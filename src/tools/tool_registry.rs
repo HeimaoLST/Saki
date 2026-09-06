@@ -40,9 +40,17 @@ pub struct ToolRegistry {
 }
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ToolDefinition {
+    #[serde(rename = "type")]
+    pub tool_type: ToolType,
     pub name: String,
     pub description: String,
     pub parameters: Value,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolType {
+    Function,
 }
 impl ToolRegistry {
     pub fn new() -> Self {

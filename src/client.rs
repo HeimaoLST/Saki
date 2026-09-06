@@ -9,7 +9,6 @@ use crate::{conversation::Conversation, tools::tool_registry::ToolDefinition};
 const MAX_RETRIES: u8 = 3;
 pub struct DeepseekClient {
     base_url: String,
-    api_key: String,
     http_client: reqwest::Client,
 }
 /// An item sent to the Responses API.
@@ -30,7 +29,7 @@ pub enum InputItem {
     },
     FunctionCallOutput {
         call_id: String,
-        output: Value,
+        output: String,
     },
     CustomToolCall {
         call_id: String,
@@ -169,6 +168,7 @@ impl DeepseekClient {
     pub fn new() -> Self {
         dotenvy::dotenv().expect("Faild to load the .env");
         let api_key = env::var("API_KEY").expect("Can't load the api_key");
+        let api_key = format!("Bearer {}", api_key);
         const BASE_URL: &str = "https://api.deepseek.com";
         let mut header = header::HeaderMap::new();
         header.insert(
@@ -182,7 +182,6 @@ impl DeepseekClient {
 
         Self {
             base_url: BASE_URL.to_owned(),
-            api_key: env::var("API_KEY").expect("Can't load the api_key"),
             http_client: clinet,
         }
     }
@@ -194,8 +193,7 @@ impl DeepseekClient {
                 .post(format!("{}/responses", self.base_url))
                 .json(&request)
                 .send()
-                .await
-                .and_then(|res| res.error_for_status());
+                .await;
             let response = match response {
                 Ok(res) => res,
                 Err(err) => {
@@ -203,6 +201,17 @@ impl DeepseekClient {
                     continue;
                 }
             };
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|err| format!("<failed to read error body: {err}>"));
+                last_err = format!("HTTP {status}: {body}");
+                continue;
+            }
+
             let response_json = response.json::<serde_json::Value>().await?;
             return Ok(serde_json::from_value::<ModelResponse>(response_json)?);
         }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::tools::tool_registry::{Tool, ToolDefinition, ToolError};
+use crate::tools::tool_registry::{Tool, ToolDefinition, ToolError, ToolType};
 
 async fn caculator(value: Value) -> Result<Value, ToolError> {
     let a = value["a"]
@@ -30,6 +30,7 @@ async fn caculator(value: Value) -> Result<Value, ToolError> {
 pub fn init() -> Tool {
     Tool {
         definition: ToolDefinition {
+            tool_type: ToolType::Function,
             name: "caculator".to_owned(),
             description: String::from_str("用来进行两个数字之间的四则运算和算术").unwrap(),
             parameters: serde_json::json!({

@@ -28,13 +28,14 @@ impl Agent {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         loop {
             let mut input = String::new();
+            println!("User:\t");
             io::stdin()
                 .read_line(&mut input)
                 .expect("Failed to read lint");
             self.conversation.add_user_message(input);
             loop {
                 let request = ModelRequest::new(
-                    "deepseek-flash-v4".to_owned(),
+                    "deepseek-v4-flash".to_owned(),
                     &self.conversation,
                     self.tool_registry.list_definition(),
                 );
@@ -97,8 +98,10 @@ impl Agent {
                         }),
                     };
 
-                    self.conversation
-                        .add_function_call_output(call_id, function_call_output);
+                    self.conversation.add_function_call_output(
+                        call_id,
+                        serde_json::to_string(&function_call_output)?,
+                    );
                 }
             }
         }

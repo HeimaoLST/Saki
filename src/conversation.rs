@@ -45,7 +45,7 @@ impl Conversation {
         };
         self.items.push(function_call);
     }
-    pub fn add_function_call_output(&mut self, call_id: String, output: Value) {
+    pub fn add_function_call_output(&mut self, call_id: String, output: String) {
         let function_call_output = InputItem::FunctionCallOutput { call_id, output };
         self.items.push(function_call_output);
     }
