@@ -1,7 +1,7 @@
 mod agent;
 mod client;
 mod conversation;
-mod tool_registry;
+pub mod tools;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -13,7 +13,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::tool_registry::{Tool, ToolError, ToolRegistry};
+use crate::tools::tool_registry::{Tool, ToolError, ToolRegistry};
 #[derive(Serialize, Deserialize)]
 struct Message {
     role: String,

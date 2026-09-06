@@ -4,7 +4,7 @@ use reqwest::header;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{conversation::Conversation, tool_registry::ToolDefinition};
+use crate::{conversation::Conversation, tools::tool_registry::ToolDefinition};
 
 const MAX_RETRIES: u8 = 3;
 pub struct DeepseekClient {

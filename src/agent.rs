@@ -3,7 +3,7 @@ use std::io;
 use crate::{
     client::{DeepseekClient, ModelRequest, OutputItem, OutputText, ReasoningText},
     conversation::Conversation,
-    tool_registry::{ToolCall, ToolRegistry},
+    tools::tool_registry::{ToolCall, ToolRegistry},
 };
 
 pub struct Agent {
