@@ -1,0 +1,123 @@
+name: Feature 需求
+description: 新能力或行为增强（type:feature）
+title: "[feature] "
+labels: ["type:feature", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > 协作协议见根目录 `AGENTS.md`。可验证的验收标准是进入 `status:ready` 的前提。
+
+  - type: dropdown
+    id: from_agent
+    attributes:
+      label: 提出方业务线（FROM）
+      options:
+        - agent:runtime
+        - agent:tui
+        - agent:gui
+        - agent:qa
+        - agent:pm
+        - 人类
+    validations:
+      required: true
+
+  - type: input
+    id: from_instance
+    attributes:
+      label: 提出方实例 ID（FROM）
+      description: 业务线内的唯一实例名，例如 runtime#kira；人类填姓名
+      placeholder: runtime#kira
+    validations:
+      required: true
+
+  - type: dropdown
+    id: to_agent
+    attributes:
+      label: 建议负责业务线（TO）
+      options:
+        - agent:runtime
+        - agent:tui
+        - agent:gui
+        - agent:qa
+        - agent:pm
+        - 不确定
+    validations:
+      required: true
+
+  - type: input
+    id: to_instance
+    attributes:
+      label: 指定实例（TO，可选）
+      description: 想点名某个实例就填写；留空表示该业务线任意实例均可接手
+      placeholder: runtime#kira
+    validations:
+      required: false
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题与用户价值
+      description: 谁在什么场景遇到什么问题？不做会怎样？
+    validations:
+      required: true
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 期望行为（可验证）
+      description: 用可观察的行为描述，而不是实现方案
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 逐条列出，每条都要能判定通过与否
+      placeholder: |
+        - [ ] 当 ... 时，系统 ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: 非目标
+      description: 明确这次不做什么，防止 scope creep
+    validations:
+      required: true
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: 涉及层
+      options:
+        - runtime（执行循环 / 模型 / 会话 / 协议）
+        - 应用组装（app / profile / 预设）
+        - 前端 TUI / console
+        - 前端 GUI（desktop）
+        - 文档
+        - 跨层（需要 type:decision）
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: evidence
+    attributes:
+      label: 需要的证据类型
+      options:
+        - label: 确定性离线测试（禁止 sleep）
+        - label: 真实模型运行摘要
+        - label: PTY / 真实终端验证
+        - label: 截图或交互对比
+        - label: 文档同步
+
+  - type: textarea
+    id: deps
+    attributes:
+      label: 依赖与关联
+      description: 写出 Blocked-by / Blocks / Refs，没有就写「无」
+    validations:
+      required: true

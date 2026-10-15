@@ -1,0 +1,325 @@
+<div id="saki-terminal-style" aria-label="SAKI terminal presentation">
+  <style>
+    #saki-terminal-style {
+      color-scheme: light dark;
+      --saki-bg: light-dark(#f7f8f5, #191d1c);
+      --saki-text: light-dark(#29332f, #dce4de);
+      --saki-secondary: light-dark(#626e67, #9aa9a0);
+      --saki-rule: light-dark(#c8d2ca, #3b4840);
+      --saki-user: light-dark(#e8eee7, #27392f);
+      --saki-code: light-dark(#eef1ec, #222a25);
+      --saki-accent: light-dark(#32634e, #8bbda2);
+      --saki-error: light-dark(#a33d3d, #e39792);
+      --saki-warning: light-dark(#825e20, #d9b674);
+      --saki-columns: 96ch;
+      --saki-gap: 24px;
+    }
+    #saki-terminal-style [hidden] { display: none !important; }
+    #saki-terminal-style .terminal,
+    #saki-terminal-style .terminal * { box-sizing: border-box; }
+    #saki-terminal-style .terminal {
+      background: var(--saki-bg);
+      color: var(--saki-text);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 14px;
+      line-height: 1.65;
+      font-weight: 400;
+      padding: 20px 24px 16px;
+      min-height: 680px;
+      display: flex;
+      flex-direction: column;
+      overflow-wrap: anywhere;
+    }
+    #saki-terminal-style .transcript {
+      width: 100%;
+      max-width: var(--saki-columns);
+      display: flex;
+      flex-direction: column;
+      gap: var(--saki-gap);
+    }
+    #saki-terminal-style .terminal p,
+    #saki-terminal-style .terminal h2,
+    #saki-terminal-style .terminal ul,
+    #saki-terminal-style .terminal pre { margin: 0; }
+    #saki-terminal-style .terminal h2 {
+      font: inherit;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    #saki-terminal-style .terminal strong { font-weight: 700; }
+    #saki-terminal-style .terminal ul { padding-left: 2ch; }
+    #saki-terminal-style .terminal li + li { margin-top: 4px; }
+    #saki-terminal-style .terminal code,
+    #saki-terminal-style .terminal pre { font: inherit; }
+    #saki-terminal-style .terminal p code,
+    #saki-terminal-style .terminal li code { color: var(--saki-accent); }
+    #saki-terminal-style .request {
+      background: var(--saki-user);
+      padding: 16px 12px;
+      display: grid;
+      grid-template-columns: 2ch minmax(0, 1fr);
+      margin-left: -12px;
+    }
+    #saki-terminal-style .request .prompt { color: var(--saki-accent); }
+    #saki-terminal-style .activity { color: var(--saki-secondary); }
+    #saki-terminal-style .terminal summary {
+      list-style: none;
+      display: flex;
+      align-items: baseline;
+      gap: 1ch;
+      width: fit-content;
+      max-width: 100%;
+      min-height: 24px;
+    }
+    #saki-terminal-style .terminal summary::-webkit-details-marker { display: none; }
+    #saki-terminal-style .terminal summary::before { content: "▸"; flex: none; }
+    #saki-terminal-style .terminal details[open] > summary::before { content: "▾"; }
+    #saki-terminal-style .activity-body {
+      margin-top: 12px;
+      padding-left: 2ch;
+      border-left: 1px solid var(--saki-rule);
+      display: grid;
+      gap: 12px;
+    }
+    #saki-terminal-style .tool > summary { color: var(--saki-secondary); }
+    #saki-terminal-style .tool-name { color: var(--saki-text); }
+    #saki-terminal-style .raw-output {
+      margin: 8px 0 0 2ch;
+      padding: 8px 12px;
+      background: var(--saki-code);
+      white-space: pre-wrap;
+    }
+    #saki-terminal-style .reasoning { color: var(--saki-secondary); }
+    #saki-terminal-style .reasoning p { margin: 8px 0 0 2ch; }
+    #saki-terminal-style .result { display: grid; gap: 20px; }
+    #saki-terminal-style .code-block {
+      background: var(--saki-code);
+      border-left: 2px solid var(--saki-rule);
+      padding: 10px 14px;
+    }
+    #saki-terminal-style .code-language { color: var(--saki-secondary); margin-bottom: 6px; }
+    #saki-terminal-style .code-block pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    #saki-terminal-style .terminal table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font: inherit;
+    }
+    #saki-terminal-style .terminal th {
+      text-align: left;
+      font-weight: 700;
+      border-bottom: 1px solid var(--saki-rule);
+      padding: 0 1ch 6px 0;
+    }
+    #saki-terminal-style .terminal td {
+      padding: 8px 1ch 0 0;
+      vertical-align: top;
+    }
+    #saki-terminal-style .terminal td:last-child { color: var(--saki-secondary); }
+    #saki-terminal-style .terminal th:first-child { width: 29%; }
+    #saki-terminal-style .narrow-records { display: none; }
+    #saki-terminal-style .narrow-records dl { margin: 0; padding: 10px 0; display: grid; grid-template-columns: 8ch minmax(0, 1fr); gap: 4px 1ch; }
+    #saki-terminal-style .narrow-records dl + dl { border-top: 1px solid var(--saki-rule); }
+    #saki-terminal-style .narrow-records dt { font-weight: 700; }
+    #saki-terminal-style .narrow-records dd { margin: 0; }
+    #saki-terminal-style .terminal-chrome { margin-top: auto; padding-top: 28px; }
+    #saki-terminal-style .execution-state {
+      color: var(--saki-secondary);
+      margin-bottom: 8px;
+      display: flex;
+      gap: 1ch;
+    }
+    #saki-terminal-style .running-mark { color: var(--saki-accent); }
+    #saki-terminal-style .composer {
+      border-top: 1px solid var(--saki-rule);
+      display: flex;
+      gap: 1ch;
+      align-items: baseline;
+      min-height: 62px;
+      padding-top: 12px;
+      padding-bottom: 12px;
+    }
+    #saki-terminal-style .composer .prompt { color: var(--saki-accent); }
+    #saki-terminal-style .composer textarea {
+      font: inherit;
+      color: var(--saki-text);
+      background: var(--saki-bg);
+      border: 0;
+      resize: none;
+      width: 100%;
+      min-width: 0;
+      padding: 0;
+      min-height: 36px;
+      field-sizing: content;
+    }
+    #saki-terminal-style .composer textarea::placeholder { color: var(--saki-secondary); }
+    #saki-terminal-style .statusline {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      column-gap: 2ch;
+      row-gap: 4px;
+      color: var(--saki-secondary);
+    }
+    #saki-terminal-style .session-name { flex: 1; }
+    #saki-terminal-style .model { margin-left: auto; }
+    #saki-terminal-style .help { margin-top: 10px; color: var(--saki-secondary); }
+    #saki-terminal-style .help summary { margin-left: auto; }
+    #saki-terminal-style .help p { padding-top: 8px; }
+    #saki-terminal-style .error-text { color: var(--saki-error); }
+    #saki-terminal-style .warning-text { color: var(--saki-warning); }
+    #saki-terminal-style .failure {
+      border-left: 2px solid var(--saki-error);
+      padding-left: 2ch;
+      display: grid;
+      gap: 10px;
+    }
+    #saki-terminal-style .failure > p:first-child { color: var(--saki-error); }
+    @media (max-width: 640px) {
+      #saki-terminal-style .terminal { padding: 16px 20px; min-height: 850px; }
+      #saki-terminal-style .session-name { display: none; }
+    }
+    @media (max-width: 460px) {
+      #saki-terminal-style .terminal { min-height: 1010px; }
+      #saki-terminal-style .table-layout { display: none; }
+      #saki-terminal-style .narrow-records { display: block; }
+      #saki-terminal-style .statusline { align-items: flex-start; }
+      #saki-terminal-style .model { flex-basis: 100%; margin-left: 0; }
+    }
+    @media (pointer: coarse) {
+      #saki-terminal-style .terminal summary { min-height: 44px; align-items: center; }
+      #saki-terminal-style .composer textarea { font-size: 16px; }
+    }
+  </style>
+
+  <div class="viz-carousel" aria-label="SAKI task states">
+    <section data-variant="Reading" aria-label="Completed task">
+      <div class="terminal">
+        <div class="transcript">
+          <div class="request"><span class="prompt" aria-hidden="true">›</span><p>Help me run the line counter.</p></div>
+          <details class="activity">
+            <summary class="cursor-interaction">Activity · 3 tool calls</summary>
+            <div class="activity-body">
+              <details class="reasoning"><summary class="cursor-interaction">Thought</summary><p>Check the available filters before reporting a source-only count.</p></details>
+              <details class="tool"><summary class="cursor-interaction"><span><span class="tool-name">Read</span> loc.py</span></summary><pre class="raw-output">Loaded the script and argument parser.</pre></details>
+              <details class="tool"><summary class="cursor-interaction"><span><span class="tool-name">Run</span> python3 loc.py --help</span></summary><pre class="raw-output">--ext EXT
+--exclude DIR
+--json
+Exit 0</pre></details>
+              <details class="tool"><summary class="cursor-interaction"><span><span class="tool-name">Run</span> python3 loc.py . --ext .rs --exclude .saki</span></summary><pre class="raw-output">Rust source scan completed.
+Exit 0</pre></details>
+            </div>
+          </details>
+          <div class="result">
+            <p>Run this from the project directory to count <strong>Rust source files</strong>:</p>
+            <div class="code-block"><div class="code-language">bash</div><pre><code>python3 loc.py . --ext .rs --exclude .saki</code></pre></div>
+            <section>
+              <h2>What gets counted</h2>
+              <table class="table-layout" aria-label="Line counter scope">
+                <thead><tr><th>Scope</th><th>Included</th><th>Excluded</th></tr></thead>
+                <tbody><tr><td>Source</td><td>Rust files</td><td>JSON experiment data</td></tr><tr><td>Workspace</td><td>Current project</td><td>Snapshot in .saki/</td></tr><tr><td>Output</td><td>Code, comments, blanks</td><td>Other file types</td></tr></tbody>
+              </table>
+              <div class="narrow-records" aria-label="Line counter scope">
+                <dl><dt>Scope</dt><dd>Source</dd><dt>Included</dt><dd>Rust files</dd><dt>Excluded</dt><dd>JSON experiment data</dd></dl>
+                <dl><dt>Scope</dt><dd>Workspace</dd><dt>Included</dt><dd>Current project</dd><dt>Excluded</dt><dd>Snapshot in .saki/</dd></dl>
+                <dl><dt>Scope</dt><dd>Output</dd><dt>Included</dt><dd>Code, comments, blanks</dd><dt>Excluded</dt><dd>Other file types</dd></dl>
+              </div>
+            </section>
+            <p>For machine-readable output, append <code>--json</code>.</p>
+          </div>
+        </div>
+        <div class="terminal-chrome">
+          <div class="execution-state">Ready</div>
+          <label class="composer"><span class="prompt" aria-hidden="true">›</span><textarea rows="1" aria-label="Draft follow-up" placeholder="Ask a follow-up"></textarea></label>
+          <div class="statusline"><span>12% / 1M</span><span class="session-name">Line counter</span><span class="model">deepseek-v4.1-flash</span></div>
+          <details class="help"><summary class="cursor-interaction">Help</summary><p>Enter send · Alt+Enter newline<br>Activity and tool rows open their details.</p></details>
+        </div>
+      </div>
+    </section>
+
+    <section data-variant="Working" aria-label="Task in progress" hidden>
+      <div class="terminal">
+        <div class="transcript">
+          <div class="request"><span class="prompt" aria-hidden="true">›</span><p>Help me run the line counter.</p></div>
+          <p>The initial scan includes a workspace snapshot. I’m checking the exclusions before reporting the result.</p>
+          <details class="activity" open>
+            <summary class="cursor-interaction">Activity · 1 tool call · thinking</summary>
+            <div class="activity-body">
+              <details class="tool"><summary class="cursor-interaction"><span><span class="tool-name">Read</span> loc.py</span></summary><pre class="raw-output">Loaded the script and argument parser.</pre></details>
+              <details class="reasoning" open><summary class="cursor-interaction">Thinking</summary><p>The comparison needs to use the same file scope. JSON artifacts and the snapshot directory should be excluded before comparing totals.</p></details>
+            </div>
+          </details>
+        </div>
+        <div class="terminal-chrome">
+          <div class="execution-state"><span class="running-mark" aria-hidden="true">●</span><span>Thinking · checking file scope</span></div>
+          <label class="composer"><span class="prompt" aria-hidden="true">›</span><textarea rows="1" aria-label="Draft while working" placeholder="Draft a follow-up"></textarea></label>
+          <div class="statusline"><span>12% / 1M</span><span class="session-name">Line counter</span><span class="model">deepseek-v4.1-flash</span></div>
+          <details class="help"><summary class="cursor-interaction">Help</summary><p>You can keep editing your draft while the task runs.<br>Activity and tool rows open their details.</p></details>
+        </div>
+      </div>
+    </section>
+
+    <section data-variant="Needs attention" aria-label="Failed task" hidden>
+      <div class="terminal">
+        <div class="transcript">
+          <div class="request"><span class="prompt" aria-hidden="true">›</span><p>Run the tests after my changes.</p></div>
+          <details class="activity"><summary class="cursor-interaction"><span>Activity · 2 tool calls · <span class="error-text">1 failed</span></span></summary>
+            <div class="activity-body">
+              <details class="tool"><summary class="cursor-interaction"><span><span class="tool-name">Read</span> src/frontend/tui/markdown.rs</span></summary><pre class="raw-output">Loaded the current Markdown renderer.</pre></details>
+              <details class="tool"><summary class="cursor-interaction"><span><span class="error-text">Failed</span> cargo test</span></summary><pre class="raw-output">error: mismatched closing delimiter
+Exit 101</pre></details>
+            </div>
+          </details>
+          <div class="failure"><p><strong>Tests did not run.</strong> The build failed.</p><p>The compiler reported a mismatched closing delimiter in <code>src/frontend/tui/markdown.rs</code>.</p><details class="tool"><summary class="cursor-interaction">Compiler output</summary><pre class="raw-output">error: mismatched closing delimiter
+  --&gt; src/frontend/tui/markdown.rs
+
+error: could not compile saki
+Exit 101</pre></details></div>
+          <p>The syntax error needs to be fixed before test results are available.</p>
+        </div>
+        <div class="terminal-chrome">
+          <div class="execution-state"><span class="error-text">Task failed</span></div>
+          <label class="composer"><span class="prompt" aria-hidden="true">›</span><textarea rows="1" aria-label="Draft after failure" placeholder="Ask a follow-up"></textarea></label>
+          <div class="statusline"><span>12% / 1M</span><span class="session-name">Markdown rendering</span><span class="model">deepseek-v4.1-flash</span></div>
+          <details class="help"><summary class="cursor-interaction">Help</summary><p>Enter send · Alt+Enter newline<br>Compiler output remains available above.</p></details>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (() => {
+      const root = document.getElementById('saki-terminal-style');
+      const defaults = { appearance: 'System', columns: 96, density: 'Relaxed' };
+      const controls = { ...defaults };
+      const applySettings = (saved) => {
+        if (!saved || typeof saved !== 'object') return;
+        if (['System', 'Light', 'Dark'].includes(saved.appearance)) controls.appearance = saved.appearance;
+        if (typeof saved.columns === 'number') controls.columns = Math.max(72, Math.min(112, saved.columns));
+        if (['Relaxed', 'Compact'].includes(saved.density)) controls.density = saved.density;
+      };
+      const render = () => {
+        root.style.colorScheme = controls.appearance === 'System' ? 'light dark' : controls.appearance.toLowerCase();
+        root.style.setProperty('--saki-columns', `${controls.columns}ch`);
+        root.style.setProperty('--saki-gap', controls.density === 'Compact' ? '16px' : '24px');
+      };
+      const persist = () => {
+        if (window.openai?.setWidgetState) {
+          window.openai.setWidgetState({ modelContent: { ...controls }, privateContent: null }).catch(() => {});
+        }
+      };
+      applySettings(window.openai?.widgetState?.modelContent);
+      render();
+      window.addEventListener('openai:set_globals', (event) => {
+        applySettings(event.detail?.globals?.widgetState?.modelContent);
+        render();
+      });
+      if (globalThis.Tweak) {
+        const tweak = new Tweak({ container: root, onChange: () => { render(); persist(); } });
+        tweak.addSelect(controls, 'appearance', { label: 'Appearance', options: ['System', 'Light', 'Dark'] });
+        tweak.addSlider(controls, 'columns', { label: 'Reading width', min: 72, max: 112, step: 4, unit: 'cells' });
+        tweak.addSelect(controls, 'density', { label: 'Spacing', options: ['Relaxed', 'Compact'] });
+      }
+    })();
+  </script>
+</div>

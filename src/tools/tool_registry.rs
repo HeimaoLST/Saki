@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::{pin::Pin, sync::Arc};
 
-use serde::{Deserialize, Serialize};
+use crate::protocol::ToolDefinition;
 use serde_json::Value;
 use thiserror::Error;
 #[derive(Debug, Error)]
@@ -12,6 +12,12 @@ pub enum ToolError {
     ExecutionFailed(String),
     #[error("Don't find the valid tool named: {0}")]
     NotFound(String),
+}
+
+impl From<std::io::Error> for ToolError {
+    fn from(error: std::io::Error) -> Self {
+        Self::ExecutionFailed(error.to_string())
+    }
 }
 type ToolFutute = Pin<Box<dyn Future<Output = Result<Value, ToolError>> + Send>>;
 type ToolHandler = Arc<dyn Fn(Value) -> ToolFutute + Send + Sync>;
@@ -37,20 +43,6 @@ impl ToolCall {
 }
 pub struct ToolRegistry {
     tools: HashMap<String, Tool>,
-}
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ToolDefinition {
-    #[serde(rename = "type")]
-    pub tool_type: ToolType,
-    pub name: String,
-    pub description: String,
-    pub parameters: Value,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolType {
-    Function,
 }
 impl ToolRegistry {
     pub fn new() -> Self {

@@ -1,0 +1,93 @@
+name: 决策 / RFC
+description: 架构、协议或跨 agent 边界的决策（type:decision）
+title: "[decision] "
+labels: ["type:decision", "status:triage", "needs:design"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > 协作协议见根目录 `AGENTS.md` §9。影响多个 agent 的接口变更必须先走 RFC：受影响 agent 逐个评论 `ACK: agent:x`，人类确认后再拆子 issue 实施。
+        > 决策结论最终必须沉淀到 `docs/design/`，本 issue 只承载讨论过程。
+
+  - type: dropdown
+    id: from_agent
+    attributes:
+      label: 发起方业务线（FROM）
+      options:
+        - agent:runtime
+        - agent:tui
+        - agent:gui
+        - agent:qa
+        - agent:pm
+        - 人类
+    validations:
+      required: true
+
+  - type: input
+    id: from_instance
+    attributes:
+      label: 发起方实例 ID（FROM）
+      description: 业务线内的唯一实例名，例如 runtime#kira；人类填姓名
+      placeholder: runtime#kira
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 背景与问题
+      description: 要决策什么？不决策会卡住什么？引用已有文档与证据
+    validations:
+      required: true
+
+  - type: textarea
+    id: options
+    attributes:
+      label: 候选方案
+      description: 每个方案写动机、优点、缺点、成本、迁移方式、回滚方式
+      placeholder: |
+        ### 方案 A: ...
+        - 优点:
+        - 缺点:
+        - 迁移/回滚:
+
+        ### 方案 B: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: 影响面
+      description: 涉及路径、agent、文档、测试与用户可见行为
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: acks
+    attributes:
+      label: 需要哪些业务线给出 ACK
+      options:
+        - label: agent:runtime
+        - label: agent:tui
+        - label: agent:gui
+        - label: agent:qa
+        - label: agent:pm
+
+  - type: input
+    id: deadline
+    attributes:
+      label: 决策截止时间
+      placeholder: 例如 2026-11-01，或「阻塞 issue #N 前」
+    validations:
+      required: true
+
+  - type: dropdown
+    id: human
+    attributes:
+      label: 是否需要人类确认
+      options:
+        - 是（产品方向 / 密钥 / 权限 / 费用）
+        - 否（agent 之间可达成）
+    validations:
+      required: true

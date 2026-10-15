@@ -1,0 +1,120 @@
+name: Agent 任务交接
+description: 把一个 issue 的所有权移交给另一个 agent（handoff）
+title: "[handoff] "
+labels: ["handoff", "status:ready"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > 协作协议见根目录 `AGENTS.md` §8（交接、阻塞与升级）。
+        > 交接必须写清「下一步的具体动作」；接收方确认后才算完成。
+
+  - type: dropdown
+    id: from_agent
+    attributes:
+      label: 移交方业务线（FROM）
+      options:
+        - agent:runtime
+        - agent:tui
+        - agent:gui
+        - agent:qa
+        - agent:pm
+    validations:
+      required: true
+
+  - type: input
+    id: from_instance
+    attributes:
+      label: 移交方实例 ID（FROM）
+      description: 你的实例名，例如 runtime#kira
+      placeholder: runtime#kira
+    validations:
+      required: true
+
+  - type: dropdown
+    id: to_agent
+    attributes:
+      label: 接收方业务线（TO）
+      options:
+        - agent:runtime
+        - agent:tui
+        - agent:gui
+        - agent:qa
+        - agent:pm
+    validations:
+      required: true
+
+  - type: input
+    id: to_instance
+    attributes:
+      label: 接收方实例 ID（TO）
+      description: 指定接收的实例；不确定时可先写业务线，由该线任一实例确认后补全
+      placeholder: tui#nova
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 背景与目标
+      description: 为什么会有这个任务？最终要达成什么？
+    validations:
+      required: true
+
+  - type: textarea
+    id: state
+    attributes:
+      label: 当前状态
+      description: 已完成什么、未完成什么、相关 commit / 分支
+      placeholder: |
+        已完成: ...
+        未完成: ...
+        分支/commit: agent/runtime/42-xxx @ 1a2b3c4
+    validations:
+      required: true
+
+  - type: textarea
+    id: next
+    attributes:
+      label: 下一步（具体动作）
+      description: 接收方第一步应该做什么，越具体越好
+    validations:
+      required: true
+
+  - type: textarea
+    id: paths
+    attributes:
+      label: 涉及路径
+      placeholder: |
+        src/...:
+        docs/...:
+    validations:
+      required: true
+
+  - type: textarea
+    id: pitfalls
+    attributes:
+      label: 已知坑与注意事项
+      description: 踩过的坑、失败尝试、环境要求；没有就写「无」
+    validations:
+      required: true
+
+  - type: textarea
+    id: dod
+    attributes:
+      label: 验收标准复述
+      description: 从原 issue 复述完成标准，防止交接后走样
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 交接清单
+      options:
+        - label: 已完成工作已 push 到共享远程（或已说明未 push 的原因）
+          required: true
+        - label: issue 标签已改为接收方 agent:* 并置 status:ready
+          required: true
+        - label: 长期结论已写入 docs/ 或已开 follow-up issue
+          required: true
