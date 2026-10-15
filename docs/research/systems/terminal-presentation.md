@@ -1,15 +1,17 @@
-# Terminal presentation：Pi 与 Codex 的信息层次
+# Terminal presentation：Pi、Codex 与 OpenCode 的信息层次与能力矩阵
 
-核对日期：2026-10-13。本研究回应 SAKI 实测中的工具链噪声、推理占位、超长行与 Markdown 表格失去结构的问题。范围是显示与交互；布局、终端缓冲区和组件选型见 [Terminal UI](terminal-ui.md)。对应提案见 [TUI style](../../design/tui-style.md)。
+核对日期：2026-10-13；能力矩阵补充 2026-10-15。本研究回应 SAKI 实测中的工具链噪声、推理占位、超长行与 Markdown 表格失去结构的问题。第 1–7 节比较消息、活动、推理、Markdown、主题与底栏；第 8 节把固定版本的 TUI 能力矩阵沉淀为长期事实。范围是显示与交互；布局、终端缓冲区和组件选型见 [Terminal UI](terminal-ui.md)。对应提案见 [TUI style](../../design/tui-style.md)。
 
 ## 证据与版本
 
-本机 `codex --version` 为 `0.162.1`，`pi --version` 为 `1.0.2`。下面读取与安装版本对应的官方发布源码，不把 main 的变化混入版本结论。检查 Pi 安装包中的组件也确认了同样的主要行为。本次没有对两个产品做完整交互或可用性对照实验。
+本机 2026-10-13 核对时 `codex --version` 为 `0.162.1`，`pi --version` 为 `1.0.2`。下面读取与安装版本对应的官方发布源码，不把 main 的变化混入版本结论。检查 Pi 安装包中的组件也确认了同样的主要行为。本次没有对两个产品做完整交互或可用性对照实验。
 
 | 产品 | 发布版本 | 固定 commit |
 | --- | --- | --- |
 | Codex | `rust-v0.162.1` | `092d3acd6bec3e3a14bdc7e7a2810ab628ab759d` |
 | Pi | `v1.0.2` | `cd32f7725fdbddbaecdff5b1e68491563394e0ca` |
+
+2026-10-15 追加复核：本机已升级到 Pi `1.2.0`、Codex `0.162.1`；三个第三方最新稳定 release 的 peeled commit 与逐维度能力矩阵见第 8 节。第 1–7 节保留 2026-10-13 的源码快照。
 
 ## 1. 消息通过版面区分角色
 
@@ -96,7 +98,50 @@ SAKI 已把输入切换到 Termina 0.3.3 `EventReader`/`EventStream`：`Platform
 
 适配细节与验收边界见 [TUI style](../../design/tui-style.md)。
 
-## 对 SAKI 的判断
+## 8. 四系统 TUI 能力矩阵（2026-10-15）
+
+本节把 [Issue #19](https://github.com/HeimaoLST/Saki/issues/19) 的只读核对沉淀为长期事实。固定三个第三方最新稳定 release 的 peeled commit，逐维度记录 SAKI 的实现位置与竞品的可核验行为。未运行任何第三方 harness；竞品行为来自固定 commit 的源码或官方文档，不是端到端可用性实测。结论分级沿用文档约定：**[实现事实]**（直接读固定 commit 源码）、**[作者报告]**（官方文档描述）、**[设计推论]**、**[待验证]**。
+
+| 产品 | 最新稳定 release | peeled commit | 本机安装（2026-10-15） |
+| --- | --- | --- | --- |
+| Codex | `rust-v0.162.1`（2026-10-09） | [`092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d) | 0.162.1，一致 |
+| Pi | `v1.2.0`（2026-10-12） | [`06a466935536f8c9bcacb2d5efc0fc021be1bdff`](https://github.com/earendil-works/pi/tree/06a466935536f8c9bcacb2d5efc0fc021be1bdff) | 1.2.0，一致 |
+| OpenCode | `v1.19.0`（2026-10-11） | [`733b2c627e5aec39cb33cc22373bdce33053ef2c`](https://github.com/anomalyco/opencode/tree/733b2c627e5aec39cb33cc22373bdce33053ef2c) | 未安装，仅源码核对 |
+| SAKI | 无 release（`Cargo.toml` 0.1.0） | `origin/dev@082845c770e608c1c92591325eeaee912c0791b2` | 当前 TUI |
+
+Codex 的 `0.163.0-alpha.*` 属预发布，不计入稳定基线。
+
+### 8.1 SAKI 已实现（不作为缺口）
+
+这些能力已存在，不应再作为“缺失”提案：原生终端浅／深主题（`theme.rs`）、彩色 Markdown 与表格（`markdown.rs`、`markdown_layout.rs`）、任务级 Activity（`view.rs`）、流式正文与推理、跨 viewport 拖选（`selection.rs`）、JSONL 会话持久化、AI 标题、Esc 主动取消（`mod.rs` 的 `outcome.cancel`）、96-cell 正文宽度（`markdown_layout.rs:15`）、有界日志分页（`log.rs`，16 KiB／300 行）、图片附件、工具摘要与展开、视口内渲染（`view.rs` 顶部注释）与每记录布局缓存（`state.rs` 的 `CachedLayout`）。[实现事实]
+
+### 8.2 SAKI 缺口与竞品对照
+
+下表只收有源码证据、可描述用户代价的候选；不做实现级设计。
+
+| 维度／候选 | SAKI 现状（位置） | 竞品可核验行为（固定版本） | 依赖 | 分级 |
+| --- | --- | --- | --- | --- |
+| 输入历史搜索 | 仅 older／newer 召回，无搜索（`history.rs`） | Codex `history_search_previous`=Ctrl+R、`history_search_next`=Ctrl+S（[keymap.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/keymap.rs)）；Pi `tui.editor.historyPrevious/Next` | 前端 | [实现事实] |
+| 文件路径补全 / `@` 引用 | 仅补全 `/命令`（[command/mod.rs](../../../src/command/mod.rs)） | Codex [file_search.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/file_search.rs)、[mention_codec.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/mention_codec.rs)；Pi [autocomplete.ts](https://github.com/earendil-works/pi/blob/06a466935536f8c9bcacb2d5efc0fc021be1bdff/packages/tui/src/autocomplete.ts)（Tab 路径 + `@` 模糊）；OpenCode [prompt/autocomplete.tsx](https://github.com/anomalyco/opencode/blob/733b2c627e5aec39cb33cc22373bdce33053ef2c/packages/tui/src/component/prompt/autocomplete.tsx) | 路径补全=前端；把文件内容注入消息=core 消息契约 | [实现事实] |
+| 外部编辑器 | 无 | Codex [external_editor.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/external_editor.rs)（Ctrl+G）；Pi [external-editor.ts](https://github.com/earendil-works/pi/blob/06a466935536f8c9bcacb2d5efc0fc021be1bdff/packages/coding-agent/src/modes/interactive/external-editor.ts)（Ctrl+G）；OpenCode [editor.ts](https://github.com/anomalyco/opencode/blob/733b2c627e5aec39cb33cc22373bdce33053ef2c/packages/tui/src/editor.ts) | 前端（需终端挂起／恢复） | [实现事实] |
+| 运行中排队／引导 | 运行中提交只保留草稿并提示（`mod.rs`） | Codex `composer.queue`=Tab + [session_queue_commands.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/session_queue_commands.rs)；Pi Enter 引导当前响应、Alt+Enter 排队、Alt+Up 取回（`interactive-mode.ts`） | **core**：Agent worker 目前单轮顺序 | [实现事实] |
+| transcript 文本搜索 | 无；只有 Home/End 与滚动 | Codex `find_transcript`=F3 + `transcript_view.rs` 的 `Search`；Pi `tui.altScreen.search`=Ctrl+Shift+F + [alt-screen-search.ts](https://github.com/earendil-works/pi/blob/06a466935536f8c9bcacb2d5efc0fc021be1bdff/packages/tui/src/alt-screen-search.ts) | 前端 | [实现事实] |
+| 消息级跳转 | 仅 Ctrl+Home/End 与逐行 | OpenCode `session.message.next/previous`；Pi `altScreen.previousPrompt/nextPrompt`=Ctrl+Shift+Up/Down | 前端 | [实现事实] |
+| 变更 diff | edit 返回 `{"path","applied":n}`；TUI 不画 diff（[tools/edit.rs](../../../src/tools/edit.rs)） | Codex [diff_render.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/diff_render.rs)；Pi [diff.ts](https://github.com/earendil-works/pi/blob/06a466935536f8c9bcacb2d5efc0fc021be1bdff/packages/coding-agent/src/modes/interactive/components/diff.ts)；OpenCode [diff-viewer.tsx](https://github.com/anomalyco/opencode/blob/733b2c627e5aec39cb33cc22373bdce33053ef2c/packages/tui/src/feature-plugins/system/diff-viewer.tsx) | 工具参数派生预览=前端；权威已应用 diff=core 结果契约 | [实现事实] |
+| 代码块语法高亮 | 仅弱化语言标签 + 单色（[markdown.rs](../../../src/frontend/tui/markdown.rs)） | Codex syntect + two-face；Pi `highlightCode` + highlight.js；OpenCode tree-sitter WASM（[parsers-config.ts](https://github.com/anomalyco/opencode/blob/733b2c627e5aec39cb33cc22373bdce33053ef2c/packages/tui/src/parsers-config.ts)） | 前端，但新增解析依赖需 ADR／评审 | [实现事实] |
+| 会话搜索／过滤／排序／预览 | Picker 仅 Up/Down，无过滤（`sessions.rs`） | Codex [resume_picker.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/resume_picker.rs)；Pi [session-selector-search.ts](https://github.com/earendil-works/pi/blob/06a466935536f8c9bcacb2d5efc0fc021be1bdff/packages/coding-agent/src/modes/interactive/components/session-selector-search.ts)；OpenCode [dialog-session-list.tsx](https://github.com/anomalyco/opencode/blob/733b2c627e5aec39cb33cc22373bdce33053ef2c/packages/tui/src/component/dialog-session-list.tsx) | 前端（过滤 `SessionCommand::List` 的 `SessionSummary`） | [实现事实] |
+| 模型选择 | 模型只读展示，来自 `SAKI_MODEL`（[app.rs](../../../src/app.rs)） | Codex model picker；Pi `/model` + Ctrl+L；OpenCode [dialog-model.tsx](https://github.com/anomalyco/opencode/blob/733b2c627e5aec39cb33cc22373bdce33053ef2c/packages/tui/src/component/dialog-model.tsx) | **core/app**：需重建 client 与目录同步 | [实现事实] |
+| Help 文案与行为不一致 | [help.rs](../../../src/frontend/tui/help.rs) 未提 Esc 取消；称拖选仅 “visible” | ——（SAKI 内部一致性问题） | 前端 | [实现事实] |
+
+### 8.3 明确排除与待验证
+
+- **明确排除**（依 Issue #19 的产品判断，无观察到的用户问题）：TUI 内主题切换器、记录驱逐（record eviction）、reduced-motion／screen-reader 选项。它们不作为候选，除非出现可复现的用户问题。
+- **需要 RFC/ACK 的 core 边界**：运行中排队／引导、模型切换、权威已应用 diff、`@` 文件内容注入。它们改变 core 或公共契约，须先 `type:decision` 并获得受影响业务线 `ACK`；不在 TUI 伪造后台任务、undo 或权限能力。
+- **[待验证]**：OpenCode 未发现 transcript 文本搜索入口，暂记待验证而非“确认缺失”；Codex／Pi 正文宽度上限未逐位定位常量；三家均未端到端运行。
+
+具体候选的优先级、验收与非目标记录在 Issue #19，由产品负责人选定本轮范围后拆成独立实施 issue；本文档保存长期事实，不承载过程。
+
+## 对 SAKI 的判断（2026-10-13 诊断，状态更新见节末）
 
 | 已观察的问题 | 可核验原因 | 推荐方向 |
 | --- | --- | --- |
@@ -108,6 +153,8 @@ SAKI 已把输入切换到 Termina 0.3.3 `EventReader`/`EventStream`：`Platform
 | 工具摘要缺少可读的工作对象 | [view.rs](../../../src/frontend/tui/view.rs:599) 当前摘要围绕工具名和参数开头 | 四工具优先显示动作、相对路径或真实命令，展开查看完整参数 |
 
 最后两点中的宽度上限和任务级 Activity 分组是 SAKI 的设计建议，不能归为两个产品共同拥有的默认能力。截图中反复改口和冗长结论还涉及模型输出质量；renderer 只能改善组织，不能验证那些数字或让错误结论自动变正确。
+
+**2026-10-15 更新（历史状态）**：本表是 2026-10-13 的诊断快照。上表六项均已由 2026-10-14 的 TUI style 实验实现——结构化 Markdown 与表格布局、任务级 Activity 折叠、成对浅／深主题、96-cell 正文宽度、动作＋相对路径的工具摘要。实际契约与验收见 [TUI 设计](../../design/tui.md)。保留此表用于追溯当时的证据与判断。
 
 ## 建议采用与有意保留差异
 
