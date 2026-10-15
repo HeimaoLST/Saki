@@ -45,7 +45,7 @@
 | `agent:tui` | TUI 开发 | TUI、console、输入与展示适配、本地命令系统 | `src/frontend/`、`src/command/` |
 | `agent:gui` | GUI 开发 | Go 桌面 contacts 设计预览（独立 module，不接入 Rust core） | `desktop/` |
 | `agent:qa` | 测试 | 测试策略、跨模块与端到端／PTY 验收、CI 结果核对、发布前验证 | `tests/` 中跨模块与验收部分；**只读产线代码** |
-| `agent:pm` | 产品经理 | 产品方向、需求边界、优先级、triage、验收标准、文档结构与索引、Milestone | `docs/`、`README.md`、`AGENTS.md`、`.github/` |
+| `agent:pm` | 产品经理 | 产品方向、需求边界、优先级、triage、验收标准、文档结构与索引、Milestone、协作工具脚本 | `docs/`、`README.md`、`AGENTS.md`、`.github/`、`scripts/` |
 
 ### 1.2 业务线与实例：一条业务线可以有多个 agent
 
