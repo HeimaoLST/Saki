@@ -2,7 +2,7 @@
 
 ## 关联
 
-Closes #
+Closes #  <!-- Closes 只在 base 为 master 时生效；stacked 中间 PR 请改用 Refs #N -->
 
 ## 动机
 

@@ -5,15 +5,16 @@
 > **GitHub 是唯一协作总线**：Issue 承载任务与消息，PR 承载交付，Label 承载路由，Milestone 承载计划。任何在聊天、终端或口头对话中达成的结论，必须先回写 issue，否则视为未发生。
 > 本文件只定义协作规则。**任务列表以 GitHub issue 为准，不要在本文件维护 TODO。**
 
-给没时间读完的 agent，七条底线：
+给没时间读完的 agent，八条底线：
 
-1. 先认领 issue 再动手；一切改动走 PR，不直推 `master`。
+1. 先认领 issue 再动手；一切改动走 PR，不直推 `master`／`dev`。
 2. 项目按五条业务线划分；**一条业务线可能有多个 agent 实例**，实例身份写进消息头与 commit（`agent:runtime#kira`），不冒用他人身份。
 3. 只改自己业务线的地盘；跨业务线先开 issue + 交接。
 4. **完成编码后必须自行 commit 并 push**；会话结束、交接或阻塞前，工作区不得留有未提交改动。
 5. 行为变化必须带确定性测试与证据，证据贴在 issue／PR 里。
 6. 每个 issue 同时只有 1 个 `status:in-progress`，归属由 `agent:*` 标签唯一确定。
 7. 长期事实（需求、设计、决策、实验结论）写回 `docs/`；issue 只承载过程，不散落临时笔记。
+8. 开发在独立 `git worktree` 中进行，主检出固定在 `master`；任务结束立即清理 worktree 与分支，不产生只创建不回收的残留。
 
 ---
 
@@ -204,7 +205,7 @@ Issue 和 PR 是**过程与沟通**的载体，`docs/` 是**长期事实**的载
 
 ## 5. 标准工作循环
 
-0. **同步**：`git fetch origin`，从最新 `master` 开分支。
+0. **同步**：`git fetch origin`，从最新 `origin/dev` 开分支（hotfix 从 `origin/master`）。
 1. **巡检**（每次开工前必做）：
 
    ```sh
@@ -216,6 +217,8 @@ Issue 和 PR 是**过程与沟通**的载体，`docs/` 是**长期事实**的载
    gh issue list --state open --label status:blocked
    # 搜索发给我的实例/业务线的消息（评论正文）
    gh search issues --repo HeimaoLST/Saki --state open --match comments "TO agent:<line>"
+   # 清理已合并分支与失效 worktree
+   ./scripts/agent-worktree.sh prune
    ```
 
 2. **认领**，并留下认领消息（含实例 ID 与文件范围）：
@@ -232,13 +235,13 @@ Issue 和 PR 是**过程与沟通**的载体，`docs/` 是**长期事实**的载
 
    同一业务线多个实例都要做时，各自认领不同 issue；同一 issue 只能有一个实例执行。
 
-3. **开分支**：`git switch -c agent/<line>/<issue>-<slug> origin/master`，例如 `agent/tui/142-scroll-fix`。
+3. **开 worktree 与分支**：`./scripts/agent-worktree.sh add agent/<line>/<issue>-<slug>`（等价于 `git worktree add -b <branch> $SAKI_WORKTREE_ROOT/<slug> origin/dev`，默认根目录 `$HOME/Workspace/worktrees/Saki`），例如 `agent/tui/142-scroll-fix`。**不要在主检出 `git switch`**；主检出固定 `master`。
 4. **编码与小步提交**：每完成一个可解释的最小步骤就 commit，不要攒巨型提交；每个里程碑、卡点、方案变化都在 issue 留 `KIND: status` 评论。
 5. **完成即自行提交**：编码完成后**由本实例自行 commit 并 push**，不等待人类或其他 agent；push 后在 issue 里附 commit hash。结束会话、交接或阻塞前，工作区必须干净（`git status` 无未提交改动）。
 6. **交付**：开 PR，正文含 `Closes #N`，加 `status:review`、`needs:review`，并在评论里点名一位非作者的评审实例。
 7. **评审**：评审者用 `KIND: review` 评论给出 `APPROVE` 或 `REQUEST-CHANGES` + 理由；作者不自行宣布通过。
 8. **验收**：标了 `needs:test` 的，QA 先执行并在 PR 评论验收证据，再由评审者置 `status:done`。
-9. **合并**：CI 绿 + 评审通过后 squash merge、删除分支；issue 在关闭评论里附最终证据链接。
+9. **合并**：CI 绿 + 评审通过后 squash merge，并**立即删除源分支**；stacked 场景先合并底层并删其分支，让 GitHub 把上层 PR 自动改基到 `dev`，再合上层。`Closes #N` 只在 base 为默认分支（`dev`）时生效；若修复已合入非默认分支而 issue 未关闭，必须补一个指向 `dev` 的收尾 PR，或显式关闭 issue 并附证据。issue 关闭评论里附最终证据链接。合并后立即清理：远端源分支（GitHub 合并时勾选删除，或 `git push origin --delete <branch>`）、worktree 与本地分支用 `./scripts/agent-worktree.sh finish <branch>` 一次收尾；确认 `git worktree list` 与 `git branch` 无残留。
 
 > 所有 PR 合并前必须 CI 绿（`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`、`cd desktop && go test ./...`）。CI 尚未接入前，由 PR 作者粘贴等价命令与输出。
 
@@ -273,7 +276,17 @@ Issue 和 PR 是**过程与沟通**的载体，`docs/` 是**长期事实**的载
 
 ## 7. 分支、提交与 PR
 
-**分支**：`agent/<line>/<issue-number>-<short-slug>`，例如 `agent/runtime/57-compaction`、`agent/tui/142-scroll-fix`。合并后删除。
+**分支模型（三层）**：
+
+| 分支 | 角色 | 规则 |
+| --- | --- | --- |
+| `master` | 稳定运行分支 | 只接收 `dev` → `master` 的发布 PR，以及基于 `master` 的 hotfix PR；始终可运行，禁止 feature 分支直接合入 |
+| `dev` | 集成分支（默认分支） | 所有 feature／bug／docs／test PR 的 base；CI 必须绿；`Closes #N` 在此生效 |
+| `agent/<line>/<issue-number>-<short-slug>` | 工作分支 | 从 `origin/dev` 开出（hotfix 从 `origin/master`），例如 `agent/runtime/57-compaction`、`agent/tui/142-scroll-fix`；合并后删除 |
+
+- **发布**：`dev` → `master` 的 PR，标题 `[release] <范围>`，正文写变更摘要、验证与回归结论；发布 PR 用 `Refs` 列出包含的 issue，不写 `Closes`。合并后 `master` 即为稳定基线，可打 tag。
+- **hotfix**：`agent/<line>/hotfix-<slug>` 从 `origin/master` 开出，PR 目标 `master`；合并后必须把 `master` 合回 `dev`，避免分叉。
+- `master` 与 `dev` 都不接受直接 push；本地开发一律在 worktree 的 `agent/*` 分支进行。
 
 **提交**：完成编码后必须自行提交。规则：
 
@@ -300,6 +313,8 @@ scope 建议：`agent`、`tools`、`tui`、`console`、`command`、`session`、`
 - 标题：`[#142] fix(tui): 一句话说明`。
 - 正文使用 `.github/pull_request_template.md`，必须包含 `Closes #142`、动机、改动、证据、风险、回滚方式、`FROM`／`REVIEWER` 实例。
 - 一个 PR 只解决一个 issue；想塞更多就拆 issue，不要开大杂烩 PR。
+- **`Closes #N` 只在 PR 合入默认分支（当前为 `dev`）时生效**。stacked 中间 PR（base 是特性分支）正文只写 `Refs #N`，不写关闭关键字；只有最终指向 `dev` 的 PR 写 `Closes #N`。发布 PR（`dev` → `master`）用 `Refs`。若关闭关键字未生效，交付者必须补一个指向默认分支的收尾 PR，或显式关闭 issue 并附证据链接。
+- **合并即开始清理**：源分支、worktree、本地分支不得残留；合并者负责按 §5 步骤 9 收尾（`./scripts/agent-worktree.sh finish <branch>`）。
 - 改动共享文件（`Cargo.toml`、`AGENTS.md`、`README.md`、`.github/`）必须在正文显式列出。
 - 评审必须来自非作者实例。当前多个实例共用同一 GitHub 账号，无法使用 GitHub 原生 approve，因此以 `KIND: review` 结构化评论代替；未来实例有独立 bot 账号后切换为原生 review。
 - 禁止直推 `master`、禁止 force-push 他人分支、禁止合并自己未经评审的 PR。
@@ -368,7 +383,11 @@ BLOCKED-BY: #77
 - **抢占**：两个实例同时认领同一 issue，先改标签者有效；后来者不要撤销对方标签，改领其他 ready issue 或在评论中协商。
 - **接口变更冻结**：跨模块接口、协议或公共事件结构的改动，先开 `type:decision` issue 写 RFC（动机／候选方案／影响面／迁移／回滚），受影响业务线的实例评论 `ACK: agent:<line>#<instance>`，人类确认后拆成子 issue 实施。RFC 结论沉淀为 `docs/design/` 文档。
 - **合并前 rebase** 到最新 `master`；有冲突由分支作者解决，不要求评审者代劳。
-- **并行执行**：同一仓库多个实例同时工作时使用 `git worktree` 隔离工作目录；禁止两个实例在同一目录里同时切换分支。
+- **工作目录隔离（强制）**：`Saki/` 主检出固定停留在 `master`，只用于查看、巡检与合并；所有开发都在独立 worktree 中进行，避免一个实例切分支影响其他实例。
+  - 每个活跃 issue／实例一个 worktree：`./scripts/agent-worktree.sh add agent/<line>/<issue>-<slug>`，目录位于 `<Workspace>/worktrees/Saki/<branch 中 / 替换为 ->`（默认 `$HOME/Workspace`，可用 `SAKI_WORKTREE_ROOT` 覆盖；不依赖仓库当前所在目录，也不放仓库内）。
+  - 禁止在主检出 `git switch`／`git checkout` 切分支；禁止两个实例共用同一 worktree。
+  - 每个 worktree 的 `target/` 与 `.saki/` 独立；Cargo 依赖缓存（`~/.cargo`）共享。需要跨 worktree 共享会话时设置 `SAKI_SESSION_DIR`。
+  - **任务结束必须回收**：PR 合并后立即 `./scripts/agent-worktree.sh finish <branch>`（移除 worktree、删除本地与远端分支）；日常巡检用 `./scripts/agent-worktree.sh prune` 清理已合并分支与失效 worktree。
 - 大范围机械改动（rename、格式化）单独开 `type:refactor` issue，与功能改动分离。
 
 ## 10. 证据与验收要求
@@ -422,12 +441,13 @@ gh issue close 42 --comment "验收通过，证据见 PR #43"
 | Projects 看板 | 列 = `status:*`，用于人类总览 | 同一时间超过 10 个活跃 issue |
 | GitHub Actions | `fmt`／`clippy`／`test`／`go test`，以及标签守卫（缺 `type/status/agent` 自动打回） | 尽快，由 `agent:qa` 实现 |
 | Branch protection | 要求 PR + CI 通过；账号受限时评审用本协议的结构化评论代替 | CI 接入后 |
+| 自动删除合并分支 | Settings → General → Pull Requests 打开 "Automatically delete head branches"，合并 PR 时自动删远端源分支 | 已启用 |
 | CODEOWNERS | 每个业务线（或实例）有独立 bot 账号后，按路径与 `agent:*` 自动路由评审 | 启用独立 bot 账号时 |
 | Discussions | 开放探索类话题；产生结论后必须转为 issue 或文档 | 需要社区输入时 |
 
 ## 13. Agent 行为红线
 
-- 不直推 `master`，不跳过 PR 与评审。
+- 不直推 `master`／`dev`，不跳过 PR 与评审。
 - 不在 issue／PR／commit 中写入密钥、token、`.env` 内容，不提交 `.saki/` 运行产物。
 - 不跨业务线修改代码或文档；先开 issue + 交接。
 - 不冒用其他实例的身份署名或认领他人 issue。
@@ -440,6 +460,8 @@ gh issue close 42 --comment "验收通过，证据见 PR #43"
 - 不在 CI 红的情况下请求评审通过或合并。
 - 不把长期事实留在 issue 里不沉淀，也不把 plan／需求／决策散落成仓库中的临时文件。
 - 不删除他人分支，不 force-push 共享分支。
+- 不在主检出切换分支，不与其它实例共用 worktree。
+- 不留孤儿资源：合并后的源分支、worktree、本地分支必须清理，禁止只创建不回收。
 
 ## 附：本文件维护
 
