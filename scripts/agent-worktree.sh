@@ -8,8 +8,11 @@
 # 可用 SAKI_WORKTREE_ROOT 覆盖整个 worktree 根目录）。不放仓库内，也不依赖
 # 语言分类目录，便于仓库未来迁移。
 #
+# 分支模型：master 稳定、dev 集成（默认分支）、agent/* 工作分支。
+# 工作分支默认从 origin/dev 开出；可用 SAKI_INTEGRATION_BRANCH 覆盖集成分支名。
+#
 # 用法：
-#   ./scripts/agent-worktree.sh add <branch> [base]         # base 默认 origin/master
+#   ./scripts/agent-worktree.sh add <branch> [base]         # base 默认 origin/dev
 #   ./scripts/agent-worktree.sh list
 #   ./scripts/agent-worktree.sh path <branch>
 #   ./scripts/agent-worktree.sh remove <branch> [--force]
@@ -18,6 +21,7 @@
 set -euo pipefail
 
 WORKTREES_DIR="${SAKI_WORKTREE_ROOT:-$HOME/Workspace/worktrees/Saki}"
+INTEGRATION_BRANCH="${SAKI_INTEGRATION_BRANCH:-dev}"
 
 slug() { printf '%s' "$1" | tr '/' '-'; }
 dir_for() { printf '%s/%s' "$WORKTREES_DIR" "$(slug "$1")"; }
@@ -40,7 +44,7 @@ delete_remote_branch() {
 }
 
 is_merged() {
-  git merge-base --is-ancestor "refs/heads/$1" origin/master 2>/dev/null
+  git merge-base --is-ancestor "refs/heads/$1" "origin/$INTEGRATION_BRANCH" 2>/dev/null
 }
 
 remove_worktree() {
@@ -68,7 +72,7 @@ usage() {
 case "${1:-}" in
   add)
     branch="${2:?用法: add <branch> [base]}"
-    base="${3:-origin/master}"
+    base="${3:-origin/$INTEGRATION_BRANCH}"
     dir="$(dir_for "$branch")"
     mkdir -p "$WORKTREES_DIR"
     if git show-ref --verify --quiet "refs/heads/$branch"; then
@@ -104,7 +108,7 @@ case "${1:-}" in
         git branch -D "$branch"
         echo "已强制删除本地分支: $branch（内容未合入 origin/master）"
       else
-        echo "本地分支未合入 origin/master，保留: $branch（确认合并后重试，或加 --force）" >&2
+        echo "本地分支未合入 origin/$INTEGRATION_BRANCH，保留: $branch（确认合并后重试，或加 --force）" >&2
       fi
     fi
     delete_remote_branch "$branch"
@@ -115,6 +119,7 @@ case "${1:-}" in
     while IFS= read -r branch; do
       [ -z "$branch" ] && continue
       [ "$branch" = master ] && continue
+      [ "$branch" = "$INTEGRATION_BRANCH" ] && continue
       if [ -n "$(worktree_for_branch "$branch")" ]; then
         remove_worktree "$branch" || continue
       fi
@@ -123,7 +128,7 @@ case "${1:-}" in
       else
         echo "跳过（未合并或仍被占用）: $branch" >&2
       fi
-    done < <(git branch --merged origin/master --format='%(refname:short)')
+    done < <(git branch --merged "origin/$INTEGRATION_BRANCH" --format='%(refname:short)')
     git worktree prune
     ;;
   *)
