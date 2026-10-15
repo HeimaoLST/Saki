@@ -16,7 +16,12 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
     ));
     entries.push((
         false,
-        "In picker: Enter open; n new; r rename; Esc close".to_owned(),
+        "In picker: Enter open; n new; r rename; / search; Esc close".to_owned(),
+    ));
+    entries.push((
+        false,
+        "In picker search: type to filter; Up/Down select; Enter open; Esc clears, Esc again closes"
+            .to_owned(),
     ));
     if let Some(session) = &app.session {
         entries.push((false, format!("Title: {}", session.title)));
@@ -77,16 +82,18 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
     entries.extend([
         (
             false,
-            "Tab  Switch input / records; Esc  Return to input or close log".to_owned(),
-        ),
-        (
-            false,
-            "Ctrl+C  Copy selected text; otherwise close help/log, save and clear draft, or exit if empty"
+            "Tab  Switch input / records; Esc  Close search/help/log or clear selection first"
                 .to_owned(),
         ),
         (
             false,
-            "An exit request during a task waits for it to finish".to_owned(),
+            "Esc while running  Interrupt the task after local views close; the draft is kept"
+                .to_owned(),
+        ),
+        (
+            false,
+            "Ctrl+C  Copy selection, else close help/log, save and clear draft, or request exit; it never interrupts a task, and exit waits for it"
+                .to_owned(),
         ),
         (true, "Input".to_owned()),
         (
@@ -105,6 +112,15 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         (
             false,
             "Up/Down, Ctrl+P/N  Move cursor; recall history from an empty draft".to_owned(),
+        ),
+        (
+            false,
+            "Ctrl+R  Search input history; Enter inserts without sending; Esc/Ctrl+C keeps the draft"
+                .to_owned(),
+        ),
+        (
+            false,
+            "In history search: Ctrl+R/Up  Older match; Down  Newer match".to_owned(),
         ),
         (
             false,
@@ -131,7 +147,8 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         (false, "Click Thought  Show or hide reasoning".to_owned()),
         (
             false,
-            "Drag  Select visible text; release to copy to the clipboard".to_owned(),
+            "Drag  Select conversation text; hold at the top/bottom edge to keep scrolling; release copies"
+                .to_owned(),
         ),
         (
             false,
