@@ -233,7 +233,7 @@ Issue 和 PR 是**过程与沟通**的载体，`docs/` 是**长期事实**的载
 
    同一业务线多个实例都要做时，各自认领不同 issue；同一 issue 只能有一个实例执行。
 
-3. **开 worktree 与分支**：`./scripts/agent-worktree.sh add agent/<line>/<issue>-<slug>`（等价于 `git worktree add -b <branch> $SAKI_WORKTREE_ROOT/<slug> origin/master`，默认根目录 `$HOME/Workspace/.worktrees/Saki`），例如 `agent/tui/142-scroll-fix`。**不要在主检出 `git switch`**；主检出固定 `master`。
+3. **开 worktree 与分支**：`./scripts/agent-worktree.sh add agent/<line>/<issue>-<slug>`（等价于 `git worktree add -b <branch> $SAKI_WORKTREE_ROOT/<slug> origin/master`，默认根目录 `$HOME/Workspace/worktrees/Saki`），例如 `agent/tui/142-scroll-fix`。**不要在主检出 `git switch`**；主检出固定 `master`。
 4. **编码与小步提交**：每完成一个可解释的最小步骤就 commit，不要攒巨型提交；每个里程碑、卡点、方案变化都在 issue 留 `KIND: status` 评论。
 5. **完成即自行提交**：编码完成后**由本实例自行 commit 并 push**，不等待人类或其他 agent；push 后在 issue 里附 commit hash。结束会话、交接或阻塞前，工作区必须干净（`git status` 无未提交改动）。
 6. **交付**：开 PR，正文含 `Closes #N`，加 `status:review`、`needs:review`，并在评论里点名一位非作者的评审实例。
@@ -371,7 +371,7 @@ BLOCKED-BY: #77
 - **接口变更冻结**：跨模块接口、协议或公共事件结构的改动，先开 `type:decision` issue 写 RFC（动机／候选方案／影响面／迁移／回滚），受影响业务线的实例评论 `ACK: agent:<line>#<instance>`，人类确认后拆成子 issue 实施。RFC 结论沉淀为 `docs/design/` 文档。
 - **合并前 rebase** 到最新 `master`；有冲突由分支作者解决，不要求评审者代劳。
 - **工作目录隔离（强制）**：`Saki/` 主检出固定停留在 `master`，只用于查看、巡检与合并；所有开发都在独立 worktree 中进行，避免一个实例切分支影响其他实例。
-  - 每个活跃 issue／实例一个 worktree：`./scripts/agent-worktree.sh add agent/<line>/<issue>-<slug>`，目录位于 `<Workspace>/.worktrees/Saki/<branch 中 / 替换为 ->`（默认 `$HOME/Workspace`，可用 `SAKI_WORKTREE_ROOT` 覆盖；不依赖仓库当前所在目录，也不放仓库内）。
+  - 每个活跃 issue／实例一个 worktree：`./scripts/agent-worktree.sh add agent/<line>/<issue>-<slug>`，目录位于 `<Workspace>/worktrees/Saki/<branch 中 / 替换为 ->`（默认 `$HOME/Workspace`，可用 `SAKI_WORKTREE_ROOT` 覆盖；不依赖仓库当前所在目录，也不放仓库内）。
   - 禁止在主检出 `git switch`／`git checkout` 切分支；禁止两个实例共用同一 worktree。
   - 每个 worktree 的 `target/` 与 `.saki/` 独立；Cargo 依赖缓存（`~/.cargo`）共享。需要跨 worktree 共享会话时设置 `SAKI_SESSION_DIR`。
   - PR 合并并删除分支后清理：`./scripts/agent-worktree.sh remove <branch>`，再删除本地分支。
