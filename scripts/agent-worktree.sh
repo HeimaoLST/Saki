@@ -108,22 +108,24 @@ case "${1:-}" in
     branch="${2:?用法: finish <branch> [--force]}"
     force="${3:-}"
     remove_worktree "$branch" "$force" || exit 1
-    git fetch --prune --quiet origin
+    git fetch --prune --quiet origin || echo "警告：git fetch 失败，继续本地清理" >&2
     if git show-ref --verify --quiet "refs/heads/$branch"; then
       if is_merged "$branch"; then
-        git branch -d "$branch"
+        # Squash merges rewrite history, so -d can refuse a branch whose PR is
+        # already merged; keep -d when possible and fall back to -D otherwise.
+        git branch -d "$branch" 2>/dev/null || git branch -D "$branch"
         echo "已删除本地分支: $branch"
       elif [ "$force" = "--force" ]; then
         git branch -D "$branch"
-        echo "已强制删除本地分支: $branch（内容未合入 origin/$INTEGRATION_BRANCH）"
+        echo "已强制删除本地分支: ${branch}（内容未合入 origin/${INTEGRATION_BRANCH}）"
       else
-        echo "本地分支未合入 origin/$INTEGRATION_BRANCH，保留: $branch（确认合并后重试，或加 --force）" >&2
+        echo "本地分支未合入 origin/${INTEGRATION_BRANCH}，保留: ${branch}（确认合并后重试，或加 --force）" >&2
       fi
     fi
     delete_remote_branch "$branch"
     ;;
   prune)
-    git fetch --prune --quiet origin
+    git fetch --prune --quiet origin || echo "警告：git fetch 失败，继续本地清理" >&2
     git worktree prune
     while IFS= read -r branch; do
       [ -z "$branch" ] && continue
