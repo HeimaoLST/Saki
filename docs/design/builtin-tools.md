@@ -1,6 +1,6 @@
 # Builtin tools：第一版实现契约
 
-更新日期：2026-10-12。主要参考 Pi 的四工具与输出处理、Codex 的执行生命周期；第三方研究见 [Builtin tools](../research/systems/builtin-tools.md)。本版范围是当前 agent loop 的工具执行，不引入恢复、归档、输出文件清理、TTL、磁盘配额、后台会话或主动取消。
+更新日期：2026-10-15。主要参考 Pi 的四工具与输出处理、Codex 的执行生命周期；第三方研究见 [Builtin tools](../research/systems/builtin-tools.md)。本版范围是当前 agent loop 的工具执行，不引入恢复、归档、输出文件清理、TTL、磁盘配额、后台会话或主动取消。
 
 ## 注册与执行环境
 
@@ -46,7 +46,7 @@ write 创建或整体覆盖 UTF-8 文件，创建缺失父目录，不回显内�
 
 - 当前实现支持 Unix，使用 PATH 中的 bash，继承环境，非交互式执行且 stdin 关闭。
 - timeout_ms 默认 120,000，必须为正数，可以显式调整；等待命令退出，不暴露 PTY/stdin/session API。
-- stdout/stderr 两路同时消费，按收到的数据块合并；不承诺两路输出的精确时间顺序。
+- stdout/stderr 在子进程内合并到同一管道（stderr 重定向到 stdout），按实际写出顺序返回；不再依赖两路读取的完成顺序。
 - 非零退出是正常结果，保留退出码和输出供模型修复；无法启动、读取或保存输出的错误走 ToolError。
 - Unix 子进程使用独立进程组，超时与采集错误终止该组并等待 shell 退出。shell 正常退出后也终止剩余组成员，避免后台子进程持有管道导致无限等待。主动脱离该进程组的后台任务不属于本版支持范围。
 - 信号终止时 exit_code 可以为 null；timed_out 单独说明是否触发本工具的时限。
@@ -64,7 +64,7 @@ output_path 指向实际可读的输出文件；文件在返回结果前完成 f
 ## 验收
 
 - `cargo test --locked --bin Saki`：43 项，包括原有 29 项、13 项工具边界与 1 项 Agent continuation 测试。
-- 工具边界覆盖分页与超长行、UTF-8/CRLF/BOM、原文多处替换、歧义/重叠/后一项失败、symlink 与可执行权限、大输出双管道消费、行数单独触发落盘、非 UTF-8 输出、超时子进程终止、正常退出后的管道持有者，以及输出文件创建失败后的进程终止。
+- 工具边界覆盖分页与超长行、UTF-8/CRLF/BOM、原文多处替换、歧义/重叠/后一项失败、symlink 与可执行权限、大输出双流合并消费（预览保留最终标记）、行数单独触发落盘、非 UTF-8 输出、超时子进程终止、正常退出后的管道持有者，以及输出文件创建失败后的进程终止。
 - Agent 测试使用生产 Registry 和四工具，验证读取→非零退出→edit 校验失败→修正→写文件→执行验证，失败信息确实回到下一次模型请求。
 - `cargo test --locked --example growth_experiment`：原有 29 项通过。
 - `cargo fmt --check` 与 `git diff --check` 通过。Cargo.lock 与 calculator 示例保持原样。

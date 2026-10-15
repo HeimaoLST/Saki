@@ -658,3 +658,35 @@ fn journal_roundtrip_preserves_images_tools_and_native_reasoning() {
     drop(restored_conversation);
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn restore_waits_out_a_briefly_held_journal_lock() {
+    let path = temp_path();
+    let conversation = Conversation::new("system".to_owned())
+        .with_history_file(&path)
+        .unwrap();
+    let holder = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        drop(conversation);
+    });
+    let (restored, _) = Conversation::restore(&path).unwrap();
+    holder.join().unwrap();
+    drop(restored);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn restore_reports_a_lock_that_is_still_held() {
+    let path = temp_path();
+    let holder = Conversation::new("system".to_owned())
+        .with_history_file(&path)
+        .unwrap();
+    let error = match Conversation::restore(&path) {
+        Ok(_) => panic!("restore must not succeed while the journal is locked"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("session is already in use"), "{error}");
+    assert!(error.contains(&path.display().to_string()), "{error}");
+    drop(holder);
+    std::fs::remove_file(path).unwrap();
+}

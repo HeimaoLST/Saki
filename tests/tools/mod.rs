@@ -228,6 +228,20 @@ async fn bash_returns_nonzero_status_and_workdir_does_not_change_file_tool_cwd()
 
 #[cfg(unix)]
 #[tokio::test]
+async fn bash_preserves_stdout_stderr_write_order() {
+    let workspace = Workspace::new();
+    let result = workspace
+        .call(
+            "bash",
+            json!({"command":"printf out1; printf err1 >&2; printf out2; printf err2 >&2"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["output"], "out1err1out2err2");
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn bash_drains_both_pipes_and_large_output_is_complete_and_readable() {
     let workspace = Workspace::new();
     let command = "python3 -c 'import sys; sys.stderr.write(\"stderr\\n\"*20000); sys.stdout.write(\"stdout\\n\"*20000); print(\"FINAL_MARKER\")'";

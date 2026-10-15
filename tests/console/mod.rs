@@ -82,9 +82,11 @@ fn session_fixture() -> (
     crate::session::store::SessionStore,
     String,
 ) {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let root = std::env::temp_dir().join(format!(
-        "saki-command-console-{}",
-        crate::agent::journal::new_id().unwrap()
+        "saki-command-console-{}-{}",
+        crate::agent::journal::new_id().unwrap(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::create_dir(&root).unwrap();
     let store = crate::session::store::SessionStore::new(root.join("sessions")).unwrap();
