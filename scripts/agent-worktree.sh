@@ -43,8 +43,17 @@ delete_remote_branch() {
   fi
 }
 
+pr_merged() {
+  command -v gh >/dev/null 2>&1 || return 1
+  local count
+  count="$(gh pr list --head "$1" --state merged --json number -q 'length' 2>/dev/null)" || return 1
+  [ -n "$count" ] && [ "$count" != "0" ]
+}
+
 is_merged() {
-  git merge-base --is-ancestor "refs/heads/$1" "origin/$INTEGRATION_BRANCH" 2>/dev/null
+  git merge-base --is-ancestor "refs/heads/$1" "origin/$INTEGRATION_BRANCH" 2>/dev/null && return 0
+  # Squash merges rewrite history, so the branch tip is not an ancestor of dev.
+  pr_merged "$1"
 }
 
 remove_worktree() {
@@ -120,15 +129,19 @@ case "${1:-}" in
       [ -z "$branch" ] && continue
       [ "$branch" = master ] && continue
       [ "$branch" = "$INTEGRATION_BRANCH" ] && continue
+      if ! is_merged "$branch"; then
+        echo "跳过未合并分支: $branch" >&2
+        continue
+      fi
       if [ -n "$(worktree_for_branch "$branch")" ]; then
         remove_worktree "$branch" || continue
       fi
-      if git branch -d "$branch" >/dev/null 2>&1; then
+      if git branch -d "$branch" >/dev/null 2>&1 || git branch -D "$branch" >/dev/null 2>&1; then
         echo "已删除已合并本地分支: $branch"
       else
-        echo "跳过（未合并或仍被占用）: $branch" >&2
+        echo "跳过（仍被占用）: $branch" >&2
       fi
-    done < <(git branch --merged "origin/$INTEGRATION_BRANCH" --format='%(refname:short)')
+    done < <(git for-each-ref --format='%(refname:short)' refs/heads)
     git worktree prune
     ;;
   *)
