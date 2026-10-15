@@ -18,6 +18,21 @@
 
 ---
 
+## 0. 快速开工（复制给新 agent）
+
+大多数 agent 工具（pi／Claude Code／Codex 等）会自动加载工作目录的 `AGENTS.md`；agent 只要在本仓库或某个 worktree 内启动，本协议就已经在它的上下文里。启动时给它下面这段，显式指定业务线与实例名即可：
+
+```text
+你是 agent:<line>#<name>。先完整阅读 AGENTS.md，然后按 §5 标准工作循环执行：
+巡检你自己的 ready/review 队列与仓库 blocked 状态，认领一个 issue，
+用 ./scripts/agent-worktree.sh add agent/<line>/<issue>-<slug> 开独立 worktree。
+不要在主检出 git switch；编码完成后自行 commit + push，然后开 PR 到 dev。
+```
+
+- pi 用户可直接用项目模板：`/start runtime#kira`（见 `.pi/prompts/start.md`）。
+- 全局习惯可写到用户级 `~/.pi/agent/AGENTS.md`：「在 Saki 仓库工作时先完整阅读仓库根目录 AGENTS.md」。
+- 不要靠口头复述规则；以仓库里的本文件为准，规则变更走 PR。
+
 ## 1. 业务线、实例与地盘
 
 ### 1.1 五条业务线
@@ -284,7 +299,10 @@ Issue 和 PR 是**过程与沟通**的载体，`docs/` 是**长期事实**的载
 | `dev` | 集成分支（默认分支） | 所有 feature／bug／docs／test PR 的 base；CI 必须绿；`Closes #N` 在此生效 |
 | `agent/<line>/<issue-number>-<short-slug>` | 工作分支 | 从 `origin/dev` 开出（hotfix 从 `origin/master`），例如 `agent/runtime/57-compaction`、`agent/tui/142-scroll-fix`；合并后删除 |
 
-- **发布**：`dev` → `master` 的 PR，标题 `[release] <范围>`，正文写变更摘要、验证与回归结论；发布 PR 用 `Refs` 列出包含的 issue，不写 `Closes`。合并后 `master` 即为稳定基线，可打 tag。
+- **发布**：`dev` → `master` 的 PR，标题 `[release] <范围>`，正文写变更摘要、验证与回归结论；发布 PR 用 `Refs` 列出包含的 issue，不写 `Closes`。合并后 `master` 即为稳定基线，随后发布 tag：
+  - tag 命名 `vX.Y.Z`，与 `Cargo.toml` 的 `version` 对齐；使用 annotated tag（`git tag -a`）并推送。
+  - 同步创建 GitHub Release，notes 写变更摘要、验证结果与已知限制（可参考 `v0.1.0`）。
+  - hotfix 走基于 `master` 的 hotfix PR，发 patch 版本（如 `v0.1.1`）。
 - **hotfix**：`agent/<line>/hotfix-<slug>` 从 `origin/master` 开出，PR 目标 `master`；合并后必须把 `master` 合回 `dev`，避免分叉。
 - `master` 与 `dev` 都不接受直接 push；本地开发一律在 worktree 的 `agent/*` 分支进行。
 
