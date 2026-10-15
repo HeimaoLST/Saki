@@ -571,26 +571,23 @@ fn picker_search_renders_field_at_narrow_and_wide_widths() {
 fn picker_search_keeps_the_query_tail_and_cursor_visible_when_narrow() {
     let (mut sessions, mut app, _) = listed(vec![picker_summary("id-a", "alpha", "model", "/a")]);
     sessions.key(&mut app, key(KeyCode::Char('/')));
-    let long = format!("{}{}e\u{301}", "汉".repeat(30), "📝");
-    for character in long.chars() {
+    let prefix = "汉".repeat(10);
+    let suffix = "zq7x9 rocket e\u{301}";
+    for character in format!("{prefix}{suffix}").chars() {
         sessions.key(&mut app, key(KeyCode::Char(character)));
     }
     let screen = rendered(&sessions, &app, 40);
     assert!(screen.contains("Search:"), "{screen}");
     assert!(
-        screen.contains("e\u{301}▌"),
-        "tail and cursor visible: {screen}"
-    );
-    assert!(
-        !screen.contains(&"汉".repeat(30)),
-        "the prefix is scrolled out of view: {screen}"
+        screen.contains("zq7x9 rocket e\u{301}▌"),
+        "the entire fitting suffix and caret are visible: {screen}"
     );
     // Editing keeps working at the visible tail.
     sessions.key(&mut app, key(KeyCode::Backspace));
     let screen = rendered(&sessions, &app, 40);
     assert!(
-        screen.contains("📝") && screen.contains("▌"),
-        "the emoji tail and cursor stay visible after backspace: {screen}"
+        screen.contains("zq7x9 rocket ▌"),
+        "suffix and caret stay visible after grapheme Backspace: {screen}"
     );
     assert!(
         !screen.contains("e\u{301}"),

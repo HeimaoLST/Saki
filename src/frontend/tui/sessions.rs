@@ -453,13 +453,10 @@ impl Sessions {
         frame.render_widget(block, area);
         let mut lines: Vec<Line> = Vec::new();
         if let Some(query) = &picker.query {
-            // Show the query tail so the cursor stays visible when the query is
-            // wider than the picker; wrap_bytes is grapheme/cell aware.
+            // Show the longest fitting query suffix so the caret stays visible
+            // when the query is wider than the picker.
             let available = (inner.width as usize).saturating_sub("Search: ".len() + 1);
-            let shown = textwrap::wrap_bytes(query, available.max(1))
-                .pop()
-                .map(|(line, _)| line)
-                .unwrap_or_default();
+            let shown = textwrap::visible_suffix(query, available.max(1));
             lines.push(Line::from(vec![
                 Span::styled("Search: ", Style::default().fg(theme.accent)),
                 Span::styled(shown, Style::default().fg(theme.secondary)),

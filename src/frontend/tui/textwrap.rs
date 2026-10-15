@@ -32,6 +32,23 @@ pub(crate) fn wrap_bytes(text: &str, width: usize) -> Vec<(String, usize)> {
     out
 }
 
+/// The longest suffix of `text` that fits `width` cells, keeping whole
+/// graphemes. Single-line search fields use it so the caret end stays visible.
+pub(crate) fn visible_suffix(text: &str, width: usize) -> String {
+    let width = width.max(1);
+    let mut used = 0usize;
+    let mut start = text.len();
+    for (index, grapheme) in text.grapheme_indices(true).rev() {
+        let width_of = UnicodeWidthStr::width(grapheme).max(1);
+        if used + width_of > width {
+            break;
+        }
+        used += width_of;
+        start = index;
+    }
+    text[start..].to_owned()
+}
+
 /// Wraps words without splitting them; a word wider than the line falls back to
 /// grapheme wrapping. Used for fallback field labels.
 pub(crate) fn wrap_words(text: &str, width: usize) -> Vec<String> {
