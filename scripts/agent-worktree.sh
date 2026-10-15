@@ -106,7 +106,7 @@ case "${1:-}" in
         echo "已删除本地分支: $branch"
       elif [ "$force" = "--force" ]; then
         git branch -D "$branch"
-        echo "已强制删除本地分支: $branch（内容未合入 origin/master）"
+        echo "已强制删除本地分支: $branch（内容未合入 origin/$INTEGRATION_BRANCH）"
       else
         echo "本地分支未合入 origin/$INTEGRATION_BRANCH，保留: $branch（确认合并后重试，或加 --force）" >&2
       fi
