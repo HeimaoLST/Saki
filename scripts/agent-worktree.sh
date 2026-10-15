@@ -5,14 +5,16 @@
 # 避免共享 cwd 下一个实例切分支导致所有实例跟着切。规则见 AGENTS.md §9。
 #
 # worktree 放在 Workspace 级的 worktrees/Saki/ 下（默认 $HOME/Workspace，
-# 可用 SAKI_WORKTREE_ROOT 覆盖整个 worktree 根目录），目录名为分支名中的
-# "/" 替换为 "-"。不放仓库内，也不依赖语言分类目录，便于仓库未来迁移。
+# 可用 SAKI_WORKTREE_ROOT 覆盖整个 worktree 根目录）。不放仓库内，也不依赖
+# 语言分类目录，便于仓库未来迁移。
 #
 # 用法：
-#   ./scripts/agent-worktree.sh add <branch> [base]   # base 默认 origin/master
+#   ./scripts/agent-worktree.sh add <branch> [base]         # base 默认 origin/master
 #   ./scripts/agent-worktree.sh list
 #   ./scripts/agent-worktree.sh path <branch>
 #   ./scripts/agent-worktree.sh remove <branch> [--force]
+#   ./scripts/agent-worktree.sh finish <branch> [--force]   # 收尾：worktree + 本地/远端分支
+#   ./scripts/agent-worktree.sh prune                       # 清理已合并分支与失效 worktree
 set -euo pipefail
 
 WORKTREES_DIR="${SAKI_WORKTREE_ROOT:-$HOME/Workspace/worktrees/Saki}"
@@ -20,8 +22,46 @@ WORKTREES_DIR="${SAKI_WORKTREE_ROOT:-$HOME/Workspace/worktrees/Saki}"
 slug() { printf '%s' "$1" | tr '/' '-'; }
 dir_for() { printf '%s/%s' "$WORKTREES_DIR" "$(slug "$1")"; }
 
+worktree_for_branch() {
+  git worktree list --porcelain | awk -v target="refs/heads/$1" '
+    /^worktree / { path = substr($0, 10) }
+    /^branch / { if ($2 == target) print path }
+  '
+}
+
+remote_branch_exists() {
+  git ls-remote --exit-code --heads origin "$1" >/dev/null 2>&1
+}
+
+delete_remote_branch() {
+  if remote_branch_exists "$1"; then
+    git push origin --delete "$1"
+  fi
+}
+
+is_merged() {
+  git merge-base --is-ancestor "refs/heads/$1" origin/master 2>/dev/null
+}
+
+remove_worktree() {
+  local branch="$1" force="${2:-}" dir current
+  dir="$(dir_for "$branch")"
+  [ -d "$dir" ] || return 0
+  current="$(pwd -P)"
+  if [ "$(cd "$dir" && pwd -P)" = "$current" ]; then
+    echo "跳过当前所在的 worktree：$dir" >&2
+    return 1
+  fi
+  if [ "$force" = "--force" ]; then
+    git worktree remove --force "$dir"
+  else
+    git worktree remove "$dir"
+  fi
+  echo "已移除 worktree: $dir"
+}
+
 usage() {
-  sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 }
 
@@ -48,14 +88,43 @@ case "${1:-}" in
     ;;
   remove)
     branch="${2:?用法: remove <branch> [--force]}"
-    dir="$(dir_for "$branch")"
-    if [ "${3:-}" = "--force" ]; then
-      git worktree remove --force "$dir"
-    else
-      git worktree remove "$dir"
+    remove_worktree "$branch" "${3:-}" || true
+    echo "分支未删除；确认已合并后运行: $0 finish $branch"
+    ;;
+  finish)
+    branch="${2:?用法: finish <branch> [--force]}"
+    force="${3:-}"
+    remove_worktree "$branch" "$force" || exit 1
+    git fetch --prune --quiet origin
+    if git show-ref --verify --quiet "refs/heads/$branch"; then
+      if is_merged "$branch"; then
+        git branch -d "$branch"
+        echo "已删除本地分支: $branch"
+      elif [ "$force" = "--force" ]; then
+        git branch -D "$branch"
+        echo "已强制删除本地分支: $branch（内容未合入 origin/master）"
+      else
+        echo "本地分支未合入 origin/master，保留: $branch（确认合并后重试，或加 --force）" >&2
+      fi
     fi
-    echo "removed: $dir"
-    echo "分支未删除；确认已合并后运行: git branch -d $branch"
+    delete_remote_branch "$branch"
+    ;;
+  prune)
+    git fetch --prune --quiet origin
+    git worktree prune
+    while IFS= read -r branch; do
+      [ -z "$branch" ] && continue
+      [ "$branch" = master ] && continue
+      if [ -n "$(worktree_for_branch "$branch")" ]; then
+        remove_worktree "$branch" || continue
+      fi
+      if git branch -d "$branch" >/dev/null 2>&1; then
+        echo "已删除已合并本地分支: $branch"
+      else
+        echo "跳过（未合并或仍被占用）: $branch" >&2
+      fi
+    done < <(git branch --merged origin/master --format='%(refname:short)')
+    git worktree prune
     ;;
   *)
     usage
