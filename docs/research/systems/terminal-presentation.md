@@ -107,7 +107,7 @@ SAKI 已把输入切换到 Termina 0.3.3 `EventReader`/`EventStream`：`Platform
 | Codex | `rust-v0.162.1`（2026-10-09） | [`092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d) | 0.162.1，一致 |
 | Pi | `v1.2.0`（2026-10-12） | [`06a466935536f8c9bcacb2d5efc0fc021be1bdff`](https://github.com/earendil-works/pi/tree/06a466935536f8c9bcacb2d5efc0fc021be1bdff) | 1.2.0，一致 |
 | OpenCode | `v1.19.0`（2026-10-11） | [`733b2c627e5aec39cb33cc22373bdce33053ef2c`](https://github.com/anomalyco/opencode/tree/733b2c627e5aec39cb33cc22373bdce33053ef2c) | 未安装，仅源码核对 |
-| SAKI | 无 release（`Cargo.toml` 0.1.0） | `origin/dev@082845c770e608c1c92591325eeaee912c0791b2` | 当前 TUI |
+| SAKI | `v0.1.0`（2026-10-15 发布） | `origin/dev@082845c770e608c1c92591325eeaee912c0791b2`（审计基线） | 当前 TUI |
 
 Codex 的 `0.163.0-alpha.*` 属预发布，不计入稳定基线。
 
@@ -121,14 +121,14 @@ Codex 的 `0.163.0-alpha.*` 属预发布，不计入稳定基线。
 
 | 维度／候选 | SAKI 现状（位置） | 竞品可核验行为（固定版本） | 依赖 | 分级 |
 | --- | --- | --- | --- | --- |
-| 输入历史搜索 | 仅 older／newer 召回，无搜索（`history.rs`） | Codex `history_search_previous`=Ctrl+R、`history_search_next`=Ctrl+S（[keymap.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/keymap.rs)）；Pi `tui.editor.historyPrevious/Next` | 前端 | [实现事实] |
+| 输入历史搜索 | 仅 older／newer 召回，无搜索（`history.rs`） | **仅 Codex 已核验**：`history_search_previous`=Ctrl+R、`history_search_next`=Ctrl+S（[keymap.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/keymap.rs)）。Pi 的 Ctrl+R 是 `app.session.rename`（会话重命名，[keybindings.ts](https://github.com/earendil-works/pi/blob/06a466935536f8c9bcacb2d5efc0fc021be1bdff/packages/coding-agent/src/core/keybindings.ts)），`tui.editor.historyPrevious/Next` 只是顺序导航，二者都不是历史搜索 | 前端 | [实现事实] |
 | 文件路径补全 / `@` 引用 | 仅补全 `/命令`（[command/mod.rs](../../../src/command/mod.rs)） | Codex [file_search.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/file_search.rs)、[mention_codec.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/mention_codec.rs)；Pi [autocomplete.ts](https://github.com/earendil-works/pi/blob/06a466935536f8c9bcacb2d5efc0fc021be1bdff/packages/tui/src/autocomplete.ts)（Tab 路径 + `@` 模糊）；OpenCode [prompt/autocomplete.tsx](https://github.com/anomalyco/opencode/blob/733b2c627e5aec39cb33cc22373bdce33053ef2c/packages/tui/src/component/prompt/autocomplete.tsx) | 路径补全=前端；把文件内容注入消息=core 消息契约 | [实现事实] |
 | 外部编辑器 | 无 | Codex [external_editor.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/external_editor.rs)（Ctrl+G）；Pi [external-editor.ts](https://github.com/earendil-works/pi/blob/06a466935536f8c9bcacb2d5efc0fc021be1bdff/packages/coding-agent/src/modes/interactive/external-editor.ts)（Ctrl+G）；OpenCode [editor.ts](https://github.com/anomalyco/opencode/blob/733b2c627e5aec39cb33cc22373bdce33053ef2c/packages/tui/src/editor.ts) | 前端（需终端挂起／恢复） | [实现事实] |
 | 运行中排队／引导 | 运行中提交只保留草稿并提示（`mod.rs`） | Codex `composer.queue`=Tab + [session_queue_commands.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/session_queue_commands.rs)；Pi Enter 引导当前响应、Alt+Enter 排队、Alt+Up 取回（`interactive-mode.ts`） | **core**：Agent worker 目前单轮顺序 | [实现事实] |
 | transcript 文本搜索 | 无；只有 Home/End 与滚动 | Codex `find_transcript`=F3 + `transcript_view.rs` 的 `Search`；Pi `tui.altScreen.search`=Ctrl+Shift+F + [alt-screen-search.ts](https://github.com/earendil-works/pi/blob/06a466935536f8c9bcacb2d5efc0fc021be1bdff/packages/tui/src/alt-screen-search.ts) | 前端 | [实现事实] |
 | 消息级跳转 | 仅 Ctrl+Home/End 与逐行 | OpenCode `session.message.next/previous`；Pi `altScreen.previousPrompt/nextPrompt`=Ctrl+Shift+Up/Down | 前端 | [实现事实] |
 | 变更 diff | edit 返回 `{"path","applied":n}`；TUI 不画 diff（[tools/edit.rs](../../../src/tools/edit.rs)） | Codex [diff_render.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/diff_render.rs)；Pi [diff.ts](https://github.com/earendil-works/pi/blob/06a466935536f8c9bcacb2d5efc0fc021be1bdff/packages/coding-agent/src/modes/interactive/components/diff.ts)；OpenCode [diff-viewer.tsx](https://github.com/anomalyco/opencode/blob/733b2c627e5aec39cb33cc22373bdce33053ef2c/packages/tui/src/feature-plugins/system/diff-viewer.tsx) | 工具参数派生预览=前端；权威已应用 diff=core 结果契约 | [实现事实] |
-| 代码块语法高亮 | 仅弱化语言标签 + 单色（[markdown.rs](../../../src/frontend/tui/markdown.rs)） | Codex syntect + two-face；Pi `highlightCode` + highlight.js；OpenCode tree-sitter WASM（[parsers-config.ts](https://github.com/anomalyco/opencode/blob/733b2c627e5aec39cb33cc22373bdce33053ef2c/packages/tui/src/parsers-config.ts)） | 前端，但新增解析依赖需 ADR／评审 | [实现事实] |
+| 代码块语法高亮 | 仅弱化语言标签 + 单色（[markdown.rs](../../../src/frontend/tui/markdown.rs)） | Codex syntect + two-face；Pi `highlightCode` + highlight.js；OpenCode tree-sitter WASM（[parsers-config.ts](https://github.com/anomalyco/opencode/blob/733b2c627e5aec39cb33cc22373bdce33053ef2c/packages/tui/src/parsers-config.ts)） | 前端；引入解析库会改共享 `Cargo.toml`（`agent:runtime` 拥有）→ 跨业务线 handoff；只有跨模块公共契约变更才需 RFC+ACK+人工确认 | [实现事实] |
 | 会话搜索／过滤／排序／预览 | Picker 仅 Up/Down，无过滤（`sessions.rs`） | Codex [resume_picker.rs](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/tui/src/resume_picker.rs)；Pi [session-selector-search.ts](https://github.com/earendil-works/pi/blob/06a466935536f8c9bcacb2d5efc0fc021be1bdff/packages/coding-agent/src/modes/interactive/components/session-selector-search.ts)；OpenCode [dialog-session-list.tsx](https://github.com/anomalyco/opencode/blob/733b2c627e5aec39cb33cc22373bdce33053ef2c/packages/tui/src/component/dialog-session-list.tsx) | 前端（过滤 `SessionCommand::List` 的 `SessionSummary`） | [实现事实] |
 | 模型选择 | 模型只读展示，来自 `SAKI_MODEL`（[app.rs](../../../src/app.rs)） | Codex model picker；Pi `/model` + Ctrl+L；OpenCode [dialog-model.tsx](https://github.com/anomalyco/opencode/blob/733b2c627e5aec39cb33cc22373bdce33053ef2c/packages/tui/src/component/dialog-model.tsx) | **core/app**：需重建 client 与目录同步 | [实现事实] |
 | Help 文案与行为不一致 | [help.rs](../../../src/frontend/tui/help.rs) 未提 Esc 取消；称拖选仅 “visible” | ——（SAKI 内部一致性问题） | 前端 | [实现事实] |
@@ -136,10 +136,13 @@ Codex 的 `0.163.0-alpha.*` 属预发布，不计入稳定基线。
 ### 8.3 明确排除与待验证
 
 - **明确排除**（依 Issue #19 的产品判断，无观察到的用户问题）：TUI 内主题切换器、记录驱逐（record eviction）、reduced-motion／screen-reader 选项。它们不作为候选，除非出现可复现的用户问题。
-- **需要 RFC/ACK 的 core 边界**：运行中排队／引导、模型切换、权威已应用 diff、`@` 文件内容注入。它们改变 core 或公共契约，须先 `type:decision` 并获得受影响业务线 `ACK`；不在 TUI 伪造后台任务、undo 或权限能力。
+- **记录保留不是缺陷**：源记录被有意识地完整保留，以便完整复制／回放；布局缓存上限与源记录保留是两件事。只有在实测到无界布局增长时才作为问题报告，未测量就不写成缺陷。
+- **依赖与契约的精确区分**：新增 crate 不自动需要 ADR；修改共享 `Cargo.toml`（`agent:runtime` 拥有）走跨业务线 handoff。只有跨模块公共契约（协议、公共事件、工具结果结构）变更才需要 RFC + 受影响业务线 `ACK` + 人工确认。
+- **需要 RFC/ACK 的 core 边界**：运行中排队／引导、模型切换、权威已应用 diff、`@` 文件内容注入（已登记为 #31／#32／#33 及路径补全 handoff）。不在 TUI 伪造后台任务、undo 或权限能力。
+- **已更正事实**：此前评论曾把 OpenCode `session.background` 等同于 follow-up 排队；核对 v1.19.0 `config/keybind.ts` 后确认它是 “Background synchronous subagents”，与排队／引导无关，已删除该等价。Pi 的 Ctrl+R 是 `app.session.rename`，不是历史搜索。
 - **[待验证]**：OpenCode 未发现 transcript 文本搜索入口，暂记待验证而非“确认缺失”；Codex／Pi 正文宽度上限未逐位定位常量；三家均未端到端运行。
 
-具体候选的优先级、验收与非目标记录在 Issue #19，由产品负责人选定本轮范围后拆成独立实施 issue；本文档保存长期事实，不承载过程。
+具体候选的优先级、验收与非目标记录在 Issue #19。当前迭代（p1）：#21 会话选择器搜索、#22 草稿安全的历史搜索、#23 准确的情境帮助；基线证据 #20，clean baseline 的 clippy 门禁阻塞见 #25。本轮之外的 backlog（p2）：#26 消息边界跳转、#27 transcript 文本搜索、#28 路径补全、#29 外部编辑器、#30 代码块语法高亮；runtime/design handoff（RFC 先行）：#31 排队／引导、#32 模型切换、#33 权威已应用 diff。本文档保存长期事实，不承载过程。
 
 ## 对 SAKI 的判断（2026-10-13 诊断，状态更新见节末）
 
