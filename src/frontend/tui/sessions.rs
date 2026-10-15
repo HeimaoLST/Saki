@@ -8,11 +8,12 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
     editor::Editor,
     state::{App, Record},
-    theme,
+    textwrap, theme,
 };
 use crate::{
     agent::journal::TaskStatus,
@@ -21,9 +22,94 @@ use crate::{
 
 pub struct Picker {
     pub sessions: Vec<SessionSummary>,
+    /// Indices into `sessions` matching the active query, in core order.
+    /// `selected` indexes this list, so navigation only visits visible results.
+    visible: Vec<usize>,
+    /// Index into `visible`.
     pub selected: usize,
     active_id: Option<String>,
-    rename: Option<String>,
+    rename: Option<Rename>,
+    /// `Some` while the local search field is active; `None` in browse mode.
+    query: Option<String>,
+}
+
+/// An in-progress rename. The target ID is pinned so an asynchronous title
+/// update cannot redirect the rename to a different result.
+struct Rename {
+    id: String,
+    title: String,
+}
+
+impl Picker {
+    /// The session a confirm or rename would act on; `None` when the query has
+    /// no matches.
+    fn selected_session(&self) -> Option<&SessionSummary> {
+        self.visible
+            .get(self.selected)
+            .and_then(|index| self.sessions.get(*index))
+    }
+
+    /// Recomputes matches. `preferred` stays selected when it still matches,
+    /// otherwise the first result is selected.
+    fn refilter(&mut self, preferred: Option<&str>) {
+        self.visible = match &self.query {
+            Some(query) => self
+                .sessions
+                .iter()
+                .enumerate()
+                .filter(|(_, session)| session_matches(session, query))
+                .map(|(index, _)| index)
+                .collect(),
+            None => (0..self.sessions.len()).collect(),
+        };
+        self.selected = preferred
+            .and_then(|id| {
+                self.visible
+                    .iter()
+                    .position(|index| self.sessions[*index].metadata.id == id)
+            })
+            .unwrap_or(0);
+    }
+
+    /// Recomputes matches while keeping the selected session when it still
+    /// matches.
+    fn refresh(&mut self) {
+        let preferred = self
+            .selected_session()
+            .map(|session| session.metadata.id.clone());
+        self.refilter(preferred.as_deref());
+    }
+}
+
+/// Case-insensitive, whitespace-separated AND match over the metadata the
+/// picker already holds: title, ID, working directory and model route.
+fn session_matches(session: &SessionSummary, query: &str) -> bool {
+    let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    if terms.is_empty() {
+        return true;
+    }
+    let title = session.metadata.title.to_lowercase();
+    let id = session.metadata.id.to_lowercase();
+    let directory = session
+        .metadata
+        .working_directory
+        .to_string_lossy()
+        .to_lowercase();
+    let model = session.metadata.model.to_lowercase();
+    terms.iter().all(|term| {
+        title.contains(term)
+            || id.contains(term)
+            || directory.contains(term)
+            || model.contains(term)
+    })
+}
+
+/// Removes the last grapheme so search Backspace is safe for combining marks
+/// and ZWJ sequences.
+fn pop_last_grapheme(text: &mut String) {
+    if let Some((index, _)) = text.grapheme_indices(true).next_back() {
+        text.truncate(index);
+    }
 }
 
 #[derive(Default)]
@@ -112,20 +198,17 @@ impl Sessions {
                 self.pending = false;
             }
             SessionEvent::Listed(sessions) => {
-                let selected = sessions
-                    .iter()
-                    .position(|session| {
-                        app.session
-                            .as_ref()
-                            .is_some_and(|active| active.id == session.metadata.id)
-                    })
-                    .unwrap_or(0);
-                self.picker = Some(Picker {
+                let active_id = app.session.as_ref().map(|session| session.id.clone());
+                let mut picker = Picker {
                     sessions,
-                    selected,
-                    active_id: app.session.as_ref().map(|session| session.id.clone()),
+                    visible: Vec::new(),
+                    selected: 0,
+                    active_id: active_id.clone(),
                     rename: None,
-                });
+                    query: None,
+                };
+                picker.refilter(active_id.as_deref());
+                self.picker = Some(picker);
                 self.pending = false;
                 app.help_open = false;
                 app.text_selection.clear();
@@ -142,6 +225,17 @@ impl Sessions {
                     cached.session = Some(metadata.clone());
                 }
                 if let Some(picker) = &mut self.picker {
+                    // During rename the pinned target stays selected across
+                    // asynchronous title updates.
+                    let preferred = picker
+                        .rename
+                        .as_ref()
+                        .map(|rename| rename.id.clone())
+                        .or_else(|| {
+                            picker
+                                .selected_session()
+                                .map(|session| session.metadata.id.clone())
+                        });
                     if let Some(session) = picker
                         .sessions
                         .iter_mut()
@@ -152,6 +246,7 @@ impl Sessions {
                     if renamed {
                         picker.rename = None;
                     }
+                    picker.refilter(preferred.as_deref());
                 }
                 if renamed {
                     self.pending = false;
@@ -193,54 +288,83 @@ impl Sessions {
         let Some(picker) = &mut self.picker else {
             return (false, None);
         };
-        if let Some(title) = &mut picker.rename {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+
+        // Rename editing owns printable keys; n/r are title text here.
+        if let Some(rename) = &mut picker.rename {
             match key.code {
                 KeyCode::Esc => picker.rename = None,
                 KeyCode::Backspace => {
-                    title.pop();
+                    rename.title.pop();
                 }
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    picker.rename = None
-                }
-                KeyCode::Char(c)
-                    if !key
-                        .modifiers
-                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-                {
-                    title.push(c)
-                }
-                KeyCode::Enter if !title.trim().is_empty() => {
-                    if let Some(session) = picker.sessions.get(picker.selected) {
-                        self.pending = true;
-                        return (
-                            true,
-                            Some(SessionCommand::Rename {
-                                session_id: session.metadata.id.clone(),
-                                title: title.clone(),
-                            }),
-                        );
-                    }
+                KeyCode::Char('c') if ctrl => picker.rename = None,
+                KeyCode::Char(c) if !ctrl && !alt => rename.title.push(c),
+                KeyCode::Enter if !rename.title.trim().is_empty() => {
+                    self.pending = true;
+                    return (
+                        true,
+                        Some(SessionCommand::Rename {
+                            session_id: rename.id.clone(),
+                            title: rename.title.clone(),
+                        }),
+                    );
                 }
                 _ => {}
             }
             return (true, None);
         }
+
+        // Search text editing; Up/Down and Enter continue to the shared guards.
+        if picker.query.is_some() {
+            match key.code {
+                KeyCode::Esc => {
+                    picker.query = None;
+                    picker.refresh();
+                }
+                KeyCode::Char('c') if ctrl => {
+                    picker.query = None;
+                    picker.refresh();
+                }
+                KeyCode::Backspace => {
+                    if let Some(query) = picker.query.as_mut() {
+                        pop_last_grapheme(query);
+                    }
+                    picker.refresh();
+                }
+                KeyCode::Char(c) if !ctrl && !alt => {
+                    if let Some(query) = picker.query.as_mut() {
+                        query.push(c);
+                    }
+                    picker.refresh();
+                }
+                _ => {}
+            }
+            if !matches!(key.code, KeyCode::Up | KeyCode::Down | KeyCode::Enter) {
+                return (true, None);
+            }
+        }
+
         match key.code {
             KeyCode::Esc => self.picker = None,
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.picker = None
-            }
+            KeyCode::Char('c') if ctrl => self.picker = None,
             KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
             KeyCode::Down => {
-                picker.selected = (picker.selected + 1).min(picker.sessions.len().saturating_sub(1))
+                picker.selected = (picker.selected + 1).min(picker.visible.len().saturating_sub(1))
+            }
+            KeyCode::Char('/') => {
+                picker.query = Some(String::new());
+                picker.refresh();
             }
             KeyCode::Char('r') => {
                 if let Some(session) = picker
-                    .sessions
-                    .get(picker.selected)
+                    .selected_session()
                     .filter(|session| session.unavailable.is_none())
                 {
-                    picker.rename = Some(session.metadata.title.clone());
+                    picker.rename = Some(Rename {
+                        id: session.metadata.id.clone(),
+                        title: session.metadata.title.clone(),
+                    });
                 }
             }
             KeyCode::Enter | KeyCode::Char('n') => {
@@ -253,7 +377,7 @@ impl Sessions {
                 let command = if key.code == KeyCode::Char('n') {
                     SessionCommand::Create
                 } else {
-                    let Some(session) = picker.sessions.get(picker.selected) else {
+                    let Some(session) = picker.selected_session() else {
                         return (true, None);
                     };
                     if app
@@ -285,14 +409,22 @@ impl Sessions {
     }
 
     pub fn paste(&mut self, text: &str) {
-        if !self.pending {
-            if let Some(title) = self
-                .picker
-                .as_mut()
-                .and_then(|picker| picker.rename.as_mut())
-            {
-                title.push_str(&text.replace(['\r', '\n'], " "));
+        if self.pending {
+            return;
+        }
+        let Some(picker) = self.picker.as_mut() else {
+            return;
+        };
+        if let Some(rename) = picker.rename.as_mut() {
+            rename.title.push_str(&text.replace(['\r', '\n'], " "));
+            return;
+        }
+        if picker.query.is_some() {
+            let text = text.replace(['\r', '\n'], " ");
+            if let Some(query) = picker.query.as_mut() {
+                query.push_str(&text);
             }
+            picker.refresh();
         }
     }
 
@@ -319,65 +451,104 @@ impl Sessions {
         let inner = block.inner(area);
         frame.render_widget(Clear, area);
         frame.render_widget(block, area);
-        let mut lines = Vec::new();
-        let count = (inner.height.saturating_sub(2) / 2).max(1) as usize;
-        let start = picker.selected.saturating_sub(count.saturating_sub(1));
-        for (index, session) in picker.sessions.iter().enumerate().skip(start).take(count) {
-            let marker = if index == picker.selected {
-                "› "
-            } else {
-                "  "
-            };
-            let state = if session.unavailable.is_some() {
-                " · unavailable"
-            } else if picker.active_id.as_ref() == Some(&session.metadata.id) {
-                " · current"
-            } else if session.in_use {
-                " · in use"
-            } else if session.status == TaskStatus::Interrupted {
-                " · interrupted"
-            } else {
-                ""
-            };
-            let seconds = crate::agent::journal::now_ms()
-                .unwrap_or(session.updated_at)
-                .saturating_sub(session.updated_at)
-                / 1000;
-            let age = if seconds < 60 {
-                "now".to_owned()
-            } else if seconds < 3600 {
-                format!("{}m ago", seconds / 60)
-            } else if seconds < 86400 {
-                format!("{}h ago", seconds / 3600)
-            } else {
-                format!("{}d ago", seconds / 86400)
-            };
-            let text = format!("{marker}{}{state} · {age}", session.metadata.title);
-            let style = if index == picker.selected {
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.secondary)
-            };
-            lines.push(Line::from(Span::styled(text, style)));
+        let mut lines: Vec<Line> = Vec::new();
+        if let Some(query) = &picker.query {
+            // Show the query tail so the cursor stays visible when the query is
+            // wider than the picker; wrap_bytes is grapheme/cell aware.
+            let available = (inner.width as usize).saturating_sub("Search: ".len() + 1);
+            let shown = textwrap::wrap_bytes(query, available.max(1))
+                .pop()
+                .map(|(line, _)| line)
+                .unwrap_or_default();
+            lines.push(Line::from(vec![
+                Span::styled("Search: ", Style::default().fg(theme.accent)),
+                Span::styled(shown, Style::default().fg(theme.secondary)),
+                Span::styled("▌", Style::default().fg(theme.accent)),
+            ]));
+        }
+        // Reserve the blank separator and footer for the hint line.
+        let available = (inner.height as usize)
+            .saturating_sub(lines.len())
+            .saturating_sub(2);
+        if picker.visible.is_empty() {
             lines.push(Line::from(Span::styled(
-                format!(
-                    "  {} · {}",
-                    session.metadata.model,
-                    session.metadata.working_directory.display()
-                ),
+                if picker.query.is_some() {
+                    "No sessions match the search.".to_owned()
+                } else {
+                    "No saved sessions.".to_owned()
+                },
                 Style::default().fg(theme.secondary),
             )));
+        } else {
+            let count = (available / 2).max(1);
+            let start = picker.selected.saturating_sub(count.saturating_sub(1));
+            for (index, session_index) in picker.visible.iter().enumerate().skip(start).take(count)
+            {
+                let session = &picker.sessions[*session_index];
+                let marker = if index == picker.selected {
+                    "› "
+                } else {
+                    "  "
+                };
+                let state = if session.unavailable.is_some() {
+                    " · unavailable"
+                } else if picker.active_id.as_ref() == Some(&session.metadata.id) {
+                    " · current"
+                } else if session.in_use {
+                    " · in use"
+                } else if session.status == TaskStatus::Interrupted {
+                    " · interrupted"
+                } else {
+                    ""
+                };
+                let seconds = crate::agent::journal::now_ms()
+                    .unwrap_or(session.updated_at)
+                    .saturating_sub(session.updated_at)
+                    / 1000;
+                let age = if seconds < 60 {
+                    "now".to_owned()
+                } else if seconds < 3600 {
+                    format!("{}m ago", seconds / 60)
+                } else if seconds < 86400 {
+                    format!("{}h ago", seconds / 3600)
+                } else {
+                    format!("{}d ago", seconds / 86400)
+                };
+                let text = format!("{marker}{}{state} · {age}", session.metadata.title);
+                let style = if index == picker.selected {
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.secondary)
+                };
+                lines.push(Line::from(Span::styled(text, style)));
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "  {} · {}",
+                        session.metadata.model,
+                        session.metadata.working_directory.display()
+                    ),
+                    Style::default().fg(theme.secondary),
+                )));
+            }
         }
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
             if self.pending {
                 "Loading…".to_owned()
-            } else if let Some(title) = &picker.rename {
-                format!("Rename: {title}  · Enter save · Esc cancel")
+            } else if let Some(rename) = &picker.rename {
+                format!("Rename: {}  · Enter save · Esc cancel", rename.title)
+            } else if picker.query.is_some() {
+                if inner.width >= 50 {
+                    "Type to filter · Up/Down select · Enter open · Esc clear".to_owned()
+                } else {
+                    "Type · Up/Down · Enter · Esc".to_owned()
+                }
+            } else if inner.width >= 54 {
+                "Enter open · n new · r rename · / search · Esc close".to_owned()
             } else {
-                "Enter open · n new · r rename · Esc close".to_owned()
+                "Enter open · / search".to_owned()
             },
             Style::default().fg(theme.secondary),
         )));
