@@ -31,9 +31,11 @@ struct StartupWorkspace {
 
 impl StartupWorkspace {
     fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "saki-startup-session-{}",
-            crate::agent::journal::new_id().unwrap()
+            "saki-startup-session-{}-{}",
+            crate::agent::journal::new_id().unwrap(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join("workspace")).unwrap();
         Self { root }
