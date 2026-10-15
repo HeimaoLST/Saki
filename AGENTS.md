@@ -335,7 +335,8 @@ scope 建议：`agent`、`tools`、`tui`、`console`、`command`、`session`、`
 - **合并即开始清理**：源分支、worktree、本地分支不得残留；合并者负责按 §5 步骤 9 收尾（`./scripts/agent-worktree.sh finish <branch>`）。
 - 改动共享文件（`Cargo.toml`、`AGENTS.md`、`README.md`、`.github/`）必须在正文显式列出。
 - 评审必须来自非作者实例。当前多个实例共用同一 GitHub 账号，无法使用 GitHub 原生 approve，因此以 `KIND: review` 结构化评论代替；未来实例有独立 bot 账号后切换为原生 review。
-- 禁止直推 `master`、禁止 force-push 他人分支、禁止合并自己未经评审的 PR。
+- **人类预授权**：人类 maintainer 可以给出预授权（例如「非关键决策直接处理」）。授权范围内，交付实例可以代录人类的 `KIND: review` `APPROVE`（评论注明「预授权」）并执行合并；超出范围的关键决策（产品方向、安全、权限、费用、破坏性架构变更）仍必须按 §8 升级人类确认。
+- 禁止直推 `master`／`dev`、禁止 force-push 他人分支、禁止在无评审且无人类预授权的情况下合并自己的 PR。
 
 ## 8. 交接、阻塞与升级
 
@@ -465,7 +466,7 @@ gh issue close 42 --comment "验收通过，证据见 PR #43"
 
 ## 13. Agent 行为红线
 
-- 不直推 `master`／`dev`，不跳过 PR 与评审。
+- 不直推 `master`／`dev`，不做无评审且无人类预授权的合并。
 - 不在 issue／PR／commit 中写入密钥、token、`.env` 内容，不提交 `.saki/` 运行产物。
 - 不跨业务线修改代码或文档；先开 issue + 交接。
 - 不冒用其他实例的身份署名或认领他人 issue。
