@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::{
     process::Stdio,
     sync::Arc,
@@ -78,18 +80,28 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
         .process_group(0)
         .kill_on_drop(true);
+    // Merge stderr into the stdout pipe inside the child so the kernel keeps
+    // the write order of both streams. Reading two pipes concurrently appends
+    // chunks in completion order, which can put late stderr reads after the
+    // final stdout bytes and evict them from the bounded preview tail.
+    // SAFETY: `dup2` only runs in the child between fork and exec and operates
+    // on the stdio descriptors that std/tokio already configured.
+    unsafe {
+        command.as_std_mut().pre_exec(|| {
+            if libc::dup2(libc::STDOUT_FILENO, libc::STDERR_FILENO) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
     let mut child = command.spawn()?;
     let pid = child.id().unwrap();
     let mut group_guard = GroupGuard { pid, armed: true };
     let mut stdout = child.stdout.take().unwrap();
-    let mut stderr = child.stderr.take().unwrap();
     let mut stdout_buffer = [0; 8192];
-    let mut stderr_buffer = [0; 8192];
     let mut stdout_open = true;
-    let mut stderr_open = true;
     let mut exit_status = None;
     let mut timed_out = false;
     let started = Instant::now();
@@ -97,7 +109,7 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
     tokio::pin!(deadline);
     let mut output = OutputAccumulator::new();
     let collected: Result<(), ToolError> = async {
-        while exit_status.is_none() || stdout_open || stderr_open {
+        while exit_status.is_none() || stdout_open {
             tokio::select! {
                 status = child.wait(), if exit_status.is_none() => {
                     exit_status = Some(status?);
@@ -108,11 +120,6 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
                     let size = chunk?;
                     stdout_open = size != 0;
                     if size != 0 { output.append(&stdout_buffer[..size], &context.output_dir).await?; }
-                }
-                chunk = stderr.read(&mut stderr_buffer), if stderr_open => {
-                    let size = chunk?;
-                    stderr_open = size != 0;
-                    if size != 0 { output.append(&stderr_buffer[..size], &context.output_dir).await?; }
                 }
                 _ = &mut deadline, if !timed_out => {
                     timed_out = true;
@@ -149,7 +156,7 @@ pub fn init(context: Arc<ToolContext>) -> Tool {
         definition: ToolDefinition {
             tool_type: ToolType::Function,
             name: "bash".to_owned(),
-            description: "Run a non-interactive bash command and wait for completion. workdir defaults to the fixed working directory. timeout_ms defaults to 120000; timed-out commands and their process group are terminated. No managed background processes or stdin sessions. Returns combined stdout/stderr, exit_code, and timed_out. Preview is limited to the last 2000 lines / 50 KiB; larger output is saved at output_path for read or rg. Use for searches, tests, and batch scripts.".to_owned(),
+            description: "Run a non-interactive bash command and wait for completion. workdir defaults to the fixed working directory. timeout_ms defaults to 120000; timed-out commands and their process group are terminated. No managed background processes or stdin sessions. Returns stdout/stderr merged in write order, exit_code, and timed_out. Preview is limited to the last 2000 lines / 50 KiB; larger output is saved at output_path for read or rg. Use for searches, tests, and batch scripts.".to_owned(),
             parameters: json!({"type":"object", "properties":{
                 "command":{"type":"string"}, "workdir":{"type":"string"},
                 "timeout_ms":{"type":"integer","minimum":1}}, "required":["command"], "additionalProperties":false}),

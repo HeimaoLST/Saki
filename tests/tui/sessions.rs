@@ -14,9 +14,11 @@ use crate::{
 };
 
 pub(super) fn snapshot(title: &str) -> (SessionMetadata, Replay) {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let path = std::env::temp_dir().join(format!(
-        "saki-session-ui-{}",
-        crate::agent::journal::new_id().unwrap()
+        "saki-session-ui-{}-{}",
+        crate::agent::journal::new_id().unwrap(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::create_dir(&path).unwrap();
     let store = SessionStore::new(path.join("sessions")).unwrap();
@@ -45,9 +47,11 @@ pub(super) fn snapshot(title: &str) -> (SessionMetadata, Replay) {
 }
 
 pub(super) fn task_snapshot(title: &str) -> (SessionMetadata, Replay) {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let path = std::env::temp_dir().join(format!(
-        "saki-session-task-{}",
-        crate::agent::journal::new_id().unwrap()
+        "saki-session-task-{}-{}",
+        crate::agent::journal::new_id().unwrap(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::create_dir(&path).unwrap();
     let store = SessionStore::new(path.join("sessions")).unwrap();

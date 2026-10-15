@@ -1,8 +1,9 @@
 use std::{
     collections::HashSet,
-    fs::File,
+    fs::{File, TryLockError},
     io::{Seek, SeekFrom},
     path::Path,
+    time::Duration,
 };
 
 use anyhow::{Context, Result, ensure};
@@ -26,6 +27,35 @@ constraints, verified results, progress, blockers, decisions and their reasons, 
 and next steps. Clearly distinguish observations from assumptions. Preserve exact relevant file paths, \
 identifiers and commands. If a prior summary is present, update it using the newer events. The recent \
 conversation tail will be retained separately; summarize only the supplied prefix. Return only the summary.";
+
+/// Takes the exclusive journal lock for a session.
+///
+/// `fork(2)` copies the whole descriptor table, and a child that has not
+/// `exec`'d yet keeps our `flock` alive through the copied descriptor until
+/// `O_CLOEXEC` closes it. Neighboring subprocesses (bash tool, PTY hosts,
+/// parallel tests) can therefore make a released journal look busy for a
+/// short window, so wait briefly before reporting the session as in use.
+fn lock_journal(file: &File, path: &Path) -> Result<()> {
+    const RETRIES: usize = 100;
+    const RETRY_DELAY: Duration = Duration::from_millis(2);
+    for attempt in 0..=RETRIES {
+        match file.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(TryLockError::WouldBlock) if attempt < RETRIES => {
+                std::thread::sleep(RETRY_DELAY);
+            }
+            Err(TryLockError::WouldBlock) => {
+                anyhow::bail!("session is already in use: {}", path.display());
+            }
+            Err(TryLockError::Error(error)) => {
+                return Err(error).with_context(|| {
+                    format!("failed to lock session journal: {}", path.display())
+                });
+            }
+        }
+    }
+    unreachable!("the final attempt always returns")
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct CompactionConfig {
@@ -130,7 +160,7 @@ impl Conversation {
             "attach the history journal before any compaction"
         );
         self.history_file = Some(File::options().write(true).create_new(true).open(path)?);
-        self.history_file.as_ref().unwrap().try_lock()?;
+        lock_journal(self.history_file.as_ref().unwrap(), path)?;
         self.persisted_items = 0;
         self.save_history()?;
         Ok(self)
@@ -139,7 +169,7 @@ impl Conversation {
     /// Opens and locks an existing journal. Loading never runs a model or tool.
     pub fn restore(path: &Path) -> Result<(Self, Replay)> {
         let mut file = File::options().read(true).write(true).open(path)?;
-        file.try_lock().context("session is already in use")?;
+        lock_journal(&file, path)?;
         let replay = journal::read(&file, path)?;
         if file.metadata()?.len() != replay.valid_bytes {
             file.set_len(replay.valid_bytes)?;
