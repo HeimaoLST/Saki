@@ -140,7 +140,7 @@ Codex 的 `0.163.0-alpha.*` 属预发布，不计入稳定基线。
 - **依赖与契约的精确区分**：新增 crate 不自动需要 ADR；修改共享 `Cargo.toml`（`agent:runtime` 拥有）走跨业务线 handoff。只有跨模块公共契约（协议、公共事件、工具结果结构）变更才需要 RFC + 受影响业务线 `ACK` + 人工确认。
 - **需要 RFC/ACK 的 core 边界**：运行中排队／引导、模型切换、权威已应用 diff、`@` 文件内容注入（已登记为 #31／#32／#33 及路径补全 handoff）。不在 TUI 伪造后台任务、undo 或权限能力。
 - **已更正事实**：此前评论曾把 OpenCode `session.background` 等同于 follow-up 排队；核对 v1.19.0 `config/keybind.ts` 后确认它是 “Background synchronous subagents”，与排队／引导无关，已删除该等价。Pi 的 Ctrl+R 是 `app.session.rename`，不是历史搜索。
-- **[待验证]**：OpenCode 未发现 transcript 文本搜索入口，暂记待验证而非“确认缺失”；Codex／Pi 正文宽度上限未逐位定位常量；三家均未端到端运行。
+- **[待验证]**：OpenCode 未发现 transcript 文本搜索入口，暂记待验证而非“确认缺失”；Codex／Pi 正文宽度上限未逐位定位常量；三家均未端到端运行；无障碍（screen-reader／reduced-motion）与长历史布局增长无实测证据，属证据缺口，不作为必须功能。
 
 具体候选的优先级、验收与非目标记录在 Issue #19。当前迭代（p1）：#21 会话选择器搜索、#22 草稿安全的历史搜索、#23 准确的情境帮助；基线证据 #20，clean baseline 的 clippy 门禁阻塞见 #25。本轮之外的 backlog（p2）：#26 消息边界跳转、#27 transcript 文本搜索、#28 路径补全、#29 外部编辑器、#30 代码块语法高亮；runtime/design handoff（RFC 先行）：#31 排队／引导、#32 模型切换、#33 权威已应用 diff。本文档保存长期事实，不承载过程。
 
