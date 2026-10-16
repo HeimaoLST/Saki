@@ -7,6 +7,7 @@ body:
     attributes:
       value: |
         > 协作协议见根目录 `AGENTS.md` §10。测试覆盖真实行为、非平凡不变量与边界；并发优先受控协调，不用无意义的 sleep 碰运气。简单机械改动不强制新增测试。
+        > 本模板用于独立测试／QA 任务。主 agent 给自己的子 agent 分派核查时使用 tmux，由主 agent 汇总真实评审身份、候选 SHA、证据和限制；子 agent 不重复认领或逐条发 GitHub 评论。
 
   - type: dropdown
     id: from_agent

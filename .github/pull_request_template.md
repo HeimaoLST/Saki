@@ -36,5 +36,6 @@ Closes #  <!-- 目标为默认分支 dev 且完成该任务时填写；hotfix、
 ## Agent 声明
 
 FROM: agent:<line>#<instance>      <!-- 例如 agent:tui#nova -->
-REVIEWER: agent:<line>#<instance>  <!-- 必须是非作者实例；作者不得自行宣布通过或代录 APPROVE -->
+IMPLEMENTER: <!-- 有子 agent 时注明实际实施实例；内部指导走 tmux，由主 agent 汇总，不写固定 pane 地址 -->
+REVIEWER: agent:<line>#<instance>  <!-- 实际独立审查者；主 agent 可附已发生的审查证据汇总，不能伪造结论或将同一交付的主子互审称为独立评审 -->
 MERGE 授权: <!-- 尚未授权可填“未授权”；执行合并前记录用户明确授权该 PR 的来源。此字段不要求提前向用户索取授权。 -->
