@@ -27,7 +27,7 @@ func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "CONTACTS").FontSize(12).TextColor(t.TextMuted)
 			ui.Spacer(c)
-			ui.Button(c, "Add contact").FontSize(12).OnClick(func() { a.openAdd() })
+			ui.Button(c, "Add contact").FontSize(12).OnClick(func() { a.addDefaultContact() })
 		})
 		ui.Scroll(c).Grow(1).Children(func() {
 			for i := range a.contacts {
@@ -90,8 +90,6 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 		a.header(c, t)
 		ui.Divider(c)
 		switch a.screen {
-		case viewAdd:
-			a.addForm(c, t)
 		case viewHistory:
 			a.historyView(c, t)
 		default:
@@ -266,20 +264,11 @@ func (a *appModel) emptyState(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Column(c).Padding(16).Gap(6).Children(func() {
 		ui.Text(c, "No messages yet").FontSize(16).FontWeight(500).TextColor(t.Text)
-		ui.Text(c, "This conversation and its history belong to "+ct.Name+" only. Write the first message below, or adjust the contact profile first.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
-		ui.Text(c, "Purpose: "+orPlaceholder(ct.Purpose)).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
-		ui.Text(c, "Instructions: "+orPlaceholder(ct.Instructions)).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Start typing below to talk with "+ct.Name+"; you can personalize name, purpose, instructions and workspace any time in Settings.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 		ui.Row(c).Children(func() {
-			ui.Button(c, "Contact settings").FontSize(12).OnClick(func() { a.openSettings() })
+			ui.Button(c, "Settings").FontSize(12).OnClick(func() { a.openSettings() })
 		})
 	})
-}
-
-func orPlaceholder(s string) string {
-	if strings.TrimSpace(s) == "" {
-		return "Not set yet — add one in contact settings."
-	}
-	return s
 }
 
 // ---------- composer ----------
@@ -288,7 +277,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Column(c).Padding(8, 16).Gap(4).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.End).Padding(6, 8).Radius(12).Background(t.SurfaceHover).Children(func() {
-			ui.TextArea(c, &ct.Draft).Label("Composer for " + ct.Name).FontSize(14).LineHeight(1.5).Background(ui.Transparent).BorderWidth(0).Padding(2).Placeholder("Message " + ct.Name).Grow(1).OnEnter(func(e ui.Enter) bool {
+			input := ui.TextArea(c, &ct.Draft).Label("Composer for " + ct.Name).FontSize(14).LineHeight(1.5).Background(ui.Transparent).BorderWidth(0).Padding(2).Placeholder("Message " + ct.Name).Grow(1).OnEnter(func(e ui.Enter) bool {
 				if e.Mods&ui.Shift != 0 {
 					return false
 				}
@@ -301,38 +290,16 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				}
 				return true
 			})
+			if a.focusComposer {
+				input.Focus()
+				a.focusComposer = false
+			}
 			send := ui.PrimaryButton(c, "Send").FontSize(13).Disabled(ct.Status == statusWorking || strings.TrimSpace(ct.Draft) == "")
 			if send.Clicked() {
 				a.sendCurrent()
 			}
 		})
 		ui.Text(c, "Enter to send · Shift + Enter for a new line").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
-	})
-}
-
-// ---------- add ----------
-
-func (a *appModel) addForm(c *ui.Context, t *ui.Theme) {
-	ui.Scroll(c).Grow(1).Padding(18, 16).Children(func() {
-		ui.Column(c).MaxWidth(560).Gap(10).Children(func() {
-			ui.Text(c, "Add contact").FontSize(16).FontWeight(500).TextColor(t.Text)
-			ui.Text(c, "A contact keeps its own profile, history and drafts. Only the name is required.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
-			ui.Text(c, "Name").FontSize(12).FontWeight(500).TextColor(t.Text)
-			ui.TextInput(c, &a.add.Name).FontSize(14).Placeholder("e.g. Ren")
-			if a.addNameError {
-				ui.Text(c, "Enter a name for this contact.").FontSize(12).TextColor(t.Danger)
-			}
-			ui.Text(c, "Purpose").FontSize(12).FontWeight(500).TextColor(t.Text)
-			ui.TextArea(c, &a.add.Purpose).FontSize(14).Placeholder("What will you work on together?")
-			ui.Text(c, "Instructions").FontSize(12).FontWeight(500).TextColor(t.Text)
-			ui.TextArea(c, &a.add.Instructions).FontSize(14).Placeholder("Standing requirements for this contact.")
-			ui.Text(c, "Workspace (optional)").FontSize(12).FontWeight(500).TextColor(t.Text)
-			ui.TextInput(c, &a.add.Workspace).FontSize(14).Placeholder("~/Workspace/my-project")
-			ui.Row(c).Gap(8).Children(func() {
-				ui.Button(c, "Cancel").FontSize(13).OnClick(func() { a.cancelAdd() })
-				ui.PrimaryButton(c, "Create contact").FontSize(13).OnClick(func() { a.createContact() })
-			})
-		})
 	})
 }
 

@@ -43,10 +43,10 @@ func TestMinimumWindowRenders(t *testing.T) {
 	if !tr.HasText("Save changes") {
 		t.Fatal("settings should render at the 960x640 minimum")
 	}
-	a.openAdd()
+	a.addDefaultContact()
 	tr.Frame()
-	if !tr.HasText("Create contact") {
-		t.Fatal("the add form should render at the 960x640 minimum")
+	if !tr.HasText("New contact 1") {
+		t.Fatal("the default contact should render at the 960x640 minimum")
 	}
 }
 
@@ -170,6 +170,90 @@ func TestDraftSwitchThroughTester(t *testing.T) {
 	}
 }
 
+// TestAddContactFocusesComposerAndSends clicks Add contact, then types and
+// presses Enter without any extra click: the message must belong to the new
+// default contact and existing contacts must not change.
+func TestAddContactFocusesComposerAndSends(t *testing.T) {
+	a := testApp(t)
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.SetFocused(true)
+	tr.Frame()
+	before := make([]int, len(a.contacts))
+	for i := range a.contacts {
+		before[i] = len(a.contacts[i].Messages)
+	}
+	if err := tr.Click("Add contact"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	created := a.selectedContact()
+	if created.Name != "New contact 1" || created.Role != "Assistant" {
+		t.Fatalf("created contact = %q role=%q", created.Name, created.Role)
+	}
+	tr.Type("hello default")
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if len(created.Messages) != 2 {
+		t.Fatalf("new contact messages = %d, want user + demo reply", len(created.Messages))
+	}
+	if got := created.Messages[0]; got.Kind != msgUser || got.Text != "hello default" {
+		t.Fatalf("first message = %+v", got)
+	}
+	for i := range before {
+		if len(a.contacts[i].Messages) != before[i] {
+			t.Fatalf("existing contact %d changed: %d -> %d", i, before[i], len(a.contacts[i].Messages))
+		}
+	}
+}
+
+// TestSettingsDoesNotStealComposerFocus verifies the one-shot focus is
+// consumed once, later focus changes stick, and Settings keeps the draft.
+func TestSettingsDoesNotStealComposerFocus(t *testing.T) {
+	a := testApp(t)
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.SetFocused(true)
+	tr.Frame()
+	if err := tr.Click("Add contact"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	tr.Type("keep me")
+	tr.Frame()
+	if a.selectedContact().Draft != "keep me" {
+		t.Fatalf("draft = %q", a.selectedContact().Draft)
+	}
+	if a.focusComposer {
+		t.Fatal("the one-shot focus request should be consumed")
+	}
+	tr.ClickAt(400, 200) // leave the composer before clicking a button
+	tr.Frame()
+	if err := tr.Click("Settings"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	tr.Frame()
+	tr.Type("zz")
+	tr.Frame()
+	if a.selectedContact().Draft != "keep me" {
+		t.Fatalf("composer focus was stolen after Settings: draft = %q", a.selectedContact().Draft)
+	}
+	a.settingsDraft.Name = "Renamed"
+	if !a.saveSettings() {
+		t.Fatal("settings save should succeed with a name")
+	}
+	if a.selectedContact().Name != "Renamed" {
+		t.Fatalf("name = %q", a.selectedContact().Name)
+	}
+	if a.selectedContact().Draft != "keep me" || len(a.selectedContact().Messages) != 0 {
+		t.Fatal("settings save must not clear the draft or history")
+	}
+	a.openSettings()
+	a.settingsDraft.Name = "  "
+	if a.saveSettings() || !a.settingsError {
+		t.Fatal("empty settings name must be rejected")
+	}
+}
+
 // TestSourceRevealScrollsOnceAndCanMoveAway covers the regression: with a
 // long transcript the reveal requests one list scroll to the entry, keeps
 // the highlight, and a later manual scroll can move the source out of view.
@@ -221,11 +305,11 @@ func TestPreviewImages(t *testing.T) {
 		if dark {
 			theme = "dark"
 		}
-		for _, scene := range []string{"chat", "add", "settings", "sources", "history"} {
+		for _, scene := range []string{"chat", "new-contact", "settings", "sources", "history"} {
 			a := testApp(t)
 			switch scene {
-			case "add":
-				a.openAdd()
+			case "new-contact":
+				a.addDefaultContact()
 			case "settings":
 				a.openSettings()
 			case "sources":
