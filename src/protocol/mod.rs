@@ -149,6 +149,9 @@ pub struct ReasoningText {
 }
 
 impl ReasoningText {
+    // Test-only constructor with real callers in tests/conversation and tests/tui;
+    // production code builds ReasoningText through provider decoding.
+    #[cfg(test)]
     pub fn new(text: impl Into<String>) -> Self {
         Self { text: text.into() }
     }

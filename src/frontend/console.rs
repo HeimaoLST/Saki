@@ -53,17 +53,18 @@ async fn run_with_io<R: AsyncBufRead + Unpin, W: Write>(
     let mut queue = VecDeque::<UserMessage>::new();
     let mut pending: Option<(Command, String)> = None;
     loop {
-        if !running && pending.is_none() {
-            if let Some(message) = queue.pop_front() {
-                let request = SessionCommand::Send {
-                    session_id: session_id.clone().unwrap(),
-                    message,
-                };
-                if input.as_ref().unwrap().send(request).is_err() {
-                    break;
-                }
-                running = true;
+        if !running
+            && pending.is_none()
+            && let Some(message) = queue.pop_front()
+        {
+            let request = SessionCommand::Send {
+                session_id: session_id.clone().unwrap(),
+                message,
+            };
+            if input.as_ref().unwrap().send(request).is_err() {
+                break;
             }
+            running = true;
         }
         if eof && queue.is_empty() && pending.is_none() {
             input = None;

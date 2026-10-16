@@ -12,12 +12,9 @@ use crate::{
 };
 use serde_json::{Value, json};
 
-#[path = "../support/mod.rs"]
-mod support;
-
 mod cancellation;
 
-use support::{Journal, completed, overflow, requests, scripted_http};
+use crate::test_support::{Journal, completed, overflow, requests, scripted_http};
 
 fn conversation() -> Conversation {
     Conversation::new("Preserve project ion-42.".to_owned())
@@ -101,19 +98,19 @@ async fn streamed_tool_calls_execute_once_after_completion_and_continue_with_ful
         json!({"type":"reasoning","id":"r","status":"completed","content":[],"encrypted_content":"opaque"}),
         json!({"type":"function_call","id":"f","status":"completed","call_id":"c","name":"lookup","arguments":"{}"}),
     ]);
-    let (client, server) = support::scripted_stream(vec![
-        support::sse(json!({"type":"response.reasoning_text.delta","item_id":"r","delta":"Inspect fixture."}))
-        + &support::sse(json!({"type":"response.output_item.done","item":{"type":"reasoning","id":"r"}}))
-        + &support::sse(
+    let (client, server) = crate::test_support::scripted_stream(vec![
+        crate::test_support::sse(json!({"type":"response.reasoning_text.delta","item_id":"r","delta":"Inspect fixture."}))
+        + &crate::test_support::sse(json!({"type":"response.output_item.done","item":{"type":"reasoning","id":"r"}}))
+        + &crate::test_support::sse(
             json!({"type":"response.output_text.delta","item_id":"message","delta":"Checking."}),
-        ) + &support::sse(
+        ) + &crate::test_support::sse(
             json!({"type":"response.function_call_arguments.delta","item_id":"f","delta":"{"}),
-        ) + &support::sse(
+        ) + &crate::test_support::sse(
             json!({"type":"response.function_call_arguments.delta","item_id":"f","delta":"}"}),
-        ) + &support::sse(json!({"type":"response.completed","response":first})),
-        support::sse(
+        ) + &crate::test_support::sse(json!({"type":"response.completed","response":first})),
+        crate::test_support::sse(
             json!({"type":"response.output_text.delta","item_id":"message","delta":"Result: 37"}),
-        ) + &support::sse(json!({"type":"response.completed","response":completed("Result: 37")})),
+        ) + &crate::test_support::sse(json!({"type":"response.completed","response":completed("Result: 37")})),
     ])
     .await;
     let journal = Journal::new();
@@ -192,14 +189,16 @@ async fn streamed_tool_calls_execute_once_after_completion_and_continue_with_ful
 async fn a_failed_stream_keeps_partial_display_out_of_context_and_accepts_the_next_turn() {
     for ending in [
         String::new(),
-        support::sse(json!({"type":"error","code":"context_length_exceeded","message":"too long"})),
+        crate::test_support::sse(
+            json!({"type":"error","code":"context_length_exceeded","message":"too long"}),
+        ),
     ] {
-        let (client, server) = support::scripted_stream(vec![
-            support::sse(json!({"type":"response.output_text.delta","item_id":"message","delta":"UNCOMMITTED"}))
-                + &support::sse(json!({"type":"response.function_call_arguments.delta","item_id":"f","delta":"{"}))
-                + &support::sse(json!({"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"f","status":"completed","call_id":"c","name":"lookup","arguments":"{}"}}))
+        let (client, server) = crate::test_support::scripted_stream(vec![
+            crate::test_support::sse(json!({"type":"response.output_text.delta","item_id":"message","delta":"UNCOMMITTED"}))
+                + &crate::test_support::sse(json!({"type":"response.function_call_arguments.delta","item_id":"f","delta":"{"}))
+                + &crate::test_support::sse(json!({"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"f","status":"completed","call_id":"c","name":"lookup","arguments":"{}"}}))
                 + &ending,
-            support::sse(json!({"type":"response.completed","response":completed("Recovered")})),
+            crate::test_support::sse(json!({"type":"response.completed","response":completed("Recovered")})),
         ]).await;
         let (events_tx, mut events_rx) = event_channels();
         let agent =
@@ -243,10 +242,10 @@ async fn a_failed_stream_keeps_partial_display_out_of_context_and_accepts_the_ne
 
 #[tokio::test]
 async fn in_band_overflow_before_output_compacts_once_and_retries_the_stream() {
-    let (client, server) = support::scripted_bodies(vec![
-        (200, "text/event-stream", support::sse(json!({"type":"response.failed","response":{"error":{"code":"context_length_exceeded","message":"too long"}}})).into_bytes()),
+    let (client, server) = crate::test_support::scripted_bodies(vec![
+        (200, "text/event-stream", crate::test_support::sse(json!({"type":"response.failed","response":{"error":{"code":"context_length_exceeded","message":"too long"}}})).into_bytes()),
         (200, "application/json", serde_json::to_vec(&completed("Preserve project ion-42")).unwrap()),
-        (200, "text/event-stream", support::sse(json!({"type":"response.completed","response":completed("Recovered")})).into_bytes()),
+        (200, "text/event-stream", crate::test_support::sse(json!({"type":"response.completed","response":completed("Recovered")})).into_bytes()),
     ]).await;
     let mut agent = Agent::new(client, ToolRegistry::new(), previous_history());
     agent.handle_user_message("Continue").await.unwrap();
