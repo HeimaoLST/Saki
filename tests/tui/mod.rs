@@ -282,12 +282,9 @@ fn tool_status_classifies_failures() {
         view::tool_status(Some(&json!({"exit_code": 0}))),
         ("✓", false)
     );
-    assert_eq!(view::tool_status(Some(&json!({"exit_code": 7}))).1, true);
-    assert_eq!(view::tool_status(Some(&json!({"timed_out": true}))).1, true);
-    assert_eq!(
-        view::tool_status(Some(&json!({"error": "not found"}))).1,
-        true
-    );
+    assert!(view::tool_status(Some(&json!({"exit_code": 7}))).1);
+    assert!(view::tool_status(Some(&json!({"timed_out": true}))).1);
+    assert!(view::tool_status(Some(&json!({"error": "not found"}))).1);
 }
 
 #[test]
@@ -560,7 +557,7 @@ fn y_key_copies_the_selected_source() {
 
 #[test]
 fn exit_code_null_is_a_failure() {
-    assert_eq!(view::tool_status(Some(&json!({"exit_code": null}))).1, true);
+    assert!(view::tool_status(Some(&json!({"exit_code": null}))).1);
 }
 
 #[test]

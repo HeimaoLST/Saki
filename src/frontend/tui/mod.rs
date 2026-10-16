@@ -75,7 +75,11 @@ pub async fn run(
                 let (copy, notify_copy) = match maybe {
                     Ok(Some(Input::Event(Event::Key(key)))) => {
                         let (handled, command) = sessions.key(&mut app, key);
-                        if let Some(command) = command { if input.send(command).is_err() { break; } }
+                        if let Some(command) = command
+                            && input.send(command).is_err()
+                        {
+                            break;
+                        }
                         if handled {
                             // A picker key ends any local history search and
                             // stops background edge scrolling.
@@ -88,24 +92,26 @@ pub async fn run(
                             continue;
                         }
                         let outcome = handle_key(&mut app, &mut editor, key);
-                        if let Some(command) = outcome.command {
-                            if let Some(request) = commands.dispatch(command, &mut app, &mut editor, &mut sessions) {
-                                if input.send(request).is_err() { break; }
-                            }
+                        if let Some(command) = outcome.command
+                            && let Some(request) = commands.dispatch(command, &mut app, &mut editor, &mut sessions)
+                            && input.send(request).is_err()
+                        {
+                            break;
                         }
                         if app.help_open {
                             app.history.cancel_search();
                         }
-                        if outcome.cancel {
-                            if let Some(metadata) = &app.session {
-                                app.cancelling = true;
-                                app.status = None;
-                                let command = SessionCommand::Cancel {
-                                    session_id: metadata.id.clone(),
-                                };
-                                if input.send(command).is_err() {
-                                    break;
-                                }
+                        if outcome.cancel
+                            && let Some(metadata) = &app.session
+                        {
+                            app.cancelling = true;
+                            app.status = None;
+                            let command = SessionCommand::Cancel {
+                                session_id: metadata.id.clone(),
+                            };
+                            if input.send(command).is_err() {
+                                break;
+
                             }
                         }
                         if let Some(message) = outcome.send {
@@ -239,12 +245,13 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     let had_selection = app.text_selection.active();
 
-    if ctrl && matches!(key.code, KeyCode::Char('c' | 'C')) {
-        if let Some(text) = app.text_selection.text() {
-            outcome.copy = Some(text);
-            app.text_selection.clear();
-            return outcome;
-        }
+    if ctrl
+        && matches!(key.code, KeyCode::Char('c' | 'C'))
+        && let Some(text) = app.text_selection.text()
+    {
+        outcome.copy = Some(text);
+        app.text_selection.clear();
+        return outcome;
     }
     app.text_selection.clear();
 
@@ -824,10 +831,10 @@ fn attach_image(app: &mut App, editor: &mut Editor, path: PathBuf) -> Result<(),
 /// opened relative to the user's home directory.
 fn expand_home(path: &std::path::Path) -> PathBuf {
     let text = path.to_string_lossy();
-    if let Some(rest) = text.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
+    if let Some(rest) = text.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(rest);
     }
     path.to_path_buf()
 }

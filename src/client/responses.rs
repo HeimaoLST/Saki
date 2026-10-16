@@ -52,6 +52,12 @@ pub struct ResponsesClient {
 /// (zero when protocol conversion fails before any HTTP request).
 pub struct Attempted<T> {
     pub result: anyhow::Result<T>,
+    /// Read by the standalone growth experiment and the client module tests; the
+    /// binary carries it but never reads it.
+    #[allow(
+        dead_code,
+        reason = "read only by the experiment harness and client module tests"
+    )]
     pub attempts: u8,
 }
 
@@ -143,6 +149,7 @@ impl ResponsesClient {
 
     /// Set a per-request timeout for all subsequent calls. Used by the
     /// experiment harness; the main agent keeps the default (`None`).
+    #[allow(dead_code, reason = "called only by the standalone growth experiment")]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = Some(timeout);
         self

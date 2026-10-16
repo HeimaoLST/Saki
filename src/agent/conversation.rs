@@ -599,14 +599,14 @@ pub(crate) fn summary_item(summary: &str) -> InputItem {
 fn replace_images(value: &mut Value, images: &mut Vec<ImageAttachment>) {
     match value {
         Value::Object(map) => {
-            if map.get("type").and_then(Value::as_str) == Some("image") {
-                if let Some(Value::String(url)) = map.get_mut("url") {
-                    let index = images.len() + 1;
-                    let data_url = std::mem::take(url);
-                    images.push(ImageAttachment::new(format!("image #{index}"), data_url));
-                    *url = format!("[image #{index}]");
-                    return;
-                }
+            if map.get("type").and_then(Value::as_str) == Some("image")
+                && let Some(Value::String(url)) = map.get_mut("url")
+            {
+                let index = images.len() + 1;
+                let data_url = std::mem::take(url);
+                images.push(ImageAttachment::new(format!("image #{index}"), data_url));
+                *url = format!("[image #{index}]");
+                return;
             }
             for child in map.values_mut() {
                 replace_images(child, images);
