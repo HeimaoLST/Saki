@@ -143,19 +143,8 @@ impl SessionManager {
     }
 
     fn build_agent(&self, loaded: LoadedSession) -> Result<Agent> {
-        // Every open path goes through here, before any active state is
-        // replaced: a session created on another protocol fails without
-        // touching the current conversation or history.
-        let api = self.client.api();
-        if loaded.metadata.api != api.as_str() {
-            bail!(
-                "session {} was created for API {}; this run speaks {} — run with SAKI_API={} to open it",
-                loaded.metadata.id,
-                loaded.metadata.api,
-                api.as_str(),
-                loaded.metadata.api,
-            );
-        }
+        // The API match was checked by `SessionStore::open_for_api` before the
+        // history was restored; every open path goes through that entry.
         let conversation = loaded
             .conversation
             .with_compaction_config(loaded.metadata.compaction)?;
@@ -222,7 +211,7 @@ impl SessionManager {
         if id == self.metadata.id {
             bail!("This session is already open.");
         }
-        let loaded = self.store.open(id)?;
+        let loaded = self.store.open_for_api(id, self.client.api().as_str())?;
         let metadata = loaded.metadata.clone();
         let replay = loaded.replay.clone();
         let agent = self.build_agent(loaded)?;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::client::config::{CHAT_COMPLETIONS_API, RESPONSES_API};
 use crate::{
     agent::journal::{JournalRecord, TaskStatus},
     protocol::{ToolDefinition, ToolType},
@@ -86,13 +87,13 @@ fn metadata_and_history_are_separate_and_a_session_has_one_writer() {
     let id = workspace.create(&store);
     let metadata = store.rename(&id, "Compiler work").unwrap();
     assert_eq!(metadata.title, "Compiler work");
-    let mut loaded = store.open(&id).unwrap();
-    assert!(store.open(&id).is_err());
+    let mut loaded = store.open_for_api(&id, RESPONSES_API).unwrap();
+    assert!(store.open_for_api(&id, RESPONSES_API).is_err());
     assert!(store.list().unwrap()[0].in_use);
     loaded.conversation.add_user_message("remember red-71");
     loaded.conversation.save_history().unwrap();
     drop(loaded);
-    let loaded = store.open(&id).unwrap();
+    let loaded = store.open_for_api(&id, RESPONSES_API).unwrap();
     assert_eq!(loaded.metadata.title, "Compiler work");
     assert_eq!(loaded.metadata.model, "test");
     assert_eq!(loaded.replay.context.len(), 2);
@@ -121,12 +122,20 @@ fn torn_tail_is_removed_but_complete_corruption_and_unknown_versions_are_rejecte
         .unwrap()
         .write_all(b"{\"schema_ver")
         .unwrap();
-    let mut loaded = store.open(&id).unwrap();
+    let mut loaded = store.open_for_api(&id, RESPONSES_API).unwrap();
     assert_eq!(fs::read(&path).unwrap(), original);
     loaded.conversation.add_user_message("after torn write");
     loaded.conversation.save_history().unwrap();
     drop(loaded);
-    assert_eq!(store.open(&id).unwrap().replay.context.len(), 2);
+    assert_eq!(
+        store
+            .open_for_api(&id, RESPONSES_API)
+            .unwrap()
+            .replay
+            .context
+            .len(),
+        2
+    );
     fs::OpenOptions::new()
         .append(true)
         .open(&path)
@@ -134,7 +143,14 @@ fn torn_tail_is_removed_but_complete_corruption_and_unknown_versions_are_rejecte
         .write_all(b"{broken}\n")
         .unwrap();
     let corrupted = fs::read(&path).unwrap();
-    assert!(store.open(&id).err().unwrap().to_string().contains(":3:"));
+    assert!(
+        store
+            .open_for_api(&id, RESPONSES_API)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains(":3:")
+    );
     assert_eq!(fs::read(&path).unwrap(), corrupted);
     let mut unsupported = original.clone();
     unsupported.extend_from_slice(b"{\"schema_version\":99,\"type\":\"messages\",\"items\":[]}");
@@ -159,11 +175,19 @@ fn valid_final_record_without_newline_is_kept_and_can_be_appended() {
     let mut original = fs::read(&path).unwrap();
     assert_eq!(original.pop(), Some(b'\n'));
     fs::write(&path, original).unwrap();
-    let mut loaded = store.open(&id).unwrap();
+    let mut loaded = store.open_for_api(&id, RESPONSES_API).unwrap();
     loaded.conversation.add_user_message("second record");
     loaded.conversation.save_history().unwrap();
     drop(loaded);
-    assert_eq!(store.open(&id).unwrap().replay.context.len(), 2);
+    assert_eq!(
+        store
+            .open_for_api(&id, RESPONSES_API)
+            .unwrap()
+            .replay
+            .context
+            .len(),
+        2
+    );
 }
 
 #[test]
@@ -227,7 +251,7 @@ async fn switching_a_b_a_keeps_context_model_and_tool_working_directories_separa
         (200, completed("A still remembers")),
     ])
     .await;
-    let loaded = store.open(&a).unwrap();
+    let loaded = store.open_for_api(&a, RESPONSES_API).unwrap();
     let manager = SessionManager::new(
         store,
         client,
@@ -335,7 +359,7 @@ async fn switching_a_b_a_keeps_context_model_and_tool_working_directories_separa
     assert!(requests[6].to_string().contains("answer-A"));
     assert!(!requests[6].to_string().contains("secret-B"));
     let store = workspace.store();
-    let a_again = store.open(&a).unwrap();
+    let a_again = store.open_for_api(&a, RESPONSES_API).unwrap();
     assert_eq!(a_again.metadata.title, "Title A");
     assert_eq!(a_again.metadata.title_source.as_deref(), Some("auto"));
     assert_eq!(a_again.replay.status, TaskStatus::Completed);
@@ -355,7 +379,7 @@ async fn interrupted_tool_is_closed_on_next_input_and_is_never_reexecuted() {
     let workspace = Workspace::new();
     let store = workspace.store();
     let id = workspace.create(&store);
-    let mut loaded = store.open(&id).unwrap();
+    let mut loaded = store.open_for_api(&id, RESPONSES_API).unwrap();
     loaded.conversation.begin_task().unwrap();
     loaded.conversation.add_user_message("change a file");
     loaded
@@ -368,7 +392,7 @@ async fn interrupted_tool_is_closed_on_next_input_and_is_never_reexecuted() {
     )
     .unwrap();
     drop(loaded);
-    let loaded = store.open(&id).unwrap();
+    let loaded = store.open_for_api(&id, RESPONSES_API).unwrap();
     assert_eq!(loaded.replay.status, TaskStatus::Interrupted);
     let count = Arc::new(AtomicUsize::new(0));
     let executed = count.clone();
@@ -408,7 +432,11 @@ async fn interrupted_tool_is_closed_on_next_input_and_is_never_reexecuted() {
     );
     drop(agent);
     assert_eq!(
-        store.open(&id).unwrap().replay.status,
+        store
+            .open_for_api(&id, RESPONSES_API)
+            .unwrap()
+            .replay
+            .status,
         TaskStatus::Completed
     );
 }
@@ -437,7 +465,7 @@ async fn busy_session_rejects_switch_and_second_message_but_can_be_listed() {
     let manager = SessionManager::new(
         store,
         ModelClient::for_test(format!("http://{address}/v1")),
-        workspace.store().open(&a).unwrap(),
+        workspace.store().open_for_api(&a, RESPONSES_API).unwrap(),
         workspace.0.clone(),
         "test".into(),
         CompactionConfig::new(262_144),
@@ -602,7 +630,7 @@ fn a_title_result_for_another_session_updates_that_store_entry_only() {
     let a = workspace.create(&store);
     let b = workspace.create(&store);
     assert!(store.claim_auto_title(&a).unwrap());
-    let loaded_b = store.open(&b).unwrap();
+    let loaded_b = store.open_for_api(&b, RESPONSES_API).unwrap();
     let (client, _server) = block_on(scripted_http(vec![]));
     let mut manager = SessionManager::new(
         store,
@@ -673,7 +701,7 @@ async fn cancel_emits_one_terminal_event_and_stale_cancels_are_harmless() {
     let manager = SessionManager::new(
         store,
         ModelClient::for_test(format!("http://{address}/v1")),
-        workspace.store().open(&a).unwrap(),
+        workspace.store().open_for_api(&a, RESPONSES_API).unwrap(),
         workspace.0.clone(),
         "test".into(),
         CompactionConfig::new(262_144),
@@ -772,7 +800,9 @@ async fn a_session_created_on_another_api_is_not_opened_or_changed() {
             CompactionConfig::new(262_144),
         )
         .unwrap();
-    let loaded = store.open(&responses_session).unwrap();
+    let loaded = store
+        .open_for_api(&responses_session, RESPONSES_API)
+        .unwrap();
     let (client, _server) = scripted_http(vec![]).await;
     let mut manager = SessionManager::new(
         store,
@@ -800,12 +830,12 @@ async fn a_session_created_on_another_api_is_not_opened_or_changed() {
     // exactly where they were.
     assert_eq!(manager.metadata.id, responses_session);
     assert!(manager.agent.is_some());
-    let untouched = manager.store.open(&chat_session).unwrap();
-    assert_eq!(untouched.metadata.api, CHAT_COMPLETIONS_API);
+    let untouched = manager.store.metadata(&chat_session).unwrap();
+    assert_eq!(untouched.api, CHAT_COMPLETIONS_API);
 }
 
-#[tokio::test]
-async fn a_mismatched_session_is_rejected_at_construction() {
+#[test]
+fn cross_api_open_with_torn_tail_fails_before_repairing_the_history() {
     use crate::client::config::CHAT_COMPLETIONS_API;
     let workspace = Workspace::new();
     let store = workspace.store();
@@ -818,23 +848,35 @@ async fn a_mismatched_session_is_rejected_at_construction() {
             CompactionConfig::new(262_144),
         )
         .unwrap();
-    let loaded = store.open(&chat_session).unwrap();
-    let (client, _server) = scripted_http(vec![]).await;
-    let error = match SessionManager::new(
-        store,
-        client,
-        loaded,
-        workspace.0.clone(),
-        "test".into(),
-        CompactionConfig::new(262_144),
-    ) {
-        Ok(_) => panic!("a mismatched session must not construct a manager"),
-        Err(error) => error,
-    };
+    let path = store
+        .directory(&chat_session)
+        .unwrap()
+        .join("history.jsonl");
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(b"{\"schema_ver")
+        .unwrap();
+    let torn = fs::read(&path).unwrap();
+
+    // Wrong API: fails before `Conversation::restore` can trim the torn tail.
+    let error = store
+        .open_for_api(&chat_session, RESPONSES_API)
+        .map(|_| ())
+        .unwrap_err();
     assert!(
         error
             .to_string()
             .contains("was created for API openai-chat-completions"),
         "{error:?}"
     );
+    assert_eq!(fs::read(&path).unwrap(), torn);
+
+    // The right API still restores and repairs the torn tail as before.
+    let loaded = store
+        .open_for_api(&chat_session, CHAT_COMPLETIONS_API)
+        .unwrap();
+    drop(loaded);
+    assert!(fs::read(&path).unwrap().len() < torn.len());
 }

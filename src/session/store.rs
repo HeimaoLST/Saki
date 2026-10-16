@@ -139,15 +139,37 @@ impl SessionStore {
         Ok(metadata)
     }
 
+    /// Loads a session only for the expected API. The check runs before the
+    /// history is restored: `Conversation::restore` repairs a torn tail, so a
+    /// mismatched protocol must fail without touching the file. Startup and
+    /// `SessionCommand::Open` both use this entry.
+    pub fn open_for_api(&self, id: &str, expected_api: &str) -> Result<LoadedSession> {
+        let metadata = self.metadata(id)?;
+        ensure!(
+            metadata.api == expected_api,
+            "session {id} was created for API {}; this run speaks {expected_api} — run with SAKI_API={} to open it",
+            metadata.api,
+            metadata.api
+        );
+        self.restore(metadata)
+    }
+
+    /// Restores a session without an API expectation, for callers that already
+    /// know it belongs to the running client; startup and resume use
+    /// `open_for_api`, which checks before restore.
     pub fn open(&self, id: &str) -> Result<LoadedSession> {
         let metadata = self.metadata(id)?;
+        self.restore(metadata)
+    }
+
+    fn restore(&self, metadata: SessionMetadata) -> Result<LoadedSession> {
         ensure!(
             metadata.working_directory.is_dir(),
             "session working directory is missing: {}",
             metadata.working_directory.display()
         );
         let (conversation, replay) =
-            Conversation::restore(&self.directory(id)?.join("history.jsonl"))?;
+            Conversation::restore(&self.directory(&metadata.id)?.join("history.jsonl"))?;
         Ok(LoadedSession {
             metadata,
             conversation,

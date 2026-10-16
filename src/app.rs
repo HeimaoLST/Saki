@@ -75,7 +75,7 @@ pub async fn run() -> anyhow::Result<()> {
             api => store.create_with_api(&cwd, &model, SYSTEM_PROMPT, api.as_str(), config)?,
         },
     };
-    let loaded = store.open(&session_id)?;
+    let loaded = store.open_for_api(&session_id, client_config.api().as_str())?;
     let manager = SessionManager::new(store, client, loaded, cwd, model, config)?;
 
     let (events_tx, events_rx) = mpsc::unbounded_channel();
