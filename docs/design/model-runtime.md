@@ -46,13 +46,13 @@
 - 终止：只有 `stop` 与 `tool_calls` 视为完成（JSON 与 SSE 一致）；`length`、`content_filter`、未知原因或缺少 finish_reason 都在客户端失败，不把截断文本或其中的工具调用交给 Agent，已显示的文本不自动重播。[DONE] 单独出现不构成完成。
 - 不可表示的数据：图片输入、Responses 的 reasoning／ProviderItem continuation 在发请求前返回明确转换错误；厂商专用 reasoning 扩展不在本轮。
 
-### 已知未支持组合（失败边界，待验证）
+### 已知未支持组合（失败边界，已观察）
 
-DeepSeek thinking 模型经 Chat Completions 的第二轮请求要求回传 `reasoning_content`。本版本不发送也不扩展该字段，因此该模型的多轮工具续接会失败（首轮可正常返回）。这是一个已记录的真实运行边界，不是修复或兼容层；如后续要支持，需单独决策并补齐测试。
+DeepSeek thinking 模型经 Chat Completions 的第二轮请求要求回传 `reasoning_content`。本版本不发送也不扩展该字段，因此该模型的多轮工具续接会失败（首轮可正常返回）。这是已运行观察到的真实边界，归类为作者报告／已观察的未支持组合，不是修复或兼容层；如后续要支持，需另行实现并验证，是否开 RFC 取决于是否改变公共契约。
 
 ## 流式响应契约
 
-`respond_stream(request, on_event)` 是异步调用：收到增量后同步调用轻量回调，成功时返回完整 ModelResponse。公共协议的 ModelStreamEvent 提供 TextDelta／ReasoningDelta／ReasoningCompleted，不向 Agent 或前端暴露 SSE 类型。没有事件接收方也仍能使用完整模型／工具循环；丢弃调用 future 会关闭连接，但当前 UI 尚未提供主动取消入口。
+`respond_stream(request, on_event)` 是异步调用：收到增量后同步调用轻量回调，成功时返回完整 ModelResponse。公共协议的 ModelStreamEvent 提供 TextDelta／ReasoningDelta／ReasoningCompleted，不向 Agent 或前端暴露 SSE 类型。没有事件接收方也仍能使用完整模型／工具循环；丢弃调用 future 会关闭连接，主动取消沿用既有的 SessionCommand::Cancel／TUI Esc 路径。
 
 Responses 的 `response.output_text.delta`、`response.reasoning_text.delta` 转为公共增量；`response.completed` 中的完整 output 保留推理续接字段，作为写入 Conversation、usage 与工具执行的依据。工具 arguments 的中间增量不会被执行；即使收到 output_item.done，也必须等整个响应完成。当前不显示推理 summary 增量。TUI 已接入 reasoning_text，使用浅灰色 Thought 区域展示；console 实时输出 reasoning_text。TUI 仅展示实际返回的文本，不为 encrypted-only 响应生成推理正文；若已收到文本增量而最终 content 为空，保留可见片段。
 
@@ -98,4 +98,10 @@ compact 仍由 Conversation 处理。摘要 transcript 使用公共历史表示�
 
 实现事实：离线行为测试覆盖 Chat 请求映射、图片与 Responses continuation 的请求前拒绝、JSON／SSE 文本与工具参数分片、交错与 usage 尾块、缺失 usage、终止语义（`length`／`content_filter`／缺失 finish_reason／仅 [DONE] 均失败）、结构化 overflow 判定、Agent 层 Chat 工具闭环，以及 Chat compact 的单次请求契约（[client/chat tests](../../tests/client/chat.rs)）；session 侧覆盖跨 API 打开与 torn tail 不修改历史（[session tests](../../tests/session/mod.rs)）。现有 Responses 全量回归继续通过。
 
-作者报告（监督者验收，2026-10-16）：以 `043b6c8` 编译的本地 console 二进制通过双协议闭环；真实 Chat 组合 `opencode-go/gpt-6-luna` 完成文字 + 一次 `read` 工具 → 回传 → 最终标记正确的完整闭环（completed）。真实 DeepSeek thinking 组合在 Chat 第二轮失败，边界见上节。除已验收组合外不宣称支持其他兼容厂商。
+作者报告（监督者验收，2026-10-16，按 SHA 区分）：
+
+- `a19213a`：双协议（Responses 默认 + Chat）普通本地 console 编译二进制闭环通过。
+- `50131b7`：增强版本地验收（跨 API + torn tail）通过；报告 `/private/tmp/saki-47-acceptance-50131b7.json`，二进制 SHA-256 `00a8e76aea18007140160b1ba4502911ad70a4aabbef1f4074156f09796ec968`。
+- `043b6c8`：两个真实 smoke——`opencode-go/gpt-6-luna` Chat 工具闭环成功（一次 `read`、回传、最终标记正确、completed）；DeepSeek thinking Chat 第二轮失败（边界见上节）。
+
+除已验收组合外不宣称支持其他兼容厂商。
