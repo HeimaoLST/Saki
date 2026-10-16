@@ -6,7 +6,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        > 协作协议见根目录 `AGENTS.md` §9。影响多个 agent 的接口变更必须先走 RFC：受影响 agent 逐个评论 `ACK: agent:x`，人类确认后再拆子 issue 实施。
+        > 协作协议见根目录 `AGENTS.md` §9。新增跨业务线公共契约或不兼容变更先走 RFC，受影响业务线评论 `ACK: agent:<line>#<instance>` 后再拆实施任务；不改变公共契约的局部维护走普通 PR。
+        > 是否需要人类确认见下方字段：只有产品方向／安全／权限／费用等需人类拍板时才由人类确认。（本模板默认 `status:triage`，`agent:*`／`priority:*` 由 `agent:pm` 分诊补齐。）
         > 决策结论最终必须沉淀到 `docs/design/`，本 issue 只承载讨论过程。
 
   - type: dropdown
@@ -88,6 +89,6 @@ body:
       label: 是否需要人类确认
       options:
         - 是（产品方向 / 密钥 / 权限 / 费用）
-        - 否（agent 之间可达成）
+        - 否（在已授权任务范围内，受影响业务线 ACK 后实施）
     validations:
       required: true
