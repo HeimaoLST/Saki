@@ -425,10 +425,10 @@ fn push_table_fallback(
     }
 }
 
-/// Fallback rendering for a table cell whose header prefix does not fit. It is
-/// a private single-caller helper; the inputs are one rendering context, so
-/// grouping them into a struct would add indirection purely for the lint.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "private single-caller fallback helper; its inputs are one rendering context"
+)]
 fn push_fallback_cell(
     out: &mut Vec<VisualLine>,
     cell: &[markdown::Segment],
