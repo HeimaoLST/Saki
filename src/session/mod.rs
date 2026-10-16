@@ -8,7 +8,7 @@ use crate::{
     agent::{
         Agent, AgentEvent, conversation::CompactionConfig, journal::Replay, message::UserMessage,
     },
-    client::ResponsesClient,
+    client::ModelClient,
     protocol::{InputItem, InputMessageContent, MessageRole, ModelRequest, OutputItem, OutputText},
     tools::{ToolContext, register_builtins, tool_registry::ToolRegistry},
 };
@@ -106,7 +106,7 @@ fn remember_reply(reply: &mut String, event: &AgentEvent) {
 
 pub struct SessionManager {
     store: SessionStore,
-    client: ResponsesClient,
+    client: ModelClient,
     default_model: String,
     cwd: PathBuf,
     config: CompactionConfig,
@@ -120,12 +120,22 @@ pub struct SessionManager {
 impl SessionManager {
     pub fn new(
         store: SessionStore,
-        client: ResponsesClient,
+        client: ModelClient,
         loaded: LoadedSession,
         cwd: PathBuf,
         default_model: String,
         config: CompactionConfig,
     ) -> Result<Self> {
+        let api = client.api();
+        if loaded.metadata.api != api.as_str() {
+            bail!(
+                "session {} was created for API {}; this run speaks {} — run with SAKI_API={} to open it",
+                loaded.metadata.id,
+                loaded.metadata.api,
+                api.as_str(),
+                loaded.metadata.api,
+            );
+        }
         let metadata = loaded.metadata.clone();
         let mut manager = Self {
             store,
@@ -183,10 +193,11 @@ impl SessionManager {
                 if self.agent.is_none() {
                     bail!("Agent is busy. Wait for the current task to finish.");
                 }
-                let id = self.store.create(
+                let id = self.store.create_with_api(
                     &self.cwd,
                     &self.default_model,
                     SYSTEM_PROMPT,
+                    self.client.api().as_str(),
                     self.config,
                 )?;
                 self.open(&id)

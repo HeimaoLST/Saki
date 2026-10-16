@@ -91,8 +91,8 @@ impl ModelServer {
         }
     }
 
-    fn client(&self) -> crate::client::ResponsesClient {
-        crate::client::ResponsesClient::for_test(format!("http://{}/v1", self.address))
+    fn client(&self) -> crate::client::ModelClient {
+        crate::client::ModelClient::for_test(format!("http://{}/v1", self.address))
     }
 
     async fn next_request(&mut self, timeout: Duration) -> Value {

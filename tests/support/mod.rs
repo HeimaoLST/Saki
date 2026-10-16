@@ -10,7 +10,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::client::ResponsesClient;
+use crate::client::ModelClient;
 
 pub fn completed(text: &str) -> Value {
     json!({"id":"response", "status":"completed", "output":[{
@@ -23,9 +23,7 @@ pub fn overflow() -> Value {
     json!({"error":{"code":"context_length_exceeded", "message":"input exceeds context window"}})
 }
 
-pub async fn scripted_http(
-    responses: Vec<(u16, Value)>,
-) -> (ResponsesClient, JoinHandle<Vec<Value>>) {
+pub async fn scripted_http(responses: Vec<(u16, Value)>) -> (ModelClient, JoinHandle<Vec<Value>>) {
     scripted_bodies(
         responses
             .into_iter()
@@ -41,7 +39,7 @@ pub async fn scripted_http(
     .await
 }
 
-pub async fn scripted_stream(responses: Vec<String>) -> (ResponsesClient, JoinHandle<Vec<Value>>) {
+pub async fn scripted_stream(responses: Vec<String>) -> (ModelClient, JoinHandle<Vec<Value>>) {
     scripted_bodies(
         responses
             .into_iter()
@@ -53,7 +51,7 @@ pub async fn scripted_stream(responses: Vec<String>) -> (ResponsesClient, JoinHa
 
 pub async fn scripted_bodies(
     responses: Vec<(u16, &'static str, Vec<u8>)>,
-) -> (ResponsesClient, JoinHandle<Vec<Value>>) {
+) -> (ModelClient, JoinHandle<Vec<Value>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
@@ -66,10 +64,7 @@ pub async fn scripted_bodies(
         }
         requests
     });
-    (
-        ResponsesClient::for_test(format!("http://{address}/v1")),
-        task,
-    )
+    (ModelClient::for_test(format!("http://{address}/v1")), task)
 }
 
 pub async fn read_request(socket: &mut TcpStream) -> Value {

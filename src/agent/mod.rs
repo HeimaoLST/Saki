@@ -7,7 +7,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use self::{conversation::Conversation, message::UserMessage};
 use crate::{
-    client::{ResponsesClient, responses::ApiError},
+    client::{ModelClient, responses::ApiError},
     protocol::{ModelRequest, ModelStreamEvent, OutputItem, OutputText},
     tools::tool_registry::{ToolCall, ToolRegistry},
 };
@@ -132,7 +132,7 @@ async fn cancelled(cancel: &mut Option<tokio::sync::watch::Receiver<bool>>) {
 }
 
 pub struct Agent {
-    client: ResponsesClient,
+    client: ModelClient,
     tool_registry: ToolRegistry,
     conversation: Conversation,
     model: String,
@@ -142,7 +142,7 @@ pub struct Agent {
 
 impl Agent {
     pub fn new(
-        client: ResponsesClient,
+        client: ModelClient,
         tool_registry: ToolRegistry,
         conversation: Conversation,
     ) -> Self {

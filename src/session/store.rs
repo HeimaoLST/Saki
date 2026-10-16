@@ -11,6 +11,7 @@ use crate::agent::{
     conversation::{CompactionConfig, Conversation},
     journal::{self, Replay, TaskStatus},
 };
+use crate::client::config::{CHAT_COMPLETIONS_API, RESPONSES_API};
 
 /// Title used until the first successful turn can generate one.
 pub const DEFAULT_TITLE: &str = "New session";
@@ -75,6 +76,24 @@ impl SessionStore {
         system_prompt: &str,
         config: CompactionConfig,
     ) -> Result<String> {
+        self.create_with_api(cwd, model, system_prompt, RESPONSES_API, config)
+    }
+
+    /// Creates a session that records the API it was created on. The runtime
+    /// uses this with the selected protocol; `create` stays the Responses
+    /// default for existing callers.
+    pub fn create_with_api(
+        &self,
+        cwd: &Path,
+        model: &str,
+        system_prompt: &str,
+        api: &str,
+        config: CompactionConfig,
+    ) -> Result<String> {
+        ensure!(
+            api == RESPONSES_API || api == CHAT_COMPLETIONS_API,
+            "unsupported session API: {api}"
+        );
         let conversation =
             Conversation::new(system_prompt.to_owned()).with_compaction_config(config)?;
         let working_directory = cwd.canonicalize()?;
@@ -93,7 +112,7 @@ impl SessionStore {
             created_at: journal::now_ms()?,
             working_directory,
             model: model.to_owned(),
-            api: "openai-responses".to_owned(),
+            api: api.to_owned(),
             compaction: config,
         };
         let conversation = conversation.with_history_file(&directory.join("history.jsonl"))?;
@@ -113,7 +132,7 @@ impl SessionStore {
             path.display()
         );
         ensure!(
-            metadata.api == "openai-responses",
+            metadata.api == RESPONSES_API || metadata.api == CHAT_COMPLETIONS_API,
             "unsupported session API: {}",
             metadata.api
         );

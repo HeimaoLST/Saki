@@ -436,7 +436,7 @@ async fn busy_session_rejects_switch_and_second_message_but_can_be_listed() {
     });
     let manager = SessionManager::new(
         store,
-        ResponsesClient::for_test(format!("http://{address}/v1")),
+        ModelClient::for_test(format!("http://{address}/v1")),
         workspace.store().open(&a).unwrap(),
         workspace.0.clone(),
         "test".into(),
@@ -672,7 +672,7 @@ async fn cancel_emits_one_terminal_event_and_stale_cancels_are_harmless() {
     });
     let manager = SessionManager::new(
         store,
-        ResponsesClient::for_test(format!("http://{address}/v1")),
+        ModelClient::for_test(format!("http://{address}/v1")),
         workspace.store().open(&a).unwrap(),
         workspace.0.clone(),
         "test".into(),

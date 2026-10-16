@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use agent::conversation::Conversation;
-use client::ResponsesClient;
+use client::{ClientConfig, ResponsesClient};
 use protocol::{ModelRequest, ModelResponse, OutputItem, OutputText, ToolDefinition, ToolType};
 use tools::tool_registry::{Tool, ToolCall, ToolError, ToolRegistry};
 
@@ -1297,7 +1297,8 @@ async fn main() -> anyhow::Result<()> {
         .cloned()
         .or_else(|| std::env::var("SAKI_BASE_URL").ok());
 
-    let mut client = ResponsesClient::new()?.with_timeout(Duration::from_secs(60));
+    let mut client = ResponsesClient::from_config(&ClientConfig::from_env()?)?
+        .with_timeout(Duration::from_secs(60));
     if let Some(url) = base_url {
         client = client.with_base_url(url);
     }
