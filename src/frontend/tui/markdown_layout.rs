@@ -104,11 +104,10 @@ fn styled_lines(
         let rendered_len = segment.text.len();
         let mut consumed = 0usize;
         for grapheme in segment.text.graphemes(true) {
-            let source = if rendered_len == 0 {
-                segment.source
-            } else {
-                segment.source + consumed.saturating_mul(segment.advance) / rendered_len
-            };
+            let source = consumed
+                .saturating_mul(segment.advance)
+                .checked_div(rendered_len)
+                .map_or(segment.source, |scaled| segment.source + scaled);
             if grapheme == "\n" {
                 // A blank line must take its own source position from this
                 // newline, not reuse the previous content line's start, or
@@ -349,11 +348,11 @@ fn push_table(
         // header through the rule instead of skipping the whole table.
         if row.header && row_index + 1 < table.rows.len() {
             let mut rule = String::from(padding);
-            for column in 0..columns {
+            for (column, width) in widths.iter().enumerate().take(columns) {
                 if column > 0 {
                     rule.push_str("─┼─");
                 }
-                rule.push_str(&"─".repeat(widths[column]));
+                rule.push_str(&"─".repeat(*width));
             }
             let source = bump_anchor(&mut anchor_source, table.source_start, table.source_end);
             out.push(VisualLine {
@@ -426,6 +425,10 @@ fn push_table_fallback(
     }
 }
 
+/// Fallback rendering for a table cell whose header prefix does not fit. It is
+/// a private single-caller helper; the inputs are one rendering context, so
+/// grouping them into a struct would add indirection purely for the lint.
+#[allow(clippy::too_many_arguments)]
 fn push_fallback_cell(
     out: &mut Vec<VisualLine>,
     cell: &[markdown::Segment],

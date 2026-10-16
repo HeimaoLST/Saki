@@ -285,14 +285,13 @@ impl Sessions {
     }
 
     pub fn paste(&mut self, text: &str) {
-        if !self.pending {
-            if let Some(title) = self
+        if !self.pending
+            && let Some(title) = self
                 .picker
                 .as_mut()
                 .and_then(|picker| picker.rename.as_mut())
-            {
-                title.push_str(&text.replace(['\r', '\n'], " "));
-            }
+        {
+            title.push_str(&text.replace(['\r', '\n'], " "));
         }
     }
 

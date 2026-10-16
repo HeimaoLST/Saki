@@ -211,10 +211,8 @@ impl TextSelection {
             .transcript
             .as_mut()
             .is_some_and(|transcript| transcript.restore_follow && !transcript.dragged);
-        if restore {
-            if let Some(transcript) = self.transcript.as_mut() {
-                transcript.restore_follow = false;
-            }
+        if restore && let Some(transcript) = self.transcript.as_mut() {
+            transcript.restore_follow = false;
         }
         restore
     }

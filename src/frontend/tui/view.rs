@@ -285,28 +285,29 @@ fn activity_line(app: &App, editor: &Editor, width: usize) -> Line<'static> {
             " · New output",
             Style::default().fg(theme.accent),
         ));
-    } else if app.running && app.follow && !app.quit_after_turn {
-        if let Some(Record::Tool {
+    } else if app.running
+        && app.follow
+        && !app.quit_after_turn
+        && let Some(Record::Tool {
             name,
             arguments,
             output: None,
             ..
         }) = app.records.last()
-        {
-            let headline = tool_headline(name, arguments, app.working_directory.as_deref());
-            let detail = headline.lines().next().unwrap_or("");
-            let available = width.saturating_sub(spans.iter().map(Span::width).sum());
-            if available >= name.width() + 3 {
-                let activity = if detail.width() + 3 <= available {
-                    detail
-                } else {
-                    name
-                };
-                spans.push(Span::styled(
-                    format!(" · {activity}"),
-                    Style::default().fg(theme.secondary),
-                ));
-            }
+    {
+        let headline = tool_headline(name, arguments, app.working_directory.as_deref());
+        let detail = headline.lines().next().unwrap_or("");
+        let available = width.saturating_sub(spans.iter().map(Span::width).sum());
+        if available >= name.width() + 3 {
+            let activity = if detail.width() + 3 <= available {
+                detail
+            } else {
+                name
+            };
+            spans.push(Span::styled(
+                format!(" · {activity}"),
+                Style::default().fg(theme.secondary),
+            ));
         }
     }
     Line::from(spans)
@@ -1013,8 +1014,7 @@ pub fn focus_transcript(app: &mut App) {
             .unwrap_or(app.selected);
         keys.iter()
             .copied()
-            .filter(|key| *key <= target)
-            .next_back()
+            .rfind(|key| *key <= target)
             .unwrap_or(last)
     };
 }
@@ -1122,13 +1122,13 @@ fn normalize_anchor_key(app: &App, keys: &[usize], anchor: Anchor) -> Anchor {
     if keys.contains(&anchor.record) {
         return anchor;
     }
-    if let Some(marker) = app.visible_activity_for(anchor.record) {
-        if keys.contains(&marker) {
-            return Anchor {
-                record: marker,
-                offset: 0,
-            };
-        }
+    if let Some(marker) = app.visible_activity_for(anchor.record)
+        && keys.contains(&marker)
+    {
+        return Anchor {
+            record: marker,
+            offset: 0,
+        };
     }
     let key = keys
         .iter()
@@ -1145,14 +1145,13 @@ fn normalize_anchor_key(app: &App, keys: &[usize], anchor: Anchor) -> Anchor {
 /// Resolves the exact row the anchored viewport starts at. The width-keyed
 /// visual anchor wins while valid; source offsets remain the reflow fallback.
 fn anchored_start(app: &mut App, keys: &[usize], width: usize) -> (usize, usize) {
-    if let Some(visual) = app.visual_anchor {
-        if visual.width == width {
-            if let Some(position) = keys.iter().position(|key| *key == visual.key.record) {
-                let layout = record_layout(app, visual.key.record, width);
-                if visual.key.line < layout.len() {
-                    return (position, visual.key.line);
-                }
-            }
+    if let Some(visual) = app.visual_anchor
+        && visual.width == width
+        && let Some(position) = keys.iter().position(|key| *key == visual.key.record)
+    {
+        let layout = record_layout(app, visual.key.record, width);
+        if visual.key.line < layout.len() {
+            return (position, visual.key.line);
         }
     }
     let anchor = normalize_anchor_key(
@@ -1180,14 +1179,14 @@ fn anchored_start(app: &mut App, keys: &[usize], width: usize) -> (usize, usize)
 
 /// Exact top visible row for the current follow/anchored state at `width`.
 fn current_top_row(app: &mut App, width: usize) -> Option<RowKey> {
-    if let Some(visual) = app.visual_anchor {
-        if visual.width == width {
-            let keys = app.visible_record_keys();
-            if keys.contains(&visual.key.record) {
-                let layout = record_layout(app, visual.key.record, width);
-                if visual.key.line < layout.len() {
-                    return Some(visual.key);
-                }
+    if let Some(visual) = app.visual_anchor
+        && visual.width == width
+    {
+        let keys = app.visible_record_keys();
+        if keys.contains(&visual.key.record) {
+            let layout = record_layout(app, visual.key.record, width);
+            if visual.key.line < layout.len() {
+                return Some(visual.key);
             }
         }
     }
