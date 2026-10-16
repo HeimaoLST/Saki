@@ -133,6 +133,9 @@ impl ChatCompletionsClient {
     ) -> anyhow::Result<ModelResponse> {
         let mut body = Self::request_body(&request)?;
         body["stream"] = json!(true);
+        // Ask for the usage tail block; vendors that do not support it still
+        // work and usage stays unknown, never zero.
+        body["stream_options"] = json!({"include_usage": true});
         let url = format!("{}/chat/completions", self.base_url);
         let response = self
             .transport
@@ -142,25 +145,20 @@ impl ChatCompletionsClient {
     }
 }
 
-/// A body that says the request exceeded the model's context window. Vendors
-/// spell the code and message differently, so both are checked.
+/// A body that says the request exceeded the model's context window. The
+/// vendor's structured error code decides; message wording never does.
 fn is_context_overflow(value: &Value) -> bool {
-    let code = value["error"]["code"].as_str().unwrap_or("");
-    if code == "context_length_exceeded" {
-        return true;
-    }
-    let message = value["error"]["message"].as_str().unwrap_or("");
-    let message = message.to_ascii_lowercase();
-    message.contains("maximum context length") || message.contains("context length")
+    value["error"]["code"] == "context_length_exceeded"
 }
 
 fn chat_role(role: &MessageRole) -> &'static str {
     match role {
         MessageRole::User => "user",
         MessageRole::Assistant => "assistant",
-        // Chat Completions has no developer role on every vendor; system is the
-        // compatible mapping.
-        MessageRole::System | MessageRole::Developer => "system",
+        MessageRole::System => "system",
+        // Native developer role is preserved; vendor-specific downgrades are
+        // not this round's compatibility layer.
+        MessageRole::Developer => "developer",
     }
 }
 
@@ -251,22 +249,14 @@ fn arguments_text(arguments: Option<Value>) -> String {
     }
 }
 
-/// The response's terminal state as the shared model types describe it.
-fn outcome(finish: Option<&str>) -> (Option<String>, Option<Value>) {
+/// Only `stop` and `tool_calls` complete a turn. `length`, `content_filter`
+/// and unknown reasons fail here, before the Agent can keep truncated text or
+/// execute an incomplete tool call; partial visible text is never replayed.
+fn completed(finish: Option<&str>) -> anyhow::Result<()> {
     match finish {
-        Some("length") => (
-            Some("incomplete".to_owned()),
-            Some(json!({"reason": "max_output_tokens"})),
-        ),
-        Some("content_filter") => (
-            Some("incomplete".to_owned()),
-            Some(json!({"reason": "content_filter"})),
-        ),
-        Some("stop") | Some("tool_calls") | Some("function_call") => {
-            (Some("completed".to_owned()), None)
-        }
-        Some(other) => (Some(other.to_owned()), None),
-        None => (None, None),
+        Some("stop") | Some("tool_calls") => Ok(()),
+        Some(reason) => anyhow::bail!("chat completion did not finish: {reason}"),
+        None => anyhow::bail!("chat completion had no finish_reason"),
     }
 }
 
@@ -355,12 +345,12 @@ fn decode_response_value(response: ChatResponse) -> anyhow::Result<ModelResponse
         .into_iter()
         .next()
         .ok_or_else(|| anyhow::anyhow!("chat completion contained no choices"))?;
-    let (status, incomplete_details) = outcome(choice.finish_reason.as_deref());
+    completed(choice.finish_reason.as_deref())?;
     Ok(ModelResponse {
         id: response.id.clone(),
         model: response.model,
-        status,
-        incomplete_details,
+        status: Some("completed".to_owned()),
+        incomplete_details: None,
         output: output_from_message(
             &response.id,
             choice.message.content,
@@ -429,7 +419,6 @@ struct StreamState {
     calls: Vec<PartialCall>,
     finish: Option<String>,
     usage: Option<ChatUsage>,
-    done: bool,
 }
 
 impl StreamState {
@@ -490,11 +479,7 @@ impl StreamState {
     }
 
     fn finish(self) -> anyhow::Result<ModelResponse> {
-        anyhow::ensure!(
-            self.done || self.finish.is_some(),
-            "chat stream ended before completion"
-        );
-        let (status, incomplete_details) = outcome(self.finish.as_deref());
+        completed(self.finish.as_deref())?;
         let mut output = Vec::new();
         if self.text_seen {
             output.push(OutputItem::Message {
@@ -519,8 +504,8 @@ impl StreamState {
         Ok(ModelResponse {
             id: self.id,
             model: self.model,
-            status,
-            incomplete_details,
+            status: Some("completed".to_owned()),
+            incomplete_details: None,
             output,
             usage: self.usage.map(Into::into),
         })
@@ -553,7 +538,6 @@ async fn decode_stream(
     while let Some(event) = events.next().await {
         let event = event.map_err(|error| anyhow::anyhow!("chat stream interrupted: {error}"))?;
         if event.data == "[DONE]" {
-            state.done = true;
             break;
         }
         let chunk: StreamChunk = serde_json::from_str(&event.data)
@@ -562,3 +546,7 @@ async fn decode_stream(
     }
     state.finish()
 }
+
+#[cfg(test)]
+#[path = "../../tests/client/chat.rs"]
+mod tests;

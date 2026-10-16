@@ -756,3 +756,85 @@ async fn cancel_emits_one_terminal_event_and_stale_cancels_are_harmless() {
     assert_eq!(terminals, 1, "exactly one terminal event for the turn");
     assert_eq!(errors, 0, "cancelling is never an error: {errors}");
 }
+
+#[tokio::test]
+async fn a_session_created_on_another_api_is_not_opened_or_changed() {
+    use crate::client::config::CHAT_COMPLETIONS_API;
+    let workspace = Workspace::new();
+    let store = workspace.store();
+    let responses_session = workspace.create(&store);
+    let chat_session = store
+        .create_with_api(
+            &workspace.0,
+            "test",
+            SYSTEM_PROMPT,
+            CHAT_COMPLETIONS_API,
+            CompactionConfig::new(262_144),
+        )
+        .unwrap();
+    let loaded = store.open(&responses_session).unwrap();
+    let (client, _server) = scripted_http(vec![]).await;
+    let mut manager = SessionManager::new(
+        store,
+        client,
+        loaded,
+        workspace.0.clone(),
+        "test".into(),
+        CompactionConfig::new(262_144),
+    )
+    .unwrap();
+    assert_eq!(manager.metadata.id, responses_session);
+    let error = match manager.control(SessionCommand::Open {
+        session_id: chat_session.clone(),
+    }) {
+        Ok(_) => panic!("opening a mismatched session must fail"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("was created for API openai-chat-completions"),
+        "{error:?}"
+    );
+    // The active session, its agent and the refused session's files are all
+    // exactly where they were.
+    assert_eq!(manager.metadata.id, responses_session);
+    assert!(manager.agent.is_some());
+    let untouched = manager.store.open(&chat_session).unwrap();
+    assert_eq!(untouched.metadata.api, CHAT_COMPLETIONS_API);
+}
+
+#[tokio::test]
+async fn a_mismatched_session_is_rejected_at_construction() {
+    use crate::client::config::CHAT_COMPLETIONS_API;
+    let workspace = Workspace::new();
+    let store = workspace.store();
+    let chat_session = store
+        .create_with_api(
+            &workspace.0,
+            "test",
+            SYSTEM_PROMPT,
+            CHAT_COMPLETIONS_API,
+            CompactionConfig::new(262_144),
+        )
+        .unwrap();
+    let loaded = store.open(&chat_session).unwrap();
+    let (client, _server) = scripted_http(vec![]).await;
+    let error = match SessionManager::new(
+        store,
+        client,
+        loaded,
+        workspace.0.clone(),
+        "test".into(),
+        CompactionConfig::new(262_144),
+    ) {
+        Ok(_) => panic!("a mismatched session must not construct a manager"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("was created for API openai-chat-completions"),
+        "{error:?}"
+    );
+}

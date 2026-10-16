@@ -44,6 +44,16 @@ pub struct ClientConfig {
 }
 
 impl ClientConfig {
+    /// Explicit value constructor for hosts that do not read the process
+    /// environment. `from_env` builds on this.
+    pub fn new(api: ModelApi, api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
+        Self {
+            api,
+            api_key: api_key.into(),
+            base_url: base_url.into(),
+        }
+    }
+
     /// Reads the environment once: a missing `.env` is fine; a malformed `.env`
     /// is an error; `API_KEY` is required. Errors never echo secret values.
     pub fn from_env() -> anyhow::Result<Self> {
@@ -68,11 +78,7 @@ impl ClientConfig {
             Err(_) => ModelApi::Responses,
         };
         let base_url = env::var("SAKI_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_owned());
-        Ok(Self {
-            api,
-            api_key,
-            base_url,
-        })
+        Ok(Self::new(api, api_key, base_url))
     }
 
     pub fn api(&self) -> ModelApi {
