@@ -1,8 +1,8 @@
-<!-- 协作协议见根目录 AGENTS.md。一个 PR 只解决一个 issue；证据规则见 AGENTS.md §10。 -->
+<!-- 协作协议见根目录 AGENTS.md。普通 PR 一个目标；发布/回流可汇总多个 issue。证据见 §10，合并授权见 §5/§7。 -->
 
 ## 关联
 
-Closes #  <!-- Closes 只在 base 为 master 时生效；stacked 中间 PR 请改用 Refs #N -->
+Closes #  <!-- 目标为默认分支 dev 且完成该任务时填写；hotfix、发布、回流和 stacked 中间 PR 使用 Refs #N -->
 
 ## 动机
 
@@ -14,14 +14,17 @@ Closes #  <!-- Closes 只在 base 为 master 时生效；stacked 中间 PR 请�
 
 ## 证据
 
-<!-- 粘贴命令与输出摘要。先贴原始输出，再给判断。不要把运行产物入库（.saki/ 已 gitignore）。 -->
+<!-- 行为证据按 §10 选择，不适用项写 N/A 与理由；仓库必需门禁不能自行标 N/A 跳过。先贴命令与原始结果摘要，再给判断。 -->
 
-- [ ] 离线确定性测试（禁止 sleep）：
+- base / 同步状态：<!-- 目标分支；是否已同步最新 base（未发布分支 rebase / 共享分支 merge commit）；最新验证 SHA：____ -->
+- 合并方法：<!-- 短期工作分支默认 squash；dev→master 发布、master→dev 回流使用 merge commit，保留长期分支 -->
 - [ ] `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` / `cargo test`：
+- [ ] `cd desktop && go test ./...`：
+- [ ] 离线确定性测试（禁止 sleep）：
 - [ ] 真实模型验证（如适用，注明模型 ID 与摘要）：
 - [ ] PTY / 真实终端验证（如适用）：
-- [ ] `cd desktop && go test ./...`（如适用）：
-- [ ] 行为变化已同步 `docs/` 对应文档，或已开 follow-up issue：
+- [ ] 行为变化已同步既有 `docs/` 文档，或已开 follow-up issue：
+- 已知基线失败（与本次改动无关，附证据）：
 
 ## 影响与风险
 
@@ -33,4 +36,5 @@ Closes #  <!-- Closes 只在 base 为 master 时生效；stacked 中间 PR 请�
 ## Agent 声明
 
 FROM: agent:<line>#<instance>      <!-- 例如 agent:tui#nova -->
-REVIEWER: agent:<line>#<instance>  <!-- 必须是非作者实例 -->
+REVIEWER: agent:<line>#<instance>  <!-- 必须是非作者实例；作者不得自行宣布通过或代录 APPROVE -->
+MERGE 授权: <!-- 尚未授权可填“未授权”；执行合并前记录用户明确授权该 PR 的来源。此字段不要求提前向用户索取授权。 -->

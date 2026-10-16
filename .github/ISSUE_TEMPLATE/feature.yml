@@ -99,7 +99,7 @@ body:
         - 前端 TUI / console
         - 前端 GUI（desktop）
         - 文档
-        - 跨层（需要 type:decision）
+        - 跨层（新增跨业务线公共契约或不兼容变更先开 type:decision；局部维护按普通流程）
     validations:
       required: true
 
