@@ -1096,11 +1096,14 @@ async fn chat_completions_complete_a_tool_turn_and_a_follow_up() {
         "id": "c2",
         "choices": [{"delta": {}, "finish_reason": "stop"}]
     })) + "data: [DONE]\n\n";
-    let (client, server) = support::scripted_chat(vec![
+    let (base_url, server) = support::scripted_server(vec![
         (200, "text/event-stream", tool_turn.into_bytes()),
         (200, "text/event-stream", answer_turn.into_bytes()),
     ])
     .await;
+    let client = crate::client::ModelClient::ChatCompletions(
+        crate::client::ChatCompletionsClient::for_test(base_url),
+    );
     let mut agent = Agent::new(client, tools, conversation()).with_model("test".to_owned());
     agent
         .handle_user_message("Look it up".to_owned())

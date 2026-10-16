@@ -120,13 +120,6 @@ impl ResponsesClient {
         self
     }
 
-    /// Override the API base URL (default stays the direct DeepSeek endpoint).
-    /// Used by the experiment harness to point at a local proxy.
-    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
-        self.base_url = base_url.into().trim_end_matches('/').to_owned();
-        self
-    }
-
     /// One HTTP attempt with no retry; conversion failures report zero attempts.
     pub async fn respond_once(&self, request: ModelRequest<'_>) -> Attempted<ModelResponse> {
         let body = match Self::request_body(&request) {

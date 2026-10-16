@@ -56,18 +56,9 @@ pub async fn scripted_bodies(
     (ModelClient::for_test(base_url), task)
 }
 
-/// A scripted Chat Completions endpoint over the same wire mock.
-pub async fn scripted_chat(
-    responses: Vec<(u16, &'static str, Vec<u8>)>,
-) -> (ModelClient, JoinHandle<Vec<Value>>) {
-    let (base_url, task) = scripted_server(responses).await;
-    (
-        ModelClient::ChatCompletions(crate::client::ChatCompletionsClient::for_test(base_url)),
-        task,
-    )
-}
-
-async fn scripted_server(
+/// A scripted wire mock serving one response per element and returning the
+/// request bodies it received. Shared by the Responses and Chat test helpers.
+pub async fn scripted_server(
     responses: Vec<(u16, &'static str, Vec<u8>)>,
 ) -> (String, JoinHandle<Vec<Value>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

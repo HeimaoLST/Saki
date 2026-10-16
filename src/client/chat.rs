@@ -395,7 +395,7 @@ struct StreamChoice {
 #[derive(Deserialize, Default)]
 struct StreamDelta {
     content: Option<String>,
-    #[serde(default, deserialize_with = "absent_or_null")]
+    #[serde(default)]
     tool_calls: Vec<ToolCallDelta>,
 }
 

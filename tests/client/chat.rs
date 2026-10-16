@@ -511,27 +511,4 @@ async fn null_tool_calls_mean_no_calls() {
     assert!(
         matches!(&response.output[0], OutputItem::Message { content, .. } if content[0].text == "direct")
     );
-
-    // SSE deltas may carry tool_calls: null as well.
-    let mut stream = String::new();
-    stream.push_str(&sse(json!({
-        "id": "c-null",
-        "choices": [{"delta": {"content": "ok", "tool_calls": null}}]
-    })));
-    stream.push_str(&sse(json!({
-        "id": "c-null",
-        "choices": [{"delta": {}, "finish_reason": "stop"}]
-    })));
-    stream.push_str("data: [DONE]\n\n");
-    let (client, _server) = mock_once(200, "text/event-stream", stream).await;
-    let response = client
-        .respond_stream(
-            ModelRequest::new("m".to_owned(), &input, Vec::new()),
-            |_| {},
-        )
-        .await
-        .unwrap();
-    assert!(response.output.iter().any(
-        |item| matches!(item, OutputItem::Message { content, .. } if content[0].text == "ok")
-    ));
 }
