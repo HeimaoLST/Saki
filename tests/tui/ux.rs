@@ -935,3 +935,20 @@ fn plain_click_then_esc_while_running_cancels() {
     let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Esc));
     assert!(outcome.cancel, "Esc after a plain click cancels the turn");
 }
+
+#[test]
+fn esc_closes_help_before_interrupting_a_running_task() {
+    let mut app = App::new();
+    app.running = true;
+    let mut editor = Editor::new();
+    editor.insert_str("keep draft");
+    handle_key(&mut app, &mut editor, key(KeyCode::F(1)));
+    assert!(app.help_open);
+    let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Esc));
+    assert!(!outcome.cancel, "the first Esc only closes help");
+    assert!(!app.help_open);
+    assert_eq!(editor.text(), "keep draft");
+    let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Esc));
+    assert!(outcome.cancel, "a later Esc interrupts the task");
+    assert_eq!(editor.text(), "keep draft");
+}

@@ -2,10 +2,7 @@ use super::*;
 use crate::agent::conversation::Conversation;
 use serde_json::json;
 
-#[path = "../support/mod.rs"]
-mod support;
-
-use support::{completed, overflow, requests, scripted_http};
+use crate::test_support::{completed, overflow, requests, scripted_http};
 
 #[tokio::test]
 async fn overflow_is_typed_and_is_not_retried() {
