@@ -1,5 +1,5 @@
 use super::*;
-use crate::client::config::{CHAT_COMPLETIONS_API, RESPONSES_API};
+use crate::client::config::RESPONSES_API;
 use crate::{
     agent::journal::{JournalRecord, TaskStatus},
     protocol::{ToolDefinition, ToolType},

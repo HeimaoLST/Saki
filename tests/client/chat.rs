@@ -426,3 +426,52 @@ async fn overflow_needs_the_structured_code_not_message_wording() {
         Some(ApiError::ContextOverflow { .. })
     ));
 }
+
+#[tokio::test]
+async fn compaction_on_the_chat_client_uses_one_request_and_keeps_context() {
+    use crate::agent::conversation::{CompactionConfig, Conversation};
+    let mut conversation = Conversation::new("System instructions must survive.".to_owned())
+        .with_compaction_config(CompactionConfig {
+            context_budget_tokens: 8192,
+            max_input_tokens: None,
+            reserve_tokens: 2048,
+            keep_recent_tokens: 256,
+            max_summary_tokens: 1024,
+        })
+        .unwrap();
+    conversation.add_user_message(format!(
+        "original-source: {}",
+        "verified context ".repeat(1100)
+    ));
+    conversation.add_assistant_message("Completed initial work.".to_owned());
+    conversation.add_user_message("Continue the unfinished goal.".to_owned());
+    let before = serde_json::to_value(&conversation).unwrap();
+    let (client, server) = mock_once(
+        500,
+        "application/json",
+        json!({"error":{"code":"server_error"}}).to_string(),
+    )
+    .await;
+    let client = crate::client::ModelClient::ChatCompletions(client);
+    let error = conversation
+        .compact_if_needed(&client, "test", &[])
+        .await
+        .map(|_| ())
+        .unwrap_err();
+    // The summary went through exactly one HTTP attempt: a retry would have
+    // failed on the closed listener with a transport error instead.
+    assert!(
+        matches!(
+            error.downcast_ref::<ApiError>(),
+            Some(ApiError::Http { status, .. })
+                if *status == reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        ),
+        "{error:?}"
+    );
+    assert_eq!(serde_json::to_value(&conversation).unwrap(), before);
+    let sent = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(sent["messages"].is_array());
+}

@@ -116,7 +116,7 @@ impl ResponsesClient {
     /// Set a per-request timeout for all subsequent calls. Used by the
     /// experiment harness; the main agent keeps the default (`None`).
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.transport = self.transport.with_timeout(timeout);
+        self.transport.request_timeout = Some(timeout);
         self
     }
 

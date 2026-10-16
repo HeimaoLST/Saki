@@ -155,8 +155,9 @@ impl SessionStore {
     }
 
     /// Restores a session without an API expectation, for callers that already
-    /// know it belongs to the running client; startup and resume use
-    /// `open_for_api`, which checks before restore.
+    /// know it belongs to the running client. Production startup and resume
+    /// use `open_for_api`; this unchecked form is used by tests.
+    #[cfg(test)]
     pub fn open(&self, id: &str) -> Result<LoadedSession> {
         let metadata = self.metadata(id)?;
         self.restore(metadata)

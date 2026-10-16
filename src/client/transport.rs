@@ -13,7 +13,7 @@ const MAX_RETRIES: u8 = 3;
 #[derive(Clone)]
 pub(crate) struct ApiTransport {
     http_client: reqwest::Client,
-    request_timeout: Option<Duration>,
+    pub(crate) request_timeout: Option<Duration>,
 }
 
 impl ApiTransport {
@@ -41,11 +41,6 @@ impl ApiTransport {
             http_client: reqwest::Client::new(),
             request_timeout: Some(timeout),
         }
-    }
-
-    pub(crate) fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.request_timeout = Some(timeout);
-        self
     }
 
     /// One attempt: HTTP errors become `ApiError::Http`, or

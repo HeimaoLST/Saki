@@ -52,6 +52,24 @@ pub async fn scripted_stream(responses: Vec<String>) -> (ModelClient, JoinHandle
 pub async fn scripted_bodies(
     responses: Vec<(u16, &'static str, Vec<u8>)>,
 ) -> (ModelClient, JoinHandle<Vec<Value>>) {
+    let (base_url, task) = scripted_server(responses).await;
+    (ModelClient::for_test(base_url), task)
+}
+
+/// A scripted Chat Completions endpoint over the same wire mock.
+pub async fn scripted_chat(
+    responses: Vec<(u16, &'static str, Vec<u8>)>,
+) -> (ModelClient, JoinHandle<Vec<Value>>) {
+    let (base_url, task) = scripted_server(responses).await;
+    (
+        ModelClient::ChatCompletions(crate::client::ChatCompletionsClient::for_test(base_url)),
+        task,
+    )
+}
+
+async fn scripted_server(
+    responses: Vec<(u16, &'static str, Vec<u8>)>,
+) -> (String, JoinHandle<Vec<Value>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
@@ -64,7 +82,7 @@ pub async fn scripted_bodies(
         }
         requests
     });
-    (ModelClient::for_test(format!("http://{address}/v1")), task)
+    (format!("http://{address}/v1"), task)
 }
 
 pub async fn read_request(socket: &mut TcpStream) -> Value {
