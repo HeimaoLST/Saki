@@ -475,3 +475,63 @@ async fn compaction_on_the_chat_client_uses_one_request_and_keeps_context() {
         .unwrap();
     assert!(sent["messages"].is_array());
 }
+
+#[tokio::test]
+async fn null_tool_calls_mean_no_calls() {
+    let input = vec![user("hi")];
+    // Complete JSON: the standard schema allows tool_calls: null.
+    let body = json!({
+        "id": "chatcmpl-null",
+        "choices": [{"message": {"content": "hello", "tool_calls": null}, "finish_reason": "stop"}]
+    })
+    .to_string();
+    let (client, _server) = mock_once(200, "application/json", body).await;
+    let response = client
+        .respond(ModelRequest::new("m".to_owned(), &input, Vec::new()))
+        .await
+        .unwrap();
+    assert!(
+        matches!(&response.output[0], OutputItem::Message { content, .. } if content[0].text == "hello")
+    );
+
+    // The stream JSON fallback shares this decoder (compact and titles too).
+    let body = json!({
+        "id": "chatcmpl-null-2",
+        "choices": [{"message": {"content": "direct", "tool_calls": null}, "finish_reason": "stop"}]
+    })
+    .to_string();
+    let (client, _server) = mock_once(200, "application/json", body).await;
+    let response = client
+        .respond_stream(
+            ModelRequest::new("m".to_owned(), &input, Vec::new()),
+            |_| {},
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(&response.output[0], OutputItem::Message { content, .. } if content[0].text == "direct")
+    );
+
+    // SSE deltas may carry tool_calls: null as well.
+    let mut stream = String::new();
+    stream.push_str(&sse(json!({
+        "id": "c-null",
+        "choices": [{"delta": {"content": "ok", "tool_calls": null}}]
+    })));
+    stream.push_str(&sse(json!({
+        "id": "c-null",
+        "choices": [{"delta": {}, "finish_reason": "stop"}]
+    })));
+    stream.push_str("data: [DONE]\n\n");
+    let (client, _server) = mock_once(200, "text/event-stream", stream).await;
+    let response = client
+        .respond_stream(
+            ModelRequest::new("m".to_owned(), &input, Vec::new()),
+            |_| {},
+        )
+        .await
+        .unwrap();
+    assert!(response.output.iter().any(
+        |item| matches!(item, OutputItem::Message { content, .. } if content[0].text == "ok")
+    ));
+}

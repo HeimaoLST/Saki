@@ -241,6 +241,16 @@ fn encode_messages(input: &[InputItem]) -> anyhow::Result<Vec<Value>> {
     Ok(messages)
 }
 
+/// `tool_calls` is optional *or null* in the standard Chat schema; a missing
+/// field, an explicit null and an empty array all mean no calls.
+fn absent_or_null<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 fn arguments_text(arguments: Option<Value>) -> String {
     match arguments {
         None | Some(Value::Null) => String::new(),
@@ -304,7 +314,7 @@ struct ChatChoice {
 #[derive(Deserialize)]
 struct ChatMessage {
     content: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "absent_or_null")]
     tool_calls: Vec<ChatToolCall>,
 }
 
@@ -385,7 +395,7 @@ struct StreamChoice {
 #[derive(Deserialize, Default)]
 struct StreamDelta {
     content: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "absent_or_null")]
     tool_calls: Vec<ToolCallDelta>,
 }
 
