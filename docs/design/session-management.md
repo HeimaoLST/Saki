@@ -27,11 +27,14 @@ A session is not SAKI's long-term identity. Shared beliefs, experiences, and rel
 | `SAKI_SESSION_DIR=/path/to/sessions cargo run` | Use a different storage root |
 | TUI: Ctrl+S or click the session title | Open the session picker |
 | Picker: Up/Down, Enter | Select and open a session |
-| Picker: n | Create and open a new session |
-| Picker: r | Rename the selected session; Enter saves, Esc cancels |
-| Picker: Esc or Ctrl+S | Close the picker |
+| Picker: / then type | Filter the listed sessions locally; terms are case-insensitive and all must match title, ID, working directory or model |
+| Picker: Up/Down while searching | Move through the matching results only |
+| Picker: n | Create and open a new session (outside search) |
+| Picker: r | Rename the selected session; Enter saves, Esc cancels (outside search) |
+| Picker: Esc in search | Clear the search field and keep the picker open |
+| Picker: Esc or Ctrl+S | Close the picker (Esc closes after search is cleared) |
 
-The picker shows titles, model routes, working directories, recent activity, and unavailable/in-use/interrupted states. It is displayed on demand; there is no permanent sidebar or shortcut list. New sessions start with the default title `New session` and a persisted `pending` provenance. After the first successful turn, one bounded background job asks the active model (tools disabled, small text-only excerpt, 30 s timeout) for a one-line title. Dispatch persists `auto` provenance first, so a failed, empty, timed-out, or restarted attempt is never retried; a manual rename records `manual` and always wins. Generated titles are English by design; only new sessions are eligible, and legacy metadata is never auto-titled. Metadata written before this feature has no provenance and keeps its explicit title.
+The picker shows titles, model routes, working directories, recent activity, and unavailable/in-use/interrupted states. It is displayed on demand; there is no permanent sidebar or shortcut list. A local `/` search filters the already-listed summaries: terms are case-insensitive, whitespace-separated and must all match the title, ID, working directory or model. An empty query shows all sessions in the existing recent-activity order; no matches show an explicit empty state, and Enter or `r` do nothing. Backspace is grapheme-safe, and while the field is active `n` and `r` are query text, not create/rename shortcuts. Search is frontend-only and never reaches core. New sessions start with the default title `New session` and a persisted `pending` provenance. After the first successful turn, one bounded background job asks the active model (tools disabled, small text-only excerpt, 30 s timeout) for a one-line title. Dispatch persists `auto` provenance first, so a failed, empty, timed-out, or restarted attempt is never retried; a manual rename records `manual` and always wins. Generated titles are English by design; only new sessions are eligible, and legacy metadata is never auto-titled. Metadata written before this feature has no provenance and keeps its explicit title.
 
 The TUI keeps each session's unsent draft, image attachments, reading position, selected record, and reasoning/tool expansion state during in-process switching. Reopening reads disk history again, so a cached view cannot hide newly saved messages. Cross-restart restoration of unsent drafts is not implemented. Restored reasoning is collapsed by default.
 
@@ -81,7 +84,7 @@ Frontends exchange `SessionCommand` and `SessionEvent`. Agent events are wrapped
 
 There is one write lock per journal, held for the loaded Conversation's lifetime. A second process cannot open the same session for writing. The OS releases the lock when the process exits. Listing does not require taking over the active session. Writes synchronize journal data before reporting success; this is not an exactly-once transaction across external tool side effects and the journal.
 
-Listing scans session journals and reads metadata, then sorts by recent activity. Older records without timestamps use file modification time as a fallback. There is no incremental search index yet; very large collections may need one after measuring actual listing costs.
+Listing scans session journals and reads metadata, then sorts by recent activity. Older records without timestamps use file modification time as a fallback. The picker's local search filters this in-memory summary list only; there is no persistent or incremental search index yet, so very large collections may need one after measuring actual listing costs.
 
 Tool-output files remain session-local dependencies of the history. No cleanup, deletion, export, automatic workspace relocation, or attachment migration is introduced.
 
@@ -112,7 +115,7 @@ If a target session fails to load, the existing active Agent and its frontend dr
 
 ## Validation and limits
 
-Behavior tests are grouped in [session tests](../../tests/session/mod.rs), [conversation tests](../../tests/conversation/mod.rs), and [TUI session tests](../../tests/tui/sessions.rs). They cover A/B/A context and model separation, session working directories, save/reopen, Busy handling, failed-open preservation, file locking, invalid versions, torn-tail recovery, interrupted tools, draft/attachment/view preservation, and session ID filtering. Existing tests now exercise production restore after repeated compact checkpoints and compare native requests containing images and reasoning before/after restore. M1 adds the API mismatch cases (2026-10-16): `a_session_created_on_another_api_is_not_opened_or_changed` (the refused open leaves the active session and files untouched) and `cross_api_open_with_torn_tail_fails_before_repairing_the_history` (fails before restore, history bytes unchanged, while the matching API still repairs the tail).
+Behavior tests are grouped in [session tests](../../tests/session/mod.rs), [conversation tests](../../tests/conversation/mod.rs), and [TUI session tests](../../tests/tui/sessions.rs). They cover A/B/A context and model separation, session working directories, save/reopen, Busy handling, failed-open preservation, file locking, invalid versions, torn-tail recovery, interrupted tools, draft/attachment/view preservation, session ID filtering, and picker search (metadata matching, empty state, key precedence, grapheme-safe editing, and selection stability across rename/title updates). Existing tests now exercise production restore after repeated compact checkpoints and compare native requests containing images and reasoning before/after restore. M1 adds the API mismatch cases (2026-10-16): `a_session_created_on_another_api_is_not_opened_or_changed` (the refused open leaves the active session and files untouched) and `cross_api_open_with_torn_tail_fails_before_repairing_the_history` (fails before restore, history bytes unchanged, while the matching API still repairs the tail).
 
 - Historical all-target regression (2026-10-13): **197 main tests + 40 experiment tests passed**. Formatting, build and whitespace checks also passed.
 - Current acceptance for automatic titles and cancellation (2026-10-15, frozen binary SHA `63b74e217c5d239e…`): combined serial suite passed **282 main + 40 experiment tests** with `cargo fmt --all -- --check` clean; the independent 5-scenario PTY harness passed 5/5; a real Magpie gateway live smoke (`opencode-go/deepseek-v4.1-flash`) completed with no tool calls and generated the title `Simple Greeting Request and Response` (report: `/tmp/saki-title-cancel-qa/live_report.json`).
@@ -126,7 +129,7 @@ Additional acceptance used the actual binary with an isolated mock Responses ser
 
 These session checks used local mock model responses; no new real-provider request was required. Existing user tmux panes and running sessions were not restarted or modified.
 
-Remaining scope: parallel/background jobs, session deletion/export/fork, old-directory migration, full-text search, cross-restart drafts, library packaging, and shared long-term identity.
+Remaining scope: parallel/background jobs, session deletion/export/fork, old-directory migration, full-text history search (the picker only filters list metadata), cross-restart drafts, library packaging, and shared long-term identity.
 
 ## Local command system
 

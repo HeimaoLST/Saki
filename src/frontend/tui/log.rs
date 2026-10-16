@@ -56,9 +56,8 @@ pub fn page(path: &str, start: u64) -> LogPage {
     let full = read as u64 == LOG_PAGE_BYTES;
     let mut out = String::new();
     let mut consumed = 0usize;
-    let mut line_count = 0usize;
     let mut stopped = false;
-    for raw in buffer.split_inclusive(|byte| *byte == b'\n') {
+    for (line_count, raw) in buffer.split_inclusive(|byte| *byte == b'\n').enumerate() {
         if line_count >= LOG_PAGE_LINES {
             stopped = true;
             break;
@@ -77,7 +76,6 @@ pub fn page(path: &str, start: u64) -> LogPage {
             out.push_str(&String::from_utf8_lossy(raw));
         }
         consumed += length;
-        line_count += 1;
     }
     if consumed == 0 {
         // The first line is longer than the page budget: clip a chunk and

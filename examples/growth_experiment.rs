@@ -8,24 +8,38 @@
 //!           cargo run --locked --example growth_experiment -- --real --run-id <id> \
 //!           --model <name> --base-url <url>'`
 
+// The experiment imports only a subset of each module via `#[path]`, so unused
+// items are expected. `not(test)` guards the expectation because the cfg(test)
+// build also loads those modules' own test suites, which use more of the API.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "example uses a subset via #[path]")
+)]
 #[path = "../src/agent"]
 mod agent {
     pub mod conversation;
     pub mod journal;
     pub mod message;
 }
-// The experiment deliberately imports only the Responses subset of the shared
-// client module tree (ModelClient and the Chat adapter are unused here by
-// design). Suppress dead code only for this experiment's copy; production and
-// test targets keep the lint.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "example uses a subset via #[path]")
+)]
 #[path = "../src/client/mod.rs"]
 mod client;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "example uses a subset via #[path]")
+)]
 #[path = "../src/protocol/mod.rs"]
 mod protocol;
 
 // Reuse the existing tool protocol by path, re-exported so
 // Reuse the registry while keeping tool execution outside the protocol module.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "example uses a subset via #[path]")
+)]
 #[path = "../src/tools/tool_registry.rs"]
 mod tool_registry_impl;
 mod tools {
@@ -33,6 +47,12 @@ mod tools {
         pub use crate::tool_registry_impl::*;
     }
 }
+
+// Second crate root: the cfg(test) build loads tests/client/{mod,stream}.rs via
+// the imported modules, and those refer to `crate::test_support`.
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod test_support;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
@@ -284,6 +304,7 @@ enum Backend {
         client: ResponsesClient,
         model: String,
     },
+    #[cfg_attr(not(test), expect(dead_code, reason = "constructed only in cfg(test)"))]
     Scripted(Mutex<VecDeque<ModelResponse>>),
 }
 
@@ -433,6 +454,12 @@ fn first_action(calls: &[RecordedCall]) -> String {
     }
 }
 
+// One CallOutcome per model call; keeping `Response` inline avoids boxing with
+// no measured benefit.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one per model call; boxing adds no benefit"
+)]
 enum CallOutcome {
     Response {
         resp: ModelResponse,
@@ -1315,7 +1342,7 @@ async fn main() -> anyhow::Result<()> {
         Some(url) => ClientConfig::new(config.api(), config.api_key().to_owned(), url),
         None => config,
     };
-    let mut client = ResponsesClient::from_config(&config)?.with_timeout(Duration::from_secs(60));
+    let client = ResponsesClient::from_config(&config)?.with_timeout(Duration::from_secs(60));
     let backend = Backend::Real { client, model };
     let base_dir = PathBuf::from(format!("examples/growth_experiment_artifacts/{run_id}"));
     prepare_artifacts(&base_dir)?;

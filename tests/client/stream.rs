@@ -4,9 +4,7 @@ use crate::protocol::{ModelRequest, OutputItem};
 use serde_json::json;
 use tokio::{io::AsyncWriteExt, net::TcpListener, sync::oneshot};
 
-#[path = "../support/mod.rs"]
-mod support;
-use support::{completed, read_request, requests, scripted_http, scripted_stream, sse};
+use crate::test_support::{completed, read_request, requests, scripted_http, scripted_stream, sse};
 
 #[tokio::test]
 async fn deltas_arrive_before_completion_across_byte_boundaries() {
@@ -24,9 +22,7 @@ async fn deltas_arrive_before_completion_across_byte_boundaries() {
         let (mut socket, _) = listener.accept().await.unwrap();
         let request = read_request(&mut socket).await;
         socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").await.unwrap();
-        let first = format!(
-            ": heartbeat\r\n\r\ndata: {{\"type\":\"response.created\"}}\r\n\r\nevent: response.output_text.delta\r\ndata: {{\"type\":\"response.output_text.delta\",\r\ndata: \"item_id\":\"message\",\"delta\":\"你好 🌱\"}}\r\n\r\n"
-        );
+        let first = ": heartbeat\r\n\r\ndata: {\"type\":\"response.created\"}\r\n\r\nevent: response.output_text.delta\r\ndata: {\"type\":\"response.output_text.delta\",\r\ndata: \"item_id\":\"message\",\"delta\":\"你好 🌱\"}\r\n\r\n";
         // Every UTF-8 byte is in a separate HTTP chunk, independent of TCP coalescing.
         for byte in first.bytes() {
             socket
@@ -151,7 +147,7 @@ async fn streaming_reuses_http_retry_and_overflow_rules_and_accepts_json_gateway
     assert_eq!(sent[0], sent[1]);
     assert_eq!(sent[0]["stream"], true);
 
-    let (client, server) = scripted_http(vec![(400, support::overflow())]).await;
+    let (client, server) = scripted_http(vec![(400, crate::test_support::overflow())]).await;
     let error = client
         .respond_stream(ModelRequest::new("test".to_owned(), &[], vec![]), |_| {})
         .await

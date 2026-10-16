@@ -356,25 +356,25 @@ impl App {
         // belong to a new task, never to the interrupted one. The boundary is
         // taken before the synthetic status error so that record stays visible
         // outside the group.
-        if let Some(index) = marker {
-            if matches!(
+        if let Some(index) = marker
+            && matches!(
                 app.records.get(index),
                 Some(Record::Activity { end: None, .. })
-            ) {
-                let end = app.records.len();
-                if let Record::Activity {
-                    end: slot,
-                    expanded,
-                    failed,
-                    interrupted,
-                    ..
-                } = &mut app.records[index]
-                {
-                    *slot = Some(end);
-                    *failed = true;
-                    *interrupted = true;
-                    *expanded = true;
-                }
+            )
+        {
+            let end = app.records.len();
+            if let Record::Activity {
+                end: slot,
+                expanded,
+                failed,
+                interrupted,
+                ..
+            } = &mut app.records[index]
+            {
+                *slot = Some(end);
+                *failed = true;
+                *interrupted = true;
+                *expanded = true;
             }
         }
         if matches!(replay.status, TaskStatus::Interrupted | TaskStatus::Unknown)
@@ -591,16 +591,15 @@ impl App {
             auto_collapse,
             ..
         } = &mut self.records[index]
+            && *auto_collapse
         {
-            if *auto_collapse {
-                if !reading {
-                    *expanded = false;
-                    self.text_selection.invalidate_record(index);
-                }
-                // Completion and user toggles consume the automatic transition once.
-                *auto_collapse = false;
-                self.layouts[index] = None;
+            if !reading {
+                *expanded = false;
+                self.text_selection.invalidate_record(index);
             }
+            // Completion and user toggles consume the automatic transition once.
+            *auto_collapse = false;
+            self.layouts[index] = None;
         }
     }
 
@@ -755,10 +754,10 @@ impl App {
 
     /// Moves a stale selection out of a collapsed Activity onto its marker.
     pub fn normalize_selection(&mut self) {
-        if let Some(marker) = self.visible_activity_for(self.selected) {
-            if !self.activity_expanded(marker) {
-                self.selected = marker;
-            }
+        if let Some(marker) = self.visible_activity_for(self.selected)
+            && !self.activity_expanded(marker)
+        {
+            self.selected = marker;
         }
     }
 
@@ -769,13 +768,13 @@ impl App {
             return;
         };
         let mut record = anchor.record;
-        if let Some(marker) = self.visible_activity_for(record) {
-            if !self.activity_expanded(marker) {
-                record = marker;
-                self.anchor = Some(Anchor { record, offset: 0 });
-                self.visual_anchor = None;
-                return;
-            }
+        if let Some(marker) = self.visible_activity_for(record)
+            && !self.activity_expanded(marker)
+        {
+            record = marker;
+            self.anchor = Some(Anchor { record, offset: 0 });
+            self.visual_anchor = None;
+            return;
         }
         let hidden = matches!(self.records.get(record), Some(Record::Activity { .. }))
             && !self.activity_visible(record);
