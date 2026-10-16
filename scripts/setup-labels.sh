@@ -44,7 +44,7 @@ labels=(
   "status:triage|ededed|待分诊：补类型、归属、优先级与迭代安排"
   "status:ready|c2e0c6|已就绪，等待负责业务线认领"
   "status:in-progress|fbca04|唯一主责实例组织执行，子任务通过 tmux 分派"
-  "status:review|1d76db|待评审、验收或授权合并；未集成仍保留"
+  "status:review|1d76db|待评审、验收或合并；breaking change 等人类决定"
   "status:blocked|b60205|被依赖阻塞（正文写 BLOCKED-BY: #N 或具体原因与解除条件）"
   "status:done|0e8a16|验收通过且交付完成，待关闭/已关闭"
 

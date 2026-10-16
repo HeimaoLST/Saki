@@ -1,4 +1,4 @@
-<!-- 协作协议见根目录 AGENTS.md。普通 PR 一个目标；发布/回流可汇总多个 issue。证据见 §10，合并授权见 §5/§7。 -->
+<!-- 协作协议见根目录 AGENTS.md。普通 PR 一个目标；发布/回流可汇总多个 issue。证据见 §10，合并预授权见 §0.2，执行门槛见 §5/§7。 -->
 
 ## 关联
 
@@ -38,4 +38,5 @@ Closes #  <!-- 目标为默认分支 dev 且完成该任务时填写；hotfix、
 FROM: agent:<line>#<instance>      <!-- 例如 agent:tui#nova -->
 IMPLEMENTER: <!-- 有子 agent 时注明实际实施实例；内部指导走 tmux，由主 agent 汇总，不写固定 pane 地址 -->
 REVIEWER: agent:<line>#<instance>  <!-- 实际独立审查者；主 agent 可附已发生的审查证据汇总，不能伪造结论或将同一交付的主子互审称为独立评审 -->
-MERGE 授权: <!-- 尚未授权可填“未授权”；执行合并前记录用户明确授权该 PR 的来源。此字段不要求提前向用户索取授权。 -->
+兼容性: <!-- 非 breaking change：说明依据；breaking change：影响、迁移／回滚方案与人类确认来源 -->
+MERGE 责任与授权: <!-- 主责实例；非 breaking change 引用 AGENTS.md §0.2 持续预授权，无需逐 PR 询问；breaking change 记录人类明确批准。独立评审／门禁／适用 QA 与发布协调仍须满足。 -->
