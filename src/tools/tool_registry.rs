@@ -44,6 +44,11 @@ impl ToolCall {
 pub struct ToolRegistry {
     tools: HashMap<String, Tool>,
 }
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
@@ -64,11 +69,9 @@ impl ToolRegistry {
         (tool.handler)(call.arguments).await
     }
     pub fn list_definition(&self) -> Vec<ToolDefinition> {
-        let tools = self
-            .tools
+        self.tools
             .values()
             .map(|tool| tool.definition.clone())
-            .collect();
-        return tools;
+            .collect()
     }
 }
