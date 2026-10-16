@@ -15,9 +15,7 @@ use std::{
     time::Duration,
 };
 
-#[path = "../support/mod.rs"]
-mod support;
-use support::{completed, scripted_http};
+use crate::test_support::{completed, scripted_http};
 
 struct Workspace(PathBuf);
 impl Workspace {
@@ -426,7 +424,7 @@ async fn busy_session_rejects_switch_and_second_message_but_can_be_listed() {
     let (release_tx, release_rx) = oneshot::channel();
     let server = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
-        let request = support::read_request(&mut socket).await;
+        let request = crate::test_support::read_request(&mut socket).await;
         started_tx.send(()).unwrap();
         release_rx.await.unwrap();
         let body = serde_json::to_vec(&completed("done")).unwrap();
@@ -524,7 +522,7 @@ fn title_attempt_is_claimed_once_and_failures_do_not_retry() {
             .is_none(),
         "an applied title is not replaced"
     );
-    assert_eq!(store.claim_auto_title(&id).unwrap(), false);
+    assert!(!store.claim_auto_title(&id).unwrap());
 }
 
 #[test]
@@ -655,7 +653,7 @@ async fn cancel_emits_one_terminal_event_and_stale_cancels_are_harmless() {
     let (release_tx, release_rx) = oneshot::channel();
     let server = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
-        let _request = support::read_request(&mut socket).await;
+        let _request = crate::test_support::read_request(&mut socket).await;
         started_tx.send(()).unwrap();
         let _ = release_rx.await;
         let body = serde_json::to_vec(&completed("too late")).unwrap();

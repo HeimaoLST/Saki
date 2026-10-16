@@ -111,21 +111,20 @@ impl ModelCatalog {
                 .providers
                 .get(provider)
                 .and_then(|provider| provider.models.get(model_id))
+                && model.limit.context > 0
             {
-                if model.limit.context > 0 {
-                    return Some(model.limit);
-                }
-            }
-            if let Some(model) = self.models.get(model_id) {
-                if model.limit.context > 0 {
-                    return Some(model.limit);
-                }
-            }
-        }
-        if let Some(model) = self.models.get(requested) {
-            if model.limit.context > 0 {
                 return Some(model.limit);
             }
+            if let Some(model) = self.models.get(model_id)
+                && model.limit.context > 0
+            {
+                return Some(model.limit);
+            }
+        }
+        if let Some(model) = self.models.get(requested)
+            && model.limit.context > 0
+        {
+            return Some(model.limit);
         }
         let name = requested.rsplit('/').next().unwrap_or(requested);
         let mut matches = self.models.iter().filter(|(id, model)| {
