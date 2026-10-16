@@ -53,7 +53,7 @@ src/
 | `research/systems/` | [Model runtime](research/systems/model-runtime.md) | Pi 的公共类型、模型目录、API 适配与流式调用边界；SAKI 分层建议 |
 | `research/systems/` | [Builtin tools](research/systems/builtin-tools.md) | Pi／Codex／OpenCode／Claude Code 的工具设计、输出与进程管理，以及首批工具提案 |
 | `research/systems/` | [Terminal UI](research/systems/terminal-ui.md) | 布局、滚动、主题与 Rust 组件选择；含发布版本核对和兼容性小样 |
-| `research/systems/` | [Terminal presentation](research/systems/terminal-presentation.md) | Pi／Codex 发布源码中的消息、活动、推理、Markdown、主题与状态栏技巧 |
+| `research/systems/` | [Terminal presentation](research/systems/terminal-presentation.md) | Pi／Codex／OpenCode 发布源码的消息、活动、推理、Markdown、主题与状态栏技巧，以及固定版本的四系统 TUI 能力矩阵 |
 | `research/learning/` | [Evidence and beliefs](research/learning/evidence-and-beliefs.md) | 来源、归因、矛盾与判断修正 |
 | `research/evaluation/` | [History to behavior](research/evaluation/history-to-behavior.md) | 如何评价记忆对行动的影响，已有评测的限制 |
 | `design/` | [Conversation compaction](design/conversation-compaction.md) | 自动触发、容量与 usage、工具边界、日志和验收 |
