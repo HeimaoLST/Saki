@@ -386,16 +386,16 @@ func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 	})
 	ui.Text(c, "Changes apply to future messages. Saved history stays intact.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 	ui.Text(c, "Name").FontSize(12).FontWeight(500).TextColor(t.Text)
-	ui.TextInput(c, &a.settingsDraft.Name).FontSize(14).Placeholder("Name")
+	ui.TextInput(c, &a.settingsDraft.Name).Label("Contact name").FontSize(14).Placeholder("Name")
 	if a.settingsError {
 		ui.Text(c, "Enter a name for this contact.").FontSize(12).TextColor(t.Danger)
 	}
 	ui.Text(c, "Purpose").FontSize(12).FontWeight(500).TextColor(t.Text)
-	ui.TextArea(c, &a.settingsDraft.Purpose).FontSize(14).Placeholder("Purpose")
+	ui.TextArea(c, &a.settingsDraft.Purpose).Label("Contact purpose").FontSize(14).Placeholder("Purpose")
 	ui.Text(c, "Instructions").FontSize(12).FontWeight(500).TextColor(t.Text)
-	ui.TextArea(c, &a.settingsDraft.Instructions).FontSize(14).Placeholder("Instructions")
+	ui.TextArea(c, &a.settingsDraft.Instructions).Label("Contact instructions").FontSize(14).Placeholder("Instructions")
 	ui.Text(c, "Workspace").FontSize(12).FontWeight(500).TextColor(t.Text)
-	ui.TextInput(c, &a.settingsDraft.Workspace).FontSize(14).Placeholder("~/Workspace/my-project")
+	ui.TextInput(c, &a.settingsDraft.Workspace).Label("Contact workspace").FontSize(14).Placeholder("~/Workspace/my-project")
 	ui.Row(c).Gap(8).Children(func() {
 		ui.Button(c, "Cancel").FontSize(13).OnClick(func() { a.closeAux() })
 		ui.PrimaryButton(c, "Save changes").FontSize(13).OnClick(func() { a.saveSettings() })

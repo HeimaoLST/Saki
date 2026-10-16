@@ -170,45 +170,95 @@ func TestDraftSwitchThroughTester(t *testing.T) {
 	}
 }
 
-// TestAddContactFocusesComposerAndSends clicks Add contact, then types and
-// presses Enter without any extra click: the message must belong to the new
-// default contact and existing contacts must not change.
+// TestAddContactFocusesComposerAndSends clicks Add contact twice through the
+// labeled view. Each time it types and presses Enter without any extra click;
+// each message must belong to the contact just created, and every existing
+// contact's messages and draft must stay untouched. The second creation is
+// the one the reviewer asked for: it proves the one-shot focus works again
+// and that the two new contacts do not share drafts or messages.
 func TestAddContactFocusesComposerAndSends(t *testing.T) {
 	a := testApp(t)
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.SetFocused(true)
 	tr.Frame()
-	before := make([]int, len(a.contacts))
+	beforeMsgs := make([]int, len(a.contacts))
+	beforeDrafts := make([]string, len(a.contacts))
 	for i := range a.contacts {
-		before[i] = len(a.contacts[i].Messages)
+		beforeMsgs[i] = len(a.contacts[i].Messages)
+		beforeDrafts[i] = a.contacts[i].Draft
 	}
+	assertExistingUnchanged := func(when string) {
+		t.Helper()
+		for i := range beforeMsgs {
+			if len(a.contacts[i].Messages) != beforeMsgs[i] || a.contacts[i].Draft != beforeDrafts[i] {
+				t.Fatalf("%s: existing contact %d changed: msgs %d->%d draft %q->%q", when, i, beforeMsgs[i], len(a.contacts[i].Messages), beforeDrafts[i], a.contacts[i].Draft)
+			}
+		}
+	}
+
+	// First creation.
 	if err := tr.Click("Add contact"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	created := a.selectedContact()
-	if created.Name != "New contact 1" || created.Role != "Assistant" {
-		t.Fatalf("created contact = %q role=%q", created.Name, created.Role)
+	first := a.selectedContact()
+	if first.Name != "New contact 1" || first.Role != "Assistant" {
+		t.Fatalf("created contact = %q role=%q", first.Name, first.Role)
+	}
+	if !tr.Focused("Composer for " + first.Name) {
+		t.Fatal("first creation should focus its composer without a click")
 	}
 	tr.Type("hello default")
 	tr.Key(0, ui.KeyEnter)
 	tr.Frame()
-	if len(created.Messages) != 2 {
-		t.Fatalf("new contact messages = %d, want user + demo reply", len(created.Messages))
+	if len(first.Messages) != 2 {
+		t.Fatalf("first contact messages = %d, want user + demo reply", len(first.Messages))
 	}
-	if got := created.Messages[0]; got.Kind != msgUser || got.Text != "hello default" {
+	if got := first.Messages[0]; got.Kind != msgUser || got.Text != "hello default" {
 		t.Fatalf("first message = %+v", got)
 	}
-	for i := range before {
-		if len(a.contacts[i].Messages) != before[i] {
-			t.Fatalf("existing contact %d changed: %d -> %d", i, before[i], len(a.contacts[i].Messages))
-		}
+	assertExistingUnchanged("after first send")
+
+	// Second creation through the same UI path, again with no extra click.
+	if err := tr.Click("Add contact"); err != nil {
+		t.Fatal(err)
 	}
+	tr.Frame()
+	second := a.selectedContact()
+	if second == first {
+		t.Fatal("the second Add contact must create a new contact")
+	}
+	if second.Name != "New contact 2" || second.Role != "Assistant" {
+		t.Fatalf("second contact = %q role=%q", second.Name, second.Role)
+	}
+	if !tr.Focused("Composer for " + second.Name) {
+		t.Fatal("second creation should focus its composer without a click")
+	}
+	tr.Type("second hello")
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if len(second.Messages) != 2 {
+		t.Fatalf("second contact messages = %d, want user + demo reply", len(second.Messages))
+	}
+	if got := second.Messages[0]; got.Kind != msgUser || got.Text != "second hello" {
+		t.Fatalf("second contact message = %+v, want the exact typed input", got)
+	}
+	// The first new contact still holds exactly its own message and no
+	// draft; the second send must not have leaked into it.
+	if len(first.Messages) != 2 || first.Messages[0].Text != "hello default" {
+		t.Fatalf("first new contact was changed by the second send: %+v", first.Messages[0])
+	}
+	if first.Draft != "" || second.Draft != "" {
+		t.Fatalf("sent send should clear both drafts: first=%q second=%q", first.Draft, second.Draft)
+	}
+	assertExistingUnchanged("after second send")
 }
 
-// TestSettingsDoesNotStealComposerFocus verifies the one-shot focus is
-// consumed once, later focus changes stick, and Settings keeps the draft.
-func TestSettingsDoesNotStealComposerFocus(t *testing.T) {
+// TestSettingsFieldsReceiveInputAndDoNotStealComposerFocus verifies through
+// the UI, not private flags, that a Settings field really takes typed input
+// while the composer keeps its draft, and that Tab plus further frames do not
+// pull focus back to the composer.
+func TestSettingsFieldsReceiveInputAndDoNotStealComposerFocus(t *testing.T) {
 	a := testApp(t)
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.SetFocused(true)
@@ -217,40 +267,98 @@ func TestSettingsDoesNotStealComposerFocus(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
+	ct := a.selectedContact()
 	tr.Type("keep me")
 	tr.Frame()
-	if a.selectedContact().Draft != "keep me" {
-		t.Fatalf("draft = %q", a.selectedContact().Draft)
+	if ct.Draft != "keep me" {
+		t.Fatalf("composer draft = %q", ct.Draft)
 	}
-	if a.focusComposer {
-		t.Fatal("the one-shot focus request should be consumed")
-	}
-	tr.ClickAt(400, 200) // leave the composer before clicking a button
-	tr.Frame()
 	if err := tr.Click("Settings"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	tr.Frame()
-	tr.Type("zz")
-	tr.Frame()
-	if a.selectedContact().Draft != "keep me" {
-		t.Fatalf("composer focus was stolen after Settings: draft = %q", a.selectedContact().Draft)
+	tr.Frame() // a second frame must not re-focus the composer
+	if tr.Focused("Composer for " + ct.Name) {
+		t.Fatal("opening Settings must not keep composer focus")
 	}
-	a.settingsDraft.Name = "Renamed"
+
+	// Explicitly focus the Settings name field through the UI and type.
+	nameBefore := a.settingsDraft.Name
+	if err := tr.Click("Contact name"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.Focused("Contact name") {
+		t.Fatal("clicking the Settings name field should focus it")
+	}
+	tr.Type(" edited")
+	tr.Frame()
+	if a.settingsDraft.Name != nameBefore+" edited" {
+		t.Fatalf("Settings name field did not receive the typed input: %q", a.settingsDraft.Name)
+	}
+	if ct.Draft != "keep me" {
+		t.Fatalf("typing in Settings changed the composer draft: %q", ct.Draft)
+	}
+
+	// Tab moves focus to the next control. More frames must not steal it
+	// back to the composer, and typing must not land in the composer.
+	tr.Key(0, ui.KeyTab)
+	tr.Frame()
+	tr.Frame()
+	if tr.Focused("Composer for " + ct.Name) {
+		t.Fatal("frames after Tab must not return focus to the composer")
+	}
+	tr.Type("qq")
+	tr.Frame()
+	if ct.Draft != "keep me" {
+		t.Fatalf("typing after Tab leaked into the composer: %q", ct.Draft)
+	}
+	if a.settingsDraft.Name != nameBefore+" edited" {
+		t.Fatalf("typing after Tab changed the name field: %q", a.settingsDraft.Name)
+	}
+}
+
+// TestSettingsSavePreservesMessagesHistoryAndDraft modifies and saves the
+// profile of a contact that already has non-empty messages, history and a
+// draft, and checks those are preserved; an empty name is still rejected.
+func TestSettingsSavePreservesMessagesHistoryAndDraft(t *testing.T) {
+	a := testApp(t)
+	ct := a.selectedContact() // Saki is seeded with messages and history
+	if len(ct.Messages) == 0 || len(ct.History) == 0 {
+		t.Fatal("fixture must start with non-empty messages and history")
+	}
+	ct.Draft = "unsent draft"
+	beforeMsgs := len(ct.Messages)
+	beforeHist := len(ct.History)
+	beforeLast := ct.Messages[beforeMsgs-1].Text
+
+	a.openSettings()
+	a.settingsDraft.Name = "Saki Renamed"
+	a.settingsDraft.Purpose = "Keeps earlier decisions in view."
+	a.settingsDraft.Workspace = "~/Workspace/saki"
 	if !a.saveSettings() {
 		t.Fatal("settings save should succeed with a name")
 	}
-	if a.selectedContact().Name != "Renamed" {
-		t.Fatalf("name = %q", a.selectedContact().Name)
+	if ct.Name != "Saki Renamed" {
+		t.Fatalf("name = %q", ct.Name)
 	}
-	if a.selectedContact().Draft != "keep me" || len(a.selectedContact().Messages) != 0 {
-		t.Fatal("settings save must not clear the draft or history")
+	if len(ct.Messages) != beforeMsgs || ct.Messages[beforeMsgs-1].Text != beforeLast {
+		t.Fatalf("saving settings changed messages: %d -> %d", beforeMsgs, len(ct.Messages))
 	}
+	if len(ct.History) != beforeHist {
+		t.Fatalf("saving settings changed history: %d -> %d", beforeHist, len(ct.History))
+	}
+	if ct.Draft != "unsent draft" {
+		t.Fatalf("saving settings cleared the draft: %q", ct.Draft)
+	}
+
 	a.openSettings()
 	a.settingsDraft.Name = "  "
 	if a.saveSettings() || !a.settingsError {
 		t.Fatal("empty settings name must be rejected")
+	}
+	if ct.Name != "Saki Renamed" {
+		t.Fatalf("a rejected save must not rename the contact: %q", ct.Name)
 	}
 }
 
