@@ -452,10 +452,10 @@ pub fn blocks_with_theme(text: &str, theme: theme::Theme) -> Vec<Block> {
                 }
             }
             Event::End(TagEnd::TableCell) => {
-                if let Some(table) = &mut parser.table {
-                    if let (Some(row), Some(cell)) = (&mut table.row, table.cell.take()) {
-                        row.push(cell);
-                    }
+                if let Some(table) = &mut parser.table
+                    && let (Some(row), Some(cell)) = (&mut table.row, table.cell.take())
+                {
+                    row.push(cell);
                 }
             }
             Event::End(TagEnd::Table) => {
@@ -521,11 +521,11 @@ fn push_into(
     end: usize,
 ) {
     let lead = parser.lead();
-    if let Some(table) = &mut parser.table {
-        if let Some(cell) = &mut table.cell {
-            push_cell_segment(cell, text, style, source, advance, lead);
-            return;
-        }
+    if let Some(table) = &mut parser.table
+        && let Some(cell) = &mut table.cell
+    {
+        push_cell_segment(cell, text, style, source, advance, lead);
+        return;
     }
     // The bullet is synthetic and must take the item/text start offset, before
     // the cursor advances past the wrapped text, so every continuation line can
@@ -546,17 +546,16 @@ fn push_cell_segment(
     if text.is_empty() {
         return;
     }
-    if let Some(last) = cell.last_mut() {
-        if advance > 0
-            && last.advance > 0
-            && last.style == style
-            && last.lead == lead
-            && last.source + last.advance == source
-        {
-            last.text.push_str(text);
-            last.advance += advance;
-            return;
-        }
+    if let Some(last) = cell.last_mut()
+        && advance > 0
+        && last.advance > 0
+        && last.style == style
+        && last.lead == lead
+        && last.source + last.advance == source
+    {
+        last.text.push_str(text);
+        last.advance += advance;
+        return;
     }
     cell.push(Segment {
         text: text.to_owned(),

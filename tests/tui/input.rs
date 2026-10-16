@@ -495,3 +495,382 @@ fn ctrl_c_closes_the_log_before_touching_the_draft() {
     assert_eq!(editor.text(), "draft", "the cleared draft is in history");
     let _ = std::fs::remove_file(&path);
 }
+
+fn image(name: &str) -> crate::agent::message::ImageAttachment {
+    crate::agent::message::ImageAttachment::new(name, "data:image/png;base64,AA")
+}
+
+fn render_history(app: &App, width: u16) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, 20)).unwrap();
+    terminal
+        .draw(|frame| crate::frontend::tui::history::draw(frame, app))
+        .unwrap();
+    buffer_text(terminal.backend().buffer())
+}
+
+#[test]
+fn ctrl_r_opens_history_search_and_leaves_the_draft_untouched() {
+    let mut app = App::new();
+    app.history.push("older prompt".to_owned());
+    app.history.push("newer prompt".to_owned());
+    let mut editor = Editor::new();
+    editor.set_draft(crate::agent::message::UserMessage {
+        text: "keep me".into(),
+        images: vec![image("a.png")],
+    });
+    let outcome = handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    assert!(app.history.searching());
+    assert!(outcome.send.is_none() && !outcome.cancel);
+    assert_eq!(editor.text(), "keep me");
+    assert_eq!(editor.images().len(), 1);
+}
+
+#[test]
+fn history_search_accept_inserts_into_the_composer_without_sending() {
+    let mut app = App::new();
+    app.history.push("first prompt".to_owned());
+    app.history.push("second prompt".to_owned());
+    let mut editor = Editor::new();
+    editor.insert_str("draft");
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    for character in "second".chars() {
+        handle_key(&mut app, &mut editor, key(KeyCode::Char(character)));
+    }
+    let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Enter));
+    assert!(!app.history.searching());
+    assert_eq!(editor.text(), "second prompt");
+    assert!(outcome.send.is_none(), "accept never sends");
+}
+
+#[test]
+fn history_search_cancel_restores_the_exact_editor_state() {
+    let mut app = App::new();
+    app.history.push("history one".to_owned());
+    let mut editor = Editor::new();
+    editor.set_draft(crate::agent::message::UserMessage {
+        text: "keep\ndraft".into(),
+        images: vec![image("a.png")],
+    });
+    editor.set_global_offset(2);
+    let cursor = editor.cursor();
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    for character in "history".chars() {
+        handle_key(&mut app, &mut editor, key(KeyCode::Char(character)));
+    }
+    let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Esc));
+    assert!(!app.history.searching());
+    assert_eq!(editor.text(), "keep\ndraft");
+    assert_eq!(editor.images().len(), 1);
+    assert_eq!(editor.cursor(), cursor);
+    assert!(!outcome.cancel);
+}
+
+#[test]
+fn history_search_ctrl_c_cancels_without_clearing_the_draft() {
+    let mut app = App::new();
+    app.history.push("saved".to_owned());
+    let mut editor = Editor::new();
+    editor.insert_str("composer draft");
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    let outcome = handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('c')));
+    assert!(!app.history.searching());
+    assert_eq!(editor.text(), "composer draft");
+    assert!(!outcome.quit, "Ctrl+C cancels search, not the app");
+}
+
+#[test]
+fn history_search_moves_older_and_newer() {
+    let mut app = App::new();
+    app.history.push("alpha one".to_owned());
+    app.history.push("alpha two".to_owned());
+    app.history.push("alpha three".to_owned());
+    let mut editor = Editor::new();
+    let search = |app: &mut App, editor: &mut Editor| {
+        handle_key(app, editor, ctrl(KeyCode::Char('r')));
+        for character in "alpha".chars() {
+            handle_key(app, editor, key(KeyCode::Char(character)));
+        }
+    };
+    // Newest match is selected first.
+    search(&mut app, &mut editor);
+    handle_key(&mut app, &mut editor, key(KeyCode::Enter));
+    assert_eq!(editor.text(), "alpha three");
+    // Up then repeated Ctrl+R steps to older matches.
+    search(&mut app, &mut editor);
+    handle_key(&mut app, &mut editor, key(KeyCode::Up));
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    handle_key(&mut app, &mut editor, key(KeyCode::Enter));
+    assert_eq!(editor.text(), "alpha one");
+    // Down moves newer again.
+    search(&mut app, &mut editor);
+    handle_key(&mut app, &mut editor, key(KeyCode::Up));
+    handle_key(&mut app, &mut editor, key(KeyCode::Down));
+    handle_key(&mut app, &mut editor, key(KeyCode::Enter));
+    assert_eq!(editor.text(), "alpha three");
+}
+
+#[test]
+fn history_search_no_match_keeps_the_mode_open_without_accepting_or_sending() {
+    // Empty history.
+    let mut app = App::new();
+    let mut editor = Editor::new();
+    editor.insert_str("draft");
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    assert!(app.history.searching());
+    let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Enter));
+    assert!(outcome.send.is_none());
+    assert_eq!(editor.text(), "draft");
+    assert!(
+        app.history.searching(),
+        "empty history keeps the search open"
+    );
+
+    // Non-empty history with no match: repeated Enter neither accepts nor
+    // sends, and the local mode stays visible.
+    let mut app = App::new();
+    app.history.push("other".to_owned());
+    let mut editor = Editor::new();
+    editor.insert_str("draft");
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    for character in "zzz".chars() {
+        handle_key(&mut app, &mut editor, key(KeyCode::Char(character)));
+    }
+    for _ in 0..2 {
+        let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Enter));
+        assert!(outcome.send.is_none(), "no-match Enter never sends");
+        assert!(app.history.searching(), "no-match Enter keeps the mode");
+        assert_eq!(editor.text(), "draft");
+    }
+}
+
+#[test]
+fn history_search_f1_closes_search_and_opens_help() {
+    let mut app = App::new();
+    app.history.push("saved".to_owned());
+    let mut editor = Editor::new();
+    editor.set_draft(crate::agent::message::UserMessage {
+        text: "draft".into(),
+        images: vec![image("a.png")],
+    });
+    editor.set_global_offset(1);
+    let cursor = editor.cursor();
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    handle_key(&mut app, &mut editor, key(KeyCode::Char('s')));
+    let outcome = handle_key(&mut app, &mut editor, key(KeyCode::F(1)));
+    assert!(!app.history.searching());
+    assert!(app.help_open, "F1 opens help after closing search");
+    assert!(outcome.send.is_none() && !outcome.cancel);
+    // Esc closes help; the draft, images and cursor are retained.
+    handle_key(&mut app, &mut editor, key(KeyCode::Esc));
+    assert!(!app.help_open);
+    assert_eq!(editor.text(), "draft");
+    assert_eq!(editor.images().len(), 1);
+    assert_eq!(editor.cursor(), cursor);
+}
+
+#[test]
+fn history_search_consumes_mouse_except_a_help_click() {
+    let mut app = App::new();
+    app.theme = crate::frontend::tui::theme::Theme::dark();
+    app.history.push("saved".to_owned());
+    app.transcript_area = Rect::new(0, 0, 80, 20);
+    app.help_button_area = Rect::new(70, 20, 10, 1);
+    app.session_button_area = Rect::new(0, 20, 10, 1);
+    app.input_area = Rect::new(0, 14, 80, 4);
+    let mut editor = Editor::new();
+    editor.insert_str("draft");
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    // Wheel and background clicks are consumed; the mode and focus stay put.
+    let _ = handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, 5, 5));
+    let _ = handle_mouse(
+        &mut app,
+        mouse(MouseEventKind::Down(MouseButton::Left), 5, 5),
+    );
+    assert!(app.history.searching());
+    assert_eq!(app.focus, Focus::Input);
+    assert_eq!(editor.text(), "draft");
+    // Ctrl+C still cancels the search without clearing the draft.
+    let outcome = handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('c')));
+    assert!(!app.history.searching());
+    assert_eq!(editor.text(), "draft");
+    assert!(!outcome.quit);
+    // A Help click is global and closes search before opening help.
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    let _ = handle_mouse(
+        &mut app,
+        mouse(MouseEventKind::Down(MouseButton::Left), 72, 20),
+    );
+    assert!(!app.history.searching());
+    assert!(app.help_open);
+}
+
+#[test]
+fn history_search_overlay_keeps_the_hint_with_a_tall_composer() {
+    let mut app = App::new();
+    app.theme = crate::frontend::tui::theme::Theme::dark();
+    app.history
+        .push("first line\nsecond line\nthird line".to_owned());
+    app.history.push(crate::agent::message::UserMessage {
+        text: "target one is a long prompt that does not fit one row\nsecond line of that prompt"
+            .into(),
+        images: vec![image("a.png"), image("b.png")],
+    });
+    // A five-line composer leaves only two rows above the input.
+    app.input_area = Rect::new(0, 6, 40, 6);
+    let mut editor = Editor::new();
+    editor.insert_str("draft line 1\ndraft line 2\ndraft line 3\ndraft line 4\ndraft line 5");
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    for character in "target".chars() {
+        handle_key(&mut app, &mut editor, key(KeyCode::Char(character)));
+    }
+    let mut terminal = Terminal::new(TestBackend::new(40, 15)).unwrap();
+    terminal
+        .draw(|frame| crate::frontend::tui::history::draw(frame, &app))
+        .unwrap();
+    let screen = buffer_text(terminal.backend().buffer());
+    assert!(screen.contains("History search"), "{screen}");
+    assert!(screen.contains("Search: target"), "{screen}");
+    assert!(
+        screen.contains("Esc cancel"),
+        "the exit hint stays visible: {screen}"
+    );
+    assert!(
+        screen.contains("…"),
+        "clipped preview shows omission: {screen}"
+    );
+    assert!(
+        screen.contains("[2 images]"),
+        "the attachment count stays apparent: {screen}"
+    );
+    // The real composer is untouched.
+    assert!(editor.text().contains("draft line 5"));
+    assert!(editor.images().is_empty());
+}
+
+#[test]
+fn history_search_esc_does_not_cancel_a_running_task_first() {
+    let mut app = App::new();
+    app.running = true;
+    app.history.push("previous".to_owned());
+    let mut editor = Editor::new();
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    assert!(app.history.searching());
+    let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Esc));
+    assert!(!outcome.cancel, "first Esc closes the local search");
+    assert!(!app.history.searching());
+    let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Esc));
+    assert!(outcome.cancel, "a later Esc cancels the task");
+}
+
+#[test]
+fn history_search_busy_accept_does_not_send() {
+    let mut app = App::new();
+    app.running = true;
+    app.history.push("queued prompt".to_owned());
+    let mut editor = Editor::new();
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Enter));
+    assert!(outcome.send.is_none());
+    assert_eq!(editor.text(), "queued prompt");
+}
+
+#[test]
+fn history_search_query_backspace_is_grapheme_safe() {
+    let mut app = App::new();
+    app.history.push("family a👨\u{200d}👩b".to_owned());
+    app.history.push("plain".to_owned());
+    let mut editor = Editor::new();
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    for character in "👨\u{200d}👩".chars() {
+        handle_key(&mut app, &mut editor, key(KeyCode::Char(character)));
+    }
+    // A grapheme-safe Backspace removes the whole ZWJ sequence, leaving an
+    // empty query whose newest match is "plain".
+    handle_key(&mut app, &mut editor, key(KeyCode::Backspace));
+    handle_key(&mut app, &mut editor, key(KeyCode::Enter));
+    assert_eq!(editor.text(), "plain");
+}
+
+#[test]
+fn history_search_paste_edits_only_the_query() {
+    let mut app = App::new();
+    app.history.push("pasted prompt".to_owned());
+    let mut editor = Editor::new();
+    editor.insert_str("composer draft");
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    crate::frontend::tui::handle_paste_text(&mut app, &mut editor, "pasted\nprompt");
+    assert_eq!(
+        editor.text(),
+        "composer draft",
+        "paste never mutates the hidden draft"
+    );
+    let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Enter));
+    assert!(outcome.send.is_none());
+    assert_eq!(editor.text(), "pasted prompt");
+}
+
+#[test]
+fn history_search_accept_aligns_ordinary_navigation() {
+    let mut app = App::new();
+    app.history.push("one".to_owned());
+    app.history.push("two".to_owned());
+    app.history.push("three".to_owned());
+    let mut editor = Editor::new();
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    for character in "two".chars() {
+        handle_key(&mut app, &mut editor, key(KeyCode::Char(character)));
+    }
+    handle_key(&mut app, &mut editor, key(KeyCode::Enter));
+    assert_eq!(editor.text(), "two");
+    // Ordinary recall continues from the accepted entry.
+    handle_key(&mut app, &mut editor, key(KeyCode::Up));
+    assert_eq!(editor.text(), "one");
+}
+
+#[test]
+fn history_search_cancel_leaves_navigation_unchanged() {
+    let mut app = App::new();
+    app.history.push("one".to_owned());
+    app.history.push("two".to_owned());
+    let mut editor = Editor::new();
+    handle_key(&mut app, &mut editor, key(KeyCode::Up));
+    assert_eq!(editor.text(), "two");
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    handle_key(&mut app, &mut editor, key(KeyCode::Esc));
+    handle_key(&mut app, &mut editor, key(KeyCode::Down));
+    assert_eq!(
+        editor.text(),
+        "",
+        "cancel kept the prior navigation position"
+    );
+}
+
+#[test]
+fn history_search_overlay_renders_preview_and_states() {
+    let mut app = App::new();
+    app.history.push("first\nsecond".to_owned());
+    app.history.push("target prompt".to_owned());
+    app.input_area = Rect::new(0, 12, 60, 4);
+    let mut editor = Editor::new();
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    for character in "target".chars() {
+        handle_key(&mut app, &mut editor, key(KeyCode::Char(character)));
+    }
+    let screen = render_history(&app, 60);
+    assert!(screen.contains("History search"), "{screen}");
+    assert!(screen.contains("Search: target"), "{screen}");
+    assert!(screen.contains("target prompt"), "{screen}");
+    for character in "zzz".chars() {
+        handle_key(&mut app, &mut editor, key(KeyCode::Char(character)));
+    }
+    let screen = render_history(&app, 60);
+    assert!(screen.contains("No matching history"), "{screen}");
+
+    let mut app = App::new();
+    app.input_area = Rect::new(0, 12, 40, 4);
+    let mut editor = Editor::new();
+    handle_key(&mut app, &mut editor, ctrl(KeyCode::Char('r')));
+    let screen = render_history(&app, 40);
+    assert!(screen.contains("History search"), "{screen}");
+    assert!(screen.contains("No history yet"), "{screen}");
+}

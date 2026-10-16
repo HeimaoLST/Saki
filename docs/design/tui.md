@@ -2,7 +2,7 @@
 
 下一版显示层次和视觉规范见 [TUI style](tui-style.md)，Pi／Codex 的对应源码分析见 [Terminal presentation](../research/systems/terminal-presentation.md)。TUI style 实验已于 2026-10-14 实现（主题、正文宽度、Markdown 表格、Activity 分组），本节继续描述已实现行为。
 
-更新日期：2026-10-13。首版已采用“工作记录”布局、Ratatui 原生组件和独立终端前端。Pi 负责具体实现，Codex 负责分阶段审查与独立验收。此前的布局和组件研究见 [Terminal UI 研究](../research/systems/terminal-ui.md)，HTML 对比稿仍保留为设计材料。
+更新日期：2026-10-15。首版已采用“工作记录”布局、Ratatui 原生组件和独立终端前端。Pi 负责具体实现，Codex 负责分阶段审查与独立验收。此前的布局和组件研究见 [Terminal UI 研究](../research/systems/terminal-ui.md)，HTML 对比稿仍保留为设计材料。
 
 ## 目标与当前能力
 
@@ -35,7 +35,7 @@ SAKI_UI=console cargo run
 
 | 操作 | 行为 |
 | --- | --- |
-| F1 / 空草稿时 ? / 点击帮助 | 在输入框上方打开帮助；Esc、F1、Ctrl+C 或点击关闭帮助收起，不改变草稿、焦点或阅读位置；↑↓、PgUp/PgDn、Home/End 与帮助区滚轮浏览说明 |
+| F1 / 空草稿时 ? / 点击帮助 | 在输入框上方打开帮助；Esc、F1、Ctrl+C 或点击关闭帮助收起，不改变草稿、焦点或阅读位置；↑↓、PgUp/PgDn、Home/End 与帮助区滚轮浏览说明；帮助列出会话/输入历史搜索控制与接受/关闭语义，并区分 Esc 先关局部视图再中断任务、Ctrl+C 不取消任务 |
 | 点击回到最新 | 回看或日志视图中恢复跟随最新输出，保留草稿；有新输出提示同时清除 |
 | Enter / Alt+Enter / Ctrl+J | 输入区发送／换行；兼容增强键盘协议下的 Shift+Enter；多行粘贴保留换行，不自动发送 |
 | Ctrl+V / 粘贴完整图片路径 | 输入区添加图片附件；剪贴板没有图片时粘贴文字；允许文字与多图或仅图片发送 |
@@ -44,8 +44,9 @@ SAKI_UI=console cargo run
 | 输入区恢复删除 | Ctrl+Y 插入最近一次词／行删除；单条 kill buffer，不是系统剪贴板或通用 undo；跨发送、清空和历史召回保留，普通字符删除不覆盖 |
 | 输入区视觉移动 | ↑／↓、Ctrl+P／N 按实际输入区宽度在软换行之间移动，连续垂直移动保留显示列；满足历史条件时改为召回输入历史 |
 | 输入历史 | 发送与 Ctrl+C 清空的完整草稿（文字及附件）进入当前进程历史，相邻重复去重；不从 conversation 重建、不受 compact 影响；空输入可召回，非空输入仅在等于最近召回草稿且光标位于全文头／尾时继续翻历史；改动文字或附件后继续用 ↑／↓ 移动光标；向下越过最新条目恢复空输入 |
+| 输入历史搜索 | Ctrl+R 打开输入框上方的本地搜索（空查询，最新匹配在前）；查询大小写不敏感，Ctrl+R／↑ 更旧、↓ 更新；Enter 把选中条目送入编辑器供编辑、不发送；Esc／Ctrl+C 取消并完整保留原草稿、光标、kill buffer 与附件；搜索期间真实编辑器不变，文本粘贴只改 query（多行折叠），图片粘贴提示先关闭搜索；F1 关闭搜索并打开帮助，Ctrl+S／会话标题点击先关闭搜索再打开 picker |
 | 点击 Thought / 记录区 Enter | 展开／收起工具或推理；推理期间浅灰展开，结束后自动折叠，回看或手动展开时保留状态；完整原文继续可复制 |
-| Tab / Esc | Tab 切换输入和记录焦点；Esc 依次关闭帮助、日志视图或清除真实文本选择，空闲时退出记录焦点，任务运行时发送取消（保留草稿） |
+| Tab / Esc | Tab 切换输入和记录焦点；Esc 依次关闭输入历史搜索、帮助、日志视图或清除真实文本选择，空闲时退出记录焦点，任务运行时发送取消（保留草稿） |
 | 鼠标滚轮 | 指针在记录／日志区时上下滚动，每次 3 行；不改变焦点和输入草稿 |
 | PgUp / PgDn | 按当前视口高度翻页；输入与记录焦点均可使用 |
 | Alt+Up / Alt+Down | 任意焦点逐行滚动，输入区普通方向键继续编辑草稿 |
@@ -117,6 +118,10 @@ Agent 通过 `ContextUpdated` 在 worker 启动、用户提交、响应 usage、
 界面、帮助、图片附件标签、剪贴板／图片错误和运行提示统一为英文。默认 system prompt 和遗留 calculator 的工具说明也改为英文；默认回复使用英文，用户明确要求其他语言时允许切换。用户原文、文件名和工具输出保持原样，中文／emoji 编辑与复制继续支持。历史设计说明里的中文标签代表当时方案。
 
 ## 实际验收
+
+2026-10-16 最终候选集成树（#25）：代码 HEAD `9ddeab177ed0e0331b175886f9dbd4cdf17a6737`，tree `abd3d6249ac509ff3b04ab82b4815a83f47fef59`（parents `82c6c09` + `e9fdb7f`；ancestors 含 runtime `f5aa56684671b1972a692712f96a91b397da042e` 与 TUI `e635bb545ec60d039041e8703a6c9002057e0e79`）。组合门禁全部通过：`cargo fmt --all -- --check` 0；`cargo clippy --all-targets -- -D warnings` **0**；`cargo test --locked` **313 通过 / 0 失败 / 6 忽略**；`cargo test --locked --example growth_experiment` **42 通过**；`cd desktop && go test ./...` 通过。独立真实 PTY 在该 exact HEAD 上 **9/9 场景 / 121/121 断言**通过（`session_search`、`session_search_exact_open`、`session_search_narrow_unicode`、`history_search`、`history_search_modal`、`history_search_busy_esc`、`help_esc_cancel`、`help_narrow_render`、`search_then_help_then_interrupt`）。QA 冻结二进制 `/tmp/saki-tui-search-qa/Saki-clippy-final`，sha256 `a73628f51ca3db9e7673d1885499988f0e86d4ce49e7d6375ca1ceba30a5b809`（独立于作者路径 debug 二进制 `3de90616f50b2e56f5c94a3565ae3ba890d385db1c6c9f0d0dea3238899980af`）；报告 `report-25-final.json`，见 QA 永久终验评论 [#25 comment](https://github.com/HeimaoLST/Saki/issues/25#issuecomment-6207358437)。baseline 组合修复树 `c558cf8e0a26f1ed4fa5067d4d493821482ff426`/tree `dec634b5755bfa5b910accb4990a5268bf432de2` 亦全绿（285 主测试 + 42 实验测试，clippy 0）。[#40](https://github.com/HeimaoLST/Saki/issues/40)（PR #45）清除了 `src/frontend/**`、`tests/tui/**` 的 Clippy 诊断，runtime 侧由 #39（PR #42）完成；#25 记录的基线 clippy exit 101 属历史事实，**仅对该候选集成树被取代**，不代表 `dev`/`master` 或 runtime 单独分支已合并或全绿。验收平台为 macOS arm64 + 受控 HTTP/SSE mock；本轮**没有**新增真实模型调用或物理 OS 剪贴板验证。
+
+2026-10-16（历史，pre-clippy-integration 功能栈）会话选择器搜索、输入历史搜索与上下文帮助（代码 commit `9bbf47c`，冻结二进制 SHA `f9fcad69adee3f7f9bc59db53e50ce9f5f4cf3a0b4e353e1ac6ea4ff34778f81`）：组合版本 `cargo test` **313 通过 / 0 失败 / 6 忽略**，`cargo fmt --check`、`cargo build` 与 `cd desktop && go test ./...` 通过；本轮为文档追加，代码与二进制未变。独立真实 PTY 在最终组合二进制上 **9/9 场景、121/121 断言通过**（报告 `/tmp/saki-tui-search-qa/report-23-final-stack.json`；QA 评论见 [#34](https://github.com/HeimaoLST/Saki/issues/34#issuecomment-6197099561)，root 复核见 [PR #38](https://github.com/HeimaoLST/Saki/pull/38#issuecomment-6197056801)）：`/` 会话选择器本地元数据搜索、过滤后精确 ID 打开与无匹配空状态、窄字段最长可用后缀 + grapheme Backspace；`Ctrl+R` 输入历史搜索（接受不发送、第二次 Enter 提交精确文本／图片、取消恢复原草稿与光标、模态与粘贴路由、busy Esc 本地优先）；运行中帮助第一次 Esc 只关帮助不取消、第二次 Esc 中断且保留草稿；以及 `#22`+`#23` 组合过渡。验收平台为 macOS arm64 + 受控 HTTP/SSE mock；本轮**没有**新增真实模型调用或物理 OS 剪贴板验证。`cargo clippy --all-targets -- -D warnings` 仍为既有 [#25](https://github.com/HeimaoLST/Saki/issues/25) 基线失败（exit 101，本迭代前端改动无新增诊断），因此不声称所有门禁为绿。
 
 2026-10-15 自动标题与 Esc 取消：组合串行全量 **282 主程序 + 40 成长实验**通过，`cargo fmt --all -- --check` 通过。冻结二进制 SHA `63b74e217c5d239e…` 上独立 5 场景 PTY 验收 5/5 通过（报告 `/tmp/saki-title-cancel-qa/report.json`）：自动标题一次尝试、失败不致命、流式取消保留有序部分文本与草稿、bash 进程组含后代终止、等待响应取消与空闲／帮助／选择器 Esc 优先级、陈旧与重复取消无害。真实 Magpie 网关 `opencode-go/deepseek-v4.1-flash` 现场冒烟通过，无工具调用，自动标题为 `Simple Greeting Request and Response`（`/tmp/saki-title-cancel-qa/live_report.json`）。界面保持英文标题、仅新会话可自动命名、旧 metadata 的显式标题保留；取消不是事务：在途工具已开始的文件写入可能完成或留下半写状态，不作回滚承诺；被取消／未完成轮次的公开推理仅界面显示，不持久化为 provider payload，正常完成轮次的推理持久化保持不变。
 
