@@ -21,7 +21,7 @@
 | Runtime（离线实验入口） | `rust` | `cargo test --locked --example growth_experiment` | 显式离线成长实验测试；与 `--all-targets` 重叠但便于定位 |
 | TUI（真实 PTY） | `rust` | `cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1` | 真实 PTY 上进入／退出终端并验证 panic 后 cooked mode 恢复 |
 | GUI（独立 Go module） | `gui` | `gofmt -l .`（必须为空）、`CGO_ENABLED=0 go vet ./...`、`go test ./... -count=1`、`go build` | 格式、vet、测试、构建 |
-| GUI（可复现图像） | `gui` | `SAKI_PREVIEW_DIR=... go test -run TestPreviewImages -count=1 .` | headless `ui.Tester` 生成 light/dark new-contact／settings 等 PNG，作为 artifact 保留 14 天 |
+| GUI（可复现图像） | `gui` | `SAKI_PREVIEW_DIR=... go test -run TestPreviewImages -count=1 .` | headless `ui.Tester` 生成 light/dark add／settings 等场景 PNG，作为 artifact 保留 14 天 |
 
 聚合检查：`ci-required`（`if: always()`，依赖 `rust` 与 `gui`）只在两者结果都为 `success` 时通过。`cancelled`／`failed`／`skipped` 都不算成功。若未来新增 job，必须同时更新 `ci-required` 的 `needs` 与判定。
 
@@ -63,24 +63,43 @@
 
 ## 分支保护（待 maintainer／主 agent 启用）
 
-当前仓库 `dev`／`master` 没有 branch protection 或 ruleset。CI 落地后，建议由 maintainer 用管理员权限把 `ci-required` 设为 required status check（`strict` 可选），并按团队需要决定是否要求 PR。不要在同一变更里让 agent 自行修改保护设置。
-
-参考命令（需要仓库 admin 权限；先核对当前状态再执行）：
+当前仓库 `dev`／`master` 没有 branch protection 或 ruleset。建议由 maintainer 用管理员权限为两个分支启用相同保护，并在应用前重读现状（若已有规则，先合并而不是覆盖）：
 
 ```sh
-# 读取现状；404 表示尚未保护
 gh api repos/HeimaoLST/Saki/branches/dev/protection || true
+gh api repos/HeimaoLST/Saki/branches/master/protection || true
 gh api repos/HeimaoLST/Saki/rulesets
-
-# 设置 dev 的 required check（示例：strict=true，不要求 workflow token 审批）
-gh api -X PUT repos/HeimaoLST/Saki/branches/dev/protection \
-  -f required_status_checks='{"strict":true,"contexts":["ci-required"]}' \
-  -F enforce_admins=false \
-  -f required_pull_request_reviews=null \
-  -f restrictions=null
 ```
 
-`master` 同理；发布／hotfix 流程仍按 AGENTS.md §7。共享 GitHub 账号的结构化评论不能替代平台原生审批；若启用“要求审批”，由 maintainer 处理账号层面限制。
+建议的 API 载荷（`ci-required` 绑定 GitHub Actions app id `15368`，已由真实 check-run 核对；PR 必需但不要求原生审批人数，避免共享账号无法自我审批；strict、禁 force-push／删除，保护规则同样约束 admin）：
+
+```json
+{
+  "required_status_checks": {
+    "strict": true,
+    "checks": [{"context": "ci-required", "app_id": 15368}]
+  },
+  "enforce_admins": true,
+  "required_pull_request_reviews": {
+    "dismiss_stale_reviews": false,
+    "require_code_owner_reviews": false,
+    "required_approving_review_count": 0,
+    "require_last_push_approval": false
+  },
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false
+}
+```
+
+应用示例（`dev`，`master` 同理）：
+
+```sh
+gh api -X PUT repos/HeimaoLST/Saki/branches/dev/protection \
+  --input branch-protection-dev.json
+```
+
+发布／hotfix 流程仍按 AGENTS.md §7。结构化评论不能替代平台原生审批；若未来启用必须的审批人数，由 maintainer 处理账号层面限制。
 
 ## 复现命令
 
