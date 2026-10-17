@@ -136,3 +136,57 @@ The command layer should parse local user intent and dispatch existing typed ope
 The implemented vocabulary is `/new`, `/sessions`, `/resume <id>`, `/rename <title>`, and `/help`. TUI picker buttons/keys and slash commands call the same session handlers. The command implementation documents completion, argument errors, literal-slash escaping, draft preservation, and Busy feedback. TUI Esc cancellation and `SessionCommand::Cancel` are implemented and accepted (see Behavior). Future commands such as model switching or manual compact should be added only alongside their own supported core operations.
 
 Implemented local input routing: [Local command system](command-system.md).
+
+## Proposed follow-up submission contract (#31)
+
+Proposal updated: 2026-10-17. **Not implemented or approved.** This section selects and details a candidate for [#31](https://github.com/HeimaoLST/Saki/issues/31); it does not change the Busy behavior described above. The machine boundary and initial task association are proposed in [#43 / PR #59](https://github.com/HeimaoLST/Saki/pull/59).
+
+### Recommendation and scope
+
+Choose candidate B: explicit FIFO follow-ups first. Candidate A also needs a safe point for steering, interaction with pending model/tool work, and a distinct user contract; it should not be implemented by injecting text into an in-flight HTTP request. Candidate C preserves Busy but does not provide accepted follow-ups. Steering remains a separate decision after actual use; it is not silently approximated by a follow-up queue.
+
+Existing `SessionCommand::Send`, TUI draft handling, and the initial machine API keep rejection while busy. An explicit `task.send` mode `enqueue` opts into a per-session queue; omitted mode or `reject_if_busy` retains rejection. A frontend must not display a queued acceptance before the runtime acknowledges it. A TUI shortcut or queue view requires its own frontend delivery, not a runtime-only claim that the current UI supports queues.
+
+No second Agent loop, journal parser, compaction path, or global current-session queue is introduced. Each accepted message uses the shared task/message association from the initial machine API. The queue is part of session execution management and can later be used with independent concurrent sessions from #61.
+
+### Observable behavior
+
+| Operation / state | Proposed result |
+| --- | --- |
+| Send while idle | Accept task/message IDs, then explicitly start it; acceptance precedes start events |
+| `reject_if_busy` while active or already queued | Return busy; do not allocate an accepted task or mutate history |
+| `enqueue` while active or already queued | Accept into the tail; return task/message IDs and `queued:true`; do not start or add the input to model context yet |
+| Queue capacity reached | Return `queue_full` before acceptance; preserve the input for the caller |
+| Current task terminates | Publish its unique terminal event and persist its execution boundary before starting the FIFO head |
+| Targeted cancellation of active task | Preserve cooperative cancellation; acknowledgment is not a terminal event; start the next accepted follow-up only after actual cleanup |
+| Targeted cancellation of queued task | Remove only that entry, acknowledge `cancelled_queued`, and emit one interrupted terminal with `started:false`; no model/tool request |
+| Wrong/stale task cancellation | Return not_running; never cancel a different active or queued task |
+| Query session status | Include active task and ordered pending task/message IDs; a displayed queue is runtime state, not a local guess |
+| EOF / explicit shutdown | Stop accepting; drain accepted tasks in order before releasing locks and exiting |
+| Hard process termination | Queued, unstarted entries are not durable and are not automatically replayed after restart |
+
+The proposed default is at most 16 pending messages per session, excluding its active task; the host may select a smaller finite capacity. This is a bounded admission limit, not a scheduling framework. Global multi-session concurrency and resource limits remain #61's contract. Capacity is validated before accepting IDs so a rejected input never looks queued.
+
+FIFO ordering is determined by runtime acceptance order within a session, not request IDs or client timestamps. Requests rejected for invalid input/session/configuration do not occupy a slot. The first queued task is removed only when it starts or is explicitly cancelled, and exactly one task writes a session's conversation at a time.
+
+A normal model/task failure or explicit interruption does not implicitly cancel later independent follow-ups: the next accepted task can continue using the existing reconciliation path. A session that cannot persist or restore execution safely stops accepting/starting work; its accepted pending tasks receive explicit failed outcomes rather than being silently dropped or run without reliable storage. Such never-started outcomes are distinguishable with `started:false` and do not fabricate `task_started` journal records.
+
+Queued input is not appended to the model context or ordinary journal message history until that task begins. It cannot alter the current model request or be compacted before its own turn. Acceptance and pending status are process-local, not a durable queue/exactly-once promise. After an uncertain disconnect or restart, callers inspect saved task/history state and do not automatically resubmit missing acknowledgments or vanished pending tasks.
+
+Metadata-only rename can remain available. Operations that change a session's model, profile, compaction, or release its execution state return busy while any task is active or pending. This prevents an accepted message from silently starting with a later configuration; #32 must preserve this rule or explicitly introduce a different, reviewed binding contract. Viewing another session neither changes the queue nor cancels its active task.
+
+### Deterministic acceptance and implementation split
+
+The implementation issue is created after TUI/GUI/PM acknowledgment of this candidate, and depends on #43's agreed task boundary and #60's initial machine API. It covers session admission/queue state, targeted cancellation, status projection and module tests, plus this document's implementation facts. Frontend queue interactions stay in frontend-owned follow-ups; multiple session overlap stays #61. This decision is not considered implementation completion merely because this document merges.
+
+Required behavior tests use controlled model/tool gates or oneshot coordination, never sleeps:
+
+1. Hold A at an await boundary; accept B and C, reject default-mode D, and prove B/C have not made model/tool requests or entered conversation history. After releasing A, start B then C exactly once in acceptance order.
+2. Cancel queued B while A runs: B never starts, A remains active, C keeps its position, and B gets one never-started interrupted terminal. Cancel A: C starts only after A's cleanup and terminal; stale cancellation cannot interrupt C.
+3. Release A with a normal failure, then run B using preserved context/reconciliation; test storage-unavailable handling separately so pending acceptance is never silently lost in a live process.
+4. Exercise capacity, invalid input, multiple client request IDs, and simultaneous submission/cancel/finish using controlled schedules. Rejection must not create misleading accepted IDs or journal records.
+5. Close input while A runs with B queued: drain both, preserve per-task IDs and terminal ordering, and release locks. Hard-kill/restart reports interrupted durable work but does not rerun B; caller resubmission is explicit.
+6. Queues for two sessions do not share ordering or cancellation state. A/B overlap is independently verified under #61; this test does not claim cross-session concurrency from a FIFO-only implementation.
+7. Existing Busy/TUI draft behavior and cancellation regressions remain green; model switching/release while pending follow the explicit conflict rule. Record final implementation SHA, applicable gates and independent review.
+
+Review requirements: runtime checks state transitions and persistence; TUI/GUI check accepted-versus-started, pending projection and targeted cancellation; PM checks follow-up-first versus steering scope. ACKs and independent review must cite the actual candidate. Existing user authorization covers compatible implementation and dev integration after these gates; an actual breaking change or product-scope dispute is reported separately.
