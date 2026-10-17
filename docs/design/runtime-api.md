@@ -84,7 +84,7 @@ provider 的协议／endpoint／凭据归宿主，启动时注入一次；不进
 
 metadata 和工具 output 在示例中仅为形状示意，不替代 SessionMetadata 或工具的实际字段契约。工具之后还会有下一次 model_request_started 与最终回答事件，不能因看见工具结果就提前标记完成。
 
-恢复、历史、取消和错误示例（相同的真实 session/task ID 由调用方保留）：
+以下是恢复、历史、取消和错误的独立场景示例；真实 session/task ID 由调用方保留：
 
 ```json
 {"version":1,"id":"o1","method":"session.load","params":{"session_id":"s1"}}
@@ -126,12 +126,12 @@ Go 侧建议用 `exec.CommandContext` 的 stdin/stdout pipe，持续独立读取
 
 | 阶段 | 交付 | 依赖／退出条件 |
 | --- | --- | --- |
-| 0 | #47 统一客户端合入 dev；#54 同步 README | 已有精确 SHA 验收；与 #53 发布冻结协调后集成；默认 Responses 回归保留 |
+| 0 | #47 统一客户端合入 dev；#54 同步 README | 以实际最新 dev 为准同步／验收；质量修复 #58 与 CI 治理 #55 的影响须核对，不能沿用旧基线通过结果 |
 | 1 | #43 定稿本契约；拆 runtime／GUI／QA 实施任务 | GUI 消费 ACK、TUI 兼容 ACK、PM 范围 ACK、独立内容评审；文档合入 dev 后关闭 decision |
-| 2 | Runtime 机器入口、关联、历史与取消；无 GUI 真实闭环 | 基于合入后的 #47；只改 runtime 路径和必要接线，默认 TUI/console 保持；最终 SHA 离线及真实 smoke 通过 |
-| 3 | GUI 使用真实入口替换 demo；跨端 QA | GUI 负责人实施、独立 QA 验收；首轮完成不意味着后续并发／检索完成 |
-| 4 | 同宿主多 session 重叠执行与失败隔离 | 独立 runtime 实施项，保留同一个机器契约和同一个 Agent；A 活动时 B 创建／加载／提交，事件不串，A 失败不结束 B |
-| 5 | compact 后 search_history／read_history | 独立 runtime 实施项；复用 journal 与 ToolRegistry，默认当前 session／绑定范围，返回来源与记录位置，不设向量库前提 |
+| 2 | [#60](https://github.com/HeimaoLST/Saki/issues/60) Runtime 机器入口、关联、历史与取消；无 GUI 真实闭环 | 基于合入后的 #47；只改 runtime 路径和必要接线，默认 TUI/console 保持；最终 SHA 离线及真实 smoke 通过 |
+| 3 | [#63](https://github.com/HeimaoLST/Saki/issues/63) GUI 使用真实入口替换 demo；[#64](https://github.com/HeimaoLST/Saki/issues/64) 跨端 QA | GUI 负责人实施、独立 QA 验收；首轮完成不意味着后续并发／检索完成 |
+| 4 | [#61](https://github.com/HeimaoLST/Saki/issues/61) 同宿主多 session 重叠执行与失败隔离 | 独立 runtime 实施项，保留同一个机器契约和同一个 Agent；A 活动时 B 创建／加载／提交，事件不串，A 失败不结束 B |
+| 5 | [#62](https://github.com/HeimaoLST/Saki/issues/62) compact 后 search_history／read_history | 独立 runtime 实施项；复用 journal 与 ToolRegistry，默认当前 session／绑定范围，返回来源与记录位置，不设向量库前提 |
 | 6 | #31 follow-up／steering 策略与实施 | 复用 task 接纳边界；推荐先显式 FIFO follow-up、默认 busy 不变；队列、取消、关闭策略定稿后实施，steering 单列取舍 |
 | 7 | #32 会话内模型切换 | 定义候选模型配置与容量、闲时切换／失败保持、持久化及 API continuation 兼容；首版优先同 API 已配置连接，跨协议不强行迁移 |
 | 8 | #33 已应用变更的权威工具结果 | 设计 edit/write 结果中的结构化 before/after 或 change；仅报告真实应用结果，失败不伪造 diff，TUI 消费需 ACK |
@@ -154,7 +154,7 @@ Go 侧建议用 `exec.CommandContext` 的 stdin/stdout pipe，持续独立读取
 | 历史检索 | 历史由同一个 reader 提供，GUI 不复制 parser | 多次 compact 后原文可 search/read，来源可定位，绑定范围外无泄漏 |
 | 配置与兼容 | 缺少配置不开始；旧终端接口／session 可用；两种已实现模型协议回归 | 模型切换失败保持原配置；权威 diff 与实际文件变更一致 |
 
-所有并发／取消测试用 oneshot、barrier 或受控 HTTP fixture，不靠 sleep 碰运气。Rust 改动跑 fmt、strict Clippy、cargo test、growth_experiment；发布或跨端验收按仓库门禁补 Go。每个实现 PR 记录精确最终 SHA、退出码和适用范围；真实 provider 的文字→工具→回答 smoke 与离线 fixture 证据分开，未实测组合不宣称兼容。
+所有并发／取消测试用 oneshot、barrier 或受控 HTTP fixture，不靠 sleep 碰运气。Rust 改动跑 fmt、strict Clippy、cargo test、growth_experiment；发布或跨端验收按仓库门禁补 Go。若 #55 的 CI／required check 已启用，必须取得实际候选的检查结果，不能用本地通过替代必需 CI。每个实现 PR 记录精确最终 SHA、退出码和适用范围；真实 provider 的文字→工具→回答 smoke 与离线 fixture 证据分开，未实测组合不宣称兼容。
 
 ## 兼容性、回滚与定稿要求
 
