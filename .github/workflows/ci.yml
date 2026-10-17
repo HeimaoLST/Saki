@@ -51,11 +51,12 @@ jobs:
       - name: Runtime + TUI tests (unit, integration, examples)
         run: cargo test --locked --all-targets
 
-      - name: Growth experiment offline tests
-        run: cargo test --locked --example growth_experiment
-
       - name: TUI real-PTY terminal lifecycle fixture
-        run: cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1 | tee "$RUNNER_TEMP/tui-pty.log"
+          grep -q "test result: ok. 1 passed; 0 failed" "$RUNNER_TEMP/tui-pty.log"
 
       - name: Job summary
         if: always()
@@ -65,9 +66,8 @@ jobs:
             echo ""
             echo "- \`cargo fmt --all -- --check\`"
             echo "- \`cargo clippy --locked --all-targets -- -D warnings\`"
-            echo "- \`cargo test --locked --all-targets\` (unit, integration, example targets)"
-            echo "- \`cargo test --locked --example growth_experiment\` (explicit offline experiment gate)"
-            echo "- \`pty_panic_restores_terminal\` (real PTY fixture, run explicitly)"
+            echo "- \`cargo test --locked --all-targets\` (unit, integration, example targets; includes 42 growth-experiment tests)"
+            echo "- \`pty_panic_restores_terminal\` (real PTY fixture; step asserts exactly 1 passed)"
             echo ""
             echo "Runtime and TUI share this crate; this job is the required gate for both lines."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -122,7 +122,7 @@ jobs:
         with:
           name: desktop-headless-previews
           path: ${{ runner.temp }}/desktop-previews/*.png
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
       - name: Job summary

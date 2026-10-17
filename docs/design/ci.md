@@ -17,8 +17,7 @@
 | --- | --- | --- | --- |
 | Runtime + TUI（共享 crate） | `rust` | `cargo fmt --all -- --check` | Rust 格式 |
 | Runtime + TUI | `rust` | `cargo clippy --locked --all-targets -- -D warnings` | 所有 target 的静态检查，warnings 视为失败 |
-| Runtime + TUI | `rust` | `cargo test --locked --all-targets` | 单元、集成与 example target（当前 313 主程序 + 42 成长实验） |
-| Runtime（离线实验入口） | `rust` | `cargo test --locked --example growth_experiment` | 显式离线成长实验测试；与 `--all-targets` 重叠但便于定位 |
+| Runtime + TUI | `rust` | `cargo test --locked --all-targets` | 单元、集成与 example target（当前 313 主程序 + 42 成长实验；example tests 实际执行） |
 | TUI（真实 PTY） | `rust` | `cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1` | 真实 PTY 上进入／退出终端并验证 panic 后 cooked mode 恢复 |
 | GUI（独立 Go module） | `gui` | `gofmt -l .`（必须为空）、`CGO_ENABLED=0 go vet ./...`、`go test ./... -count=1`、`go build` | 格式、vet、测试、构建 |
 | GUI（可复现图像） | `gui` | `SAKI_PREVIEW_DIR=... go test -run TestPreviewImages -count=1 .` | headless `ui.Tester` 生成 light/dark add／settings 等场景 PNG，作为 artifact 保留 14 天 |
@@ -108,7 +107,6 @@ gh api -X PUT repos/HeimaoLST/Saki/branches/dev/protection \
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
-cargo test --locked --example growth_experiment
 cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1
 
 # GUI
