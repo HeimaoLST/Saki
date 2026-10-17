@@ -116,11 +116,51 @@ session.load 获得写锁、允许既有 torn-tail 修复；history 本身只读
 
 cancel 的接纳只表示发送协作式信号。任务实际退出并完成 journal 收尾后才发 interrupted；若完成先赢，则保持 completed、取消返回 not_running，不补第二个终态。取消无法回滚文件或其他外部副作用，锁在执行退出前不释放。
 
-stdin EOF 与显式 shutdown 都停止接纳，等待已接纳任务结束；不自动取消。stdout 写端断开表示观察通道丢失，不冒报 completed；核心可继续落盘后结束，GUI 将状态标为连接中断／未知并重新加载历史核对。首版没有透明重连、事件游标和断线续传；重新启动是新进程，不承诺强杀后任务存活。
+stdin EOF 与显式 shutdown 都停止接纳，等待已接纳任务结束；不自动取消。stdout 写端断开表示观察通道丢失：停止接纳新请求，等待已接纳执行落盘／收尾后退出，不冒报 completed；GUI 将状态标为连接中断／未知并重新加载历史核对。首版没有透明重连、事件游标和断线续传；重新启动是新进程，不承诺强杀后任务存活。
 
 如果调用方没收到 task.send 的接纳响应就失去连接，不能自动重发；任务可能已执行。先恢复对应 session 的历史／状态，只有明确新意图才再次提交。后续若需要幂等提交，必须另定义 durable 接纳和去重契约。
 
-Go 侧建议用 `exec.CommandContext` 的 stdin/stdout pipe，持续独立读取 stdout；不能为了等一次请求响应而暂停事件读取。默认 Scanner 的行长上限不足以承载图片或较大工具结果，应显式设置 buffer 或用 Reader。任务结束与进程退出分开：读到 task_finished 不关闭整个 runtime。完整可执行无 GUI 驱动和启动说明随首轮实现交付，不能把本文示例当作已运行证据。
+Go 侧用 `os/exec` 的 stdin/stdout pipe，持续独立读取 stdout；不能为了等一次请求响应而暂停事件读取。使用 CommandContext 时，context 应绑定整个子进程生命周期，不绑定当前查看对象。按 [Go StdoutPipe 契约](https://pkg.go.dev/os/exec#Cmd.StdoutPipe)，Start 后完成 pipe 读取再 Wait。默认 Scanner 的行长上限不足以承载图片或较大工具结果，应按 [Scanner.Buffer](https://pkg.go.dev/bufio#Scanner.Buffer) 设置 buffer 或用 Reader。任务结束与进程退出分开：读到 task_finished 不关闭整个 runtime。
+
+下面的最小无 GUI 驱动展示调用顺序，沿用启动环境和当前目录中的 `probe.txt`。它针对提案接口，需在 #60 实现后运行验证；当前不作为执行证据。恢复时将 create 换成 `session.load` 并传入已保存的 session_id，load/history 的零请求验收由独立 fixture 计数证明。
+
+```python
+import json
+import subprocess
+
+p = subprocess.Popen(["target/debug/Saki", "--stdio"], stdin=subprocess.PIPE,
+                     stdout=subprocess.PIPE, text=True)
+
+def call(request_id, method, params):
+    p.stdin.write(json.dumps({"version": 1, "id": request_id,
+                             "method": method, "params": params}) + "\n")
+    p.stdin.flush()
+    for line in p.stdout:
+        message = json.loads(line)
+        if message.get("type") == "response" and message.get("id") == request_id:
+            if "error" in message:
+                raise RuntimeError(message["error"])
+            return message["result"]
+    raise RuntimeError("runtime disconnected before response")
+
+session = call("create", "session.create", {})["session_id"]
+task = call("send", "task.send", {"session_id": session,
+            "message": {"text": "Use read to inspect probe.txt and report its marker."}})
+for line in p.stdout:
+    message = json.loads(line)
+    if (message.get("task_id") == task["task_id"]
+            and message.get("event", {}).get("type") == "task_finished"):
+        assert message["event"]["status"] == "completed", message
+        break
+else:
+    raise RuntimeError("runtime disconnected before task finished")
+call("shutdown", "runtime.shutdown", {})
+for line in p.stdout:
+    json.loads(line)
+assert p.wait() == 0
+```
+
+该示例串行消费首次任务；正式 GUI 必须持续路由所有 response/event，并独立处理 stderr 和子进程退出。完整可执行离线／子进程验收驱动及限制随首轮实现交付，不能把示例语法校验当作真实闭环。
 
 ## 综合交付顺序与依赖
 
