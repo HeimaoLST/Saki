@@ -1,6 +1,6 @@
 # CI governance（Runtime／TUI／GUI）
 
-更新日期：2026-10-17。状态：**实现事实**（workflow、本地验证与真实 GitHub Actions 运行结果）；分支保护与 required check 的启用状态单独标注。
+更新日期：2026-10-17。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。
 
 ## 目的与范围
 
@@ -60,9 +60,11 @@
 - 离线测试与本地 demo 回复不证明真实 provider、真实模型质量或 Rust runtime 端到端；这些仍按各自任务单独验收。
 - 缓存命中与否不影响门禁结论；首次运行可能较慢。
 
-## 分支保护（待 maintainer／主 agent 启用）
+## 分支保护（2026-10-17 已配置）
 
-当前仓库 `dev`／`master` 没有 branch protection 或 ruleset。建议由 maintainer 用管理员权限为两个分支启用相同保护，并在应用前重读现状（若已有规则，先合并而不是覆盖）：
+实现事实（2026-10-17 主 agent 应用并读回）：`dev`／`master` 均要求 `ci-required`（GitHub Actions app id `15368`，strict=true）；`enforce_admins=true`；PR 必需但 `required_approving_review_count=0`（共享账号不要求原生审批，独立评审仍按 AGENTS.md 流程）；force-push 与分支删除均禁止；同时核对 rulesets 为空。
+
+以下 schema／runbook 保留用于变更前重读、复验或回滚；再次应用前仍须读取现状，若已有不同规则先合并而不是覆盖：
 
 ```sh
 gh api repos/HeimaoLST/Saki/branches/dev/protection || true
