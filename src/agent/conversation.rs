@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::{
     agent::message::{ImageAttachment, UserMessage},
-    client::ResponsesClient,
+    client::ModelClient,
     protocol::{
         InputContentPart, InputItem, InputMessageContent, MessageRole, ModelRequest, OutputItem,
         ProviderData, ReasoningText, ToolDefinition, Usage,
@@ -412,7 +412,7 @@ impl Conversation {
     /// active context intact and prevents the caller from sending an oversized request.
     pub async fn compact_if_needed(
         &mut self,
-        client: &ResponsesClient,
+        client: &ModelClient,
         model: &str,
         tools: &[ToolDefinition],
     ) -> Result<Option<CompactionResult>> {
@@ -431,7 +431,7 @@ impl Conversation {
     /// Failure preserves the active context and does not retry the summary request.
     pub async fn compact(
         &mut self,
-        client: &ResponsesClient,
+        client: &ModelClient,
         model: &str,
         tools: &[ToolDefinition],
     ) -> Result<CompactionResult> {
