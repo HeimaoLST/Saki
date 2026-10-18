@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -5,6 +7,109 @@ use crate::agent::message::{ImageAttachment, UserMessage};
 
 /// Codex-style word separator run; word motion treats these as one piece.
 const WORD_SEPARATORS: &str = "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?";
+
+/// Combined retained-history caps: entry count and a hard text-byte budget
+/// shared by undo and redo. An edit whose pre-state alone exceeds the budget
+/// resets and skips history; undo/redo refuses (draft unchanged) when the live
+/// draft cannot fit.
+const MAX_UNDO_ENTRIES: usize = 100;
+const MAX_UNDO_BYTES: usize = 8 * 1024 * 1024;
+
+/// One draft state kept for undo/redo. Text lines are owned; attachments are
+/// shared by pointer so consecutive text edits never clone base64 payloads.
+struct Snapshot {
+    lines: Vec<String>,
+    row: usize,
+    col: usize,
+    images: Arc<Vec<ImageAttachment>>,
+}
+
+impl Snapshot {
+    /// Serialized text bytes, including the newline between lines.
+    fn text_bytes(&self) -> usize {
+        self.lines.iter().map(String::len).sum::<usize>() + self.lines.len().saturating_sub(1)
+    }
+}
+
+/// Bounded undo/redo stacks. `typing` is true while consecutive typed
+/// characters extend the most recent undo entry. `byte_cap`/`entry_cap` bound
+/// the *combined* retained history across both stacks.
+struct EditHistory {
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+    typing: bool,
+    byte_cap: usize,
+    entry_cap: usize,
+}
+
+impl Default for EditHistory {
+    fn default() -> Self {
+        Self {
+            undo: Vec::new(),
+            redo: Vec::new(),
+            typing: false,
+            byte_cap: MAX_UNDO_BYTES,
+            entry_cap: MAX_UNDO_ENTRIES,
+        }
+    }
+}
+
+impl EditHistory {
+    /// Records the pre-edit state. An oversized pre-edit snapshot resets and
+    /// skips history (documented oversized-edit behavior); otherwise redo is
+    /// discarded and the combined stacks are re-trimmed.
+    fn record(&mut self, snapshot: Snapshot) {
+        if snapshot.text_bytes() > self.byte_cap {
+            self.clear();
+            return;
+        }
+        self.redo.clear();
+        self.undo.push(snapshot);
+        self.trim();
+    }
+
+    /// Drops entries until the combined stacks fit both caps; older undo entries
+    /// are dropped before older redo entries. Every retained snapshot is
+    /// individually <= `byte_cap`, so this is a real bound.
+    fn trim(&mut self) {
+        while self.len() > self.entry_cap {
+            if !self.undo.is_empty() {
+                self.undo.remove(0);
+            } else if !self.redo.is_empty() {
+                self.redo.remove(0);
+            } else {
+                break;
+            }
+        }
+        while self.total_bytes() > self.byte_cap {
+            if !self.undo.is_empty() {
+                self.undo.remove(0);
+            } else if !self.redo.is_empty() {
+                self.redo.remove(0);
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.undo.len() + self.redo.len()
+    }
+
+    fn total_bytes(&self) -> usize {
+        self.undo
+            .iter()
+            .chain(self.redo.iter())
+            .map(Snapshot::text_bytes)
+            .sum()
+    }
+
+    fn clear(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+        self.typing = false;
+    }
+}
 
 /// Multi-line draft editor.
 ///
@@ -22,9 +127,11 @@ pub struct Editor {
     kill: Option<String>,
     /// Preferred display column for consecutive vertical moves.
     preferred_col: Option<usize>,
-    /// Draft image attachments, kept with the draft so recall/clear move them
-    /// together with the text.
-    images: Vec<ImageAttachment>,
+    /// Draft image attachments, shared by pointer with undo snapshots so text
+    /// edits never clone base64 payloads; collection changes build a new Arc.
+    images: Arc<Vec<ImageAttachment>>,
+    /// Bounded local draft history owned by the editor.
+    history: EditHistory,
 }
 
 impl Default for Editor {
@@ -80,7 +187,8 @@ impl Editor {
             row: 0,
             kill: None,
             preferred_col: None,
-            images: Vec::new(),
+            images: Arc::new(Vec::new()),
+            history: EditHistory::default(),
         }
     }
 
@@ -89,59 +197,207 @@ impl Editor {
     }
 
     pub fn images(&self) -> &[ImageAttachment] {
-        &self.images
+        self.images.as_slice()
     }
 
-    /// Appends a draft attachment.
+    /// Appends a draft attachment as one undoable collection change.
     pub fn insert_image(&mut self, image: ImageAttachment) {
-        self.images.push(image);
+        self.checkpoint(false);
+        let mut images = (*self.images).clone();
+        images.push(image);
+        self.images = Arc::new(images);
         self.preferred_col = None;
     }
 
-    /// Removes the last draft attachment; returns `false` when there was none.
+    /// Removes the last draft attachment as one undoable collection change;
+    /// returns `false` when there was none.
     pub fn remove_last_image(&mut self) -> bool {
-        let removed = self.images.pop().is_some();
-        if removed {
-            self.preferred_col = None;
+        if self.images.is_empty() {
+            return false;
         }
-        removed
+        self.checkpoint(false);
+        let mut images = (*self.images).clone();
+        images.pop();
+        self.images = Arc::new(images);
+        self.preferred_col = None;
+        true
     }
 
     pub fn text(&self) -> String {
         self.lines.join("\n")
     }
 
-    /// Clears the draft but keeps the kill buffer and resets vertical state.
+    /// Clears the draft as one undoable edit; keeps the kill buffer and
+    /// resets vertical state. A no-op clear leaves redo intact.
     pub fn clear(&mut self) {
-        self.lines = vec![String::new()];
-        self.row = 0;
-        self.col = 0;
-        self.preferred_col = None;
-        self.images.clear();
+        if self.is_empty() {
+            return;
+        }
+        self.checkpoint(false);
+        self.clear_state();
+    }
+
+    /// Clears the draft and drops all undo/redo history (executed command).
+    pub fn reset(&mut self) {
+        self.clear_state();
+        self.history.clear();
+    }
+
+    /// Drops undo/redo history but keeps the draft (send, session switch).
+    pub fn reset_history(&mut self) {
+        self.history.clear();
+    }
+
+    /// Clears the draft for the Ctrl+C path: the clear stays undoable while the
+    /// returned draft is stored in the input history.
+    pub fn clear_for_history(&mut self) -> UserMessage {
+        let text = self.text();
+        if self.is_empty() {
+            return UserMessage {
+                text,
+                images: Vec::new(),
+            };
+        }
+        self.checkpoint(false);
+        let images = self.take_images();
+        self.clear_state();
+        UserMessage { text, images }
     }
 
     /// Removes and returns the draft, e.g. when submitting a message. The
-    /// image snapshots are moved, not cloned, then the editor is cleared.
+    /// image snapshots are moved, not cloned, and undo history is reset so an
+    /// executed task can never be undone.
     pub fn take(&mut self) -> UserMessage {
         let text = self.text();
-        let images = std::mem::take(&mut self.images);
-        self.clear();
+        self.reset_history();
+        let images = self.take_images();
+        self.clear_state();
         UserMessage { text, images }
     }
 
     /// Replaces the whole draft (history recall) with the cursor at the end.
-    /// The kill buffer survives.
+    /// The replacement is one undoable edit; the kill buffer survives.
     pub fn set_draft(&mut self, message: impl Into<UserMessage>) {
         let message = message.into();
+        if self.text() == message.text && self.images.as_slice() == message.images.as_slice() {
+            self.end_typing();
+        } else {
+            self.checkpoint(false);
+        }
         self.lines = if message.text.is_empty() {
             vec![String::new()]
         } else {
             message.text.split('\n').map(str::to_owned).collect()
         };
-        self.images = message.images;
+        self.images = Arc::new(message.images);
         self.row = self.lines.len() - 1;
         self.col = grapheme_count(&self.lines[self.row]);
         self.preferred_col = None;
+    }
+
+    fn clear_state(&mut self) {
+        self.lines = vec![String::new()];
+        self.row = 0;
+        self.col = 0;
+        self.preferred_col = None;
+        self.images = Arc::new(Vec::new());
+    }
+
+    fn take_images(&mut self) -> Vec<ImageAttachment> {
+        let images = std::mem::replace(&mut self.images, Arc::new(Vec::new()));
+        Arc::try_unwrap(images).unwrap_or_else(|shared| (*shared).clone())
+    }
+
+    /// Records the pre-edit state. `coalesce` extends the current typing group
+    /// instead of starting a new undo entry. Callers invoke this only when the
+    /// edit actually changes state, so no-op edits keep redo intact.
+    fn checkpoint(&mut self, coalesce: bool) {
+        if coalesce && self.history.typing {
+            return;
+        }
+        let snapshot = self.snapshot();
+        self.history.record(snapshot);
+        self.history.typing = coalesce;
+    }
+
+    /// Ends the current typing group without recording an edit (navigation).
+    fn end_typing(&mut self) {
+        self.history.typing = false;
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            lines: self.lines.clone(),
+            row: self.row,
+            col: self.col,
+            images: Arc::clone(&self.images),
+        }
+    }
+
+    fn restore(&mut self, snapshot: Snapshot) {
+        self.lines = snapshot.lines;
+        self.row = snapshot.row;
+        self.col = snapshot.col;
+        self.images = snapshot.images;
+        self.preferred_col = None;
+    }
+
+    /// Serialized byte size of the live draft, computed before any clone.
+    fn live_text_bytes(&self) -> usize {
+        self.lines.iter().map(String::len).sum::<usize>() + self.lines.len().saturating_sub(1)
+    }
+
+    /// Restores the previous draft state. Returns `false` when nothing is left
+    /// to undo, or when the live draft alone cannot fit the byte budget (the
+    /// draft is then left unchanged rather than losing recoverable content).
+    /// Undo never records a new checkpoint.
+    pub fn undo(&mut self) -> bool {
+        if self.history.undo.is_empty() || self.live_text_bytes() > self.history.byte_cap {
+            return false;
+        }
+        let current = self.snapshot();
+        let previous = self.history.undo.pop().expect("checked non-empty");
+        self.history.redo.push(current);
+        self.history.trim();
+        self.restore(previous);
+        self.history.typing = false;
+        true
+    }
+
+    /// Re-applies an undone draft state. Returns `false` when nothing is left
+    /// to redo, or when the live draft alone cannot fit the byte budget (the
+    /// draft is then left unchanged). Redo never records a new checkpoint.
+    pub fn redo(&mut self) -> bool {
+        if self.history.redo.is_empty() || self.live_text_bytes() > self.history.byte_cap {
+            return false;
+        }
+        let current = self.snapshot();
+        let next = self.history.redo.pop().expect("checked non-empty");
+        self.history.undo.push(current);
+        self.history.trim();
+        self.restore(next);
+        self.history.typing = false;
+        true
+    }
+
+    /// Test-only: proves text checkpoints share the attachment payload Arc.
+    #[cfg(test)]
+    pub fn images_shared_count(&self) -> usize {
+        Arc::strong_count(&self.images)
+    }
+
+    /// Test-only: combined retained text across undo and redo.
+    #[cfg(test)]
+    pub fn retained_bytes(&self) -> usize {
+        self.history.total_bytes()
+    }
+
+    /// Test-only seam: exercise the retention policy at small limits.
+    #[cfg(test)]
+    pub fn set_history_limits(&mut self, byte_cap: usize, entry_cap: usize) {
+        self.history.clear();
+        self.history.byte_cap = byte_cap;
+        self.history.entry_cap = entry_cap;
     }
 
     pub fn cursor(&self) -> (usize, usize) {
@@ -169,6 +425,7 @@ impl Editor {
     }
 
     pub fn set_global_offset(&mut self, mut offset: usize) {
+        self.end_typing();
         let mut row = 0;
         loop {
             let line_len = self.lines[row].len();
@@ -212,15 +469,27 @@ impl Editor {
         self.replace_global_range(start, end, "");
     }
 
-    /// Inserts pasted or typed text. Newlines inside the text never submit.
+    /// Inserts pasted text as one atomic undo step. Newlines never submit.
     pub fn insert_str(&mut self, text: &str) {
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        if normalized.is_empty() {
+            return;
+        }
+        self.checkpoint(false);
         let mut parts = normalized.split('\n');
         self.insert_at_cursor(parts.next().unwrap_or(""));
         for part in parts {
-            self.insert_newline();
+            self.insert_newline_raw();
             self.insert_at_cursor(part);
         }
+        self.preferred_col = None;
+    }
+
+    /// Inserts one typed character, coalescing consecutive typing into one
+    /// undo step. Bracketed/text paste uses `insert_str` and stays atomic.
+    pub fn insert_typed(&mut self, character: char) {
+        self.checkpoint(true);
+        self.insert_at_cursor(&character.to_string());
         self.preferred_col = None;
     }
 
@@ -237,6 +506,11 @@ impl Editor {
     }
 
     pub fn insert_newline(&mut self) {
+        self.checkpoint(false);
+        self.insert_newline_raw();
+    }
+
+    fn insert_newline_raw(&mut self) {
         let line = self.lines[self.row].clone();
         let offset = byte_offset(&line, self.col);
         let tail = line[offset..].to_owned();
@@ -252,6 +526,10 @@ impl Editor {
             self.remove_last_image();
             return;
         }
+        if self.col == 0 && self.row == 0 {
+            return;
+        }
+        self.checkpoint(false);
         if self.col > 0 {
             let line = &mut self.lines[self.row];
             let end = byte_offset(line, self.col);
@@ -268,6 +546,10 @@ impl Editor {
     }
 
     pub fn delete(&mut self) {
+        if self.col >= grapheme_count(&self.lines[self.row]) && self.row + 1 >= self.lines.len() {
+            return;
+        }
+        self.checkpoint(false);
         if self.col < grapheme_count(&self.lines[self.row]) {
             let line = &mut self.lines[self.row];
             let start = byte_offset(line, self.col);
@@ -281,6 +563,7 @@ impl Editor {
     }
 
     pub fn move_left(&mut self) {
+        self.end_typing();
         if self.col > 0 {
             self.col -= 1;
         } else if self.row > 0 {
@@ -291,6 +574,7 @@ impl Editor {
     }
 
     pub fn move_right(&mut self) {
+        self.end_typing();
         if self.col < grapheme_count(&self.lines[self.row]) {
             self.col += 1;
         } else if self.row + 1 < self.lines.len() {
@@ -302,6 +586,7 @@ impl Editor {
 
     /// Ctrl+A: line start; already there moves to the previous line start.
     pub fn move_line_start(&mut self) {
+        self.end_typing();
         if self.col > 0 {
             self.col = 0;
         } else if self.row > 0 {
@@ -313,6 +598,7 @@ impl Editor {
 
     /// Ctrl+E: line end; already there moves to the next line end.
     pub fn move_line_end(&mut self) {
+        self.end_typing();
         let end = grapheme_count(&self.lines[self.row]);
         if self.col < end {
             self.col = end;
@@ -325,12 +611,14 @@ impl Editor {
 
     /// Home: start of the current logical line only.
     pub fn home(&mut self) {
+        self.end_typing();
         self.col = 0;
         self.preferred_col = None;
     }
 
     /// End: end of the current logical line only.
     pub fn end(&mut self) {
+        self.end_typing();
         self.col = grapheme_count(&self.lines[self.row]);
         self.preferred_col = None;
     }
@@ -355,6 +643,10 @@ impl Editor {
         let text = self.text();
         let cursor = self.global_offset();
         let start = snap_grapheme_start(&text, beginning_of_previous_word(&text, cursor));
+        if start >= cursor {
+            return;
+        }
+        self.checkpoint(false);
         self.kill_range(start, cursor);
     }
 
@@ -362,6 +654,10 @@ impl Editor {
         let text = self.text();
         let cursor = self.global_offset();
         let end = snap_grapheme_end(&text, end_of_next_word(&text, cursor));
+        if end <= cursor {
+            return;
+        }
+        self.checkpoint(false);
         self.kill_range(cursor, end);
     }
 
@@ -371,8 +667,12 @@ impl Editor {
         let cursor = self.global_offset();
         if self.col > 0 {
             let start = self.global_offset_of(self.row, 0);
-            self.kill_range(start, cursor);
+            if start < cursor {
+                self.checkpoint(false);
+                self.kill_range(start, cursor);
+            }
         } else if self.row > 0 {
+            self.checkpoint(false);
             self.kill_range(cursor - 1, cursor);
         }
     }
@@ -384,8 +684,12 @@ impl Editor {
         let end = grapheme_count(&self.lines[self.row]);
         if self.col < end {
             let target = self.global_offset_of(self.row, end);
-            self.kill_range(cursor, target);
+            if cursor < target {
+                self.checkpoint(false);
+                self.kill_range(cursor, target);
+            }
         } else if self.row + 1 < self.lines.len() {
+            self.checkpoint(false);
             self.kill_range(cursor, cursor + 1);
         }
     }
@@ -402,6 +706,7 @@ impl Editor {
     /// visual line it goes to the document start; the preferred column is
     /// clamped to the current width and reset at that boundary.
     pub fn move_visual_up(&mut self, width: usize) {
+        self.end_typing();
         let layout = self.layout(width);
         if layout.cursor_line == 0 {
             self.row = 0;
@@ -421,6 +726,7 @@ impl Editor {
     }
 
     pub fn move_visual_down(&mut self, width: usize) {
+        self.end_typing();
         let layout = self.layout(width);
         if layout.cursor_line + 1 >= layout.lines.len() {
             let last = self.lines.len() - 1;

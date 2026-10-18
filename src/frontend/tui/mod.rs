@@ -482,6 +482,12 @@ fn input_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutcome {
         KeyCode::Char('p') if ctrl => navigate_or_move(app, editor, false),
         KeyCode::Char('n') if ctrl => navigate_or_move(app, editor, true),
         KeyCode::Char('r') if ctrl => app.history.open_or_older(),
+        KeyCode::Char('u') if alt => {
+            editor.undo();
+        }
+        KeyCode::Char('r') if alt => {
+            editor.redo();
+        }
         KeyCode::Left if ctrl || alt => editor.move_word_left(),
         KeyCode::Right if ctrl || alt => editor.move_word_right(),
         KeyCode::Left => editor.move_left(),
@@ -495,7 +501,7 @@ fn input_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutcome {
         KeyCode::Home => editor.home(),
         KeyCode::End => editor.end(),
         // Alt and Ctrl letters are shortcuts; they must not be inserted.
-        KeyCode::Char(character) if !ctrl && !alt => editor.insert_str(&character.to_string()),
+        KeyCode::Char(character) if !ctrl && !alt => editor.insert_typed(character),
         _ => {}
     }
     outcome
@@ -571,7 +577,7 @@ fn handle_ctrl_c(app: &mut App, editor: &mut Editor) -> bool {
         return false;
     }
     if !editor.is_empty() {
-        app.history.push(editor.take());
+        app.history.push(editor.clear_for_history());
         app.focus = Focus::Input;
         app.status = None;
         return false;

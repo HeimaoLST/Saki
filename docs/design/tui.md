@@ -2,7 +2,7 @@
 
 下一版显示层次和视觉规范见 [TUI style](tui-style.md)，Pi／Codex 的对应源码分析见 [Terminal presentation](../research/systems/terminal-presentation.md)。TUI style 实验已于 2026-10-14 实现（主题、正文宽度、Markdown 表格、Activity 分组），本节继续描述已实现行为。
 
-更新日期：2026-10-15。首版已采用“工作记录”布局、Ratatui 原生组件和独立终端前端。Pi 负责具体实现，Codex 负责分阶段审查与独立验收。此前的布局和组件研究见 [Terminal UI 研究](../research/systems/terminal-ui.md)，HTML 对比稿仍保留为设计材料。
+更新日期：2026-10-18。首版已采用“工作记录”布局、Ratatui 原生组件和独立终端前端。Pi 负责具体实现，Codex 负责分阶段审查与独立验收。此前的布局和组件研究见 [Terminal UI 研究](../research/systems/terminal-ui.md)，HTML 对比稿仍保留为设计材料。
 
 ## 目标与当前能力
 
@@ -42,6 +42,7 @@ SAKI_UI=console cargo run
 | Backspace（文字为空且有附件） | 删除最后一张图片 |
 | 输入区快捷编辑 | Ctrl+B／F 左右字符；Ctrl／Alt+←／→、Alt+B／F 按 Unicode 词界移动；Ctrl+A／E 到逻辑行首尾（在边界可跨到相邻行）；Home／End 留在当前行；Ctrl+W、Alt／Ctrl+Backspace 后删词；Alt+D、Alt／Ctrl+Delete 前删词；Ctrl+U／K 删除到逻辑行首尾（在边界可删除相邻换行）；Ctrl+H／D 删除字符；Ctrl+J 换行；按词操作对齐 grapheme，组合字符与 emoji 不被拆开 |
 | 输入区恢复删除 | Ctrl+Y 插入最近一次词／行删除；单条 kill buffer，不是系统剪贴板或通用 undo；跨发送、清空和历史召回保留，普通字符删除不覆盖 |
+| 输入区撤销／重做 | Alt+U 撤销、Alt+R 重做（不改 Ctrl+Z 作业控制）；仅输入焦点，局部模态优先。编辑器持有有界历史（最多 100 条，且全部 undo＋redo 保留文本合计 ≤ 8 MiB）：连续单字符输入合并为一步，移动光标／设置光标偏移／粘贴／非输入编辑断开分组；粘贴、kill、yank、图片增删各为一步；无操作不丢弃 redo，撤销后新编辑丢弃 redo。Ctrl+C 清空可撤销且仍进入输入历史；成功发送、会话切换、已执行命令重置撤销历史（不能撤销已执行任务／命令文本）；输入历史召回是可按撤的整草稿替换；kill buffer 不随撤销回退。单次编辑的前状态若自身超过字节预算则重置并跳过历史；若撤销／重做时当前草稿无法存入预算，则保持草稿不变且操作不可用 |
 | 输入区视觉移动 | ↑／↓、Ctrl+P／N 按实际输入区宽度在软换行之间移动，连续垂直移动保留显示列；满足历史条件时改为召回输入历史 |
 | 输入历史 | 发送与 Ctrl+C 清空的完整草稿（文字及附件）进入当前进程历史，相邻重复去重；不从 conversation 重建、不受 compact 影响；空输入可召回，非空输入仅在等于最近召回草稿且光标位于全文头／尾时继续翻历史；改动文字或附件后继续用 ↑／↓ 移动光标；向下越过最新条目恢复空输入 |
 | 输入历史搜索 | Ctrl+R 打开输入框上方的本地搜索（空查询，最新匹配在前）；查询大小写不敏感，Ctrl+R／↑ 更旧、↓ 更新；Enter 把选中条目送入编辑器供编辑、不发送；Esc／Ctrl+C 取消并完整保留原草稿、光标、kill buffer 与附件；搜索期间真实编辑器不变，文本粘贴只改 query（多行折叠），图片粘贴提示先关闭搜索；F1 关闭搜索并打开帮助，Ctrl+S／会话标题点击先关闭搜索再打开 picker |
@@ -165,7 +166,7 @@ Agent 通过 `ContextUpdated` 在 worker 启动、用户提交、响应 usage、
 
 本轮证据聚合于 `.saki/verification/tui-input/`：`input-smoke-result.json`、`tui-smoke-result.json`、`content-smoke-result.json`、编译检查日志及 `supervision.md`。首次独立全量测试中，既有 `bash_drains_both_pipes_and_large_output_is_complete_and_readable` 的 stdout/stderr 合并输出按行计数断言出现 19997／20000 差异；定向与最终全量复跑通过。首次日志仍保留为 `tests-initial.log`，本轮未修改工具实现，不声称这项波动已修复。
 
-会话恢复会从已保存的用户消息重建输入历史；未发送或 Ctrl+C 清空的草稿仍只保留在当前进程。Ctrl+R 搜索、外部编辑器、长粘贴占位与通用撤销仍留待后续需求；任务取消已实现并验收（运行中 Esc）。
+会话恢复会从已保存的用户消息重建输入历史；未发送或 Ctrl+C 清空的草稿仍只保留在当前进程。外部编辑器与长粘贴占位仍留待后续需求；Ctrl+R 输入历史搜索与通用撤销／重做（Alt+U／Alt+R，仅输入焦点）已实现；任务取消已实现并验收（运行中 Esc）。
 
 ## 四种布局候选
 
