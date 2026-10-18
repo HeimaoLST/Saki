@@ -14,7 +14,9 @@ use serde_json::{Value, json};
 
 mod cancellation;
 
-use crate::test_support::{Journal, completed, overflow, requests, scripted_http};
+use crate::test_support::{
+    Journal, completed, overflow, requests, scripted_http, scripted_server, sse,
+};
 
 fn conversation() -> Conversation {
     Conversation::new("Preserve project ion-42.".to_owned())
@@ -1052,4 +1054,82 @@ async fn a_pre_cancelled_turn_never_calls_the_model_or_a_tool() {
         "no request should reach the model"
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn chat_completions_complete_a_tool_turn_and_a_follow_up() {
+    let executions = Arc::new(AtomicUsize::new(0));
+    let counter = executions.clone();
+    let mut tools = ToolRegistry::new();
+    tools.registry(Tool {
+        definition: ToolDefinition {
+            tool_type: ToolType::Function,
+            name: "lookup".into(),
+            description: "Read fixture".into(),
+            parameters: json!({"type":"object","properties":{}}),
+        },
+        handler: Arc::new(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(json!({"result":37})) })
+        }),
+    });
+    // The tool call's arguments arrive in fragments; only the completed call
+    // may reach the tool registry.
+    let tool_turn = sse(json!({
+        "id": "c1",
+        "choices": [{"delta": {"role": "assistant", "content": "Checking."}}]
+    })) + &sse(json!({
+        "id": "c1",
+        "choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1",
+            "function": {"name": "lookup", "arguments": "{\"qu"}}]}}]
+    })) + &sse(json!({
+        "id": "c1",
+        "choices": [{"delta": {"tool_calls": [{"index": 0,
+            "function": {"arguments": "ery\":\"ion-42\"}"}}]}}]
+    })) + &sse(json!({
+        "id": "c1",
+        "choices": [{"delta": {}, "finish_reason": "tool_calls"}]
+    })) + "data: [DONE]\n\n";
+    let answer_turn = sse(json!({
+        "id": "c2",
+        "choices": [{"delta": {"content": "Result: 37"}}]
+    })) + &sse(json!({
+        "id": "c2",
+        "choices": [{"delta": {}, "finish_reason": "stop"}]
+    })) + "data: [DONE]\n\n";
+    let (base_url, server) = scripted_server(vec![
+        (200, "text/event-stream", tool_turn.into_bytes()),
+        (200, "text/event-stream", answer_turn.into_bytes()),
+    ])
+    .await;
+    let client = crate::client::ModelClient::ChatCompletions(
+        crate::client::ChatCompletionsClient::for_test(base_url),
+    );
+    let mut agent = Agent::new(client, tools, conversation()).with_model("test".to_owned());
+    agent
+        .handle_user_message("Look it up".to_owned())
+        .await
+        .unwrap();
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+    let sent = requests(server).await;
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0]["messages"][0]["role"], "system");
+    assert_eq!(sent[0]["stream_options"]["include_usage"], true);
+    let messages = sent[1]["messages"].as_array().unwrap();
+    let assistant = messages
+        .iter()
+        .find(|message| message["role"] == "assistant" && message.get("tool_calls").is_some())
+        .expect("assistant tool call must be sent back");
+    assert_eq!(assistant["tool_calls"][0]["id"], "call_1");
+    assert_eq!(assistant["tool_calls"][0]["function"]["name"], "lookup");
+    assert_eq!(
+        assistant["tool_calls"][0]["function"]["arguments"],
+        "{\"query\":\"ion-42\"}"
+    );
+    let tool = messages
+        .iter()
+        .find(|message| message["role"] == "tool")
+        .expect("tool result must follow the assistant call");
+    assert_eq!(tool["tool_call_id"], "call_1");
+    assert!(tool["content"].as_str().unwrap().contains("\"result\":37"));
 }

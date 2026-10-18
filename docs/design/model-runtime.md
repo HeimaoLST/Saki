@@ -1,19 +1,29 @@
 # Model runtime：协议、客户端与模型目录
 
-更新日期：2026-10-13。状态：已实施职责拆分和 Responses 流式响应；主 Agent 默认流式，compact 与实验保留完整响应接口。参考依据见 [Pi 分层研究](../research/systems/model-runtime.md)。
+更新日期：2026-10-16。状态：已实施职责拆分、Responses 流式响应，以及 M1 的 Chat Completions 调用边界；主 Agent 默认流式，compact 与实验保留完整响应接口。参考依据见 [Pi 分层研究](../research/systems/model-runtime.md)。
 
 ## 模块与依赖
 
 | 模块 | 职责 |
 | --- | --- |
 | [protocol/](../../src/protocol/mod.rs) | 公共请求、输入／输出项、文字和图片内容、工具声明、推理、usage 与 opaque continuation 数据 |
-| [client/responses.rs](../../src/client/responses.rs) | Responses 原生格式转换、HTTP 调用、错误分类、有限重试与响应解码 |
-| [client/responses/stream.rs](../../src/client/responses/stream.rs) | SSE 消费、增量转换、终止与断流判断 |
+| [client/mod.rs](../../src/client/mod.rs) | `ModelClient` 枚举分派：Responses 与 Chat Completions 共用同一个 Agent、工具与 compact 调用入口 |
+| [client/config.rs](../../src/client/config.rs) | 组装边界配置：`ModelApi` 解析（SAKI_API）、显式值构造与一次性的环境读取 |
+| [client/transport.rs](../../src/client/transport.rs) | 共享 HTTP 客户端、Bearer 认证与受限重试，两协议复用同一实现 |
+| [client/responses.rs](../../src/client/responses.rs) | Responses 原生格式转换、错误分类与响应解码 |
+| [client/responses/stream.rs](../../src/client/responses/stream.rs) | Responses SSE 消费、增量转换、终止与断流判断 |
+| [client/chat.rs](../../src/client/chat.rs) | Chat Completions 请求／JSON／SSE 转换、工具调用聚合与终止语义 |
 | [model/catalog.rs](../../src/model/catalog.rs) | models.dev 目录同步、缓存、模型匹配与容量读取；尚未扩展为完整能力数据库 |
 | [agent/conversation.rs](../../src/agent/conversation.rs) | 公共协议上下文、usage 校准、compact、版本化历史日志 |
 | [tools/tool_registry.rs](../../src/tools/tool_registry.rs) | 工具 handler 注册与执行；使用公共协议的 ToolDefinition，不再定义协议类型 |
 
-客户端不引用 Conversation、工具 registry、TUI 或 console；公共协议不引用这些运行模块。模型目录也不依赖推理客户端。Conversation 按既有设计借用客户端执行 compact，当前 Agent 持有一个具体的 ResponsesClient；当前没有引入多客户端 trait 或独立 library。
+客户端不引用 Conversation、工具 registry、TUI 或 console；公共协议不引用这些运行模块。模型目录也不依赖推理客户端。Conversation 按既有设计借用客户端执行 compact，Agent、compact 与自动标题都通过同一个 `ModelClient` 调用；协议选择是简单枚举分派，没有动态 trait registry 或第二套消息结构。
+
+## 协议选择与配置
+
+`SAKI_API` 在组装边界（`app.rs`）读取一次：`openai-responses`（默认）或 `openai-chat-completions`；未知值在发任何请求前返回明确错误。`API_KEY`、`SAKI_BASE_URL`、`SAKI_MODEL` 保持既有含义；base URL 是 API 基础地址，各适配器追加自己的路径（Responses 为 `/responses`，Chat 为 `/chat/completions`）。`ClientConfig` 可由显式值构造（api/base/key），非 CLI 宿主不必改环境变量。
+
+`ModelClient` 提供 `respond`、`respond_stream` 与 `respond_once`；compact 与成长实验继续使用单次 HTTP 语义的 `respond_once`，不退化到可重试的 `respond`。
 
 ## 调用契约
 
@@ -25,11 +35,24 @@
 
 默认端点、`.env` 加载和环境变量配置沿用原有行为；客户端按实际协议由 DeepseekClient 更名为 ResponsesClient。`respond` 仍对传输失败、408／429／5xx 最多尝试三次；context overflow 与其他请求错误立即返回，成功 HTTP 响应的解析失败不重试。
 
-请求格式转换在发送前完成，失败不重试。`respond_once` 最多发出一次 HTTP 请求，转换失败返回 `attempts=0`；发送后无论成功或失败都返回 `attempts=1`。
+请求格式转换在发送前完成，失败不重试。`respond_once` 最多发出一次 HTTP 请求，转换失败返回 `attempts=0`；发送后无论成功或失败都返回 `attempts=1`。Responses 的 context overflow 由结构化 `error.code == "context_length_exceeded"` 判定；错误文本中的 "context length" 字样不参与分类。
+
+## Chat Completions（M1，实现事实）
+
+首版只承诺文字与 function tools，与 Responses 共用 `ModelRequest`／`ModelResponse`／`ModelStreamEvent`、Agent 循环、工具执行器与 compact；不新增第二套消息结构或执行循环。
+
+- 请求：公共 `InputItem` 转为 messages；连续 `ToolCall` 聚合为一条 assistant 的 `tool_calls`，`ToolResult` 转为 `tool` 消息并携带 `tool_call_id`；工具声明为 `{"type":"function","function":{…}}`。`max_output_tokens`→`max_tokens`，`temperature` 原样传递。`MessageRole::Developer` 保留原生 `developer` 角色，不做供应商降级。
+- 流式：`stream:true` 且请求 `stream_options.include_usage:true`；按 index 聚合跨 chunk／交错的工具参数分片，响应完成后才把完整调用交给 Agent；usage 可缺失并保持未知，不编造 0；支持空 choices 的 usage 尾块与网关直接返回 JSON 的 fallback。
+- 终止：只有 `stop` 与 `tool_calls` 视为完成（JSON 与 SSE 一致）；`length`、`content_filter`、未知原因或缺少 finish_reason 都在客户端失败，不把截断文本或其中的工具调用交给 Agent，已显示的文本不自动重播。[DONE] 单独出现不构成完成。
+- 不可表示的数据：图片输入、Responses 的 reasoning／ProviderItem continuation 在发请求前返回明确转换错误；厂商专用 reasoning 扩展不在本轮。
+
+### 已知未支持组合（失败边界，已观察）
+
+DeepSeek thinking 模型经 Chat Completions 的第二轮请求要求回传 `reasoning_content`。本版本不发送也不扩展该字段，因此该模型的多轮工具续接会失败（首轮可正常返回）。这是已运行观察到的真实边界，归类为作者报告／已观察的未支持组合，不是修复或兼容层；如后续要支持，需另行实现并验证，是否开 RFC 取决于是否改变公共契约。
 
 ## 流式响应契约
 
-`respond_stream(request, on_event)` 是异步调用：收到增量后同步调用轻量回调，成功时返回完整 ModelResponse。公共协议的 ModelStreamEvent 提供 TextDelta／ReasoningDelta／ReasoningCompleted，不向 Agent 或前端暴露 SSE 类型。没有事件接收方也仍能使用完整模型／工具循环；丢弃调用 future 会关闭连接，但当前 UI 尚未提供主动取消入口。
+`respond_stream(request, on_event)` 是异步调用：收到增量后同步调用轻量回调，成功时返回完整 ModelResponse。公共协议的 ModelStreamEvent 提供 TextDelta／ReasoningDelta／ReasoningCompleted，不向 Agent 或前端暴露 SSE 类型。没有事件接收方也仍能使用完整模型／工具循环；丢弃调用 future 会关闭连接，主动取消沿用既有的 SessionCommand::Cancel／TUI Esc 路径。
 
 Responses 的 `response.output_text.delta`、`response.reasoning_text.delta` 转为公共增量；`response.completed` 中的完整 output 保留推理续接字段，作为写入 Conversation、usage 与工具执行的依据。工具 arguments 的中间增量不会被执行；即使收到 output_item.done，也必须等整个响应完成。当前不显示推理 summary 增量。TUI 已接入 reasoning_text，使用浅灰色 Thought 区域展示；console 实时输出 reasoning_text。TUI 仅展示实际返回的文本，不为 encrypted-only 响应生成推理正文；若已收到文本增量而最终 content 为空，保留可见片段。
 
@@ -70,3 +93,15 @@ compact 仍由 Conversation 处理。摘要 transcript 使用公共历史表示�
 同一网关／模型在另一个普通读文件提示下，首轮响应仅有 message 与 function_call，没有 reasoning item 或 reasoning delta；工具续接却返回 HTTP 400，要求回传 `reasoning_text`。原始 SSE 的 output_item.done 与 response.completed 都没有这段内容，因此不是客户端解析丢失。相同输入的非流式请求、显式 reasoning effort=low／none 均复现该错误。对照证据：`/var/folders/_x/4s504vvn6zv5vz36ktpbwl480000gn/T/saki-stream-probe-mq1qwn4q/` 与 `saki-stream-modes-3x5iimj0/`（同一临时目录父级）。
 
 成功的工具链提示明确要求调用工具前简短思考，响应实际含有 reasoning，随后续接通过。这只是一个成功验收场景，不能视作网关缺陷的修复或可靠的提示词 workaround。本轮不编造缺失推理，不增加自动重试该 400，也不更改用户的模型／网关配置；这项上游限制仍可能影响普通工具任务。
+
+## M1 验证（2026-10-16）
+
+实现事实：离线行为测试覆盖 Chat 请求映射、图片与 Responses continuation 的请求前拒绝、JSON／SSE 文本与工具参数分片、交错与 usage 尾块、缺失 usage、终止语义（`length`／`content_filter`／缺失 finish_reason／仅 [DONE] 均失败）、结构化 overflow 判定、Agent 层 Chat 工具闭环，以及 Chat compact 的单次请求契约（[client/chat tests](../../tests/client/chat.rs)）；session 侧覆盖跨 API 打开与 torn tail 不修改历史（[session tests](../../tests/session/mod.rs)）。现有 Responses 全量回归继续通过。
+
+作者报告（监督者验收，2026-10-16，按 SHA 区分）：
+
+- `a19213a`：双协议（Responses 默认 + Chat）普通本地 console 编译二进制闭环通过。
+- `50131b7`：增强版本地验收（跨 API + torn tail）通过；报告 `/private/tmp/saki-47-acceptance-50131b7.json`，二进制 SHA-256 `00a8e76aea18007140160b1ba4502911ad70a4aabbef1f4074156f09796ec968`。
+- `043b6c8`：两个真实 smoke——`opencode-go/gpt-6-luna` Chat 工具闭环成功（一次 `read`、回传、最终标记正确、completed）；DeepSeek thinking Chat 第二轮失败（边界见上节）。
+
+除已验收组合外不宣称支持其他兼容厂商。

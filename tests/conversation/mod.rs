@@ -1,4 +1,5 @@
 use super::*;
+use crate::client::ResponsesClient;
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -37,7 +38,7 @@ fn completed(summary: &str) -> Value {
     }], "usage":{"input_tokens":7000,"output_tokens":40}})
 }
 
-async fn mock_response(status: u16, response: Value) -> (ResponsesClient, JoinHandle<Value>) {
+async fn mock_response(status: u16, response: Value) -> (ModelClient, JoinHandle<Value>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
@@ -77,10 +78,7 @@ async fn mock_response(status: u16, response: Value) -> (ResponsesClient, JoinHa
         socket.write_all(&body).await.unwrap();
         request
     });
-    (
-        ResponsesClient::for_test(format!("http://{address}/v1")),
-        task,
-    )
+    (ModelClient::for_test(format!("http://{address}/v1")), task)
 }
 
 fn snapshot(conversation: &Conversation) -> Value {
@@ -103,7 +101,7 @@ async fn small_context_does_not_contact_the_model() {
         .unwrap();
     conversation.add_user_message("hello".to_owned());
     let original = snapshot(&conversation);
-    let client = ResponsesClient::for_test("http://127.0.0.1:1/v1".to_owned());
+    let client = ModelClient::for_test("http://127.0.0.1:1/v1".to_owned());
     assert!(
         conversation
             .compact_if_needed(&client, "test", &[])
@@ -221,7 +219,7 @@ async fn parallel_calls_and_reasoning_are_kept_together() {
 
 #[tokio::test]
 async fn pending_and_orphaned_tools_cannot_be_compacted() {
-    let client = ResponsesClient::for_test("http://127.0.0.1:1/v1".to_owned());
+    let client = ModelClient::for_test("http://127.0.0.1:1/v1".to_owned());
     for orphan in [false, true] {
         let mut conversation = long_history();
         if orphan {
@@ -323,7 +321,7 @@ async fn oversized_single_block_is_reported_without_dropping_it() {
         .unwrap();
     conversation.add_user_message("huge current request ".repeat(1200));
     let before = snapshot(&conversation);
-    let client = ResponsesClient::for_test("http://127.0.0.1:1/v1".to_owned());
+    let client = ModelClient::for_test("http://127.0.0.1:1/v1".to_owned());
     assert!(
         conversation
             .compact_if_needed(&client, "test", &[])

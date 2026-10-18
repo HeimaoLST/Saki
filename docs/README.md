@@ -64,6 +64,7 @@ src/
 | `design/` | [Multimodal input](design/multimodal-input.md) | 图片附件、剪贴板／路径输入、消息契约及图片压缩 |
 | `design/` | [Session management](design/session-management.md) | 持久会话、JSONL 恢复、会话选择器、中断语义与核心边界 |
 | `design/` | [Desktop contacts](design/desktop.md) | contact 交互设计、Rose Pine 视觉、浏览器示意与可运行 MyGo 原生设计预览 |
+| `design/` | [CI governance](design/ci.md) | Runtime／TUI／GUI 的 GitHub Actions 门禁、责任矩阵、工具链与失败修复约定 |
 | `requirements/` | [Agent runtime requirements](requirements/agent-runtime.md) | 多 session 重叠执行、可观察执行事实、contact 边界与历史检索的 runtime 需求交接（未实施） |
 | `design/` | [Local command system](design/command-system.md) | 本地命令解析、会话操作复用、输入边界、TUI 补全与验收 |
 | `design/` | [Experience to behavior](design/experience-to-behavior.md) | 最小闭环的架构提案与未决问题 |

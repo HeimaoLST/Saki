@@ -27,8 +27,11 @@ fn default_timeout() -> u64 {
     120_000
 }
 
-/// Kills the process group when the execution future is dropped (for example
-/// when the turn is cancelled). `kill_on_drop` alone only signals the shell.
+/// Owns the process group's cleanup. The timeout, the normal exit, the error
+/// path and `Drop` all terminate through [`GroupGuard::terminate`], which is a
+/// no-op once the group has been signalled. A successful signal or a benign
+/// ESRCH disarms it; a genuine first error is returned and leaves it armed for
+/// the drop cleanup. `kill_on_drop` alone only signals the shell.
 #[cfg(unix)]
 struct GroupGuard {
     pid: u32,
@@ -36,10 +39,23 @@ struct GroupGuard {
 }
 
 #[cfg(unix)]
+impl GroupGuard {
+    fn terminate(&mut self) -> Result<(), ToolError> {
+        if !self.armed {
+            return Ok(());
+        }
+        // kill_group treats a vanished group (ESRCH) as already done.
+        kill_group(self.pid)?;
+        self.armed = false;
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
 impl Drop for GroupGuard {
     fn drop(&mut self) {
         if self.armed {
-            let _ = kill_group(self.pid);
+            let _ = self.terminate();
         }
     }
 }
@@ -98,7 +114,7 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
     }
     let mut child = command.spawn()?;
     let pid = child.id().unwrap();
-    let mut group_guard = GroupGuard { pid, armed: true };
+    let mut group = GroupGuard { pid, armed: true };
     let mut stdout = child.stdout.take().unwrap();
     let mut stdout_buffer = [0; 8192];
     let mut stdout_open = true;
@@ -114,7 +130,7 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
                 status = child.wait(), if exit_status.is_none() => {
                     exit_status = Some(status?);
                     // Background descendants can keep inherited pipes open after the shell exits.
-                    kill_group(pid)?;
+                    group.terminate()?;
                 }
                 chunk = stdout.read(&mut stdout_buffer), if stdout_open => {
                     let size = chunk?;
@@ -123,7 +139,7 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
                 }
                 _ = &mut deadline, if !timed_out => {
                     timed_out = true;
-                    kill_group(pid)?;
+                    group.terminate()?;
                 }
             }
         }
@@ -131,7 +147,7 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
         Ok(())
     }.await;
     if let Err(error) = collected {
-        kill_group(pid)?;
+        group.terminate()?;
         child.wait().await?;
         return Err(error);
     }
@@ -140,7 +156,6 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
     if let Some(path) = output.path {
         result["output_path"] = json!(path);
     }
-    group_guard.armed = false;
     Ok(result)
 }
 

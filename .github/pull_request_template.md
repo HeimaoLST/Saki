@@ -20,11 +20,14 @@ Closes #  <!-- 目标为默认分支 dev 且完成该任务时填写；hotfix、
 - 合并方法：<!-- 短期工作分支默认 squash；dev→master 发布、master→dev 回流使用 merge commit，保留长期分支 -->
 - [ ] `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` / `cargo test`：
 - [ ] `cd desktop && go test ./...`：
+- [ ] CI workflow：PR run URL / 最新验证 SHA / `ci-required` 结论：
+- [ ] 工具链与复现：Rust 1.99.0、Go 由 `desktop/go.mod` 决定；命令与 `.github/workflows/ci.yml` 一致：
 - [ ] 离线确定性测试（禁止 sleep）：
 - [ ] 真实模型验证（如适用，注明模型 ID 与摘要）：
 - [ ] PTY / 真实终端验证（如适用）：
 - [ ] 行为变化已同步既有 `docs/` 文档，或已开 follow-up issue：
 - 已知基线失败（与本次改动无关，附证据）：
+- CI 失败处理：定位失败 job 与 owner；不得用 skip／`continue-on-error`／放宽 lint 掩盖真实失败。基线失败单独列出，不能写成本次通过。CI 绿只表示门禁通过，不替代独立评审，也不授权 breaking migration。详见 `docs/design/ci.md`。
 
 ## 影响与风险
 
