@@ -43,8 +43,8 @@ labels=(
   # 状态 status:* —— 每个 issue 恰好 1 个
   "status:triage|ededed|待分诊：补类型、归属、优先级与迭代安排"
   "status:ready|c2e0c6|已就绪，等待负责业务线认领"
-  "status:in-progress|fbca04|负责业务线的执行实例处理中"
-  "status:review|1d76db|待评审、验收或授权合并；未集成仍保留"
+  "status:in-progress|fbca04|唯一主责实例组织执行，子任务通过 tmux 分派"
+  "status:review|1d76db|待评审、验收或合并；breaking change 等人类决定"
   "status:blocked|b60205|被依赖阻塞（正文写 BLOCKED-BY: #N 或具体原因与解除条件）"
   "status:done|0e8a16|验收通过且交付完成，待关闭/已关闭"
 
@@ -70,7 +70,7 @@ labels=(
   "needs:human|b60205|需要人类决策/介入"
 
   # 流转与其他
-  "handoff|ff7619|交接进行中：优先原 issue，接收方确认后移除"
+  "handoff|ff7619|独立任务主责交接；主子内部派活用 tmux"
   "epic|3e4b9e|跨多个 issue 的目标追踪"
   "platform:rust|dea584|涉及 Rust core"
   "platform:go|00add8|涉及 desktop Go 模块"

@@ -1,12 +1,12 @@
 # Runtime 调用契约与实施规划
 
-更新日期：2026-10-17。状态：**设计提案，待 GUI／TUI／PM ACK 与独立评审，尚未实施**。
+更新日期：2026-10-18。状态：**设计提案，待 GUI／TUI／PM ACK 与独立评审，尚未实施**。
 
 需求依据：[Agent runtime 需求](../requirements/agent-runtime.md)、[#43](https://github.com/HeimaoLST/Saki/issues/43) 及 [GUI 首轮交接](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6235030388)。本文定义跨宿主调用契约与验收边界；实时优先级、任务状态和负责人以 GitHub 为准。
 
 ## 现状与目标
 
-实现事实（`origin/dev@13e69ad`，以及尚未合入的 `#47@8d39565`）：
+实现事实（核对 `origin/dev@78e5d96`；#47 已于 `6b1d6cf` 合入 dev）：
 
 | 能力 | 已有实现 | 仍需交付 |
 | --- | --- | --- |
@@ -174,7 +174,7 @@ assert p.wait() == 0
 | 5 | [#62](https://github.com/HeimaoLST/Saki/issues/62) compact 后 search_history／read_history | 独立 runtime 实施项；复用 journal 与 ToolRegistry，默认当前 session／绑定范围，返回来源与记录位置，不设向量库前提 |
 | 6 | #31 follow-up／steering 策略与实施 | 复用 task 接纳边界；推荐先显式 FIFO follow-up、默认 busy 不变；队列、取消、关闭策略定稿后实施，steering 单列取舍 |
 | 7 | #32 会话内模型切换 | 定义候选模型配置与容量、闲时切换／失败保持、持久化及 API continuation 兼容；首版优先同 API 已配置连接，跨协议不强行迁移 |
-| 8 | #33 已应用变更的权威工具结果 | 设计 edit/write 结果中的结构化 before/after 或 change；仅报告真实应用结果，失败不伪造 diff，TUI 消费需 ACK |
+| 8 | #33 已应用变更的权威工具结果 | 先设计 edit 结果中的结构化 before/after 或 change；仅报告真实应用结果，失败不伪造 diff，TUI 消费需 ACK |
 
 阶段 4／5 是完整 runtime 需求的一部分，不因首轮 GUI 可运行就取消；每阶段单独的可验收 issue／PR，避免 #43 混入所有代码。阶段 6–8 复用已有 decision，不另造重复议题；实现顺序可在阶段 2 后按真实使用与 PM 排期调整。M2/M3、新厂商协议、OAuth、订阅授权、长期身份和成长机制不在当前队列的默认实施范围。
 

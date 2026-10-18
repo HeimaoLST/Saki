@@ -11,6 +11,7 @@ use crate::agent::{
     conversation::{CompactionConfig, Conversation},
     journal::{self, Replay, TaskStatus},
 };
+use crate::client::config::{CHAT_COMPLETIONS_API, RESPONSES_API};
 
 /// Title used until the first successful turn can generate one.
 pub const DEFAULT_TITLE: &str = "New session";
@@ -75,6 +76,24 @@ impl SessionStore {
         system_prompt: &str,
         config: CompactionConfig,
     ) -> Result<String> {
+        self.create_with_api(cwd, model, system_prompt, RESPONSES_API, config)
+    }
+
+    /// Creates a session that records the API it was created on. The runtime
+    /// uses this with the selected protocol; `create` stays the Responses
+    /// default for existing callers.
+    pub fn create_with_api(
+        &self,
+        cwd: &Path,
+        model: &str,
+        system_prompt: &str,
+        api: &str,
+        config: CompactionConfig,
+    ) -> Result<String> {
+        ensure!(
+            api == RESPONSES_API || api == CHAT_COMPLETIONS_API,
+            "unsupported session API: {api}"
+        );
         let conversation =
             Conversation::new(system_prompt.to_owned()).with_compaction_config(config)?;
         let working_directory = cwd.canonicalize()?;
@@ -93,7 +112,7 @@ impl SessionStore {
             created_at: journal::now_ms()?,
             working_directory,
             model: model.to_owned(),
-            api: "openai-responses".to_owned(),
+            api: api.to_owned(),
             compaction: config,
         };
         let conversation = conversation.with_history_file(&directory.join("history.jsonl"))?;
@@ -113,22 +132,45 @@ impl SessionStore {
             path.display()
         );
         ensure!(
-            metadata.api == "openai-responses",
+            metadata.api == RESPONSES_API || metadata.api == CHAT_COMPLETIONS_API,
             "unsupported session API: {}",
             metadata.api
         );
         Ok(metadata)
     }
 
+    /// Loads a session only for the expected API. The check runs before the
+    /// history is restored: `Conversation::restore` repairs a torn tail, so a
+    /// mismatched protocol must fail without touching the file. Startup and
+    /// `SessionCommand::Open` both use this entry.
+    pub fn open_for_api(&self, id: &str, expected_api: &str) -> Result<LoadedSession> {
+        let metadata = self.metadata(id)?;
+        ensure!(
+            metadata.api == expected_api,
+            "session {id} was created for API {}; this run speaks {expected_api} — run with SAKI_API={} to open it",
+            metadata.api,
+            metadata.api
+        );
+        self.restore(metadata)
+    }
+
+    /// Restores a session without an API expectation, for callers that already
+    /// know it belongs to the running client. Production startup and resume
+    /// use `open_for_api`; this unchecked form is used by tests.
+    #[cfg(test)]
     pub fn open(&self, id: &str) -> Result<LoadedSession> {
         let metadata = self.metadata(id)?;
+        self.restore(metadata)
+    }
+
+    fn restore(&self, metadata: SessionMetadata) -> Result<LoadedSession> {
         ensure!(
             metadata.working_directory.is_dir(),
             "session working directory is missing: {}",
             metadata.working_directory.display()
         );
         let (conversation, replay) =
-            Conversation::restore(&self.directory(id)?.join("history.jsonl"))?;
+            Conversation::restore(&self.directory(&metadata.id)?.join("history.jsonl"))?;
         Ok(LoadedSession {
             metadata,
             conversation,

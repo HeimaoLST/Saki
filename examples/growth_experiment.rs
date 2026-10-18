@@ -64,7 +64,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use agent::conversation::Conversation;
-use client::ResponsesClient;
+use client::{ClientConfig, ResponsesClient, config::ModelApi};
 use protocol::{ModelRequest, ModelResponse, OutputItem, OutputText, ToolDefinition, ToolType};
 use tools::tool_registry::{Tool, ToolCall, ToolError, ToolRegistry};
 
@@ -1329,10 +1329,20 @@ async fn main() -> anyhow::Result<()> {
         .cloned()
         .or_else(|| std::env::var("SAKI_BASE_URL").ok());
 
-    let mut client = ResponsesClient::new()?.with_timeout(Duration::from_secs(60));
-    if let Some(url) = base_url {
-        client = client.with_base_url(url);
-    }
+    // The harness records Responses request bodies and its own request shape;
+    // a Chat configuration cannot be represented here.
+    let config = ClientConfig::from_env()?;
+    anyhow::ensure!(
+        config.api() == ModelApi::Responses,
+        "growth_experiment speaks {}; SAKI_API={} is not supported by this harness",
+        ModelApi::Responses.as_str(),
+        config.api().as_str()
+    );
+    let config = match base_url {
+        Some(url) => ClientConfig::new(config.api(), config.api_key().to_owned(), url),
+        None => config,
+    };
+    let client = ResponsesClient::from_config(&config)?.with_timeout(Duration::from_secs(60));
     let backend = Backend::Real { client, model };
     let base_dir = PathBuf::from(format!("examples/growth_experiment_artifacts/{run_id}"));
     prepare_artifacts(&base_dir)?;

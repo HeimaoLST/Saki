@@ -1,9 +1,7 @@
 mod stream;
 
-use std::env;
 use std::time::Duration;
 
-use reqwest::header;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -12,8 +10,15 @@ use crate::protocol::{
     ModelStreamEvent, OutputItem, OutputText, ProviderData, ReasoningText, ToolType, Usage,
 };
 
-const MAX_RETRIES: u8 = 3;
+use super::config::ClientConfig;
+use super::transport::ApiTransport;
+
 const API: &str = "openai-responses";
+
+/// The Responses error code for a request that exceeded the context window.
+fn is_context_overflow(value: &Value) -> bool {
+    value["error"]["code"] == "context_length_exceeded"
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
@@ -44,9 +49,7 @@ impl ApiError {
 #[derive(Clone)]
 pub struct ResponsesClient {
     base_url: String,
-    http_client: reqwest::Client,
-    /// Optional per-request timeout. `None` keeps the existing (no-timeout) behaviour.
-    request_timeout: Option<Duration>,
+    transport: ApiTransport,
 }
 /// One experiment call: the result and the exact number of HTTP attempts made
 /// (zero when protocol conversion fails before any HTTP request).
@@ -104,46 +107,15 @@ impl ResponsesClient {
     pub(crate) fn for_test(base_url: String) -> Self {
         Self {
             base_url,
-            http_client: reqwest::Client::new(),
-            request_timeout: Some(Duration::from_secs(5)),
+            transport: ApiTransport::for_test(Duration::from_secs(5)),
         }
     }
 
-    /// Single config/error path: a missing `.env` is fine; a malformed `.env`
-    /// is an error; `API_KEY` is required.
-    pub fn new() -> anyhow::Result<Self> {
-        match dotenvy::dotenv() {
-            Ok(_) => {}
-            Err(e) if e.not_found() => {}
-            // Static message: a dotenv parse error can echo the offending line,
-            // which may contain a secret. Never include it.
-            Err(_) => {
-                return Err(anyhow::anyhow!(
-                    ".env exists but could not be parsed (details redacted)"
-                ));
-            }
-        }
-        let api_key = env::var("API_KEY").map_err(|_| {
-            anyhow::anyhow!(
-                "API_KEY is not set (checked the environment and an optional .env file)"
-            )
-        })?;
-        let api_key = format!("Bearer {}", api_key);
-        const BASE_URL: &str = "https://api.deepseek.com";
-        let mut header = header::HeaderMap::new();
-        let value = header::HeaderValue::from_str(&api_key).map_err(|_| {
-            anyhow::anyhow!("API_KEY contains characters invalid for an HTTP header")
-        })?;
-        header.insert(header::AUTHORIZATION, value);
-        let http_client = reqwest::ClientBuilder::new()
-            .default_headers(header)
-            .build()
-            .map_err(|e| anyhow::anyhow!("failed to build HTTP client: {e}"))?;
-
+    /// Builds the client from explicit configuration (read once at assembly).
+    pub fn from_config(config: &ClientConfig) -> anyhow::Result<Self> {
         Ok(Self {
-            base_url: BASE_URL.to_owned(),
-            http_client,
-            request_timeout: None,
+            base_url: config.base_url().trim_end_matches('/').to_owned(),
+            transport: ApiTransport::new(config.api_key())?,
         })
     }
 
@@ -151,14 +123,7 @@ impl ResponsesClient {
     /// experiment harness; the main agent keeps the default (`None`).
     #[allow(dead_code, reason = "called only by the standalone growth experiment")]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.request_timeout = Some(timeout);
-        self
-    }
-
-    /// Override the API base URL (default stays the direct DeepSeek endpoint).
-    /// Used by the experiment harness to point at a local proxy.
-    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
-        self.base_url = base_url.into();
+        self.transport.request_timeout = Some(timeout);
         self
     }
 
@@ -184,62 +149,25 @@ impl ResponsesClient {
     }
 
     async fn send_request(&self, body: &Value) -> anyhow::Result<reqwest::Response> {
-        let mut builder = self
-            .http_client
-            .post(format!("{}/responses", self.base_url))
-            .json(body);
-        if let Some(timeout) = self.request_timeout {
-            builder = builder.timeout(timeout);
-        }
-        let response = builder
-            .send()
+        self.transport
+            .post_once(
+                &format!("{}/responses", self.base_url),
+                body,
+                is_context_overflow,
+            )
             .await
-            .map_err(|e| anyhow::anyhow!("request failed: {e}"))?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|err| format!("<failed to read error body: {err}>"));
-            let overflow = serde_json::from_str::<Value>(&body)
-                .ok()
-                .is_some_and(|value| value["error"]["code"] == "context_length_exceeded");
-            return Err(if overflow {
-                ApiError::ContextOverflow { status, body }
-            } else {
-                ApiError::Http { status, body }
-            }
-            .into());
-        }
-        Ok(response)
     }
 
     /// Retry transport failures, HTTP 408/429 and server errors before decoding.
     /// A successful HTTP response is never replayed after body processing starts.
     async fn send_with_retry(&self, body: &Value) -> anyhow::Result<reqwest::Response> {
-        for attempt in 1..=MAX_RETRIES {
-            match self.send_request(body).await {
-                Ok(response) => return Ok(response),
-                Err(error) => {
-                    let retryable = match error.downcast_ref::<ApiError>() {
-                        Some(ApiError::Http { status, .. }) => {
-                            status.is_server_error()
-                                || *status == reqwest::StatusCode::TOO_MANY_REQUESTS
-                                || *status == reqwest::StatusCode::REQUEST_TIMEOUT
-                        }
-                        Some(_) => false,
-                        None => true,
-                    };
-                    if !retryable {
-                        return Err(error);
-                    }
-                    if attempt == MAX_RETRIES {
-                        return Err(error.context("All retries failed"));
-                    }
-                }
-            }
-        }
-        unreachable!()
+        self.transport
+            .post_with_retry(
+                &format!("{}/responses", self.base_url),
+                body,
+                is_context_overflow,
+            )
+            .await
     }
 
     pub async fn respond(&self, request: ModelRequest<'_>) -> anyhow::Result<ModelResponse> {
