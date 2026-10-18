@@ -88,6 +88,60 @@ output_path 指向实际可读的输出文件；文件在返回结果前完成 f
 
 严格复验两项均通过：四工具闭环约 10.39 秒，大输出回读约 6.08 秒。闭环中模型直接执行 python3 calc.py，首次工具退出码为 1，edit 后再次执行退出码为 0，并用 write 创建内容为 VERIFIED 的报告。大输出返回 2,000 行预览与完整 4,001 行日志，随后 read 正确取回第 2,001 行的标记。未再出现此前的 usage limit 429。
 
+## edit 已应用变更结果（#33，设计提案）
+
+更新日期：2026-10-18。**未批准、未实施。** [#33](https://github.com/HeimaoLST/Saki/issues/33) 的问题是 edit 成功结果只有 path/applied，调用方无法显示实际应用的变更。本节推荐候选 A：成功结果增加结构化 changes，保留旧字段。候选 B 的参数预览不能证明应用成功，候选 C 的 read 复查仍可用，但不能让前端把参数猜测冒充执行结果。
+
+首版范围仅 edit；write、bash、全局 diff 框架及前端 diff renderer 不自动纳入。复用现有 ToolFinished.output 和 journal 工具结果，不新增另一种公共 tool result/Agent 事件或 diff 依赖。前端展示另按业务线交付。
+
+### 成功结果与坐标
+
+小结果在原成功对象上增加 changes：
+
+```json
+{"path":"/work/source.txt","applied":1,"changes":[{"edit_index":0,"before":{"start_byte":0,"end_byte":3,"text":"old"},"after":{"start_byte":0,"end_byte":3,"text":"new"}}]}
+```
+
+- before 是本次实际读取原始快照的字节区间与文本；after 是本次最终提交的更新快照的字节区间与文本，不直接复制未经转换的 oldText/newText 参数。
+- 坐标为完整 UTF-8 文件中的零起始、右端不含字节偏移；BOM 计入偏移，CRLF 按实际两个字节计数。before/after 各自对应其快照，不是行号或 Unicode 字符索引。
+- edit_index 是原 edits 参数数组的零起始索引；changes 按原文件位置排序，多个不同长度替换后的 after 偏移须正确反映前序长度变化。未改变字节的 replacement 不产生 change；applied 继续表示已处理替换条目数，因此可以大于 changes 的长度。
+- path 沿用现有结果含义；符号链接与文件模式遵守原 edit 行为。工具提交的快照不等于之后该路径永远不变，也不承诺隔离外部并发写入。
+
+数据直接来自已校验的匹配区间、实际行尾转换和已构造 updated 内容。实现可以按排序区间维护原始/新内容游标生成结果，不为已知精确替换再次跑全文件 diff 算法。只返回被本工具修改的片段，不采集无关文件快照。
+
+### 大结果与写入边界
+
+changes 的序列化内容遵守既有工具输出的字节/行边界。超过边界时，在同一个 session 的 tool-output 下保留完整 changes JSON；结果明确省略完整内联数组，并提供文件路径、有限预览和 truncated 标记：
+
+```json
+{"path":"/work/source.txt","applied":1,"changes":null,"changes_file":"/sessions/s1/tool-output/123-0.log","changes_preview":"bounded tail of the changes JSON","truncated":true}
+```
+
+changes_file 内容是完整 changes 数组的 JSON，复用现有输出累积／UTF-8 预览／落盘路径；预览可能是 JSON 尾部，不能作为完整结构解析或伪装完整 diff。普通 read 可按既有工具能力读取产物。首轮 renderer 若不能读取完整产物，应显示截断和文件引用，不从输入参数补造缺失部分。旧成功结果没有 changes 表示“不提供该证据”；新成功结果 changes 为空数组表示“没有字节变化”，二者不能混同。
+
+建议实现顺序：
+
+1. 沿用全部参数、唯一匹配、重叠检查；构造 updated 和实际 changes，原文件尚未变更。
+2. 预先准备成功 JSON；如需完整产物，先通过现有输出路径写入/finish。准备失败沿用 ToolError，目标文件不写入。
+3. 沿用现有一次目标文件写入；成功后返回已准备结果，不再做可能失败的 diff/read/artifact IO。
+
+这样不会在文件已改完后又因输出产物失败而把成功 edit 包装成未知的普通错误。目标文件写入本身仍非事务：IO 失败/进程崩溃可能已产生部分外部变化，不能由“没有成功 changes”推导“磁盘完全未变”。失败沿用现有错误工具结果，不发布成功 applied/changes；调用方显示失败/结果不确定并允许 read 检查，不伪造权威差异。未发布的预备产物不作为已应用证据。
+
+### 验收与实施范围
+
+定稿后另建 runtime 实施 issue：`src/tools/edit.rs`、必要的既有 `output.rs` 接线及 `tests/tools/`、事实文档；不改其他工具语义、锁策略或全局协议。成功结构按 call_id 沿用现有 Agent/持久化路径进入下一模型请求和历史，恢复不重跑 edit。TUI/GUI 通过实际结果选择显示方式，不解析参数来伪造成功。
+
+确定性验收包括：
+
+- 多个乱序参数、不同长度替换：按 before 坐标重建后与实际写入字节完全一致，after 切片等于返回文本，edit_index 保留原参数关联。
+- BOM、Unicode、LF/CRLF 等价匹配和混合行尾：结果反映实际保留/转换的字节，未触碰字节和模式/符号链接回归保留。
+- 未找到、歧义、重叠、空参数等校验失败原文件不变且无成功 changes；no-op 保留 applied 语义但 changes 为空。
+- 大 changes 的完整产物可读回、UTF-8 预览有界且明确 truncated；结果/历史不谎称完整数组。产物准备失败发生在目标写入前并保持目标字节。
+- 文件写入失败不发布成功差异，不新承诺 IO 事务保证；工具错误仍回传模型。恢复读取相同 tool result/call_id，不重复执行。
+- Agent 级真实临时 edit→工具结果回传→后续回答闭环；最终实现 SHA 的工具/Agent回归、fmt、strict Clippy、all-target tests及必需CI。真实 provider 验证与离线证据分开。
+
+需要 runtime/TUI/GUI/PM 对坐标、no-op、截断和失败语义的实际 ACK，独立内容评审与未来代码验收分开。新增字段不改变现有 path/applied；如果实际实施会破坏已承诺的工具能力或持久化，则单列迁移与回滚，而不是从本提案默认获准。
+
 原始证据：[Magpie 严格复验 report.json](../../.saki/verification/builtin-tools/1791263972642569000/report.json)。
 
 此前同日首轮已经完成文件修复与报告写入，但模型使用 python3 calc.py 后追加 echo 的命令，整个 shell 的退出码被 echo 的成功遮蔽；严格要求工具返回非零退出码的检查因此失败。这属于该次模型生成命令的行为，bash 返回了实际 shell 退出状态。随后明确要求两次测试命令均恰好为 python3 calc.py，再运行上述严格复验。首轮结果保留在[首轮报告](../../.saki/verification/builtin-tools/1791263925128818000/report.json)，不改写其失败判定。
