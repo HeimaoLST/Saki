@@ -105,3 +105,60 @@ compact 仍由 Conversation 处理。摘要 transcript 使用公共历史表示�
 - `043b6c8`：两个真实 smoke——`opencode-go/gpt-6-luna` Chat 工具闭环成功（一次 `read`、回传、最终标记正确、completed）；DeepSeek thinking Chat 第二轮失败（边界见上节）。
 
 除已验收组合外不宣称支持其他兼容厂商。
+
+## 会话内模型选择（#32，设计提案）
+
+更新日期：2026-10-18。**未批准、未实施。** 本节落实 [#32](https://github.com/HeimaoLST/Saki/issues/32) 的候选与验收，不将已有启动配置误写为运行期切换。跨宿主边界见 [#43 / PR #59](https://github.com/HeimaoLST/Saki/pull/59)，排队冲突见 [#31 / PR #65](https://github.com/HeimaoLST/Saki/pull/65)。
+
+### 推荐范围
+
+推荐原候选 B：使用宿主已加载的配置／模型容量信息，在目标 session 空闲时切换。候选 A 的运行期网络刷新、跨 endpoint/client 重建适合完整 provider 配置成熟后的阶段；候选 C 保留 env 但无法完成应用内选择。
+
+首版保持当前宿主的 API、endpoint、凭据和工具不变；`model` 是实际发给该 endpoint 的模型标识，`catalog_id` 只是容量查找标识，二者不能互相误用。相同 API/endpoint 下的模型选择复用已有 ModelClient，不为改一个请求字段重新建立 transport；跨 API／endpoint／凭据切换不是本契约的隐含副作用。原 `SAKI_MODEL` 等 env 继续作为新 session 的缺省配置，不被某个 session 的选择操作全局改写。
+
+### 调用与容量
+
+建议增加 `SessionCommand::SelectModel { session_id, ... }` 的等价 typed 操作，以及机器入口 `session.select_model`。调用方明确目标，不直接修改 Agent/client，也不通过伪造 Opened 事件重新打开历史。操作只针对已加载、无 active/pending task 的 session；另一个 session 正在执行不自动使本 session busy。TUI/console 新事件接线须由所属业务线确认并交付。
+
+```json
+{"version":1,"id":"model1","method":"session.select_model","params":{"session_id":"s1","model":"target-model","catalog_id":"provider/target-model"}}
+{"version":1,"type":"response","id":"model1","result":{"session_id":"s1","model":"target-model","api":"openai-chat-completions","effective_from":"next_task"}}
+```
+
+模型容量由已加载 catalog 的唯一匹配提供；自定义模型可由调用方提供完整 `compaction`（沿用 CompactionConfig 字段）替代 catalog 查找。一个请求只选一种容量来源。选择操作不调用 `ModelCatalog::load`、不请求 `/models`、不发测试推理或 compact。没有唯一容量或默认 compact 设置在目标容量下不合法时，明确返回 `model_limits_required`／`invalid_model_limits`，不静默猜 256K；调用方可以补充有效的显式配置。
+
+context/input/output 的目标限制与 reserve、summary、keep-recent 必须一起核对，复用当前 CompactionConfig 的单一验证规则。已有上下文超出新预算不靠删除历史解决；下一次 Send 仍走同一个 compact-before-generation 流程，compact 失败保持上下文并报告真实任务失败，不自动退回旧模型或另起第二套摘要。
+
+接受模型配置只证明本地路由／容量合法，不证明 endpoint 已开通该模型或模型支持当前图片／工具能力。首次实际调用的上游错误仍按普通模型失败报告，不通过偷偷降级、移除图片或重试别的模型制造成功。
+
+### 原子生效、历史与原生 continuation
+
+执行顺序建议是一次目标 session 的串行控制操作：
+
+1. 核对 session/active/pending 状态、容量来源、有效 compact 设置，以及当前上下文是否可保留。
+2. 准备新的 metadata/model/compact 值；尚不改变当前 Agent、usage 校准或事件。
+3. 使用现有 metadata 临时文件＋rename 路径持久化；失败返回错误，旧模型／预算／上下文和 metadata 保持。
+4. 在无 await、没有可失败的后置转换的提交段内同步活动 Agent/model/compact，清除旧 usage 校准，再发布真实 ModelChanged/context 信息及成功响应。
+
+同一验证规则只保留一份；必要时从现有 consuming `with_compaction_config` 提取验证/应用边界，避免先移走 Conversation 再因错误丢失旧状态。选择过程中不发模型／工具请求，不重写 `history.jsonl`，不释放/重新取得 session 写锁。重启在持久化提交后恢复新 model/compact，提交前恢复旧值；切换其他会话不串改配置。
+
+当前 ProviderData 只标记 API，没有证明不同模型可接受原生 continuation。首版对包含 `ProviderItem` 或携带 `provider_data` 的 reasoning 上下文，不静默删除／转成文字，也不假定“同 API”足以迁移；改变模型时返回明确 `continuation_not_supported` 并保持原状态。没有这类数据的公共文字／普通 function tool 历史可继续使用。该限制是首版选定的行为边界，不是声称所有厂商都禁止同 API 迁移；后续确需支持时另验证目标模型/厂商的迁移契约。选择原模型且有效配置未变化可作为空操作保留原数据。
+
+未来新 task 的 journal task-start 可以增加可选 model/api 字段，记录实际执行配置；旧记录缺失时保持未知，不以当前 metadata 倒填旧任务的模型。复用现有 record 类型的可选字段，不能为了模型选择新增旧 reader 无法识别的 record 而宣称完全可回滚。task/message 关联与 #60 保持同一来源。
+
+自动标题任务继续使用派发时捕获的旧模型/连接，其结果只更新标题，不改新选择或其 usage。运行/queued 任务未结束时不切换，避免已接纳输入悄悄使用新配置；完整 profile 编辑和跨 provider 迁移另行定稿。
+
+### 验收与交付切分
+
+此 decision 定稿后另建 runtime 实施 issue，范围为 `src/session/` 控制/metadata、`src/agent/` 配置应用、`src/model/` 已加载容量、必要 app 接线和对应模块测试；共享 HTTP/Agent/compact 不复制。TUI picker/command 与 GUI 模型设置归各自业务线，不由 runtime PR 越界实现或声称界面已可切换。
+
+确定性验收至少包括：
+
+- A→B→A 的实际请求 model 与当前 metadata/context/预算一致；恢复后继续 B，原历史内容与工具调用次数不变；选择本身零 HTTP/工具请求。
+- active 或 pending 时拒绝、未知/歧义容量拒绝、无效 compact 拒绝、metadata 写入失败：原 Agent/metadata/usage/上下文保持；目标 session 错误不影响另一个 session。
+- 小预算触发下一任务现有 compact 路径；summary/generation 都用 B，单次 compact 契约不退化；失败不丢上下文、不自动 fallback。
+- 有 opaque continuation 时拒绝并保留字节/状态；普通 tool 历史不重跑。旧 task 缺少模型字段保持未知，新 task 记录实际模型，不生成伪历史。
+- 成功后的 context estimate 不复用 A 的 usage 校准；之后 B 的真实 usage 可重新校准。标题作业的迟到结果不改变 B。
+- 默认启动/旧 session/取消/队列冲突及两协议回归；最终实现 SHA 的 fmt、strict Clippy、tests/example 和 required CI；上游真实可用性只按实际验证的模型组合声明。
+
+需要 runtime 对持久化/配置提交边界、TUI/GUI 对状态/可发现性和不可迁移反馈、PM 对首版同连接与后续扩展范围的实际 ACK。独立评审和代码验收分别记录；本文合入不等于模型选择已实现，breaking migration 不从现有开发授权推导。
