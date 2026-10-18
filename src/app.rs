@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     agent::conversation::CompactionConfig,
-    client::ResponsesClient,
+    client::{ClientConfig, ModelApi, ModelClient},
     frontend::{console, tui},
     model::catalog,
     session::{SYSTEM_PROMPT, SessionManager, store::SessionStore},
@@ -16,10 +16,10 @@ use crate::{
 /// This module wires channels and lifecycle only; it contains no model/tool loop
 /// and no terminal drawing.
 pub async fn run() -> anyhow::Result<()> {
-    let mut client = ResponsesClient::new()?;
-    if let Ok(base_url) = std::env::var("SAKI_BASE_URL") {
-        client = client.with_base_url(base_url);
-    }
+    // Assembly boundary: the protocol, key and base URL are read once here and
+    // injected explicitly; nothing below reads them again.
+    let client_config = ClientConfig::from_env()?;
+    let client = ModelClient::new(&client_config)?;
     let model = std::env::var("SAKI_MODEL").unwrap_or_else(|_| "deepseek-v4.1-flash".to_owned());
     let mut config = match std::env::var("SAKI_CONTEXT_TOKENS") {
         Ok(value) => CompactionConfig::new(value.parse()?),
@@ -69,9 +69,13 @@ pub async fn run() -> anyhow::Result<()> {
         // startup never resumes stored history. An explicit ID is opened below
         // and fails loudly when it is missing or locked.
         Some(id) => id,
-        None => store.create(&cwd, &model, SYSTEM_PROMPT, config)?,
+        None => match client_config.api() {
+            // The default API keeps the original creation path.
+            ModelApi::Responses => store.create(&cwd, &model, SYSTEM_PROMPT, config)?,
+            api => store.create_with_api(&cwd, &model, SYSTEM_PROMPT, api.as_str(), config)?,
+        },
     };
-    let loaded = store.open(&session_id)?;
+    let loaded = store.open_for_api(&session_id, client_config.api().as_str())?;
     let manager = SessionManager::new(store, client, loaded, cwd, model, config)?;
 
     let (events_tx, events_rx) = mpsc::unbounded_channel();
