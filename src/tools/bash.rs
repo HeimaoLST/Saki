@@ -30,7 +30,7 @@ fn default_timeout() -> u64 {
 /// Owns the process group's cleanup. The timeout, the normal exit, the error
 /// path and `Drop` all terminate through [`GroupGuard::terminate`], which is a
 /// no-op once the group has been signalled. A successful signal or a benign
-/// ESRCH disarms it; a genuine first error is returned and leaves it armed for
+/// ESRCH or confirmed exited group disarms it; a genuine first error leaves it armed for
 /// the drop cleanup. `kill_on_drop` alone only signals the shell.
 #[cfg(unix)]
 struct GroupGuard {
@@ -44,7 +44,7 @@ impl GroupGuard {
         if !self.armed {
             return Ok(());
         }
-        // kill_group treats a vanished group (ESRCH) as already done.
+        // kill_group treats a vanished or confirmed exited group as already done.
         kill_group(self.pid)?;
         self.armed = false;
         Ok(())
@@ -71,9 +71,71 @@ fn kill_group(pid: u32) -> Result<(), ToolError> {
         if error.raw_os_error() == Some(libc::ESRCH) {
             return Ok(());
         }
-        return Err(error.into());
+        // Darwin also reports EPERM when its group iterator finds only zombies.
+        #[cfg(target_os = "macos")]
+        if error.raw_os_error() == Some(libc::EPERM) && process_group_exited(pid) {
+            return Ok(());
+        }
+        return Err(ToolError::ExecutionFailed(format!(
+            "kill process group {pid}: {error}"
+        )));
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn process_group_members(pid: u32) -> Option<Vec<libc::pid_t>> {
+    let capacity = unsafe { libc::proc_listpgrppids(pid as i32, std::ptr::null_mut(), 0) };
+    if capacity <= 0 {
+        return None;
+    }
+    let mut members = vec![0 as libc::pid_t; capacity as usize];
+    let Ok(buffer_size) = i32::try_from(std::mem::size_of_val(members.as_slice())) else {
+        return None;
+    };
+    let (count, error) = unsafe {
+        // libproc maps query errors to zero, the same result as an empty group.
+        *libc::__error() = 0;
+        let count = libc::proc_listpgrppids(pid as i32, members.as_mut_ptr().cast(), buffer_size);
+        (count, *libc::__error())
+    };
+    if count < 0 || count as usize >= members.len() || (count == 0 && error != 0) {
+        return None;
+    }
+    members.truncate(count as usize);
+    Some(members)
+}
+
+#[cfg(target_os = "macos")]
+fn process_group_exited(pid: u32) -> bool {
+    let Some(members) = process_group_members(pid) else {
+        return false;
+    };
+    for &member in &members {
+        let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+        let size = unsafe {
+            libc::proc_pidinfo(
+                member,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                info.as_mut_ptr().cast(),
+                std::mem::size_of::<libc::proc_bsdinfo>() as i32,
+            )
+        };
+        if size == 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            continue;
+        }
+        if size != std::mem::size_of::<libc::proc_bsdinfo>() as i32 {
+            return false;
+        }
+        let info = unsafe { info.assume_init() };
+        if info.pbi_status != libc::SZOMB {
+            return false;
+        }
+    }
+    // A member may fork before exiting. Do not accept an unexamined new PID.
+    process_group_members(pid)
+        .is_some_and(|current| current.iter().all(|member| members.contains(member)))
 }
 
 #[cfg(unix)]
@@ -112,7 +174,9 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
             Ok(())
         });
     }
-    let mut child = command.spawn()?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| ToolError::ExecutionFailed(format!("spawn bash: {error}")))?;
     let pid = child.id().unwrap();
     let mut group = GroupGuard { pid, armed: true };
     let mut stdout = child.stdout.take().unwrap();
@@ -128,7 +192,7 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
         while exit_status.is_none() || stdout_open {
             tokio::select! {
                 status = child.wait(), if exit_status.is_none() => {
-                    exit_status = Some(status?);
+                    exit_status = Some(status.map_err(|error| ToolError::ExecutionFailed(format!("wait for bash {pid}: {error}")))?);
                     // Background descendants can keep inherited pipes open after the shell exits.
                     group.terminate()?;
                 }
@@ -148,7 +212,10 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
     }.await;
     if let Err(error) = collected {
         group.terminate()?;
-        child.wait().await?;
+        child
+            .wait()
+            .await
+            .map_err(|error| ToolError::ExecutionFailed(format!("wait for bash {pid}: {error}")))?;
         return Err(error);
     }
     let mut result = json!({"output":output.preview(), "exit_code":exit_status.unwrap().code(),
@@ -179,3 +246,7 @@ pub fn init(context: Arc<ToolContext>) -> Tool {
         handler: Arc::new(move |args| { let context = context.clone(); Box::pin(async move { bash(args, &context).await }) }),
     }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "../../tests/tools/bash.rs"]
+mod tests;
