@@ -129,7 +129,7 @@ impl Sessions {
                 context,
             } => {
                 let mut next = App::restore(&replay);
-                let next_editor;
+                let mut next_editor;
                 if let Some((previous, draft)) = self.cached.remove(&metadata.id) {
                     next.follow = previous.follow;
                     next.anchor = previous
@@ -180,6 +180,9 @@ impl Sessions {
                 } else {
                     next_editor = Editor::new();
                 }
+                // A session switch starts a fresh local undo history while the
+                // cached draft, cursor and attachments are preserved.
+                next_editor.reset_history();
                 next.working_directory = Some(metadata.working_directory.clone());
                 next.session = Some(metadata);
                 next.apply_event(context);

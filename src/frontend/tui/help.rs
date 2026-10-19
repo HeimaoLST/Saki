@@ -141,6 +141,10 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         ),
         (
             false,
+            "Alt+U / Alt+R  Undo/redo the draft; consecutive typing is one step".to_owned(),
+        ),
+        (
+            false,
             "Ctrl+H/D  Delete previous/next character; Ctrl+D on empty input exits".to_owned(),
         ),
         (true, "Records".to_owned()),
