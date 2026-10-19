@@ -88,15 +88,20 @@ def prefixed(names, prefix) -> list:
 
 
 def analyze_open_issues(issues) -> list:
+    """status 必须恰好 1 个；仅唯一 status:triage 允许 type／agent 为 0 或 1。"""
     findings = []
     for issue in issues:
         names = label_names(issue)
-        counts = {
-            "type": len(prefixed(names, TYPE_PREFIX)),
-            "status": len(prefixed(names, STATUS_PREFIX)),
-            "agent": len(prefixed(names, AGENT_PREFIX)),
-        }
-        problems = ["%s=%d" % (key, value) for key, value in counts.items() if value != 1]
+        statuses = prefixed(names, STATUS_PREFIX)
+        types = prefixed(names, TYPE_PREFIX)
+        agents = prefixed(names, AGENT_PREFIX)
+        problems = []
+        if len(statuses) != 1:
+            problems.append("status=%d" % len(statuses))
+        triage = len(statuses) == 1 and statuses[0] == "status:triage"
+        for key, values in (("type", types), ("agent", agents)):
+            if len(values) != 1 and not (triage and not values):
+                problems.append("%s=%d" % (key, len(values)))
         if problems:
             findings.append(
                 {
@@ -318,7 +323,7 @@ def print_text(report: dict) -> None:
     print("说明：以下均为候选，不自动验收；脚本不会改标签、关闭 issue、ACK、删除或提交。")
 
     _print_section(
-        "open issue 标签约束（type/status/agent 各应为 1）",
+        "open issue 标签约束（status 恰好 1；仅 triage 时 type/agent 可为 0 或 1，其余各为 1）",
         report["label_constraints"],
         lambda e: "#%s %s -> %s [%s]" % (e["number"], e["title"], ", ".join(e["problems"]), e["url"]),
     )

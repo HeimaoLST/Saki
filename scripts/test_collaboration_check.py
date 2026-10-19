@@ -52,6 +52,43 @@ class AnalyzeTest(unittest.TestCase):
         self.assertEqual(findings[0]["problems"], ["type=0", "agent=0"])
         self.assertEqual(findings[1]["problems"], ["type=2"])
 
+    def test_triage_allows_missing_type_and_agent(self):
+        issues = [
+            {"number": 20, "title": "bare triage", "labels": [{"name": "status:triage"}]},
+            {"number": 21, "title": "partial triage", "labels": [
+                {"name": "status:triage"}, {"name": "type:bug"}]},
+            {"number": 22, "title": "full triage", "labels": [
+                {"name": "status:triage"}, {"name": "type:bug"}, {"name": "agent:pm"}]},
+        ]
+        self.assertEqual(cc.analyze_open_issues(issues), [])
+
+    def test_triage_still_reports_duplicates(self):
+        issues = [
+            {"number": 30, "title": "dup type", "labels": [
+                {"name": "status:triage"}, {"name": "type:bug"}, {"name": "type:docs"}]},
+            {"number": 31, "title": "dup agent", "labels": [
+                {"name": "status:triage"}, {"name": "agent:pm"}, {"name": "agent:tui"}]},
+            {"number": 32, "title": "two status", "labels": [
+                {"name": "status:triage"}, {"name": "status:ready"}]},
+        ]
+        findings = cc.analyze_open_issues(issues)
+        by_number = {f["number"]: f["problems"] for f in findings}
+        self.assertEqual(by_number[30], ["type=2"])
+        self.assertEqual(by_number[31], ["agent=2"])
+        # 多个 status 时不满足“唯一 triage”，type/agent 缺失同时上报
+        self.assertEqual(by_number[32], ["status=2", "type=0", "agent=0"])
+
+    def test_ready_missing_type_and_agent_reported(self):
+        issues = [
+            {"number": 40, "title": "ready no type/agent", "labels": [{"name": "status:ready"}]},
+            {"number": 41, "title": "ready missing agent", "labels": [
+                {"name": "status:ready"}, {"name": "type:bug"}]},
+        ]
+        findings = cc.analyze_open_issues(issues)
+        self.assertEqual([f["number"] for f in findings], [40, 41])
+        self.assertEqual(findings[0]["problems"], ["type=0", "agent=0"])
+        self.assertEqual(findings[1]["problems"], ["agent=0"])
+
     def test_closed_leftover_normal_and_anomaly(self):
         issues = [
             {"number": 10, "title": "leftover", "stateReason": "COMPLETED",
