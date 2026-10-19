@@ -6,7 +6,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        > 协作协议见根目录 `AGENTS.md` §10（证据与验收要求）。测试必须是确定性的，禁止用 `sleep` 或时间竞态碰运气。
+        > 协作协议见根目录 `AGENTS.md` §10。测试覆盖真实行为、非平凡不变量与边界；并发优先受控协调，不用无意义的 sleep 碰运气。简单机械改动不强制新增测试。
+        > 本模板用于独立测试／QA 任务。主 agent 给自己的子 agent 分派核查时使用 tmux，由主 agent 汇总真实评审身份、候选 SHA、证据和限制；子 agent 不重复认领或逐条发 GitHub 评论。
 
   - type: dropdown
     id: from_agent
@@ -35,7 +36,7 @@ body:
     id: to_agent
     attributes:
       label: 执行方业务线（TO）
-      description: 单模块测试归对应业务线；跨模块 / 端到端测试归 agent:qa
+      description: 单模块测试归对应模块业务线；跨模块 / 端到端 / PTY 验收归 agent:qa
       options:
         - agent:qa
         - agent:runtime
@@ -95,7 +96,7 @@ body:
     id: location
     attributes:
       label: 期望测试位置
-      description: 例如 tests/tools/mod.rs（单模块归 owner）或 tests/tui/（跨模块归 QA）
+      description: 例如 tests/tools/mod.rs（runtime 模块测试）；跨模块／PTY 验收的位置和范围在 issue 中明确，不按 tests/ 目录名直接推定归属
       placeholder: tests/tools/mod.rs
     validations:
       required: true

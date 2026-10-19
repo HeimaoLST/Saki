@@ -3,11 +3,13 @@ pub mod journal;
 pub mod message;
 
 use serde_json::Value;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+#[cfg(test)]
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::UnboundedSender;
 
 use self::{conversation::Conversation, message::UserMessage};
 use crate::{
-    client::{ResponsesClient, responses::ApiError},
+    client::{ModelClient, responses::ApiError},
     protocol::{ModelRequest, ModelStreamEvent, OutputItem, OutputText},
     tools::tool_registry::{ToolCall, ToolRegistry},
 };
@@ -132,7 +134,7 @@ async fn cancelled(cancel: &mut Option<tokio::sync::watch::Receiver<bool>>) {
 }
 
 pub struct Agent {
-    client: ResponsesClient,
+    client: ModelClient,
     tool_registry: ToolRegistry,
     conversation: Conversation,
     model: String,
@@ -142,7 +144,7 @@ pub struct Agent {
 
 impl Agent {
     pub fn new(
-        client: ResponsesClient,
+        client: ModelClient,
         tool_registry: ToolRegistry,
         conversation: Conversation,
     ) -> Self {
@@ -474,11 +476,14 @@ impl Agent {
     }
 }
 
-/// The single worker entry point.
+/// Test-facing worker entry point: forwards user messages to
+/// [`Agent::handle_user_message`] and emits exactly one terminal event per
+/// message at that return boundary, so a turn never has both a success and a
+/// failure event. Closing the input channel ends the worker.
 ///
-/// It forwards user messages to [`Agent::handle_user_message`] and emits exactly
-/// one terminal event per message at that return boundary, so a turn never has
-/// both a success and a failure event. Closing the input channel ends the worker.
+/// The binary drives the same loop through `SessionManager::run`, so this helper
+/// is compiled only for tests.
+#[cfg(test)]
 pub async fn run_agent(mut agent: Agent, mut input: UnboundedReceiver<UserMessage>) {
     agent.emit_context();
     while let Some(message) = input.recv().await {

@@ -2,13 +2,14 @@
 description: 以指定业务线/实例身份，按 AGENTS.md 开工
 argument-hint: "<line>#<name>"
 ---
-你是 agent:${1:-runtime#default}。业务线取 `#` 前的部分，实例名取 `#` 后的部分。
+你是 agent:$1。先主动完整读取仓库根目录 `AGENTS.md`（不要假设工具会自动加载），再按下面执行。
 
-先完整阅读仓库根目录的 `AGENTS.md`，然后按 §0 快速开工与 §5 标准工作循环执行：
+- 参数应为 `<line>#<name>`（例如 `runtime#kira`）。业务线不明确时先确认；仅缺实例名或名字冲突时选择新的唯一实例名并报告，不冒用他人身份。
+- 先确认角色：独立任务主责按 §5 巡检／认领；由主 agent 通过 tmux 分派的子 agent，只执行该范围，不另巡检认领、不改标签、不通过 GitHub 与主 agent 对话。
+- 主 agent 按 §2.2 动态发现并核对父子 pane 的稳定实例 ID、任务与状态；不用固定 session／pane 编号或仅凭继承的 `TMUX_PANE` 定位。通过 split-window、send-keys／paste-buffer 与 capture-pane 分派和监督。
+- 子 agent 通过 pane 回报结果与日志路径，主 agent 复核并汇总关键证据到 GitHub；跨独立业务线的需求和交接仍按标签路由。
+- 已授权任务的文件修改在任务 worktree 内完成，主 agent 对 commit／push／PR 闭环负责，可明确分派相应步骤；子 agent 未获分派不自行执行其他 Git 动作。只读任务交付报告，base 与 issue 引用按 §7。
+- 未获任务或队列执行授权时：只读巡检并报告 `ready`／`review`／`blocked` 状态，不自行扩展范围或创建空 worktree。
+- 非 breaking change 已获用户持续预授权：独立 agent 评审、必需检查与适用 QA 通过后，由主 agent 按 §5 自行合并并收尾，不逐 PR 询问用户；子 agent 的 merge 动作须由主 agent 明确分派。breaking change 按 §0.2／§8 升级人类。`master` 保持生产稳定，发布需确定范围并全套验证；`dev` 是开发集成分支。清理按 §9，保留长期分支。
 
-1. 巡检队列：`gh issue list --state open --label "agent:<line>,status:ready"`、`status:review`，以及仓库的 `status:blocked`。
-2. 认领一个 issue（或从 triage 开始），用 `./scripts/agent-worktree.sh add agent/<line>/<issue>-<slug>` 开独立 worktree。
-3. 不要在主检出 `git switch`；编码完成后自行 commit + push，然后开 PR 到 `dev`，用 `Closes #N` 关联 issue。
-4. 合并后按 §9 清理：`./scripts/agent-worktree.sh finish <branch>`。
-
-本次身份：`agent:${1:-runtime#default}`
+本次身份：`agent:$1`

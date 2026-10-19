@@ -30,7 +30,7 @@ if [ "$auth_ok" -ne 1 ]; then
 fi
 
 labels=(
-  # 类型 type:* —— 每个 issue 恰好 1 个
+  # 类型 type:* —— 分诊完成后恰好 1 个
   "type:bug|d73a4a|行为与预期不符，需要修复"
   "type:feature|a2eeef|新能力或行为增强"
   "type:test|0e8a16|需要补充/修复的测试或验收"
@@ -41,19 +41,19 @@ labels=(
   "type:question|d876e3|需要澄清的问题"
 
   # 状态 status:* —— 每个 issue 恰好 1 个
-  "status:triage|ededed|待分诊：补信息、定级、定归属"
-  "status:ready|c2e0c6|已就绪，等待负责 agent 认领"
-  "status:in-progress|fbca04|负责 agent 处理中"
-  "status:review|1d76db|等待其他 agent 评审"
-  "status:blocked|b60205|被依赖阻塞（正文须写 BLOCKED-BY: #N）"
-  "status:done|0e8a16|验收通过，待关闭/已关闭"
+  "status:triage|ededed|待分诊：补类型、归属、优先级与迭代安排"
+  "status:ready|c2e0c6|已就绪，等待负责业务线认领"
+  "status:in-progress|fbca04|唯一主责实例组织执行，子任务通过 tmux 分派"
+  "status:review|1d76db|待评审、验收或合并；breaking change 等人类决定"
+  "status:blocked|b60205|被依赖阻塞（正文写 BLOCKED-BY: #N 或具体原因与解除条件）"
+  "status:done|0e8a16|验收通过且交付完成，待关闭/已关闭"
 
-  # 归属 agent:* —— 业务线（每条业务线可有多个 agent 实例），每个 issue 恰好 1 个
+  # 归属 agent:* —— 业务线（每条业务线可有多个实例），分诊完成后恰好 1 个
   "agent:runtime|006b75|Agent Runtime 开发：执行循环/模型/工具/会话/协议"
   "agent:tui|6f42c1|TUI 开发：TUI/console/本地命令"
   "agent:gui|00add8|GUI 开发：desktop Go contacts 预览"
   "agent:qa|0e8a16|测试：测试策略/端到端验收/CI"
-  "agent:pm|fbca04|产品经理：需求/优先级/文档/验收标准"
+  "agent:pm|fbca04|产品经理：需求/优先级/文档分类/协作配置与验收标准"
 
   # 优先级 priority:* —— triage 时确定
   "priority:p0|b60205|阻断/安全/数据损坏，立即处理"
@@ -70,7 +70,7 @@ labels=(
   "needs:human|b60205|需要人类决策/介入"
 
   # 流转与其他
-  "handoff|ff7619|跨 agent 交接：负责人变更"
+  "handoff|ff7619|独立任务主责交接；主子内部派活用 tmux"
   "epic|3e4b9e|跨多个 issue 的目标追踪"
   "platform:rust|dea584|涉及 Rust core"
   "platform:go|00add8|涉及 desktop Go 模块"

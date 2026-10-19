@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::{
     agent::message::{ImageAttachment, UserMessage},
-    client::ResponsesClient,
+    client::ModelClient,
     protocol::{
         InputContentPart, InputItem, InputMessageContent, MessageRole, ModelRequest, OutputItem,
         ProviderData, ReasoningText, ToolDefinition, Usage,
@@ -412,7 +412,7 @@ impl Conversation {
     /// active context intact and prevents the caller from sending an oversized request.
     pub async fn compact_if_needed(
         &mut self,
-        client: &ResponsesClient,
+        client: &ModelClient,
         model: &str,
         tools: &[ToolDefinition],
     ) -> Result<Option<CompactionResult>> {
@@ -431,7 +431,7 @@ impl Conversation {
     /// Failure preserves the active context and does not retry the summary request.
     pub async fn compact(
         &mut self,
-        client: &ResponsesClient,
+        client: &ModelClient,
         model: &str,
         tools: &[ToolDefinition],
     ) -> Result<CompactionResult> {
@@ -599,14 +599,14 @@ pub(crate) fn summary_item(summary: &str) -> InputItem {
 fn replace_images(value: &mut Value, images: &mut Vec<ImageAttachment>) {
     match value {
         Value::Object(map) => {
-            if map.get("type").and_then(Value::as_str) == Some("image") {
-                if let Some(Value::String(url)) = map.get_mut("url") {
-                    let index = images.len() + 1;
-                    let data_url = std::mem::take(url);
-                    images.push(ImageAttachment::new(format!("image #{index}"), data_url));
-                    *url = format!("[image #{index}]");
-                    return;
-                }
+            if map.get("type").and_then(Value::as_str) == Some("image")
+                && let Some(Value::String(url)) = map.get_mut("url")
+            {
+                let index = images.len() + 1;
+                let data_url = std::mem::take(url);
+                images.push(ImageAttachment::new(format!("image #{index}"), data_url));
+                *url = format!("[image #{index}]");
+                return;
             }
             for child in map.values_mut() {
                 replace_images(child, images);

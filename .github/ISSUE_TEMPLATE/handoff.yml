@@ -1,13 +1,41 @@
 name: Agent 任务交接
-description: 把一个 issue 的所有权移交给另一个 agent（handoff）
+description: 独立业务线或主责之间的任务交接；主子内部派活使用 tmux
 title: "[handoff] "
-labels: ["handoff", "status:ready"]
+labels: ["handoff", "status:triage"]
 body:
   - type: markdown
     attributes:
       value: |
         > 协作协议见根目录 `AGENTS.md` §8（交接、阻塞与升级）。
-        > 交接必须写清「下一步的具体动作」；接收方确认后才算完成。
+        > 主 agent 给自己的子 agent 派活或接收结果，使用 tmux；不使用本模板、不另认领或改标签。只写稳定实例 ID，不把 session／pane 数字当作后续路由。
+        > 优先在**原 issue** 评论交接，只有目标确实不同才新开本 issue。
+        > 新目标默认 `status:triage`：类型／归属／优先级由 PM 按目标补齐，DoR 完整后才置 `ready`。接收方评论确认才完成交接。
+
+  - type: input
+    id: source_issue
+    attributes:
+      label: 原 issue
+      description: 引用交接来源及相关历史；不同目标应另写验收标准
+      placeholder: "#42"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: 新任务的建议类型
+      description: 按实际目标选择，分诊时核对；单纯换执行者应在原 issue 评论
+      options:
+        - type:bug
+        - type:feature
+        - type:test
+        - type:refactor
+        - type:docs
+        - type:research
+        - type:decision
+        - type:question
+    validations:
+      required: true
 
   - type: dropdown
     id: from_agent
@@ -47,11 +75,11 @@ body:
   - type: input
     id: to_instance
     attributes:
-      label: 接收方实例 ID（TO）
-      description: 指定接收的实例；不确定时可先写业务线，由该线任一实例确认后补全
+      label: 接收方实例 ID（TO，可选）
+      description: 不确定时留空，接收方确认时补充唯一实例 ID
       placeholder: tui#nova
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: context
@@ -103,7 +131,15 @@ body:
     id: dod
     attributes:
       label: 验收标准复述
-      description: 从原 issue 复述完成标准，防止交接后走样
+      description: 写明本任务的可验证完成标准，并说明与来源任务的关系
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 依赖与阻塞
+      description: 写入 Blocked-by / Blocks / 需要先完成的事项；没有就写「无」
     validations:
       required: true
 
@@ -112,9 +148,13 @@ body:
     attributes:
       label: 交接清单
       options:
-        - label: 已完成工作已 push 到共享远程（或已说明未 push 的原因）
+        - label: 已记录阶段成果、验证状态与 SHA；未提交推送时已说明原因和接手方式
           required: true
-        - label: issue 标签已改为接收方 agent:* 并置 status:ready
+        - label: 新任务已注明来源 issue、目标与建议类型；单纯换执行者使用原 issue
           required: true
-        - label: 长期结论已写入 docs/ 或已开 follow-up issue
+        - label: 目标业务线已知则改 `agent:*`；不确定时留给 `agent:pm` 分诊
+          required: true
+        - label: 接收方确认接手后才移除 `handoff`；置 `ready` 前 DoR 完整
+          required: true
+        - label: 需沉淀的长期结论已写入 docs/ 或有明确 follow-up；无需沉淀时已说明
           required: true

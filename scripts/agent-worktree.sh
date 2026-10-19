@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Agent 实例的 git worktree 管理器。
 #
-# 主检出固定 master；每个 agent 实例/活跃 issue 用独立 worktree 开发，
-# 避免共享 cwd 下一个实例切分支导致所有实例跟着切。规则见 AGENTS.md §9。
+# 主检出固定 master；每个独立开发 issue 使用隔离 worktree，
+# 同任务主子 agent 的文件范围与 Git 操作由主 agent 协调。规则见 AGENTS.md §9。
 #
 # worktree 放在 Workspace 级的 worktrees/Saki/ 下（默认 $HOME/Workspace，
 # 可用 SAKI_WORKTREE_ROOT 覆盖整个 worktree 根目录）。不放仓库内，也不依赖

@@ -52,7 +52,10 @@ pub async fn run(
         session.draw(|frame| {
             view::draw(frame, &mut app, &editor);
             if sessions.picker.is_none() && !sessions.pending {
-                commands.draw(frame, &app);
+                if !app.history.searching() {
+                    commands.draw(frame, &app);
+                }
+                history::draw(frame, &app);
             }
             sessions.draw(frame, app.theme);
         })?;
@@ -72,33 +75,43 @@ pub async fn run(
                 let (copy, notify_copy) = match maybe {
                     Ok(Some(Input::Event(Event::Key(key)))) => {
                         let (handled, command) = sessions.key(&mut app, key);
-                        if let Some(command) = command { if input.send(command).is_err() { break; } }
+                        if let Some(command) = command
+                            && input.send(command).is_err()
+                        {
+                            break;
+                        }
                         if handled {
-                            // A picker/cancel key must also stop any background
-                            // edge-scroll timer.
+                            // A picker key ends any local history search and
+                            // stops background edge scrolling.
+                            app.history.cancel_search();
                             app.text_selection.clear();
                             continue;
                         }
-                        if commands.key(&mut editor, key) {
+                        if !app.history.searching() && commands.key(&mut editor, key) {
                             app.text_selection.clear();
                             continue;
                         }
                         let outcome = handle_key(&mut app, &mut editor, key);
-                        if let Some(command) = outcome.command {
-                            if let Some(request) = commands.dispatch(command, &mut app, &mut editor, &mut sessions) {
-                                if input.send(request).is_err() { break; }
-                            }
+                        if let Some(command) = outcome.command
+                            && let Some(request) = commands.dispatch(command, &mut app, &mut editor, &mut sessions)
+                            && input.send(request).is_err()
+                        {
+                            break;
                         }
-                        if outcome.cancel {
-                            if let Some(metadata) = &app.session {
-                                app.cancelling = true;
-                                app.status = None;
-                                let command = SessionCommand::Cancel {
-                                    session_id: metadata.id.clone(),
-                                };
-                                if input.send(command).is_err() {
-                                    break;
-                                }
+                        if app.help_open {
+                            app.history.cancel_search();
+                        }
+                        if outcome.cancel
+                            && let Some(metadata) = &app.session
+                        {
+                            app.cancelling = true;
+                            app.status = None;
+                            let command = SessionCommand::Cancel {
+                                session_id: metadata.id.clone(),
+                            };
+                            if input.send(command).is_err() {
+                                break;
+
                             }
                         }
                         if let Some(message) = outcome.send {
@@ -132,12 +145,15 @@ pub async fn run(
                             app.text_selection.clear();
                             continue;
                         }
-                        if commands.mouse(&mut editor, mouse) {
+                        if !app.history.searching() && commands.mouse(&mut editor, mouse) {
                             app.text_selection.clear();
                             continue;
                         }
                         let position = ratatui::layout::Position::new(mouse.column, mouse.row);
                         if mouse.kind == MouseEventKind::Down(MouseButton::Left) && app.session_button_area.contains(position) {
+                            // The global session picker closes any local search
+                            // first so a switched session never caches it.
+                            app.history.cancel_search();
                             app.text_selection.clear();
                             sessions.pending = true;
                             if input.send(SessionCommand::List).is_err() { break; }
@@ -197,6 +213,7 @@ pub async fn run(
     Ok(())
 }
 
+#[derive(Default)]
 pub struct KeyOutcome {
     pub send: Option<UserMessage>,
     pub command: Option<Command>,
@@ -228,12 +245,13 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     let had_selection = app.text_selection.active();
 
-    if ctrl && matches!(key.code, KeyCode::Char('c' | 'C')) {
-        if let Some(text) = app.text_selection.text() {
-            outcome.copy = Some(text);
-            app.text_selection.clear();
-            return outcome;
-        }
+    if ctrl
+        && matches!(key.code, KeyCode::Char('c' | 'C'))
+        && let Some(text) = app.text_selection.text()
+    {
+        outcome.copy = Some(text);
+        app.text_selection.clear();
+        return outcome;
     }
     app.text_selection.clear();
 
@@ -245,6 +263,18 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
         app.focus = Focus::Input;
         outcome.paste_clipboard = true;
         return outcome;
+    }
+
+    // A local prompt-history search is modal in the input focus: it consumes
+    // every key (Esc/Ctrl+C included), so the hidden composer is never edited.
+    if app.history.searching() && app.focus == Focus::Input {
+        // F1 is global help: it closes the search first.
+        if key.code == KeyCode::F(1) && !ctrl && !alt {
+            app.history.cancel_search();
+            app.toggle_help();
+            return outcome;
+        }
+        return history_search_key(app, editor, key);
     }
 
     if key.code == KeyCode::F(1) && !ctrl && !alt {
@@ -407,6 +437,9 @@ fn input_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutcome {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    if app.history.searching() {
+        return history_search_key(app, editor, key);
+    }
     match key.code {
         KeyCode::Enter if alt || shift => editor.insert_newline(),
         KeyCode::Enter => {
@@ -448,6 +481,7 @@ fn input_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutcome {
         KeyCode::Char('h') if ctrl => editor.backspace(),
         KeyCode::Char('p') if ctrl => navigate_or_move(app, editor, false),
         KeyCode::Char('n') if ctrl => navigate_or_move(app, editor, true),
+        KeyCode::Char('r') if ctrl => app.history.open_or_older(),
         KeyCode::Left if ctrl || alt => editor.move_word_left(),
         KeyCode::Right if ctrl || alt => editor.move_word_right(),
         KeyCode::Left => editor.move_left(),
@@ -503,6 +537,32 @@ fn navigate_or_move(app: &mut App, editor: &mut Editor, forward: bool) {
     }
 }
 
+/// Local prompt-history search keys. The composer draft is untouched here;
+/// Enter clones the chosen entry into the editor and never sends. Esc and
+/// Ctrl+C cancel and leave the draft and ordinary navigation unchanged.
+fn history_search_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutcome {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    match key.code {
+        KeyCode::Esc => app.history.cancel_search(),
+        KeyCode::Char('c') if ctrl => app.history.cancel_search(),
+        KeyCode::Char('r') if ctrl => app.history.move_older(),
+        KeyCode::Up => app.history.move_older(),
+        KeyCode::Char('p') if ctrl => app.history.move_older(),
+        KeyCode::Down => app.history.move_newer(),
+        KeyCode::Char('n') if ctrl => app.history.move_newer(),
+        KeyCode::Backspace => app.history.query_backspace(),
+        KeyCode::Enter => {
+            if let Some(entry) = app.history.accept_search() {
+                editor.set_draft(entry);
+            }
+        }
+        KeyCode::Char(character) if !ctrl && !alt => app.history.query_push(character),
+        _ => {}
+    }
+    KeyOutcome::default()
+}
+
 /// Ctrl+C: close the log sub-view first, else save and clear a non-empty draft
 /// (even while busy, without requesting exit), else use the shared exit path.
 fn handle_ctrl_c(app: &mut App, editor: &mut Editor) -> bool {
@@ -535,6 +595,18 @@ fn exit_or_wait(app: &mut App) -> bool {
 /// Dragging copies visible text; navigation never edits the draft or its focus.
 /// Returns text for the event loop to write to the clipboard.
 pub fn handle_mouse(app: &mut App, mouse: MouseEvent) -> Option<String> {
+    // A keyboard-owned history search consumes ordinary mouse events; only a
+    // Help click is global and closes the search first.
+    if app.history.searching() {
+        let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && app.help_button_area.contains(position)
+        {
+            app.history.cancel_search();
+            app.toggle_help();
+        }
+        return None;
+    }
     let position = ratatui::layout::Position::new(mouse.column, mouse.row);
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
         app.text_selection.clear();
@@ -680,6 +752,11 @@ fn handle_paste_text(app: &mut App, editor: &mut Editor, text: &str) {
         log::close(app);
     }
     app.focus = Focus::Input;
+    // Paste during search edits only the query; the hidden draft is untouched.
+    if app.history.searching() {
+        app.history.query_paste(text);
+        return;
+    }
     match message::classify_image_paste(text, |path| path.is_file()) {
         Some(paste) => {
             if let Err(error) = attach_image(app, editor, paste) {
@@ -701,6 +778,18 @@ fn handle_clipboard(app: &mut App, editor: &mut Editor) {
             return;
         }
     };
+    // While searching, text paste edits only the query and an image clipboard
+    // is reported without touching the preserved draft or history images.
+    if app.history.searching() {
+        match clipboard.get_image() {
+            Ok(_) => app.notify("Close history search before attaching an image.".to_owned()),
+            Err(_) => match clipboard.get_text() {
+                Ok(text) => app.history.query_paste(&text),
+                Err(error) => app.notify(format!("Clipboard read failed: {error}")),
+            },
+        }
+        return;
+    }
     match clipboard.get_image() {
         Ok(image) => match encode_clipboard_png(&image) {
             Ok(bytes) => {
@@ -742,10 +831,10 @@ fn attach_image(app: &mut App, editor: &mut Editor, path: PathBuf) -> Result<(),
 /// opened relative to the user's home directory.
 fn expand_home(path: &std::path::Path) -> PathBuf {
     let text = path.to_string_lossy();
-    if let Some(rest) = text.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
+    if let Some(rest) = text.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(rest);
     }
     path.to_path_buf()
 }

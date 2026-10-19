@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        > 协作协议见根目录 `AGENTS.md`。提交后由任意 agent 分诊（triage）；长期结论需沉淀到 `docs/`。
+        > 协作协议见根目录 `AGENTS.md`。提交后由 `agent:pm` 主导分诊（triage）：补 `agent:*`／`priority:*` 并挂 Milestone，满足 DoR 后才进 `ready`；长期结论需沉淀到 `docs/`。
 
   - type: dropdown
     id: from_agent
