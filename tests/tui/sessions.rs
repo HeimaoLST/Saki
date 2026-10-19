@@ -124,6 +124,10 @@ fn switching_restores_drafts_images_reading_position_and_thought_expansion() {
     sessions.apply_event(&mut app, &mut editor, opened(b.clone(), b_history));
     assert!(editor.is_empty());
     assert_eq!(app.session.as_ref().unwrap().id, b.id);
+    assert!(
+        !editor.undo(),
+        "a switched-to session starts with no undo history"
+    );
     editor.insert_str("unsent B draft");
     sessions.apply_event(
         &mut app,
@@ -147,6 +151,10 @@ fn switching_restores_drafts_images_reading_position_and_thought_expansion() {
     sessions.apply_event(&mut app, &mut editor, opened(a.clone(), a_history));
     assert_eq!(editor.text(), "unsent A draft");
     assert_eq!(editor.images().len(), 1);
+    assert!(
+        !editor.undo(),
+        "session replacement resets undo history while keeping the cached draft"
+    );
     assert_eq!(app.focus, Focus::Transcript);
     assert!(!app.follow);
     assert_eq!(
