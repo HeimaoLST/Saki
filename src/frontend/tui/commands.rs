@@ -97,7 +97,7 @@ impl Commands {
             return None;
         }
         if command == Command::Help {
-            editor.clear();
+            editor.reset();
             app.help_open = true;
             app.help_scroll = 0;
             app.text_selection.clear();
@@ -123,7 +123,7 @@ impl Commands {
             .as_ref()
             .is_some_and(|command| command.acknowledged_by(event))
         {
-            editor.clear();
+            editor.reset();
             self.pending = None;
         } else if matches!(event, SessionEvent::Error { .. }) {
             self.pending = None;
