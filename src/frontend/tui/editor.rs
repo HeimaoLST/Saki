@@ -16,11 +16,14 @@ const MAX_UNDO_ENTRIES: usize = 100;
 const MAX_UNDO_BYTES: usize = 8 * 1024 * 1024;
 
 /// One draft state kept for undo/redo. Text lines are owned; attachments are
-/// shared by pointer so consecutive text edits never clone base64 payloads.
+/// shared by pointer so consecutive text edits never clone base64 payloads. The
+/// preferred display column is captured so undo/redo restores vertical-movement
+/// state, not just the logical cursor.
 struct Snapshot {
     lines: Vec<String>,
     row: usize,
     col: usize,
+    preferred_col: Option<usize>,
     images: Arc<Vec<ImageAttachment>>,
 }
 
@@ -330,6 +333,7 @@ impl Editor {
             lines: self.lines.clone(),
             row: self.row,
             col: self.col,
+            preferred_col: self.preferred_col,
             images: Arc::clone(&self.images),
         }
     }
@@ -338,8 +342,8 @@ impl Editor {
         self.lines = snapshot.lines;
         self.row = snapshot.row;
         self.col = snapshot.col;
+        self.preferred_col = snapshot.preferred_col;
         self.images = snapshot.images;
-        self.preferred_col = None;
     }
 
     /// Serialized byte size of the live draft, computed before any clone.

@@ -1233,3 +1233,36 @@ fn combined_byte_transfer_stays_bounded_across_undo_redo_and_branch() {
         );
     }
 }
+
+fn assert_undo_restores_preferred_column(width: usize, text: &str, ups: usize) {
+    let mut control = Editor::new();
+    let mut roundtrip = Editor::new();
+    for editor in [&mut control, &mut roundtrip] {
+        editor.insert_str(text);
+        for _ in 0..ups {
+            editor.move_visual_up(width);
+        }
+    }
+    assert_eq!(control.cursor(), roundtrip.cursor());
+    // Editing resets the preferred column; undo must restore the prior value.
+    roundtrip.insert_str("Z");
+    assert!(roundtrip.undo());
+    assert_eq!(roundtrip.text(), control.text());
+    assert_eq!(roundtrip.cursor(), control.cursor());
+    for step in 0..2 {
+        control.move_visual_up(width);
+        roundtrip.move_visual_up(width);
+        assert_eq!(
+            roundtrip.cursor(),
+            control.cursor(),
+            "width {width}, step {step}: undo restores the preferred display column"
+        );
+    }
+}
+
+#[test]
+fn undo_restores_preferred_display_column() {
+    assert_undo_restores_preferred_column(40, "abcdefgh\nx\nabcdefgh", 1);
+    // Narrow width exercises the soft-wrap fragment path too.
+    assert_undo_restores_preferred_column(4, "abcdefgh\nx\nabcdefgh", 1);
+}
