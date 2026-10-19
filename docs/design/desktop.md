@@ -1,16 +1,24 @@
 # Desktop contacts：首版交互设计
 
-更新日期：2026-10-15。状态：**设计原型**：浏览器示意与可运行 MyGo 原生 UI 预览均已实现；native runtime（contact store、IPC／后端模型调用）仍属 future work，Rust core 尚未实现 contact 模型。
-[previews/desktop-contacts.html](previews/desktop-contacts.html) 是可交互浏览器示意；仓库内 `desktop/` 是可运行的 MyGo **原生 UI** 设计预览（非 WebView 包 HTML）。两者都是 UI demo，只含本地演示数据；Working／回复／历史检索／source 跳转均为本地状态机模拟，不代表后端已支持并行执行、后台任务或真实模型调用。
+更新日期：2026-10-19。状态：**设计预览**。实现事实以 dev 已集成的 GUI PR [#48](https://github.com/HeimaoLST/Saki/pull/48)（`fce8495`）为准：原生 MyGo 预览已支持直接创建默认联系人；contact store、IPC／后端模型调用尚未实现，Rust core 不承担 contact 产品模型。
+[previews/desktop-contacts.html](previews/desktop-contacts.html) 是可交互浏览器示意；仓库内 `desktop/` 是可运行的 MyGo **原生 UI** 设计预览（非 WebView 包 HTML）。浏览器示意保留早期创建表单，不是当前原生创建流程的验收对象。两者都是 UI demo，只含本地演示数据；Working／回复／历史检索／source 跳转均为本地状态机模拟，不代表后端已支持并行执行、后台任务或真实模型调用。
 
 调色板：Rose Pine（dark）与 Rosé Pine Dawn（light），来源 [rosepinetheme.com/palette](https://rosepinetheme.com/palette/)，跟随宿主外观。角色分配保持克制：rose 只用于主操作与选中态，可读的 `--link`（Dawn pine / Main foam）用于链接、来源与进行中状态，foam 的填充与图标用于引用和历史，gold 只用于 needs attention，love 只用于校验错误，iris 只用于焦点环与临时的消息定位高亮。
+
+## 已确认需求与交付边界
+
+需求／产品决定（用户确认，#44）：首次使用无需先定义 agent。添加联系人即得到可输入的默认通用助手，个性化的 name／purpose／instructions／workspace 为可选设置；默认助手并不免除真实运行时所需的宿主模型、凭据与工具配置。
+
+实现事实：当前原生预览一次点击 Add contact 即创建并选中 `New contact N`、`Role=Assistant`、Ready 的空联系人，输入区取得一次焦点；不弹创建表单或要求额外确认。Settings 保留编辑与非空名称校验，保存不丢失已有消息、历史和草稿。profile 改动只影响未来请求是产品契约，当前演示回复不构成真实模型已应用 profile 的证据。
+
+待验证／待定：真实窗口与输入法、联系人与 runtime session／长期身份的持久映射、预设集合、“已读”含义仍须分别核对。不得把已读等同于模型理解，头像暂不扩展设计。通用 runtime 的并发与历史检索需求只在 [Agent runtime 需求](../requirements/agent-runtime.md) 维护；[调用契约提案](runtime-api.md)、[#60](https://github.com/HeimaoLST/Saki/issues/60)、[#63](https://github.com/HeimaoLST/Saki/issues/63) 与 [#64](https://github.com/HeimaoLST/Saki/issues/64) 分别承载核心入口、GUI 消费和独立验收，当前文档不声称它们已实现。
 
 ## Native preview（已实现）
 
 - 形态：仓库内单独立 Go module `desktop/`，用 MyGo 的**原生 UI**（`ui` 包，非 WebView 包 HTML）承载同一套 contact 界面。它是设计预览而不是 native runtime：没有 contact store、没有 IPC、没有真实模型调用，也不修改 Rust/Cargo。
 - 依赖：Go 1.27.1；`github.com/egoist/mygo v0.4.9-0.20261014025635-fea932a7a2a9`（commit `fea932a7a2a9`），`CGO_ENABLED=0`。`go.mod` 固定该 pseudo-version，没有 replace。
 - 文件：`desktop/main.go`（窗口入口、embed+decode 默认 mascot）、`desktop/model.go`（contact／消息／草稿／来源与本地演示调度）、`desktop/view.go`（原生布局）、`desktop/theme.go`（Rose Pine Main／Dawn）、`desktop/model_test.go`、`desktop/view_test.go`、`desktop/assets/saki-avatar-default.png`。
-- 已实现行为：contact rail／会话／按需 aux；每个 contact 独立 profile、消息与草稿（切换保留）；Create（Name 必填）／Cancel；Settings 只影响后续回复并保留历史；多行 composer 的 Enter 发送与 Shift+Enter 换行（`ui.Enter.Text()`／`SetText()`，IME 组合期不发送）；Sources 与 contact 范围 History；Ren 的 Working→Needs attention→Try again；发送后的回复按 contact 归属。native 窗口允许内部滚动。
+- 已实现行为：contact rail／会话／按需 aux；每个 contact 独立 profile、消息与草稿（切换保留）；直接创建并选中默认联系人、一次性请求 composer 焦点（后续 Frame 不抢回）；Settings 保存保留消息／历史／草稿，空名只在设置保存时校验；多行 composer 的 Enter 发送与 Shift+Enter 换行（`ui.Enter.Text()`／`SetText()`，IME 组合期不发送）；Sources 与 contact 范围 History；Ren 的 Working→Needs attention→Try again；发送后的回复按 contact 归属。native 窗口允许内部滚动。
 - 命令（均在 `desktop/`）：
   - `CGO_ENABLED=0 go build -o /private/tmp/saki-desktop-design-qa/saki-desktop .`
   - `CGO_ENABLED=0 go run .`（直接运行原生预览）
@@ -18,7 +26,8 @@
   - `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /private/tmp/saki-desktop-design-qa/saki-desktop-linux-amd64 .`
   - `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /private/tmp/saki-desktop-design-qa/saki-desktop-windows-amd64.exe .`
   - `SAKI_PREVIEW_DIR=/private/tmp/saki-desktop-design-qa/previews CGO_ENABLED=0 go test -run TestPreviewImages -count=1 .`
-- 证据：默认 `go test ./...` 14/14 通过；设置 `SAKI_PREVIEW_DIR` 时 15/15 通过（含 preview 导出测试）。`go vet` 通过；macOS arm64、Linux amd64、Windows amd64 构建通过；headless 预览图 12 张（light/dark × chat/add/settings/sources/history，以及 960×640 的 chat/settings）。macOS QA 用 `.app` bundle 只在 `/private/tmp/saki-desktop-design-qa` 生成。作者尚未在真实窗口里操作 GUI（computer-use 访问未获批），视觉验证来自 headless `ui.Tester` 渲染的 PNG。
+- 当前验证／作者与独立 QA 报告（2026-10-19，候选 `bbbe9ef`，随后 squash 为 `fce8495`）：[`#49 独立验收`](https://github.com/HeimaoLST/Saki/issues/49#issuecomment-6258219718) 记录 Go test／vet／build、连续两次创建后直接输入与发送、设置字段实际键入与 Tab 后不抢焦点、非空消息／历史／草稿保留均通过；候选重新生成的 12 张 headless PNG 与参考图逐字节一致。场景为 light/dark × chat/new-contact/settings/sources/history，以及最小窗口 chat/settings；这些证据不覆盖真实 macOS 窗口、系统键盘或 IME。
+- 历史作者报告（2026-10-15）：初版默认测试 14/14、导出预览时 15/15，macOS arm64／Linux amd64／Windows amd64 构建通过；macOS QA `.app` bundle 只在 `/private/tmp/saki-desktop-design-qa` 生成。该报告中的 add 表单属于旧行为，测试数量不作为当前基线。
 - macOS QA bundle 打包：按 Apple 本地开发做法在组装后做 bundle 级 ad-hoc 签名（`codesign --force --sign - --identifier dev.saki.desktop.preview`），绑定现有 Info.plist 与资源。`codesign --verify --strict` 与 `--deep --strict` 均 exit 0；`Identifier=dev.saki.desktop.preview`，Info.plist 已绑定，Sealed Resources 存在。bundle id／显示名／路径不变；独立原始二进制保留，bundle 内可执行文件代码未改（哈希因签名而不同）。打包脚本只保存在 QA 目录，不进入仓库。
 - 浏览器（WebAssembly）预览：同一 `desktop/` Go UI 用固定 MyGo 版本构建为 wasm。在 `desktop/` 运行 `go run github.com/egoist/mygo/cmd/mygo@v0.4.9-0.20261014025635-fea932a7a2a9 build -platform web -o /private/tmp/saki-desktop-design-qa .`，产物为 `web/index.html`、内容哈希 `desktop.ea7d761f7873.wasm`（约 11.2 MB）与 `wasm_exec.js`；产物只在 QA 目录。本地 URL `http://127.0.0.1:8137/`（`python3 -m http.server 8137 --bind 127.0.0.1`）供手动查看。
 - 验证边界：浏览器版本尚未实际在浏览器中操作或核对（当前 CUA 无浏览器连接：iab unavailable、browsers=[]，Chrome 也未获批准）；这条路径不覆盖 macOS 原生窗口、系统主题与输入法行为。原生 app 已按本地开发做法 ad-hoc 签名且 `--verify --strict` 通过，但 Computer Use 依旧拒绝访问，因此不能声称签名修复解决了授权问题。
@@ -44,7 +53,7 @@
 
 不得把本原型的并行观感当作后端承诺；实现前需要单独的 contact store、历史工具和任务归属设计。
 
-## 布局与断点
+## 布局与断点（浏览器示意）
 
 - **≥920px**：`contact rail (默认 220px)` ｜ conversation ｜ 右侧 aux 300px，仅在 source/settings 等操作后出现；没有常驻第三栏。
 - **640–919px**：rail + 单栏内容；source/settings 直接替换主内容，而不是压缩两栏。
@@ -79,12 +88,12 @@
 - 未来：same-family 的可选头像集合，保持一致的 silhouette、linework 与 Rose Pine／Dawn 调色。
 - 验证：头像针对性检查 27/27 通过——内嵌字节与 workspace 资产逐字节一致，256px RGBA，各位置 `naturalWidth` 256，新建／重命名／回复／Working 均使用默认头像，选中不重着色，1024／320 light／dark 无横向溢出，0 运行时错误。
 
-## 关键流程
+## 关键流程（界面设计与本地演示）
 
 1. **选择 contact**：切换 name、profile、messages 与 draft；草稿按 contact 保存。未选中的 contact 可以处于 Working，查看与切走都不会清空它。状态词只描述工作：Ready／Working／Needs attention，不假装在线。
-2. **Add contact**：主区域表单，Name 必填，Purpose／Instructions 可选，Workspace 放在 Advanced 折叠组；Create 后进入空会话，Cancel 返回且不丢草稿。校验只给最小 inline 错误。
+2. **Add contact（当前原生预览）**：一次点击直接创建、选中 Ready 默认联系人并进入空会话；无需填写 Name／Purpose／Instructions／Workspace。composer 只取得一次焦点，连续创建也可直接输入；个性化通过可选 Settings 编辑。浏览器旧示意的 Create／Cancel 表单仅保留为历史原型。
 3. **Contact settings**：编辑 name／purpose／instructions，并明确提示“changes apply to future messages; saved history stays intact”。Save 更新 header 与列表。
-4. **Composer**：textarea、Send、附件控件；Enter 发送、Shift+Enter 换行、IME 组合期不发送。发送后进入有限的本地 working→reply 过渡；切换 contact 不影响回复归属。附件只是可移除的 filename chip。
+4. **Composer**：textarea、Send、附件控件；Enter 发送、Shift+Enter 换行、IME 组合期不发送。发送后进入有限的本地 working→reply 过渡；切换 contact 不影响回复归属。浏览器示意的附件只是可移除 filename chip；当前原生预览没有附件入口。
 5. **Source action**：回复中的 “2 earlier messages” 打开 contact 范围的 sources 区域，显示日期、原说话人与原文；View in conversation 会把该消息插回会话顶部并高亮定位。返回时草稿与进行中的工作保持。
 6. **History action**：contact 范围的本地搜索，实际过滤该 contact 的样例历史；无结果有明确说明；不会出现其他 contact 的消息。不会实现或暗示 shared memory 与多 agent 协作。
 
@@ -92,20 +101,20 @@
 
 | 状态 | 表现与下一步 |
 | --- | --- |
-| Empty conversation | 说明该 contact 的 profile 与用途，引导写第一条消息或编辑 settings |
+| Empty conversation | 可直接写第一条消息，或按需编辑 Settings；无 profile 不阻止开始 |
 | Working | 会话尾部有可理解的进行中行（如 Running the parser tests）；Send 暂时不可用；切走保留状态 |
 | Needs attention | gold 状态 + 失败摘要 + 样例 “Try again”；不显示假装可取消的 Stop |
 | No history results | 说明该 query 在此 contact 历史中无匹配，建议更短的短语 |
-| Validation | Name 必填的 inline 错误，focus 回到字段 |
+| Validation | Settings 保存时名称不得为空；创建默认联系人无需表单校验 |
 | Sources | foam 强调引用来源，不铺满页面 |
 
-## 可访问性与可视化契约
+## 可访问性与可视化契约（浏览器示意）
 
 原生 button／input／textarea，语义标签与可见 focus；aria-live 只播报有意义的更新（联系人切换、回复到达、创建/保存、无结果）；用户文本一律通过 textContent 写入 DOM。所有 ID 唯一，CSS 限定在 `#saki-desktop-contacts` 下。1024／736／375／320 宽度与 light/dark 均可读，无横向溢出。
 
-## 验收清单
+## 验收清单（2026-10-14 浏览器历史记录）
 
-仅标记实际验证过的项目；未实测的保留说明，而不是当作通过。
+以下是浏览器旧原型的历史结果，不替代当前原生流程验收。当前创建与设置证据见上文 Native preview；未实测项目继续保留限制。
 
 - [x] Saki 默认选中，MyGo 桌面 shell 会话可读，最终回复带 “2 earlier messages”，Activity 可展开为 search／read 进度，无原始 reasoning。
 - [x] 选择切换 name/profile/messages/draft；Ren 的 Working 与切走/切回保持；Mio unread 清除。
@@ -124,6 +133,6 @@
 - 头像更新的针对性验证：27/27 通过——内嵌字节与 workspace 资产逐字节一致（sha256）、256px RGBA、各位置 `naturalWidth` 256、新建／重命名／回复／Working 均使用默认头像、选中不重着色、1024／320 light／dark 无横向溢出、0 运行时错误。
 - 限制：所有 Working／回复／历史都是本地模拟，不代表后端并行或真实模型调用；sandbox 预览禁止原生表单提交，因此发送／创建／保存走显式本地处理；Lucide 图标由宿主沙箱提供，脱离宿主的独立预览会显示空占位；host 模型配置、后台并行与 contact 级持久化仍 deferred。
 
-## 明确不做
+## 当前设计预览不做
 
 多 agent 协作、shared memory、后台并行执行的真实承诺、Stop／取消控件、原始推理链展示、contact 级模型/provider/key 设置（deferred）、头像 picker／上传／contact 级头像设置（same-family 集合以后再评估）。
