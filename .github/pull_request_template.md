@@ -29,6 +29,13 @@ Closes #  <!-- 目标为默认分支 dev 且完成该任务时填写；hotfix、
 - 已知基线失败（与本次改动无关，附证据）：
 - CI 失败处理：定位失败 job 与 owner；不得用 skip／`continue-on-error`／放宽 lint 掩盖真实失败。基线失败单独列出，不能写成本次通过。CI 绿只表示门禁通过，不替代独立评审，也不授权 breaking migration。详见 `docs/design/ci.md`。
 
+## 合并后收尾（主责执行）
+
+- [ ] 记录最终合并 SHA 与验证证据（与评审 SHA 不一致时说明原因）
+- [ ] 对应 issue 置 `status:done`；已满足的 `needs:*` 移除，未满足的保留并写清依赖
+- [ ] issue 已关闭（或注明 `Closes` 未生效并附最终分支／合并证据）
+- [ ] 自有 worktree／分支已回收，或保留并写明用途与解除条件
+
 ## 影响与风险
 
 - 涉及共享文件（`Cargo.toml` / `AGENTS.md` / `README.md` / `.github/`）：
