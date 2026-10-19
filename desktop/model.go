@@ -69,7 +69,6 @@ type viewMode int
 
 const (
 	viewChat viewMode = iota
-	viewAdd
 	viewHistory
 )
 
@@ -86,13 +85,13 @@ type appModel struct {
 	screen   viewMode
 	aux      string // "", "sources", "settings"
 
-	auxMessage    int
-	add           profileDraft
-	addNameError  bool
-	settingsDraft profileDraft
-	settingsError bool
-	historyQuery  string
-	highlight     string
+	auxMessage      int
+	defaultContactN int
+	focusComposer   bool
+	settingsDraft   profileDraft
+	settingsError   bool
+	historyQuery    string
+	highlight       string
 
 	seq int
 	win *mygo.Window
@@ -261,42 +260,23 @@ func (a *appModel) statusLabel(c *contact) string {
 	}
 }
 
-func (a *appModel) openAdd() {
-	a.screen = viewAdd
-	a.aux = ""
-	a.add = profileDraft{}
-	a.addNameError = false
-}
-
-func (a *appModel) cancelAdd() {
-	a.screen = viewChat
-	a.addNameError = false
-}
-
-func (a *appModel) createContact() bool {
-	name := strings.TrimSpace(a.add.Name)
-	if name == "" {
-		a.addNameError = true
-		return false
-	}
+// addDefaultContact creates and selects a ready contact with a usable
+// default name, then asks the composer to take focus once.
+func (a *appModel) addDefaultContact() {
 	a.seq++
+	a.defaultContactN++
 	c := &contact{
-		ID:           fmt.Sprintf("contact-%d", a.seq),
-		Name:         name,
-		Role:         "New contact",
-		Purpose:      strings.TrimSpace(a.add.Purpose),
-		Instructions: strings.TrimSpace(a.add.Instructions),
-		Workspace:    strings.TrimSpace(a.add.Workspace),
-		Status:       statusReady,
-		WorkLabel:    "Preparing a reply",
+		ID:        fmt.Sprintf("contact-%d", a.seq),
+		Name:      fmt.Sprintf("New contact %d", a.defaultContactN),
+		Role:      "Assistant",
+		Status:    statusReady,
+		WorkLabel: "Preparing a reply",
 	}
 	a.contacts = append(a.contacts, c)
 	a.selected = len(a.contacts) - 1
 	a.screen = viewChat
 	a.aux = ""
-	a.add = profileDraft{}
-	a.addNameError = false
-	return true
+	a.focusComposer = true
 }
 
 func (a *appModel) openSettings() {

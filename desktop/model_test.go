@@ -62,24 +62,55 @@ func TestRetryRejectedWhileWorking(t *testing.T) {
 	}
 }
 
-func TestCreateRequiresName(t *testing.T) {
+func TestAddDefaultContactIsReadyAndUnique(t *testing.T) {
 	a := testApp(t)
-	a.openAdd()
-	if a.createContact() {
-		t.Fatal("create should fail without a name")
+	a.addDefaultContact()
+	first := a.selectedContact()
+	if first.Name != "New contact 1" || first.Role != "Assistant" || first.Status != statusReady {
+		t.Fatalf("default contact = %q role=%q status=%v", first.Name, first.Role, first.Status)
 	}
-	if !a.addNameError {
-		t.Fatal("missing-name error should be set")
+	if a.screen != viewChat || !a.focusComposer {
+		t.Fatal("default contact should open a chat and request composer focus")
 	}
-	a.add.Name = "Kai"
-	if !a.createContact() {
-		t.Fatal("create should succeed with a name")
+	a.addDefaultContact()
+	second := a.selectedContact()
+	if second.Name != "New contact 2" {
+		t.Fatalf("second default name = %q", second.Name)
 	}
-	if a.selectedContact().Name != "Kai" || len(a.contacts) != 4 {
-		t.Fatalf("created contact not selected: selected=%q contacts=%d", a.selectedContact().Name, len(a.contacts))
+	if first.ID == second.ID || first == second {
+		t.Fatal("created contacts must be distinct objects with unique IDs")
 	}
-	if a.selectedContact().Draft != "" {
-		t.Fatal("new contact draft should be empty")
+	if len(a.contacts) != 5 {
+		t.Fatalf("contacts = %d, want 5", len(a.contacts))
+	}
+}
+
+func TestConsecutiveDefaultContactsAreIsolated(t *testing.T) {
+	a := testApp(t)
+	a.addDefaultContact()
+	first := a.selectedContact()
+	first.Draft = "first draft"
+	a.addDefaultContact()
+	second := a.selectedContact()
+	second.Draft = "second draft"
+	a.seq++
+	first.Messages = append(first.Messages, &message{ID: a.seq, Kind: msgUser, Text: "first message", Time: "10:00"})
+	if len(second.Messages) != 0 || len(second.History) != 0 || len(second.Revealed) != 0 {
+		t.Fatal("new contacts must not share mutable state")
+	}
+	a.selectContact(len(a.contacts) - 2)
+	if a.selectedContact().Draft != "first draft" {
+		t.Fatal("first contact draft lost")
+	}
+	if len(a.selectedContact().Messages) != 1 {
+		t.Fatal("first contact messages changed")
+	}
+	a.selectContact(len(a.contacts) - 1)
+	if a.selectedContact().Draft != "second draft" {
+		t.Fatal("second contact draft lost")
+	}
+	if len(a.selectedContact().Messages) != 0 {
+		t.Fatal("second contact received the first contact's message")
 	}
 }
 
