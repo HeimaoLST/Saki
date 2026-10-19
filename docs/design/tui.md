@@ -2,7 +2,7 @@
 
 下一版显示层次和视觉规范见 [TUI style](tui-style.md)，Pi／Codex 的对应源码分析见 [Terminal presentation](../research/systems/terminal-presentation.md)。TUI style 实验已于 2026-10-14 实现（主题、正文宽度、Markdown 表格、Activity 分组），本节继续描述已实现行为。
 
-更新日期：2026-10-18。首版已采用“工作记录”布局、Ratatui 原生组件和独立终端前端。Pi 负责具体实现，Codex 负责分阶段审查与独立验收。此前的布局和组件研究见 [Terminal UI 研究](../research/systems/terminal-ui.md)，HTML 对比稿仍保留为设计材料。
+更新日期：2026-10-19。首版已采用“工作记录”布局、Ratatui 原生组件和独立终端前端。Pi 负责具体实现，Codex 负责分阶段审查与独立验收。此前的布局和组件研究见 [Terminal UI 研究](../research/systems/terminal-ui.md)，HTML 对比稿仍保留为设计材料。
 
 ## 目标与当前能力
 
@@ -42,7 +42,7 @@ SAKI_UI=console cargo run
 | Backspace（文字为空且有附件） | 删除最后一张图片 |
 | 输入区快捷编辑 | Ctrl+B／F 左右字符；Ctrl／Alt+←／→、Alt+B／F 按 Unicode 词界移动；Ctrl+A／E 到逻辑行首尾（在边界可跨到相邻行）；Home／End 留在当前行；Ctrl+W、Alt／Ctrl+Backspace 后删词；Alt+D、Alt／Ctrl+Delete 前删词；Ctrl+U／K 删除到逻辑行首尾（在边界可删除相邻换行）；Ctrl+H／D 删除字符；Ctrl+J 换行；按词操作对齐 grapheme，组合字符与 emoji 不被拆开 |
 | 输入区恢复删除 | Ctrl+Y 插入最近一次词／行删除；单条 kill buffer，不是系统剪贴板或通用 undo；跨发送、清空和历史召回保留，普通字符删除不覆盖 |
-| 输入区撤销／重做 | Alt+U 撤销、Alt+R 重做（不改 Ctrl+Z 作业控制）；仅输入焦点，局部模态优先。编辑器持有有界历史（最多 100 条，且全部 undo＋redo 保留文本合计 ≤ 8 MiB）：连续单字符输入合并为一步，移动光标／设置光标偏移／粘贴／非输入编辑断开分组；粘贴、kill、yank、图片增删各为一步；无操作不丢弃 redo，撤销后新编辑丢弃 redo。Ctrl+C 清空可撤销且仍进入输入历史；成功发送、会话切换、已执行命令重置撤销历史（不能撤销已执行任务／命令文本）；输入历史召回是可按撤的整草稿替换；kill buffer 不随撤销回退。单次编辑的前状态若自身超过字节预算则重置并跳过历史；若撤销／重做时当前草稿无法存入预算，则保持草稿不变且操作不可用 |
+| 输入区撤销／重做 | Alt+U 撤销、Alt+R 重做（不改 Ctrl+Z 作业控制）；仅输入焦点，局部模态优先。编辑器持有有界历史（最多 100 条，且全部 undo＋redo 保留文本合计 ≤ 8 MiB）：连续单字符输入合并为一步，移动光标／设置光标偏移／粘贴／非输入编辑断开分组；粘贴、kill、yank、图片增删各为一步；无操作不丢弃 redo，撤销后新编辑丢弃 redo。Ctrl+C 清空可撤销且仍进入输入历史；成功发送、会话切换、已执行命令重置撤销历史（不能撤销已执行任务／命令文本）；输入历史召回是可按撤的整草稿替换；kill buffer 不随撤销回退。撤销／重做恢复光标的首选显示列（普通编辑仍重置）；单次编辑的前状态若自身超过字节预算则重置并跳过历史；若撤销／重做时当前草稿无法存入预算，则保持草稿不变且操作不可用 |
 | 输入区视觉移动 | ↑／↓、Ctrl+P／N 按实际输入区宽度在软换行之间移动，连续垂直移动保留显示列；满足历史条件时改为召回输入历史 |
 | 输入历史 | 发送与 Ctrl+C 清空的完整草稿（文字及附件）进入当前进程历史，相邻重复去重；不从 conversation 重建、不受 compact 影响；空输入可召回，非空输入仅在等于最近召回草稿且光标位于全文头／尾时继续翻历史；改动文字或附件后继续用 ↑／↓ 移动光标；向下越过最新条目恢复空输入 |
 | 输入历史搜索 | Ctrl+R 打开输入框上方的本地搜索（空查询，最新匹配在前）；查询大小写不敏感，Ctrl+R／↑ 更旧、↓ 更新；Enter 把选中条目送入编辑器供编辑、不发送；Esc／Ctrl+C 取消并完整保留原草稿、光标、kill buffer 与附件；搜索期间真实编辑器不变，文本粘贴只改 query（多行折叠），图片粘贴提示先关闭搜索；F1 关闭搜索并打开帮助，Ctrl+S／会话标题点击先关闭搜索再打开 picker |
@@ -119,6 +119,8 @@ Agent 通过 `ContextUpdated` 在 worker 启动、用户提交、响应 usage、
 界面、帮助、图片附件标签、剪贴板／图片错误和运行提示统一为英文。默认 system prompt 和遗留 calculator 的工具说明也改为英文；默认回复使用英文，用户明确要求其他语言时允许切换。用户原文、文件名和工具输出保持原样，中文／emoji 编辑与复制继续支持。历史设计说明里的中文标签代表当时方案。
 
 ## 实际验收
+
+2026-10-19 撤销／重做游标语义修复（#35，独立 QA 回归）：`Snapshot` 原先未记录 `preferred_col`，`restore` 又强制置 `None`，使多行草稿在末行末尾上移后，经「编辑＋撤销」再上移会丢失首选显示列（QA 探针实测 control=(0,8) vs edit+undo=(0,1)，PTY 提交文本变成 `a|bcdefgh\nx\nabcdefgh`）。fix commit `d50fddae899581c5a2919f84d16d48ed6937b8bb`（tree `747e029122639870bad35c84c5c611109028c2f7`）把 `preferred_col` 纳入快照：撤销恢复编辑前的首选列，重做恢复其自身的编辑后游标态；普通编辑仍重置首选列，kill buffer 仍独立。QA 原始探针（`/tmp/saki-qa70-evidence/preferred-column-probe.rs`）在修复源上复现为 control=(0,8) == edit+undo=(0,8)，退出 0。修复冻结二进制 SHA256 `bcbb9c14afaf9b6d7cd13634e9603e878f392677ba080723b79482e88c019fa3`；真实 PTY 复跑 QA 场景（`/tmp/saki-tui-35-cursor-fix-evidence/undo_acceptance_cursor_fix.py`，只读复用原始 harness）：6/6 通过，`preferred-edit-undo` 提交文本修正为 `abcdefgh|\nx\nabcdefgh`。新源门禁：`cargo fmt --check` 0、`cargo clippy --locked --all-targets -- -D warnings` 0、`cargo test --locked` 344 通过 / 0 失败 / 6 忽略、显式 ignored 生命周期 PTY 通过。说明：2026-10-18 的作者自测未覆盖该回退；Runtime #58 的 EPERM 偶发仍是独立问题，本次全量运行未复现，不据此改写历史失败。
 
 2026-10-18 输入区撤销／重做（#35，代码 commit `c513e2a0415c1b0fa032a9a3a3ee8b67eadf4fe0`，冻结二进制 SHA256 `2d3fdc0373278a11c254e24b0c952438c1fc55008d28e5b39b19805057e2facb`）：`Alt+U` 撤销、`Alt+R` 重做，仅输入焦点且局部模态优先，不改 `Ctrl+Z`。编辑器持有有界历史（最多 100 条，undo＋redo 保留文本合计硬上限 8 MiB，换行计入）：连续单字符输入合并为一步；移动光标、`set_global_offset`、粘贴或非输入编辑断开分组；粘贴／kill／yank／图片增删各为一步；无操作不丢弃 redo，撤销后新编辑丢弃 redo。`Ctrl+C` 清空可撤销且仍写入输入历史；成功发送、会话切换（含缓存编辑器）与已执行命令重置撤销历史；输入历史召回是可按撤的整草稿替换。超预算时：单次编辑的前状态超预算则重置并跳过历史；撤销／重做时当前草稿无法存入预算则保持草稿不变且不可用。真实 PTY（`/tmp/saki-tui-35-evidence/undo_redo_pty.py`）9/9 检查通过：typing→Alt+U/Alt+R、移动断开分组、`Ctrl+C` 清空→Alt+U 恢复，且同一轮 mock 记录 0 个模型请求（未提交消息）。门禁：`cargo fmt --check` 与 `cargo clippy --locked --all-targets -- -D warnings` 通过；TUI 子集 219 通过 / 0 失败 / 5 忽略。**已知限制**：全量 `cargo test --locked` 出现 1 个与本改动无关的 Runtime/tools `bash_preserves_stdout_stderr_write_order` EPERM 失败（Runtime #58），定向复跑通过；该失败不由本 TUI 改动引入，本轮不声称全量测试全绿。
 
