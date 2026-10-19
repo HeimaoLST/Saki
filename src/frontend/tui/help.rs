@@ -164,6 +164,10 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         ),
         (
             false,
+            "Ctrl+Shift+Up/Down  Jump to previous/next user message".to_owned(),
+        ),
+        (
+            false,
             "Ctrl+Home/End  First/latest; Home/End also work in records".to_owned(),
         ),
         (
