@@ -4,12 +4,20 @@
 复用 `gh` CLI 与 `git` 做只读查询：不修改 GitHub、不改标签、不关闭 issue、
 不删除分支或 worktree、不提交、不读取环境里的密钥。
 
+报告只是候选，不是验收结论，也不是删除／关闭授权。
+
+worktree 判定只依据**本地已有的** `origin/<integration>` 引用：脚本不自动 fetch，
+执行回收前由主责先 `git fetch origin` 再核对。
+
 退出码：
-  0  已生成报告（报告只是候选，不代表自动验收）
-  2  某条只读命令失败；不会把 API 失败当成空队列成功
+  0  已生成报告
+  2  只读命令失败、输出为空／空白／无效 JSON，或找不到 gh／git；
+     不会把失败当成空队列成功
 
 用法：
-  python3 scripts/collaboration_check.py [--limit N] [--line agent-line] [--json]
+  python3 scripts/collaboration_check.py [--limit N] [--line <line>] [--integration dev] [--json]
+
+`--line` 只过滤 worktree 分支（`agent/<line>/...`）；issue 与 PR 分类始终覆盖整个仓库。
 """
 
 from __future__ import annotations
@@ -18,7 +26,6 @@ import argparse
 import json
 import subprocess
 import sys
-from dataclasses import dataclass
 from typing import Callable, Sequence
 
 TYPE_PREFIX = "type:"
@@ -26,86 +33,50 @@ STATUS_PREFIX = "status:"
 AGENT_PREFIX = "agent:"
 NORMAL_CLOSE_LABELS = {"duplicate", "invalid", "wontfix"}
 LONG_LIVED_BRANCHES = {"master", "dev"}
-READ_ONLY_GIT_SUBCOMMANDS = {
-    "status",
-    "rev-parse",
-    "merge-base",
-    "log",
-    "rev-list",
-    "for-each-ref",
-    "show-ref",
-    "ls-remote",
-    "diff",
-    "symbolic-ref",
-}
-
-
-@dataclass(frozen=True)
-class CommandResult:
-    args: tuple
-    returncode: int
-    stdout: str
-    stderr: str
 
 
 class CommandError(RuntimeError):
     """A read command failed; callers must not treat this as empty output."""
 
-    def __init__(self, result: CommandResult):
-        self.result = result
+    def __init__(self, args: Sequence[str], returncode: int, stderr: str):
+        self.args_used = tuple(args)
+        self.returncode = returncode
+        self.stderr = stderr
         super().__init__(
             "command failed (rc={rc}): {cmd}\n{err}".format(
-                rc=result.returncode,
-                cmd=" ".join(result.args),
-                err=result.stderr.strip(),
+                rc=returncode,
+                cmd=" ".join(self.args_used),
+                err=(stderr or "").strip(),
             )
         )
 
 
-def assert_read_only(args: Sequence[str]) -> None:
-    """Reject anything that could mutate the repo or GitHub."""
-    if not args:
-        raise ValueError("empty command")
-    program = args[0]
-    if program == "git":
-        rest = list(args[1:])
-        if len(rest) >= 2 and rest[0] == "-C":
-            rest = rest[2:]
-        if len(rest) >= 2 and rest[0] == "worktree" and rest[1] == "list":
-            return
-        if not rest or rest[0] not in READ_ONLY_GIT_SUBCOMMANDS:
-            raise ValueError("refusing non read-only git command: " + " ".join(args))
-        return
-    if program == "gh":
-        if len(args) >= 3 and args[1] in {"issue", "pr"} and args[2] in {"list", "view"}:
-            return
-        raise ValueError("refusing non read-only gh command: " + " ".join(args))
-    raise ValueError("unsupported program: " + program)
+def subprocess_runner(args: Sequence[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(list(args), capture_output=True, text=True, check=False)
 
 
-def subprocess_runner(args: Sequence[str]) -> CommandResult:
-    checked = tuple(args)
-    assert_read_only(checked)
-    proc = subprocess.run(checked, capture_output=True, text=True, check=False)
-    return CommandResult(checked, proc.returncode, proc.stdout, proc.stderr)
-
-
-Runner = Callable[[Sequence[str]], CommandResult]
+Runner = Callable[[Sequence[str]], subprocess.CompletedProcess]
 
 
 def run_checked(runner: Runner, args: Sequence[str]) -> str:
-    result = runner(args)
+    try:
+        result = runner(args)
+    except OSError as exc:
+        raise CommandError(args, 127, "无法执行 %s：%s" % (args[0], exc))
     if result.returncode != 0:
-        raise CommandError(result)
+        raise CommandError(args, result.returncode, result.stderr)
     return result.stdout
 
 
 def gh_json(runner: Runner, args: Sequence[str]):
+    """Parse gh JSON; empty/whitespace output is a failure, not an empty list."""
     raw = run_checked(runner, args)
+    if not raw.strip():
+        raise CommandError(args, 1, "gh 返回空输出（不是空队列）")
     try:
-        return json.loads(raw or "[]")
+        return json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise CommandError(CommandResult(tuple(args), 1, raw, "invalid JSON: %s" % exc))
+        raise CommandError(args, 1, "无效 JSON：%s" % exc)
 
 
 def label_names(issue) -> list:
@@ -140,12 +111,11 @@ def analyze_open_issues(issues) -> list:
 
 
 def analyze_closed_issues(issues) -> dict:
-    leftovers, normal = [], []
+    """Split closed issues into leftover status, missing/duplicate status, and normal closes."""
+    leftover, anomaly, normal = [], [], []
     for issue in issues:
         names = label_names(issue)
-        status_labels = [n for n in names if n.startswith(STATUS_PREFIX) and n != "status:done"]
-        if not status_labels:
-            continue
+        status_labels = prefixed(names, STATUS_PREFIX)
         entry = {
             "number": issue["number"],
             "title": issue.get("title", ""),
@@ -153,11 +123,18 @@ def analyze_closed_issues(issues) -> dict:
             "state_reason": issue.get("stateReason"),
             "url": issue.get("url", ""),
         }
+        if len(status_labels) != 1:
+            entry["problem"] = "status=%d（应恰好 1 个）" % len(status_labels)
+            anomaly.append(entry)
+            continue
+        if status_labels[0] == "status:done":
+            normal.append(entry)
+            continue
         normal_close = issue.get("stateReason") == "NOT_PLANNED" or any(
             name in NORMAL_CLOSE_LABELS for name in names
         )
-        (normal if normal_close else leftovers).append(entry)
-    return {"leftover": leftovers, "normal": normal}
+        (normal if normal_close else leftover).append(entry)
+    return {"leftover": leftover, "anomaly": anomaly, "normal": normal}
 
 
 def analyze_handoff_pending(issues) -> list:
@@ -204,28 +181,36 @@ def parse_worktrees(porcelain: str) -> list:
     return entries
 
 
+def git(*args: str) -> list:
+    """Build a git command with global --no-optional-locks.
+
+    Some git queries (notably `status`) otherwise refresh `.git/index`, which
+    makes an ostensibly read-only check write to the repository.
+    """
+    return ["git", "--no-optional-locks", *args]
+
+
 def is_clean(runner: Runner, path: str) -> bool:
-    return run_checked(runner, ["git", "-C", path, "status", "--porcelain"]).strip() == ""
-
-
-def branch_tip(runner: Runner, branch: str) -> str:
-    return run_checked(runner, ["git", "rev-parse", "refs/heads/" + branch]).strip()
+    return run_checked(runner, git("-C", path, "status", "--porcelain")).strip() == ""
 
 
 def is_ancestor(runner: Runner, branch: str, integration: str) -> bool:
-    result = runner(
-        ["git", "merge-base", "--is-ancestor", "refs/heads/" + branch, "origin/" + integration]
-    )
+    result = runner(git("merge-base", "--is-ancestor", "refs/heads/" + branch, "origin/" + integration))
     if result.returncode == 0:
         return True
     if result.returncode == 1:
         return False
-    raise CommandError(result)
+    raise CommandError(
+        git("merge-base", "--is-ancestor", branch, "origin/" + integration),
+        result.returncode,
+        result.stderr,
+    )
 
 
-def analyze_worktrees(runner: Runner, worktrees, line, integration, merged_by_branch) -> dict:
+def analyze_worktrees(runner: Runner, worktrees, line, integration) -> dict:
+    """Only agent/* branches are considered; integration is proven by ancestry alone."""
     candidates, manual, skipped = [], [], []
-    prefix = "agent/%s/" % line if line else None
+    prefix = "agent/%s/" % line if line else "agent/"
     for tree in worktrees:
         path = tree.get("path", "")
         branch = tree.get("branch")
@@ -235,8 +220,13 @@ def analyze_worktrees(runner: Runner, worktrees, line, integration, merged_by_br
         if branch in LONG_LIVED_BRANCHES or branch == integration:
             skipped.append({"path": path, "branch": branch, "reason": "long-lived branch"})
             continue
-        if prefix and not branch.startswith(prefix):
-            skipped.append({"path": path, "branch": branch, "reason": "outside --line %s" % line})
+        if not branch.startswith("agent/"):
+            skipped.append({"path": path, "branch": branch, "reason": "非 agent 工作分支"})
+            continue
+        if not branch.startswith(prefix):
+            skipped.append(
+                {"path": path, "branch": branch, "reason": "不在 --line %s 范围" % line}
+            )
             continue
         if not is_clean(runner, path):
             skipped.append({"path": path, "branch": branch, "reason": "dirty worktree"})
@@ -246,27 +236,7 @@ def analyze_worktrees(runner: Runner, worktrees, line, integration, merged_by_br
                 {
                     "path": path,
                     "branch": branch,
-                    "reason": "clean；已合入 origin/%s（祖先关系）" % integration,
-                }
-            )
-            continue
-        pr = merged_by_branch.get(branch)
-        if not pr:
-            skipped.append(
-                {"path": path, "branch": branch, "reason": "未合入 origin/%s" % integration}
-            )
-            continue
-        pr_sha = (pr.get("mergeCommit") or {}).get("oid")
-        try:
-            tip = branch_tip(runner, branch)
-        except CommandError:
-            tip = None
-        if pr_sha and tip and pr_sha == tip:
-            candidates.append(
-                {
-                    "path": path,
-                    "branch": branch,
-                    "reason": "clean；分支 tip 等于已合并 PR #%s 的 merge commit" % pr["number"],
+                    "reason": "clean；分支为本地 origin/%s 的祖先（未自动 fetch）" % integration,
                 }
             )
         else:
@@ -274,8 +244,8 @@ def analyze_worktrees(runner: Runner, worktrees, line, integration, merged_by_br
                 {
                     "path": path,
                     "branch": branch,
-                    "reason": "PR #%s 已合并但分支 tip 不同或为 squash；只提示人工核对，不判断可删"
-                    % pr["number"],
+                    "reason": "clean；不是本地 origin/%s 的祖先（squash／stacked／未合入），"
+                    "只提示人工核对，不判断可删" % integration,
                 }
             )
     return {"candidates": candidates, "manual": manual, "skipped": skipped}
@@ -298,26 +268,27 @@ def build_report(runner: Runner, limit: int, line, integration: str) -> dict:
         runner,
         ["gh", "pr", "list", "--state", "merged", "--limit", str(limit), "--json", SCHEMA_PRS],
     )
-    worktrees = parse_worktrees(run_checked(runner, ["git", "worktree", "list", "--porcelain"]))
-    merged_by_branch = {
-        pr.get("headRefName"): pr for pr in merged_prs if pr.get("headRefName")
-    }
+    worktrees = parse_worktrees(run_checked(runner, git("worktree", "list", "--porcelain")))
     closed = analyze_closed_issues(closed_issues)
     return {
         "window": {
             "limit": limit,
             "note": "gh --limit 窗口，非全量；按 gh 默认排序取前 N 条",
-            "line_filter": line or "all agent/* branches",
+            "line_filter": "worktree 仅看 agent/%s/..." % line if line else "worktree 看 agent/*",
+            "issue_scope": "issue／PR 分类始终覆盖整个仓库",
             "integration": integration,
+            "refs_note": "worktree 集成判断依据本地 origin/%s 引用；脚本不自动 fetch，"
+            "回收前由主责 fetch 后核对" % integration,
         },
         "label_constraints": analyze_open_issues(open_issues),
         "handoff_pending": analyze_handoff_pending(open_issues),
         "closed_leftover": closed["leftover"],
+        "closed_anomaly": closed["anomaly"],
         "closed_normal": closed["normal"],
         "merged_unclosed_candidates": analyze_merged_unclosed(
             merged_prs, {issue["number"] for issue in open_issues}
         ),
-        "worktrees": analyze_worktrees(runner, worktrees, line, integration, merged_by_branch),
+        "worktrees": analyze_worktrees(runner, worktrees, line, integration),
     }
 
 
@@ -334,9 +305,16 @@ def print_text(report: dict) -> None:
     window = report["window"]
     print("== Saki 协作只读检查 ==")
     print(
-        "窗口：limit=%s（%s）；业务线过滤=%s；集成分支=%s"
-        % (window["limit"], window["note"], window["line_filter"], window["integration"])
+        "窗口：limit=%s（%s）；%s；%s；集成分支=%s"
+        % (
+            window["limit"],
+            window["note"],
+            window["line_filter"],
+            window["issue_scope"],
+            window["integration"],
+        )
     )
+    print("引用：%s" % window["refs_note"])
     print("说明：以下均为候选，不自动验收；脚本不会改标签、关闭 issue、ACK、删除或提交。")
 
     _print_section(
@@ -356,7 +334,12 @@ def print_text(report: dict) -> None:
         % (e["number"], e["title"], ",".join(e["status_labels"]), e["state_reason"], e["url"]),
     )
     _print_section(
-        "已正常关闭（duplicate/invalid/wontfix 或 NOT_PLANNED，信息）",
+        "已关闭但 status 缺失或重复（需人工核对）",
+        report["closed_anomaly"],
+        lambda e: "#%s %s %s [%s]" % (e["number"], e["title"], e["problem"], e["url"]),
+    )
+    _print_section(
+        "已正常关闭（status:done 或 duplicate/invalid/wontfix/NOT_PLANNED，信息）",
         report["closed_normal"],
         lambda e: "#%s %s [%s]" % (e["number"], e["title"], e["url"]),
     )
@@ -369,12 +352,12 @@ def print_text(report: dict) -> None:
 
     worktrees = report["worktrees"]
     _print_section(
-        "工作区回收候选（clean 且已集成，仍建议人工确认归属）",
+        "工作区回收候选（clean 且为本地 origin 集成分支祖先；仍需人工确认归属）",
         worktrees["candidates"],
         lambda e: "%s [%s] %s" % (e["branch"], e["path"], e["reason"]),
     )
     _print_section(
-        "工作区需人工核对（squash／tip 不同或未合入）",
+        "工作区需人工核对（非祖先／squash／stacked）",
         worktrees["manual"],
         lambda e: "%s [%s] %s" % (e["branch"], e["path"], e["reason"]),
     )
@@ -386,16 +369,18 @@ def print_text(report: dict) -> None:
 
 
 def main(argv=None, runner: Runner = subprocess_runner) -> int:
-    parser = argparse.ArgumentParser(description="Saki 协作只读检查")
+    parser = argparse.ArgumentParser(description="Saki 协作只读检查（候选，不自动验收）")
     parser.add_argument("--limit", type=int, default=100, help="gh list 的窗口大小（默认 100）")
-    parser.add_argument("--line", default=None, help="只检查 agent/<line>/... worktree 分支")
+    parser.add_argument(
+        "--line", default=None, help="只过滤 worktree 分支为 agent/<line>/...；issue／PR 仍全仓库"
+    )
     parser.add_argument("--integration", default="dev", help="集成分支（默认 dev）")
     parser.add_argument("--json", action="store_true", help="输出 JSON")
     args = parser.parse_args(argv)
 
     try:
         report = build_report(runner, args.limit, args.line, args.integration)
-    except (CommandError, ValueError) as exc:
+    except CommandError as exc:
         print("只读检查失败：%s" % exc, file=sys.stderr)
         return 2
     if args.json:

@@ -1,6 +1,6 @@
 # AGENTS.md — Saki 多 Agent 协作协议
 
-更新日期：2026-10-16。
+更新日期：2026-10-19。
 
 > 本文件对在本仓库工作的所有 agent（AI 或人类协作者）生效。
 > **本仓库由多条业务线共同维护，采用两层协作。** 独立业务线／独立任务之间通过 GitHub 分派、交接与交付；同一任务内的主 agent／子 agent 通过 tmux 直接协作。
@@ -294,7 +294,9 @@ Issue 和 PR 是**过程与沟通**的载体，`docs/` 是**长期事实**的载
 
 本节由独立任务的主责／主 agent 执行。主 agent 通过 §2.2 给子 agent 分派具体步骤，子 agent 不另走 GitHub 巡检、认领与汇报循环。
 
-**开工先清点遗留**：先处理上轮的未接收交接（带 `handoff` 待确认）、返修（`REQUEST-CHANGES`／`needs:review` 未闭环）与未收尾（已合并但未 `done`／未关闭）；处理或明确移交后再开新任务。
+**开工先清点遗留**：先核对上轮可处理的遗留——未接收交接（带 `handoff` 待确认）、返修（`REQUEST-CHANGES` 未闭环）、已合并但未 `done`／未关闭的收尾；能处理就处理，不能处理就明确移交或记下一步。已提交待审、正在等外部评审（`needs:review`）、被阻塞、只读研究与未完成任务不算「未收尾」，不阻止开展不冲突的新任务；`needs:review` 也不等于返修。
+
+需要盘点仓库状态时，可运行只读检查 `python3 scripts/collaboration_check.py --limit 50`（见 §12）；它只输出候选，不改标签、不关 issue、不删资源，也不代替人工核对。
 
 0. **核对范围与状态**：先确认用户授权、当前分支与脏文件来源。需要开发时 `git fetch origin`；普通 feature／修复从最新 `origin/dev` 开分支，hotfix 从 `origin/master` 开分支。只读检查不要求 fetch 或创建分支。
 1. **巡检**（每次开工前必做）：
@@ -340,7 +342,10 @@ Issue 和 PR 是**过程与沟通**的载体，`docs/` 是**长期事实**的载
    - **`Closes #N`**：只在 base 为默认分支（`dev`）时生效；发布 PR（`dev` → `master`）用 `Refs` 列出 issue。若 `Closes` 未生效，只有当改动**已进入该 issue 要求的最终目标分支且验收通过**时才在 issue 评论附证据直接关闭，不需要另造“收尾 PR”；仅合入 stacked 中间层、尚未进入最终目标分支的不能关闭。
    - **清理**：待评审／待合并保留干净 worktree 与分支。确认自己的 `agent/*` 临时分支内容已合入最终目标、没有后续提交、脏文件、活跃实例或上层依赖后，再按 §9 回收。`master`／`dev` 永久保留；不清理他人资源，不要求全局 worktree 列表为空。未回收的资源必须写清用途与解除条件（关联 issue／PR），不以固定 pane 编号描述。
 
-10. **收尾核对**（结束前）：按顺序确认——① 最终合并 SHA 与证据已记录，与评审 SHA 不一致时说明原因；② 对应 issue 已置 `status:done`，已满足的 `needs:*` 已移除、未满足的保留并写清依赖；③ issue 已关闭，或 `Closes` 未生效时已附最终分支／合并证据（§5 步骤 9）；④ 自有 worktree／分支已回收，或保留并写明用途与解除条件。核对项不新增审批层：能自助核对的自动核对，只有真实歧义才升级。
+10. **收尾核对**（结束前，按任务真实阶段分流）：
+    - **已完成交付**（已合并且验收通过）：核对 ① 最终合并 SHA 与证据已记录，与评审 SHA 不一致时说明原因；② issue 置 `status:done`，已满足的 `needs:*` 移除、未满足的保留并写清依赖；③ issue 已关闭，或 `Closes` 未生效时已附最终分支／合并证据；④ 自有 worktree／分支已回收，或保留并写明用途与解除条件。
+    - **待审／阻塞／未完成／只读任务**：不因会话结束就置 `done` 或关闭 issue。记录当前阶段、下一步与阻塞原因即可；`needs:review` 表示等外部评审，不等于 `REQUEST-CHANGES`，不必停下所有工作，可继续做不冲突的任务。
+    - 核对项不新增审批层：能自助核对的自动核对，只有真实歧义才升级。
 
 > 检查按 §10 的影响范围执行；实际配置为 required 的 CI 检查仍必须通过，不能自行跳过。CI 尚未接入时附对应命令与输出。无关基线失败单独记录，不阻止提交可审查 PR 或内容评审；不能据此声称仓库全绿。发布到 `master` 前执行全套仓库检查与本次发布的回归验收。
 
@@ -565,6 +570,7 @@ gh issue close 42 --comment "验收通过，证据见 PR #43"
 | Milestones | 每个迭代／版本一个 milestone，进入 `ready` 时必须挂载 | 第一次计划迭代时 |
 | Projects 看板 | 列 = `status:*`，用于人类总览 | 同一时间超过 10 个活跃 issue |
 | GitHub Actions | `fmt`／`clippy`／`test`／`go test`；标签守卫按 §4 区分 triage 与 ready 后的要求 | QA 提供门禁需求与验收标准，PM 维护 `.github/`，或明确交接实施；以实际配置为准 |
+| 协作只读检查 | `python3 scripts/collaboration_check.py [--limit N] [--line <line>] [--integration dev] [--json]`：列出标签约束异常、关闭后状态遗留、open handoff、已合并未关闭 issue、clean 且已集成的 `agent/*` worktree 候选 | 手动按需运行；仅候选，不自动改标签／关 issue／删资源；依据本地 `origin/<integration>`，不自动 fetch |
 | Branch protection | 要求 PR + CI；平台要求的原生审批不能由结构化评论替代 | CI 接入后由 maintainer 配置 |
 | 自动删除合并分支 | 自动清理策略需保护 `master`／`dev` 并处理上层 PR 依赖；是否已删除以实际状态为准 | 2026-10-16 已核对 `deleteBranchOnMerge=true`；设置由 maintainer 管理 |
 | CODEOWNERS | 每个业务线（或实例）有独立 bot 账号后，按路径与 `agent:*` 自动路由评审 | 启用独立 bot 账号时 |
