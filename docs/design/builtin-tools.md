@@ -1,6 +1,6 @@
 # Builtin tools：第一版实现契约
 
-更新日期：2026-10-17。主要参考 Pi 的四工具与输出处理、Codex 的执行生命周期；第三方研究见 [Builtin tools](../research/systems/builtin-tools.md)。本版范围是当前 agent loop 的工具执行，不引入恢复、归档、输出文件清理、TTL、磁盘配额、后台会话或主动取消。
+更新日期：2026-10-19。主要参考 Pi 的四工具与输出处理、Codex 的执行生命周期；第三方研究见 [Builtin tools](../research/systems/builtin-tools.md)。本版范围是当前 agent loop 的工具执行，不引入恢复、归档、输出文件清理、TTL、磁盘配额、后台会话或主动取消。
 
 ## 注册与执行环境
 
@@ -48,8 +48,10 @@ write 创建或整体覆盖 UTF-8 文件，创建缺失父目录，不回显内�
 - timeout_ms 默认 120,000，必须为正数，可以显式调整；等待命令退出，不暴露 PTY/stdin/session API。
 - stdout/stderr 在子进程内合并到同一管道（stderr 重定向到 stdout），按实际写出顺序返回；不再依赖两路读取的完成顺序。
 - 非零退出是正常结果，保留退出码和输出供模型修复；无法启动、读取或保存输出的错误走 ToolError。
-- Unix 子进程使用独立进程组，超时与采集错误终止该组并等待 shell 退出。shell 正常退出后也终止剩余组成员，避免后台子进程持有管道导致无限等待。进程组终止是幂等的：一次成功发送信号（或 ESRCH）后不再重复终止，后续清理不会把已完成的超时变成新的错误。主动脱离该进程组的后台任务不属于本版支持范围。
+- Unix 子进程使用独立进程组，超时与采集错误终止该组并等待 shell 退出。shell 正常退出后也终止剩余组成员，避免后台子进程持有管道导致无限等待。进程组终止是幂等的：一次成功发送信号（或 ESRCH）后不再重复终止，后续清理不会把已完成的超时变成新的错误。macOS 的 EPERM 仅在 libproc 确认组内成员均已退出或消失时视为清理完成；仍有存活成员、查询失败或列表截断时保留错误。spawn、wait 与 group kill 错误包含失败操作，避免只返回无法定位的 errno。主动脱离该进程组的后台任务不属于本版支持范围。
 - 信号终止时 exit_code 可以为 null；timed_out 单独说明是否触发本工具的时限。
+
+macOS 的特殊分支依据 [Apple `killpg1` 实现](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_sig.c#L1675)：进程组遍历跳过僵尸成员，没有可发送信号的成员时也可能返回 EPERM。回归测试用 `waitid(WEXITED | WNOWAIT)` 保持一个已退出但未回收的组长，确定性验证清理成功与 guard 解除；另验证存活进程组不能被当作已退出。检查结束前再次枚举，出现未经检查的新成员时保留原错误。这不将旧版只含裸 errno 的历史失败追溯归因为同一调用。
 
 ## 输出边界
 
