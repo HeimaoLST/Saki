@@ -1,6 +1,6 @@
 # CI governance（Runtime／TUI／GUI）
 
-更新日期：2026-10-20。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。当前 workflow 基线为 `dev@61079f5`（2026-10-20，含 [PR #80](https://github.com/HeimaoLST/Saki/pull/80) 的 Python 门禁）。本文职责调整本身不修改 workflow 或分支保护。
+更新日期：2026-10-20。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。当前 workflow 基线为 `dev@426d04e`（2026-10-20，含 [PR #80](https://github.com/HeimaoLST/Saki/pull/80) 的 Python 门禁）；Runtime stdio 门禁准备中，依赖 #60/PR82 合入后生效。本文职责调整本身不修改 workflow 或分支保护。
 
 ## 目的与范围
 
@@ -40,6 +40,17 @@
 
 Python 门禁的真实失败传播：临时探针 `9480847` 的 [run 39381934207](https://github.com/HeimaoLST/Saki/actions/runs/39381934207) 中 Python 与聚合均失败，Rust／Go 成功；恢复探针并同步后的最终候选 `96ad987` 的 [run 39384000031](https://github.com/HeimaoLST/Saki/actions/runs/39384000031) 四个 job 均成功。探针已用追加提交撤回，不在最终树中。
 
+## 准备中的 Runtime stdio 门禁（依赖 #60 / PR #82）
+
+状态：**待启用**。当前 `dev@426d04e` 尚无 `examples/runtime_stdio.py`，因此以下步骤尚未运行；不得把准备配置写成已通过。`#60`/PR82 合入后，`rust` job 将增加：
+
+```sh
+cargo build --locked --bin Saki
+python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
+```
+
+覆盖：两个真实 OS 进程、临时文件 read、task/message/journal 关联、跨进程保存/恢复/history 零模型重放、继续前文，以及 stdout 断连时已接纳任务的 drain/exit；driver 自带本地 fixture HTTP 与断言，不需要外部 provider/key。Python 通过 `actions/setup-python@v7` 显式固定 3.12；driver step 超时 5 分钟，使用 `pipefail`+`tee`，非零退出不会被吞掉。合入并同步后，这一步骤属于 `rust` job，失败会沿现有 `rust` → `ci-required` 链传播；不会使用 if-file-exists、continue-on-error 或 skip。
+
 ## 触发、并发与权限
 
 - 触发：所有 `pull_request`；`push` 到 `dev`／`master`；`workflow_dispatch`。发布 PR（`dev` → `master`）、hotfix PR（→ `master`）与回流 PR（`master` → `dev`）因此都跑全量检查。
@@ -49,7 +60,7 @@ Python 门禁的真实失败传播：临时探针 `9480847` 的 [run 39381934207
 - 工具链：Rust 固定 `1.99.0`（rustfmt + clippy，官方 rustup 安装，已验证该版本可从 static.rust-lang.org 下载）；Go 由 `desktop/go.mod`（当前 `1.27.1`）通过 `actions/setup-go` 的 `go-version-file` 决定，不使用本机未来版本随意钉死不可下载版本。
 - 缓存：Cargo registry／git／`target` 以 `runner.os + Rust 版本 + Cargo.lock` 为 key；Go 使用 `actions/setup-go` 内置缓存（`desktop/go.sum`）。缓存只加速，不改变 `--locked` 校验。
 - Python：`actions/setup-python` 显式提供 3.12，运行现有 stdlib unittest 入口，不增加第三方测试框架。
-- 超时：Rust 30 分钟，GUI 20 分钟，Python 10 分钟，聚合 5 分钟。
+- 超时：Rust 30 分钟（含 stdio self-test step 的 5 分钟上限），GUI 20 分钟，Python 10 分钟，聚合 5 分钟。
 
 ## 失败处理与责任
 
@@ -128,6 +139,10 @@ cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_ter
 
 # Python（协作检查回归）
 python3 scripts/test_collaboration_check.py
+
+# Runtime stdio 跨进程 smoke（需 #60/PR82 已合入；当前 dev 尚未提供 examples/runtime_stdio.py）
+cargo build --locked --bin Saki
+python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
 
 # GUI
 cd desktop
