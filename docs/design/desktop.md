@@ -1,6 +1,6 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-21。状态：**实现事实（#63 分支；依赖 #60 已合入的 stdio v1 契约）**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
+更新日期：2026-10-20。状态：**实现事实（#63 分支；依赖 #60 已合入的 stdio v1 契约）**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
 
 [previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。调色板与布局设计沿用下文。concurrency、`search_history`／`read_history`、附件、模型切换等仍是后续独立任务，不在首轮。
 
@@ -31,13 +31,46 @@
 - 工作目录：`SAKI_GUI_WORKDIR`；否则当前目录（Finder 的 `/` 除外，退回 home）。作为子进程 cwd 与默认 `session.create.working_directory`。
 - 模型/API/base URL/凭据沿用宿主环境或子进程 cwd 的 `.env`；GUI 不持久化、不打印 key，也不提供 Keychain/向导/全配置系统。Finder 启动不继承 shell cwd/env，需要在明确位置提供 `.env` 或从终端启动。
 
+可复制的本机构建与启动（不含 key；key 由宿主 `.env`/环境提供）：
+
+```sh
+cd desktop
+CGO_ENABLED=0 go build -o /private/tmp/saki-gui/o .
+SAKI_RUNTIME_BIN=/abs/path/to/Saki \
+SAKI_GUI_STORE=/private/tmp/saki-gui/contacts.json \
+SAKI_SESSION_DIR=/private/tmp/saki-gui/sessions \
+SAKI_GUI_WORKDIR=/abs/working-directory \
+/private/tmp/saki-gui/o
+```
+
+打包应用：
+```sh
+# Contents/MacOS/Saki 为 GUI，Contents/MacOS/Saki-runtime 为 runtime，无需 SAKI_RUNTIME_BIN
+open "/private/tmp/saki-gui-63-app/Saki.app"
+# 需要显式 env 时也可从终端启动 GUI 可执行文件
+SAKI_GUI_WORKDIR=/abs/working-directory \
+  "/private/tmp/saki-gui-63-app/Saki.app/Contents/MacOS/Saki"
+```
+Finder 启动使用默认 store／session／home workdir，且不继承 shell 环境；把 `.env` 放在该 workdir，或从终端带 env 启动。不要把 key 放进 Info.plist 或仓库。
+
 ## 验证与证据
 
 - Go：`CGO_ENABLED=0 go test ./... -count=1`、`go vet ./...`、`go build ./...`、`go test -race ./...` 均通过（本分支候选）。
-- 真实 runtime 集成（opt-in）：`SAKI_TEST_RUNTIME_BIN=/abs/path/to/Saki CGO_ENABLED=0 go test -run TestRuntimeProcessIntegration -count=1 .`。使用本地受控 Responses fixture 与候选进程，覆盖 read 工具、task/message 关联、跨进程恢复零模型调用、history input 形状与继续；默认 CI 未设置该 env 时跳过，需要 CI 提供编译后的 runtime binary。
+- 真实 runtime + 应用层集成（opt-in，受控 fixture）：
+  ```sh
+  SAKI_TEST_RUNTIME_BIN=/abs/path/to/Saki CGO_ENABLED=0 go test \
+    -run 'TestRuntimeProcessIntegration|TestGUIAppRuntimeFlow|TestGUIFirstCreateUsesProfileSnapshot' -count=1 .
+  ```
+  覆盖 read 工具、task/message 关联、GUI send/切换 B 草稿隔离、绑定设置只改名、drain/重启零 provider 调用、继续前文，以及首次 create 使用 profile 快照。默认 CI 未设置 `SAKI_TEST_RUNTIME_BIN` 时 skip；QA 需要提供候选 binary 才能执行。
+- 线上 provider 应用层 smoke（opt-in，不使用受控 fixture）：
+  ```sh
+  SAKI_TEST_ONLINE=1 SAKI_TEST_ONLINE_WORKDIR=/path/to/repo \
+  SAKI_TEST_RUNTIME_BIN=/abs/path/to/Saki CGO_ENABLED=0 go test \
+    -run TestGUIOnlineSmoke -count=1 .
+  ```
+  本次在宿主 `.env` 组合上以 `SAKI_API=openai-chat-completions` 运行，模型为 `opencode-go/deepseek-v4.1-flash`；GUI 应用管线完成真实 read `probe.txt`（唯一 marker）→ tool result → final，任务 completed。默认 Responses 对同一 host 返回 `model_error: missing field status`，属 provider 与 Responses 形状不兼容，不是 GUI 改写；不要把单次结果写成所有 provider 普遍兼容。Python driver 的 transport 级 smoke 不等同于本项 GUI 应用管线证据。
 - 最终候选 `4001fd4` binary sha256 `f095bb77…588f6`；官方 driver `--self-test` 单次 PASS（real read、correlated journal、cross-process restore、invalid startup、stdout-loss drain/exit，4 model requests）。
-- 真实 provider smoke（宿主已有 `.env`，临时 session 目录，只读 `README.md`、提示不写文件）：显式 `SAKI_API=openai-chat-completions` 时完成并报告首个 heading；同一 host 使用默认 Responses 时 runtime 返回 `model_error: missing field status`，属该 provider 与 Responses 形状不兼容，GUI 继承宿主配置、不自行改写。不要把单次结果写成所有 provider 普遍兼容。
-- macOS 候选包：`/private/tmp/saki-gui-63-app/Saki.app`，`Contents/MacOS/Saki` 为 GUI，`Saki-runtime` 为候选 runtime；Info.plist `dev.saki.desktop`，ad-hoc 签名，`codesign --verify --strict` 与 `--deep --strict` 通过。未在真实窗口中人工操作，也未验证系统键盘/IME。
+- macOS 候选包：`/private/tmp/saki-gui-63-app/Saki.app`，`Contents/MacOS/Saki` 为 GUI，`Saki-runtime` 为候选 runtime；Info.plist `dev.saki.desktop`，ad-hoc 签名，`codesign --verify --strict` 与 `--deep --strict` 通过。**未启动应用、未做真实窗口人工交互，也未验证系统键盘/IME**；这些证据不能替代实际窗口验收。
 
 ## 已知限制
 
@@ -53,19 +86,19 @@
 - 用户添加 **CONTACTS**：独立 agent，具有稳定的 name／avatar／profile／requirements 与长期对话；没有 New session 或 session picker 入口。
 - 每个 contact 拥有自己的 profile、历史与未来的 memory，不再继承单一全局 Saki 身份。
 - 历史查询计划新增 `search_history`／`read_history` 工具，绑定当前 contact。UI 只呈现可理解的活动与带出处的历史消息；primary flow 不暴露 compact、JSONL、token budget 或内部工具名。
-- source/history 与当前 settings 分离：编辑 profile 只影响之后的回复，不改写已保存的消息。
+- source/history 与当前 settings 分离：绑定后 profile（purpose/instructions/workspace）锁定，只有显示名可改；保存不会改写已保存的消息或草稿。
 
-## 与当前 runtime 的差距（需要 runtime 变更，proposed）
+## 与完整 runtime 需求的剩余差距（实现事实）
 
-| 差距 | 当前实际 | 原型中的呈现 |
+| 能力 | 当前实现 | 说明 |
 | --- | --- | --- |
-| Contact 持久边界 | Session + JSONL，单一 active job | UI 假定每个 contact 有 profile 与独立历史 |
-| 切换期间继续工作 | 未实现后台/并发执行 | Working 定时器按 contact 保存，切走不丢；这是 UI 模拟 |
-| 绑定历史工具 | 尚未实现 `search_history`／`read_history` | Activity 与 Sources 用样例历史数据演示 |
-| 附件 | 图片输入存在；未定义长期存储 | 只保留本地 filename chip，不保存文件内容 |
-| 模型配置 | host 环境变量/启动配置 | contact 级模型设置 **deferred**，不在本流程 |
+| Contact 持久边界 | GUI contact store + `session_id` 映射；历史由 `session.history` 提供 | GUI 不解析 JSONL；重启恢复同一 ID |
+| 查看 B 与 A 执行 | 单执行槽；A 运行时切到 B 查看不会 cancel A，B 的发送返回 busy | 同宿主 A/B 同时执行仍由 #61 承载，不是首轮承诺 |
+| 历史检索工具 | 未实现 `search_history`／`read_history` | History 只对已加载 transcript 做本地过滤 |
+| 附件 | 未接入 GUI；runtime 现有图片输入能力未暴露 | 不保存文件内容 |
+| 模型配置 | host 环境变量／启动配置；contact 级配置 deferred | GUI 不改写 API/key |
 
-不得把本原型的并行观感当作后端承诺；实现前需要单独的 contact store、历史工具和任务归属设计。
+上述是当前交付边界；不得把单执行槽或本地过滤写成并发执行／模型检索已完成。
 
 ## 布局与断点（浏览器示意）
 
@@ -102,25 +135,25 @@
 - 未来：same-family 的可选头像集合，保持一致的 silhouette、linework 与 Rose Pine／Dawn 调色。
 - 验证：头像针对性检查 27/27 通过——内嵌字节与 workspace 资产逐字节一致，256px RGBA，各位置 `naturalWidth` 256，新建／重命名／回复／Working 均使用默认头像，选中不重着色，1024／320 light／dark 无横向溢出，0 运行时错误。
 
-## 关键流程（界面设计与本地演示）
+## 关键流程（当前原生应用）
 
-1. **选择 contact**：切换 name、profile、messages 与 draft；草稿按 contact 保存。未选中的 contact 可以处于 Working，查看与切走都不会清空它。状态词只描述工作：Ready／Working／Needs attention，不假装在线。
-2. **Add contact（当前原生预览）**：一次点击直接创建、选中 Ready 默认联系人并进入空会话；无需填写 Name／Purpose／Instructions／Workspace。composer 只取得一次焦点，连续创建也可直接输入；个性化通过可选 Settings 编辑。浏览器旧示意的 Create／Cancel 表单仅保留为历史原型。
-3. **Contact settings**：编辑 name／purpose／instructions，并明确提示“changes apply to future messages; saved history stays intact”。Save 更新 header 与列表。
-4. **Composer**：textarea、Send、附件控件；Enter 发送、Shift+Enter 换行、IME 组合期不发送。发送后进入有限的本地 working→reply 过渡；切换 contact 不影响回复归属。浏览器示意的附件只是可移除 filename chip；当前原生预览没有附件入口。
-5. **Source action**：回复中的 “2 earlier messages” 打开 contact 范围的 sources 区域，显示日期、原说话人与原文；View in conversation 会把该消息插回会话顶部并高亮定位。返回时草稿与进行中的工作保持。
-6. **History action**：contact 范围的本地搜索，实际过滤该 contact 的样例历史；无结果有明确说明；不会出现其他 contact 的消息。不会实现或暗示 shared memory 与多 agent 协作。
+1. **选择 contact**：切换 name、profile、messages 与 draft；草稿按 contact 保存。A 在 runtime 执行时切到 B 查看不会 cancel A；首轮 B 的发送返回 busy。状态词只描述工作：Ready／Working／Needs attention，不假装在线。
+2. **Add contact**：一次点击直接创建、选中 Ready 默认联系人并进入空会话；无需填写 Name／Purpose／Instructions／Workspace。composer 只取得一次焦点，连续创建也可直接输入。个性化通过可选 Settings 编辑；首次发送才创建 runtime session。浏览器旧示意的 Create／Cancel 表单是历史原型。
+3. **Contact settings**：显示名始终可编辑；purpose／instructions／workspace 只在首次 create 时使用，绑定后只读。不会提示“changes apply to future messages”，也不会重建 session 或丢历史/草稿。
+4. **Composer**：textarea、Send 与 Stop；Enter 发送、Shift+Enter 换行、IME 组合期不发送。发送进入真实 runtime：接纳后显示等待开始，`task_started` 后才 Working；delta 流式、final 覆盖同一项；工具与最终文字按 task 归属。当前没有附件入口。
+5. **Source action（仅浏览器/本地 fixture 历史）**：样例来源面板与 View in conversation 是旧演示能力；真实模式暂不展示样例 Sources，也不伪造引用。
+6. **History action**：对当前 contact 已加载的 transcript 做本地过滤；无结果有明确说明。它不等于 runtime 的 `search_history`，也不会出现其他 contact 的消息或暗示 shared memory。
 
 ## 状态与反馈
 
 | 状态 | 表现与下一步 |
 | --- | --- |
 | Empty conversation | 可直接写第一条消息，或按需编辑 Settings；无 profile 不阻止开始 |
-| Working | 会话尾部有可理解的进行中行（如 Running the parser tests）；Send 暂时不可用；切走保留状态 |
-| Needs attention | gold 状态 + 失败摘要 + 样例 “Try again”；不显示假装可取消的 Stop |
-| No history results | 说明该 query 在此 contact 历史中无匹配，建议更短的短语 |
-| Validation | Settings 保存时名称不得为空；创建默认联系人无需表单校验 |
-| Sources | foam 强调引用来源，不铺满页面 |
+| Working | 会话尾部有进行中行；Send 暂时不可用，Stop 可用；切走保留状态 |
+| Needs attention | gold 状态 + 已保存的失败/中断原因；不在未知接纳时自动重发 |
+| No history results | 说明该 query 在此 contact 已加载历史中无匹配，建议更短的短语 |
+| Validation | Settings 保存时名称不得为空；绑定后 profile 字段只读 |
+| Sources | 仅旧浏览器/fixture 历史；真实模式不显示样例引用 |
 
 ## 可访问性与可视化契约（浏览器示意）
 
@@ -128,7 +161,7 @@
 
 ## 验收清单（2026-10-14 浏览器历史记录）
 
-以下是浏览器旧原型的历史结果，不替代当前原生流程验收。当前创建与设置证据见上文 Native preview；未实测项目继续保留限制。
+以下是浏览器旧原型的历史结果，不替代当前原生流程验收。当前创建与设置证据见上文 Runtime-backed native app；本节仅是浏览器历史快照。
 
 - [x] Saki 默认选中，MyGo 桌面 shell 会话可读，最终回复带 “2 earlier messages”，Activity 可展开为 search／read 进度，无原始 reasoning。
 - [x] 选择切换 name/profile/messages/draft；Ren 的 Working 与切走/切回保持；Mio unread 清除。
@@ -147,6 +180,6 @@
 - 头像更新的针对性验证：27/27 通过——内嵌字节与 workspace 资产逐字节一致（sha256）、256px RGBA、各位置 `naturalWidth` 256、新建／重命名／回复／Working 均使用默认头像、选中不重着色、1024／320 light／dark 无横向溢出、0 运行时错误。
 - 限制：所有 Working／回复／历史都是本地模拟，不代表后端并行或真实模型调用；sandbox 预览禁止原生表单提交，因此发送／创建／保存走显式本地处理；Lucide 图标由宿主沙箱提供，脱离宿主的独立预览会显示空占位；host 模型配置、后台并行与 contact 级持久化仍 deferred。
 
-## 当前设计预览不做
+## 当前不做
 
-多 agent 协作、shared memory、后台并行执行的真实承诺、Stop／取消控件、原始推理链展示、contact 级模型/provider/key 设置（deferred）、头像 picker／上传／contact 级头像设置（same-family 集合以后再评估）。
+多 agent 协作、shared memory、同宿主后台并行执行、原始推理链展示、contact 级模型/provider/key 设置（deferred）、附件、头像 picker／上传／contact 级头像设置（same-family 集合以后再评估）。Stop／取消已实现，只按 `(session,task)` 生效。
