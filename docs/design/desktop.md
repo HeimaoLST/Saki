@@ -1,6 +1,6 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-20。状态：**实现事实（#63 分支；依赖 #60 已合入的 stdio v1 契约）**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
+更新日期：2026-10-20。状态：**实现事实（#63 运行时接入；#90 局部布局打磨）**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
 
 [previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。调色板与布局设计沿用下文。concurrency、`search_history`／`read_history`、附件、模型切换等仍是后续独立任务，不在首轮。
 
@@ -19,6 +19,21 @@
 - `task_finished` 是唯一终态；`failed/interrupted` 的已保存原因在历史刷新后仍可见。取消按 `(session,task)`，迟到 cancel 不会改写已完成或别的 task。
 - 断连/协议失败标记为未知；`sendUnknown` 只有在同一连接、`session.load/status` 确认 idle 且 history 取回后才恢复可发送状态。连接已退出时不提供“Reload”假恢复，明确提示重启应用；不做透明重连框架。
 - 退出（关窗与 Cmd+Q）先阻止默认关闭，持久化草稿，异步 `runtime.shutdown` 等待已接纳任务收尾和进程 Wait，再退出；不阻塞 UI 线程、不静默 Kill。
+
+## 布局打磨（#90，实现事实）
+
+一次局部布局调整，不改发送/取消/runtime/store 语义：
+- 联系人侧栏保持 220px：品牌与 Contacts/Add contact 收敛为低权重文本入口；行内统一 32px 头像、名称和单行摘要；选中态只使用 surface hover，无边框；Working/Needs attention 合并在摘要行显示，未读仍归原联系人。
+- 顶部降为 28px 头像、15px 名称、11px 状态/角色；History/Settings 作为低权重文本按钮，移除 header 下的 divider。
+- 聊天主体使用 `MaxWidthPercent(86)` 居中阅读列；用户气泡 `MaxWidthPercent(80)`，助手正文不再重复头像/姓名/时间；历史引用仍保留日期/说话人。工具活动收敛为 `name · path/command`、摘要和 Details（展开显示原始 output 截断）；错误仍由 task alert/StatusDetail 呈现。
+- Composer 贴底，输入区从 44px 高起，圆角 14；保留多行、Enter/Shift+Enter、IME 组合不发送、一次性焦点、Send/Stop/错误与 unknown 恢复提示。
+- 960×640 与打开 settings 的 300px aux 下，阅读列按百分比收缩，不横向溢出；没有提高最小窗口。
+
+Headless 证据（fixture，不等于线上模型或原生窗口）：
+- before：`/private/tmp/saki-gui-90/before/`（改动前 demo 场景）。
+- after：`/private/tmp/saki-gui-90/after/`（demo 场景 + `headless-*runtime-*` 场景；runtime-backed 形状的消息/工具/Working/错误/只读 settings）。
+- 生成：`SAKI_PREVIEW_DIR=/private/tmp/saki-gui-90/after CGO_ENABLED=0 go test -run 'TestPreviewImages|TestPreviewRuntimeStates' -count=1 .`
+- 不新增样式数值测试；键盘焦点、草稿隔离、绑定 profile 只读、运行中切换/Stop/history 的回归仍由现有 Go 测试与真实 runtime 集成覆盖。
 
 ## 文件与配置（实现事实）
 
@@ -124,7 +139,9 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 
 上述是当前交付边界；不得把单执行槽或本地过滤写成并发执行／模型检索已完成。
 
-## 布局与断点（浏览器示意）
+## 布局与断点（浏览器历史示意）
+
+本节保留浏览器历史示意；当前原生布局以“布局打磨（#90）”为准。
 
 - **≥920px**：`contact rail (默认 220px)` ｜ conversation ｜ 右侧 aux 300px，仅在 source/settings 等操作后出现；没有常驻第三栏。
 - **640–919px**：rail + 单栏内容；source/settings 直接替换主内容，而不是压缩两栏。
