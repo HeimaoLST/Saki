@@ -28,17 +28,22 @@ pub struct Commands {
     pending: Option<Command>,
     area: Rect,
     first_visible: usize,
+    /// False while transcript search owns input; the hidden composer must not
+    /// complete or navigate through a stale popup.
+    enabled: bool,
 }
 
 impl Commands {
     pub fn sync(&mut self, app: &App, editor: &Editor) {
+        self.enabled = app.transcript_search.is_none();
         let text = editor.text();
         if text != self.prefix {
             self.prefix = text;
             self.selected = 0;
             self.dismissed = false;
         }
-        self.candidates = if !self.dismissed
+        self.candidates = if self.enabled
+            && !self.dismissed
             && !app.help_open
             && app.log_view.is_none()
             && app.focus == Focus::Input
@@ -54,6 +59,9 @@ impl Commands {
     }
 
     pub fn key(&mut self, editor: &mut Editor, key: KeyEvent) -> bool {
+        if !self.enabled {
+            return false;
+        }
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
             || self.candidates.is_empty()
             || key
@@ -131,6 +139,9 @@ impl Commands {
     }
 
     pub fn mouse(&mut self, editor: &mut Editor, mouse: MouseEvent) -> bool {
+        if !self.enabled {
+            return false;
+        }
         if self.candidates.is_empty() || !self.area.contains(Position::new(mouse.column, mouse.row))
         {
             return false;
@@ -157,6 +168,9 @@ impl Commands {
     }
 
     pub fn draw(&mut self, frame: &mut Frame, app: &App) {
+        if app.transcript_search.is_some() {
+            return;
+        }
         if self.candidates.is_empty() {
             return;
         }

@@ -1689,3 +1689,5 @@ fn message_navigation_requires_ctrl_and_shift() {
         "Alt+Up still scrolls one line instead of jumping to a message"
     );
 }
+
+mod transcript_search_tests;
