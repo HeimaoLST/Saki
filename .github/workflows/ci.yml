@@ -140,20 +140,50 @@ jobs:
             echo "This is a headless design-preview gate; real macOS window/IME is not covered."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  python:
+    name: python
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Collaboration-check regression tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/test_collaboration_check.py 2>&1 | tee "$RUNNER_TEMP/python-collaboration-tests.log"
+          grep -Eq '^Ran [1-9][0-9]* tests? in ' "$RUNNER_TEMP/python-collaboration-tests.log"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### Python gate (collaboration checker)"
+            echo ""
+            echo "- \`python3 scripts/test_collaboration_check.py\` (stdlib unittest)"
+            echo "- Non-zero test count is asserted; an empty suite cannot pass silently."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   ci-required:
     name: ci-required
     if: always()
-    needs: [rust, gui]
+    needs: [rust, gui, python]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require rust and gui success
+      - name: Require rust, gui and python success
         env:
           RUST_RESULT: ${{ needs.rust.result }}
           GUI_RESULT: ${{ needs.gui.result }}
+          PYTHON_RESULT: ${{ needs.python.result }}
         run: |
-          echo "rust=$RUST_RESULT gui=$GUI_RESULT"
-          if [ "$RUST_RESULT" != "success" ] || [ "$GUI_RESULT" != "success" ]; then
-            echo "::error::Required CI jobs must both succeed; cancelled, failed and skipped are not success."
+          echo "rust=$RUST_RESULT gui=$GUI_RESULT python=$PYTHON_RESULT"
+          if [ "$RUST_RESULT" != "success" ] || [ "$GUI_RESULT" != "success" ] || [ "$PYTHON_RESULT" != "success" ]; then
+            echo "::error::Required CI jobs must all succeed; cancelled, failed and skipped are not success."
             exit 1
           fi
