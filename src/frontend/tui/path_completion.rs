@@ -48,6 +48,8 @@ pub struct PathCompletion {
     start: usize,
     end: usize,
     quote: Quote,
+    /// A separator already follows the component; the insertion must keep it.
+    separator: bool,
 }
 
 struct Token {
@@ -179,19 +181,20 @@ fn decode(token: &Token) -> Decoded {
     let mut text = String::new();
     let mut bounds = Vec::new();
     let mut modes = Vec::new();
-    for (character, doc_start, doc_end, mode) in &token.chars {
-        bounds.push((text.len(), *doc_start));
-        modes.push(*mode);
-        text.push(*character);
-        if *doc_end > *doc_start {
-            // The final boundary is filled below; nothing per byte is needed.
+    for (index, (character, doc_start, doc_end, mode)) in token.chars.iter().enumerate() {
+        // Boundaries are character ends (and the first character start): the end
+        // of a component maps before a closing quote, while a separator's start
+        // maps after that quote.
+        if index == 0 {
+            bounds.push((0, *doc_start));
         }
+        text.push(*character);
+        modes.push(*mode);
+        bounds.push((text.len(), *doc_end));
     }
-    let end_doc = token
-        .chars
-        .last()
-        .map_or(token.content_start, |(_, _, doc_end, _)| *doc_end);
-    bounds.push((text.len(), end_doc));
+    if token.chars.is_empty() {
+        bounds.push((0, token.content_start));
+    }
     Decoded {
         text,
         bounds,
@@ -199,13 +202,28 @@ fn decode(token: &Token) -> Decoded {
     }
 }
 
-fn candidate_mode(decoded: &Decoded, token: &Token, start: usize) -> Quote {
-    decoded
-        .modes
-        .get(start)
-        .copied()
-        .or_else(|| decoded.modes.last().copied())
-        .unwrap_or(token.empty_quote)
+/// Quote mode for one component, indexed by character (not decoded byte).
+/// Mixed quoting inside the component is unsupported and returns `None`.
+fn component_quote(decoded: &Decoded, token: &Token, start: usize, end: usize) -> Option<Quote> {
+    let first = decoded.text[..start].chars().count();
+    let last = decoded.text[..end].chars().count();
+    if first < last {
+        let mode = *decoded.modes.get(first)?;
+        if decoded.modes[first..last].iter().all(|item| *item == mode) {
+            Some(mode)
+        } else {
+            None
+        }
+    } else if decoded.modes.is_empty() {
+        Some(token.empty_quote)
+    } else {
+        decoded
+            .modes
+            .get(first)
+            .copied()
+            .or_else(|| decoded.modes.last().copied())
+            .or(Some(token.empty_quote))
+    }
 }
 
 fn escape_name(name: &str, quote: Quote) -> String {
@@ -254,7 +272,7 @@ fn base_for(prefix: &str, working_directory: &Path) -> Option<PathBuf> {
     Some(working_directory.join(prefix))
 }
 
-fn list_candidates(base: &Path, partial: &str) -> (Vec<Candidate>, usize) {
+fn list_candidates(base: &Path, partial: &str, only_dirs: bool) -> (Vec<Candidate>, usize) {
     let dotfile = partial.starts_with('.');
     let needle = partial.to_lowercase();
     let mut matches = Vec::new();
@@ -272,6 +290,9 @@ fn list_candidates(base: &Path, partial: &str) -> (Vec<Candidate>, usize) {
             continue;
         }
         let is_dir = entry.metadata().map(|meta| meta.is_dir()).unwrap_or(false);
+        if only_dirs && !is_dir {
+            continue;
+        }
         matches.push(Candidate { name, is_dir });
     }
     matches.sort_by(|left, right| {
@@ -300,10 +321,11 @@ fn apply(
     start: usize,
     end: usize,
     quote: Quote,
+    separator: bool,
     candidate: &Candidate,
 ) {
     let mut insert = escape_name(&candidate.name, quote);
-    if candidate.is_dir {
+    if candidate.is_dir && !separator {
         insert.push('/');
     }
     editor.complete_global_range(start, end, &insert);
@@ -330,30 +352,31 @@ pub fn tab(app: &mut App, editor: &mut Editor) -> bool {
     let component_end = decoded.text[cursor..]
         .find('/')
         .map_or(decoded.text.len(), |index| cursor + index);
-    let partial = &decoded.text[component_start..component_end];
+    // Match only the text typed through the cursor, but replace the whole
+    // component so a mid-component typo cannot leave a duplicated suffix.
+    let partial = &decoded.text[component_start..cursor];
     let prefix = &decoded.text[..component_start];
+    let separator = decoded.text[component_end..].starts_with('/');
     let Some(base) = base_for(prefix, &working_directory) else {
         return false;
     };
-    let (candidates, extra) = list_candidates(&base, partial);
+    let (candidates, extra) = list_candidates(&base, partial, separator);
     if candidates.is_empty() {
         return false;
     }
+    let Some(quote) = component_quote(&decoded, &token, component_start, component_end) else {
+        // Mixed quoting inside one component is not supported: consume the Tab
+        // without editing the draft rather than generating malformed quotes.
+        return true;
+    };
     let Some(start) = decoded.doc_at(component_start) else {
         return false;
     };
-    // A directory replaces its existing trailing separator; the inserted name
-    // already ends with '/'.
-    let end = if decoded.text[component_end..].starts_with('/') {
-        decoded
-            .doc_at(component_end + 1)
-            .unwrap_or_else(|| decoded.doc_at(component_end).unwrap_or(start))
-    } else {
-        decoded.doc_at(component_end).unwrap_or(start)
-    };
-    let quote = candidate_mode(&decoded, &token, component_start);
+    // Replace only the component; an existing separator and closing quote stay
+    // untouched. A directory adds '/' only when no separator exists yet.
+    let end = decoded.doc_at(component_end).unwrap_or(start);
     if candidates.len() == 1 {
-        apply(app, editor, start, end, quote, &candidates[0]);
+        apply(app, editor, start, end, quote, separator, &candidates[0]);
         return true;
     }
     app.path_completion = Some(PathCompletion {
@@ -363,6 +386,7 @@ pub fn tab(app: &mut App, editor: &mut Editor) -> bool {
         start,
         end,
         quote,
+        separator,
     });
     true
 }
@@ -390,7 +414,15 @@ pub fn confirm(app: &mut App, editor: &mut Editor) {
     let Some(candidate) = state.candidates.get(state.selected) else {
         return;
     };
-    apply(app, editor, state.start, state.end, state.quote, candidate);
+    apply(
+        app,
+        editor,
+        state.start,
+        state.end,
+        state.quote,
+        state.separator,
+        candidate,
+    );
 }
 
 /// Compact list above the composer, only while the completion is active.

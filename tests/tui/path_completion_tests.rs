@@ -139,7 +139,7 @@ fn mid_component_cursor_preserves_suffix_and_does_not_duplicate() {
     editor.set_global_offset(cursor_after(text, "./sr"));
     handle_key(&mut app, &mut editor, key(KeyCode::Tab));
     assert_eq!(editor.text(), "read ./src/main.rs tail");
-    assert_eq!(editor.global_offset(), "read ./src/".len());
+    assert_eq!(editor.global_offset(), cursor_after(text, "./src"));
 
     let mut app = app_at(&dir);
     let mut editor = editor_with(text);
@@ -320,5 +320,87 @@ fn truncated_listing_reports_more_and_type_to_narrow() {
         text.contains("more") && text.contains("type to narrow"),
         "{text}"
     );
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn mid_component_typo_still_matches_on_the_prefix_through_the_cursor() {
+    let dir = workspace("typo");
+    fs::create_dir(dir.join("src")).unwrap();
+    fs::write(dir.join("src/main.rs"), "x").unwrap();
+    let text = "read ./src/maTYPO.rs tail";
+    let mut app = app_at(&dir);
+    let mut editor = editor_with(text);
+    editor.set_global_offset(cursor_after(text, "./src/ma"));
+    let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Tab));
+    assert!(outcome.send.is_none());
+    assert_eq!(app.focus, Focus::Input, "the path token is completed");
+    assert_eq!(editor.text(), "read ./src/main.rs tail");
+    assert_eq!(editor.global_offset(), "read ./src/main.rs".len());
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn a_following_child_allows_only_directories_and_keeps_the_separator() {
+    let dir = workspace("child");
+    fs::create_dir_all(dir.join("ab/child")).unwrap();
+    fs::write(dir.join("abc"), "x").unwrap();
+    let text = "open ab/child";
+    let mut app = app_at(&dir);
+    let mut editor = editor_with(text);
+    editor.set_global_offset(cursor_after(text, "open ab"));
+    handle_key(&mut app, &mut editor, key(KeyCode::Tab));
+    assert!(
+        !path_completion::active(&app),
+        "a file must not join the child path or open a mixed list"
+    );
+    assert_eq!(editor.text(), "open ab/child");
+    assert_eq!(app.focus, Focus::Input);
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn quoted_component_before_a_child_preserves_its_closing_quote() {
+    let dir = workspace("quotechild");
+    fs::create_dir(dir.join("my proj")).unwrap();
+    let text = "read \"./my proj\"/file.rs";
+    let mut app = app_at(&dir);
+    let mut editor = editor_with(text);
+    editor.set_global_offset(cursor_after(text, "\"./my pro"));
+    handle_key(&mut app, &mut editor, key(KeyCode::Tab));
+    assert_eq!(editor.text(), "read \"./my proj\"/file.rs");
+    assert_eq!(editor.global_offset(), cursor_after(text, "\"./my proj"));
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn quoted_unicode_prefix_uses_the_component_quote_for_escaping() {
+    let dir = workspace("unicodemode");
+    fs::create_dir_all(dir.join("项目/my dir")).unwrap();
+    let text = "open \"项目/my";
+    let mut app = app_at(&dir);
+    let mut editor = editor_with(text);
+    handle_key(&mut app, &mut editor, key(KeyCode::Tab));
+    assert_eq!(editor.text(), "open \"项目/my dir/");
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn mixed_quoting_inside_one_component_declines_without_mutation() {
+    let dir = workspace("mixedquote");
+    fs::create_dir(dir.join("my proj")).unwrap();
+    let text = "open my\" pro\"j";
+    let mut app = app_at(&dir);
+    let mut editor = editor_with(text);
+    let before = editor.text();
+    let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Tab));
+    assert!(outcome.send.is_none());
+    assert_eq!(
+        editor.text(),
+        before,
+        "unsupported mixed quoting is not edited"
+    );
+    assert!(!path_completion::active(&app));
+    assert_eq!(app.focus, Focus::Input);
     fs::remove_dir_all(dir).ok();
 }
