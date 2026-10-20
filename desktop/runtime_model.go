@@ -683,7 +683,11 @@ func (a *appModel) sendRuntime(ct *contact, text string) bool {
 	ct.SubmittedRev = ct.draftRev
 	ct.SendState = sendSubmitting
 	ct.SendError = ""
-	a.persist()
+	if err := a.persist(); err != nil {
+		ct.SendState = sendIdle
+		ct.SendError = "Could not save this contact; the message was not sent. " + err.Error()
+		return false
+	}
 	go a.submitTask(contactID, sessionID, text, workspace, system)
 	return true
 }
@@ -696,15 +700,23 @@ func (a *appModel) submitTask(contactID, sessionID, text, workspace, system stri
 			return
 		}
 		sessionID = session.SessionID
+		// The mapping must be durably saved before task.send; Window.Update is
+		// asynchronous, so wait for the UI callback's save result.
+		saved := make(chan error, 1)
 		a.updateUI(func() {
 			ct := a.contactByID(contactID)
 			if ct == nil {
+				saved <- errors.New("contact disappeared before saving its session")
 				return
 			}
 			ct.SessionID = sessionID
 			ct.Loaded = true
-			a.persist()
+			saved <- a.persist()
 		})
+		if err := <-saved; err != nil {
+			a.failSubmit(contactID, fmt.Errorf("save session mapping: %w", err), false)
+			return
+		}
 	}
 	result, err := a.rt.sendTask(sessionID, text)
 	if err != nil {
@@ -856,13 +868,15 @@ func (a *appModel) selectedID() string {
 	return a.contacts[a.selected].ID
 }
 
-func (a *appModel) persist() {
+func (a *appModel) persist() error {
 	if a.store == nil {
-		return
+		return nil
 	}
 	if err := a.store.save(a.contacts, a.selectedID()); err != nil {
 		a.runtimeErr = "Could not save contacts: " + err.Error()
+		return err
 	}
+	return nil
 }
 
 func (a *appModel) draftChanged(ct *contact) {

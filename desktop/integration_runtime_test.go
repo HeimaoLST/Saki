@@ -340,6 +340,9 @@ func startGUIHarness(t *testing.T, binary string, provider *providerFixture, mar
 	t.Helper()
 	server := httptest.NewServer(provider.handler(t, marker))
 	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, marker+".txt"), []byte(marker+"-file-content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("SAKI_GUI_STORE", filepath.Join(root, "gui", "contacts.json"))
 	t.Setenv("SAKI_GUI_WORKDIR", root)
 	t.Setenv("SAKI_SESSION_DIR", filepath.Join(root, "sessions"))
@@ -458,6 +461,17 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 	if bMessages != 0 || aMessages == 0 {
 		t.Fatalf("event routing: A=%d B=%d", aMessages, bMessages)
 	}
+	var sawToolResult bool
+	h.pump.do(func() {
+		for _, m := range h.app.contacts[0].Messages {
+			if strings.Contains(m.ToolOutput, marker+"-file-content") {
+				sawToolResult = true
+			}
+		}
+	})
+	if !sawToolResult {
+		t.Fatal("GUI tool result did not contain the actual probe file content")
+	}
 	if aProfile != "" {
 		t.Fatalf("zero-profile send changed purpose: %q", aProfile)
 	}
@@ -503,15 +517,18 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 		ct := h2.app.contacts[0]
 		return ct.Loaded && len(ct.Messages) > 0
 	})
+	var restoredSession, restoredName, restoredPurpose, restoredDraft, restoredBDraft string
 	h2.snapshot(func() {
 		ct := h2.app.contacts[0]
-		if ct.SessionID != aSession || ct.Name != "Renamed" || ct.Purpose != "" || ct.Draft != "keep after restart" {
-			t.Fatalf("restored contact = %+v", ct)
-		}
-		if h2.app.contacts[1].Draft != "draft for B" {
-			t.Fatalf("B draft = %q", h2.app.contacts[1].Draft)
-		}
+		restoredSession, restoredName, restoredPurpose, restoredDraft = ct.SessionID, ct.Name, ct.Purpose, ct.Draft
+		restoredBDraft = h2.app.contacts[1].Draft
 	})
+	if restoredSession != aSession || restoredName != "Renamed" || restoredPurpose != "" || restoredDraft != "keep after restart" {
+		t.Fatalf("restored contact: session=%q name=%q purpose=%q draft=%q", restoredSession, restoredName, restoredPurpose, restoredDraft)
+	}
+	if restoredBDraft != "draft for B" {
+		t.Fatalf("B draft = %q", restoredBDraft)
+	}
 	if provider.count() != beforeRestart {
 		t.Fatalf("restore issued model requests: %d -> %d", beforeRestart, provider.count())
 	}
@@ -657,6 +674,128 @@ func TestGUIOnlineSmoke(t *testing.T) {
 	}
 	if !sawTool || !sawFinal {
 		t.Fatalf("online tool=%v final=%v", sawTool, sawFinal)
+	}
+	h.shutdown(t)
+}
+
+// TestGUIAppPersistsMappingBeforeSend pauses the asynchronous mapping callback,
+// proves no task was sent, then saves the mapping and lets exactly one task run.
+func TestGUIAppPersistsMappingBeforeSend(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	marker := "saki-mapping-before-send-63"
+	provider := &providerFixture{ToolFirst: true}
+	h := startGUIHarness(t, binary, provider, marker)
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+
+	manual := make(chan func(), 8)
+	h.pump.do(func() {
+		h.app.uiHook = func(fn func()) { manual <- fn }
+		ct := h.app.contacts[0]
+		ct.Draft = "mapping ordering"
+		h.app.sendCurrent()
+	})
+	var mapping func()
+	select {
+	case mapping = <-manual:
+	case <-time.After(15 * time.Second):
+		t.Fatal("session mapping callback did not arrive")
+	}
+	if got := provider.count(); got != 0 {
+		t.Fatalf("task reached provider before mapping persisted: %d", got)
+	}
+	h.pump.close()
+	h.pump = newUIPump(t, h.app)
+	mapping() // set SessionID + persist, then unblock the worker
+	h.pump.wait(func() bool {
+		ct := h.app.contacts[0]
+		return ct.LastTaskID != "" && ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty
+	})
+	if got := provider.count(); got != 2 {
+		t.Fatalf("one task should make read+final requests, got %d", got)
+	}
+	var session string
+	h.pump.do(func() { session = h.app.contacts[0].SessionID })
+	if session == "" {
+		t.Fatal("session mapping was not set")
+	}
+	store, err := openContactStore(h.app.store.path, h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.state.Contacts[0].SessionID != session {
+		t.Fatalf("persisted session = %q, want %q", store.state.Contacts[0].SessionID, session)
+	}
+	h.shutdown(t)
+}
+
+// TestGUIAppSaveFailureStopsBeforeSend makes the store unwritable while the
+// mapping callback is paused. The mapping save must fail, no task may reach
+// the provider, and the draft/error must remain visible.
+func TestGUIAppSaveFailureStopsBeforeSend(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: true}
+	h := startGUIHarness(t, binary, provider, "saki-save-failure-63")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+
+	manual := make(chan func(), 8)
+	h.pump.do(func() {
+		h.app.uiHook = func(fn func()) { manual <- fn }
+		ct := h.app.contacts[0]
+		ct.Draft = "keep draft"
+		h.app.sendCurrent()
+	})
+	var mapping func()
+	select {
+	case mapping = <-manual:
+	case <-time.After(15 * time.Second):
+		t.Fatal("session mapping callback did not arrive")
+	}
+	if got := provider.count(); got != 0 {
+		t.Fatalf("task reached provider before mapping persisted: %d", got)
+	}
+	badParent := filepath.Join(h.root, "not-a-directory")
+	if err := os.WriteFile(badParent, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.app.store.path = filepath.Join(badParent, "contacts.json")
+	h.pump.close()
+	h.pump = newUIPump(t, h.app)
+	mapping()
+	h.pump.wait(func() bool {
+		ct := h.app.contacts[0]
+		return ct.SendState == sendIdle && strings.Contains(ct.SendError, "save")
+	})
+	var draft, errorText, active string
+	var messages int
+	h.pump.do(func() {
+		ct := h.app.contacts[0]
+		draft, errorText, active, messages = ct.Draft, ct.SendError, ct.ActiveTaskID, len(ct.Messages)
+	})
+	if provider.count() != 0 {
+		t.Fatalf("model/tool calls after save failure: %d", provider.count())
+	}
+	if draft != "keep draft" || active != "" || messages != 0 || errorText == "" {
+		t.Fatalf("state after save failure: draft=%q active=%q messages=%d error=%q", draft, active, messages, errorText)
+	}
+
+	// A send on the now-bound contact must also stop before task.send when the
+	// contact/draft save fails.
+	h.pump.do(func() {
+		ct := h.app.contacts[0]
+		ct.Draft = "second draft"
+		h.app.sendCurrent()
+	})
+	h.pump.do(func() { errorText = h.app.contacts[0].SendError })
+	if provider.count() != 0 || !strings.Contains(errorText, "save") {
+		t.Fatalf("bound send after save failure: requests=%d error=%q", provider.count(), errorText)
 	}
 	h.shutdown(t)
 }
