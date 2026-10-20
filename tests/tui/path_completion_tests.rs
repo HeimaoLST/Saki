@@ -438,3 +438,35 @@ fn empty_quoted_component_is_declined_without_mutation() {
     }
     fs::remove_dir_all(dir).ok();
 }
+
+#[cfg(unix)]
+#[test]
+fn directory_symlinks_complete_as_directories() {
+    use std::os::unix::fs::symlink;
+
+    let dir = workspace("symlink");
+    fs::create_dir_all(dir.join("real-dir/child")).unwrap();
+    symlink(dir.join("real-dir"), dir.join("link-dir")).unwrap();
+
+    let mut app = app_at(&dir);
+    let mut editor = editor_with("open link");
+    handle_key(&mut app, &mut editor, key(KeyCode::Tab));
+    assert_eq!(
+        editor.text(),
+        "open link-dir/",
+        "a symlinked directory gets the directory separator"
+    );
+
+    let text = "open link-dir/child";
+    let mut app = app_at(&dir);
+    let mut editor = editor_with(text);
+    editor.set_global_offset(cursor_after(text, "open link-dir"));
+    handle_key(&mut app, &mut editor, key(KeyCode::Tab));
+    assert!(
+        !path_completion::active(&app),
+        "a symlinked directory is not filtered out before a child path"
+    );
+    assert_eq!(editor.text(), "open link-dir/child");
+    assert_eq!(app.focus, Focus::Input);
+    fs::remove_dir_all(dir).ok();
+}

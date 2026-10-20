@@ -328,7 +328,11 @@ fn list_candidates(base: &Path, partial: &str, only_dirs: bool) -> (Vec<Candidat
         if !name.to_lowercase().starts_with(&needle) {
             continue;
         }
-        let is_dir = entry.metadata().map(|meta| meta.is_dir()).unwrap_or(false);
+        // DirEntry::metadata does not traverse symlinks; follow the target so a
+        // directory link still classifies as a directory (metadata only).
+        let is_dir = fs::metadata(entry.path())
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false);
         if only_dirs && !is_dir {
             continue;
         }
@@ -399,17 +403,12 @@ pub fn tab(app: &mut App, editor: &mut Editor) -> bool {
     let Some(base) = base_for(prefix, &working_directory) else {
         return false;
     };
-    let Some(quote) = component_quote(
-        &decoded,
-        &token,
-        char_bounds(&token, &decoded, component_start, component_end).2,
-        char_bounds(&token, &decoded, component_start, component_end).3,
-    ) else {
+    let (start, end, first, last) = char_bounds(&token, &decoded, component_start, component_end);
+    let Some(quote) = component_quote(&decoded, &token, first, last) else {
         // Mixed quoting inside one component is not supported: consume the Tab
         // without editing the draft rather than generating malformed quotes.
         return true;
     };
-    let (start, end, first, _) = char_bounds(&token, &decoded, component_start, component_end);
     if first == token.chars.len() && component_start == component_end && start != token.end_doc {
         // An empty trailing component with remaining quote characters (e.g.
         // `./"`) has no safe insertion point inside those quotes.
