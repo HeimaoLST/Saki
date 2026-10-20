@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -22,12 +23,12 @@ func (a *appModel) view(c *ui.Context) {
 // ---------- rail ----------
 
 func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
-	ui.Column(c).Width(220).FillHeight().Padding(10).Gap(6).Background(t.Background).Children(func() {
-		ui.Text(c, "Saki").FontSize(15).FontWeight(500).TextColor(t.Text)
-		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "CONTACTS").FontSize(12).TextColor(t.TextMuted)
+	ui.Column(c).Width(220).FillHeight().Padding(12, 10).Gap(10).Background(t.Background).Children(func() {
+		ui.Text(c, "Saki").FontSize(14).FontWeight(600).TextColor(t.Text)
+		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+			ui.Text(c, "Contacts").FontSize(11).TextColor(t.TextMuted)
 			ui.Spacer(c)
-			ui.Button(c, "Add contact").FontSize(12).OnClick(func() { a.addDefaultContact() })
+			ui.Button(c, "Add contact").FontSize(11).Padding(2, 8).Radius(999).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.addDefaultContact() })
 		})
 		ui.Scroll(c).Grow(1).Children(func() {
 			for i := range a.contacts {
@@ -39,26 +40,28 @@ func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
 
 func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
 	ct := a.contacts[i]
-	row := ui.ButtonBase(c).Label("Contact " + ct.Name).Gap(8).Padding(6).Radius(8).AlignItems(ui.Start).Background(ui.Transparent).BorderWidth(0)
+	row := ui.ButtonBase(c).Label("Contact " + ct.Name).Gap(10).Padding(8).Radius(12).AlignItems(ui.Start).Background(ui.Transparent).BorderWidth(0)
 	if i == a.selected {
-		row.Background(ui.RGBA(t.Accent.R, t.Accent.G, t.Accent.B, 0.14))
-		row.BorderWidth(0, 0, 0, 2).BorderColor(t.Accent)
+		row.Background(t.SurfaceHover)
 	}
 	row.OnClick(func() { a.selectContact(i) })
 	row.Children(func() {
-		a.avatarTile(c, t, 28)
+		a.avatarTile(c, t, 32)
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
 				ui.Text(c, ct.Name).FontSize(14).FontWeight(500).TextColor(t.Text)
 				ui.Spacer(c)
 				if ct.Unread > 0 {
-					ui.Text(c, fmt.Sprintf("%d", ct.Unread)).FontSize(12).TextColor(t.Accent)
+					ui.Text(c, fmt.Sprintf("%d", ct.Unread)).FontSize(11).TextColor(t.Accent)
 				}
 			})
-			ui.Text(c, a.snippet(ct)).FontSize(12).LineHeight(1.4).MaxLines(2).TextColor(t.TextMuted)
+			line := a.snippet(ct)
+			color := t.TextMuted
 			if ct.Status != statusReady {
-				ui.Text(c, a.statusLabel(ct)).FontSize(12).TextColor(a.statusColor(t, ct.Status))
+				line = a.statusLabel(ct) + " · " + line
+				color = a.statusColor(t, ct.Status)
 			}
+			ui.Text(c, line).FontSize(12).LineHeight(1.35).MaxLines(1).TextColor(color)
 		})
 	})
 }
@@ -100,7 +103,6 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 			}
 		}
 		a.header(c, t)
-		ui.Divider(c)
 		switch a.screen {
 		case viewHistory:
 			a.historyView(c, t)
@@ -112,16 +114,16 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 
 func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
-	ui.Row(c).Padding(12, 16).Gap(10).AlignItems(ui.Center).Children(func() {
-		a.avatarTile(c, t, 36)
-		ui.Column(c).Children(func() {
-			ui.Text(c, ct.Name).FontSize(16).FontWeight(500).TextColor(t.Text)
-			ui.Text(c, a.statusLabel(ct)+" · "+ct.Role).FontSize(12).LineHeight(1.4).TextColor(a.statusColor(t, ct.Status))
-		})
-		ui.Spacer(c)
-		ui.Row(c).Gap(6).Children(func() {
-			ui.Button(c, "History").FontSize(12).OnClick(func() { a.openHistory() })
-			ui.Button(c, "Settings").FontSize(12).OnClick(func() { a.openSettings() })
+	ui.Row(c).Justify(ui.Center).Children(func() {
+		ui.Row(c).Grow(1).MaxWidthPercent(86).Padding(8, 0).Gap(8).AlignItems(ui.Center).Children(func() {
+			a.avatarTile(c, t, 28)
+			ui.Column(c).Gap(1).Children(func() {
+				ui.Text(c, ct.Name).FontSize(15).FontWeight(500).TextColor(t.Text)
+				ui.Text(c, a.statusLabel(ct)+" · "+ct.Role).FontSize(11).LineHeight(1.35).TextColor(a.statusColor(t, ct.Status))
+			})
+			ui.Spacer(c)
+			ui.Button(c, "History").FontSize(11).Padding(2, 8).Radius(999).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openHistory() })
+			ui.Button(c, "Settings").FontSize(11).Padding(2, 8).Radius(999).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openSettings() })
 		})
 	})
 }
@@ -161,23 +163,31 @@ func (a *appModel) chat(c *ui.Context, t *ui.Theme) {
 	}
 	ui.Column(c).Grow(1).Children(func() {
 		if len(items) == 0 {
-			ui.Scroll(c).Grow(1).Padding(16).Children(func() {
-				a.emptyState(c, t)
+			ui.Row(c).Grow(1).FillHeight().Justify(ui.Center).Children(func() {
+				ui.Scroll(c).Grow(1).FillHeight().MaxWidthPercent(86).Padding(16, 0).Children(func() {
+					a.emptyState(c, t)
+				})
 			})
 		} else {
-			ui.List(c, &ct.list, len(items), func(i int) {
-				it := items[i]
-				switch {
-				case it.entry != nil:
-					a.historyMessage(c, t, *it.entry, it.entry.ID == a.highlight)
-				case it.working:
-					a.workingRow(c, t, ct)
-				default:
-					a.message(c, t, ct, it.msg)
-				}
-			}).Grow(1).Padding(16, 16).Gap(16)
+			ui.Row(c).Grow(1).FillHeight().Justify(ui.Center).Children(func() {
+				ui.List(c, &ct.list, len(items), func(i int) {
+					it := items[i]
+					switch {
+					case it.entry != nil:
+						a.historyMessage(c, t, *it.entry, it.entry.ID == a.highlight)
+					case it.working:
+						a.workingRow(c, t, ct)
+					default:
+						a.message(c, t, ct, it.msg)
+					}
+				}).Grow(1).FillHeight().MaxWidthPercent(86).Padding(16, 0).Gap(18)
+			})
 		}
-		a.composer(c, t)
+		ui.Row(c).Justify(ui.Center).Children(func() {
+			ui.Column(c).Grow(1).MaxWidthPercent(86).Children(func() {
+				a.composer(c, t)
+			})
+		})
 	})
 }
 
@@ -205,20 +215,29 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 	switch m.Kind {
 	case msgActivity:
 		if m.ToolName != "" || m.ToolOutput != "" {
-			label := m.ToolName
-			if label == "" {
-				label = "Tool"
+			title := toolTitle(m)
+			summary := toolOutputSummary(m.ToolOutput)
+			if m.Expanded {
+				summary = truncate(m.ToolOutput, 2000)
 			}
-			if m.ToolArgs != "" {
-				label += " " + truncate(m.ToolArgs, 120)
-			}
-			ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
-				ui.Column(c).Gap(3).Children(func() {
-					ui.Text(c, label).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Column(c).Gap(2).Padding(4, 0).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+					ui.Text(c, title).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 					if m.ToolOutput != "" {
-						ui.Text(c, truncate(m.ToolOutput, 300)).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+						label := "Details"
+						if m.Expanded {
+							label = "Hide"
+						}
+						ui.Button(c, label).FontSize(10).Padding(0, 4).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { m.Expanded = !m.Expanded })
 					}
 				})
+				if summary != "" {
+					lines := 2
+					if m.Expanded {
+						lines = 12
+					}
+					ui.Text(c, summary).FontSize(12).LineHeight(1.45).MaxLines(lines).TextColor(t.TextMuted)
+				}
 			})
 			return
 		}
@@ -247,32 +266,27 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 		})
 	case msgUser:
 		ui.Row(c).Justify(ui.End).Children(func() {
-			ui.Column(c).MaxWidth(460).Gap(4).Children(func() {
+			ui.Column(c).MaxWidthPercent(80).Gap(2).Children(func() {
 				if m.Key != "" && m.Key == a.highlight {
 					ui.Text(c, "Located in history").FontSize(11).TextColor(t.Accent)
 				}
-				ui.Text(c, m.Text).FontSize(14).LineHeight(1.5).Padding(8, 12).Radius(12).Background(t.Selection).TextColor(t.Text)
-				ui.Text(c, "You · "+m.Time).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+				ui.Text(c, m.Text).FontSize(14).LineHeight(1.55).Padding(10, 14).Radius(14).Background(t.Selection).TextColor(t.Text)
 			})
 		})
 	default:
-		ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
-			a.avatarTile(c, t, 28)
-			ui.Column(c).MaxWidth(680).Gap(4).Children(func() {
-				if m.Key != "" && m.Key == a.highlight {
-					ui.Text(c, "Located in history").FontSize(11).TextColor(t.Accent)
-				}
-				ui.Text(c, ct.Name+"  "+m.Time).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
-				ui.Text(c, m.Text).FontSize(14).LineHeight(1.5).TextColor(t.Text)
-				if m.AlertTitle != "" {
-					a.alert(c, t, m)
-				}
-				if len(m.Sources) > 0 {
-					ui.Row(c).Children(func() {
-						ui.Button(c, fmt.Sprintf("%d earlier messages", len(m.Sources))).FontSize(12).OnClick(func() { a.openSources(m.ID) })
-					})
-				}
-			})
+		ui.Column(c).Gap(4).Children(func() {
+			if m.Key != "" && m.Key == a.highlight {
+				ui.Text(c, "Located in history").FontSize(11).TextColor(t.Accent)
+			}
+			ui.Text(c, m.Text).FontSize(14).LineHeight(1.6).TextColor(t.Text)
+			if m.AlertTitle != "" {
+				a.alert(c, t, m)
+			}
+			if len(m.Sources) > 0 {
+				ui.Row(c).Children(func() {
+					ui.Button(c, fmt.Sprintf("%d earlier messages", len(m.Sources))).FontSize(12).OnClick(func() { a.openSources(m.ID) })
+				})
+			}
 		})
 	}
 }
@@ -294,23 +308,23 @@ func (a *appModel) alert(c *ui.Context, t *ui.Theme, m *message) {
 }
 
 func (a *appModel) workingRow(c *ui.Context, t *ui.Theme, ct *contact) {
-	ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
-		a.avatarTile(c, t, 28)
+	ui.Row(c).Gap(6).AlignItems(ui.Center).Padding(0, 2).Children(func() {
+		ui.Text(c, "•").FontSize(14).TextColor(t.Accent)
 		ui.Text(c, ct.Name+" · "+ct.Work+"…").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 	})
 }
 
 func (a *appModel) emptyState(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
-	ui.Column(c).Padding(16).Gap(6).Children(func() {
-		ui.Text(c, "No messages yet").FontSize(16).FontWeight(500).TextColor(t.Text)
+	ui.Column(c).Padding(8, 0).Gap(8).Children(func() {
+		ui.Text(c, "No messages yet").FontSize(15).FontWeight(500).TextColor(t.Text)
 		if a.demo {
-			ui.Text(c, "Start typing below to talk with "+ct.Name+"; you can personalize name, purpose, instructions and workspace any time in Settings.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "Start typing below to talk with "+ct.Name+"; you can personalize name, purpose, instructions and workspace any time in Settings.").FontSize(12).LineHeight(1.45).TextColor(t.TextMuted)
 		} else {
-			ui.Text(c, "Start typing below to talk with "+ct.Name+". Set purpose, instructions and workspace before the first message; after that only the display name can change.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "Start typing below to talk with "+ct.Name+". Set purpose, instructions and workspace before the first message; after that only the display name can change.").FontSize(12).LineHeight(1.45).TextColor(t.TextMuted)
 		}
 		ui.Row(c).Children(func() {
-			ui.Button(c, "Settings").FontSize(12).OnClick(func() { a.openSettings() })
+			ui.Button(c, "Settings").FontSize(12).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openSettings() })
 		})
 	})
 }
@@ -319,9 +333,9 @@ func (a *appModel) emptyState(c *ui.Context, t *ui.Theme) {
 
 func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
-	ui.Column(c).Padding(8, 16).Gap(4).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
-		ui.Row(c).Gap(8).AlignItems(ui.End).Padding(6, 8).Radius(12).Background(t.SurfaceHover).Children(func() {
-			input := ui.TextArea(c, &ct.Draft).Label("Composer for " + ct.Name).FontSize(14).LineHeight(1.5).Background(ui.Transparent).BorderWidth(0).Padding(2).Placeholder("Message " + ct.Name).Grow(1).OnChange(func() {
+	ui.Column(c).Padding(10, 0).Gap(4).Children(func() {
+		ui.Row(c).Gap(6).AlignItems(ui.End).Padding(6, 10).Radius(14).Background(t.SurfaceHover).Children(func() {
+			input := ui.TextArea(c, &ct.Draft).Label("Composer for " + ct.Name).FontSize(14).LineHeight(1.5).Height(44).Background(ui.Transparent).BorderWidth(0).Padding(2).Placeholder("Message " + ct.Name).Grow(1).OnChange(func() {
 				a.draftChanged(ct)
 			}).OnEnter(func(e ui.Enter) bool {
 				if e.Mods&ui.Shift != 0 {
@@ -344,12 +358,12 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 			if !a.demo {
 				sendDisabled = strings.TrimSpace(ct.Draft) == "" || a.canSend(ct) != ""
 			}
-			send := ui.PrimaryButton(c, "Send").FontSize(13).Disabled(sendDisabled)
+			send := ui.PrimaryButton(c, "Send").FontSize(12).Padding(3, 10).Disabled(sendDisabled)
 			if send.Clicked() {
 				a.sendCurrent()
 			}
 			if !a.demo && ct.ActiveTaskID != "" {
-				if ui.Button(c, "Stop").FontSize(13).Clicked() {
+				if ui.Button(c, "Stop").FontSize(12).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).Clicked() {
 					a.cancelSelected()
 				}
 			}
@@ -370,20 +384,22 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 			if ct.SendError != "" {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 					ui.Text(c, ct.SendError).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
-					// Reload only makes sense while the same runtime connection is
-					// alive; after a disconnect it would call a closed client.
 					if (ct.SendState == sendUnknown || ct.SendError != "") && a.runtimeStatus == runtimeStateReady && a.rt != nil {
-						if ui.Button(c, "Reload").FontSize(11).Clicked() {
+						if ui.Button(c, "Reload").FontSize(11).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).Clicked() {
 							a.reloadSelected()
 						}
 					}
 				})
 			}
-			if ct.StatusDetail != "" {
+			showDetail := ct.StatusDetail != ""
+			if len(ct.Messages) > 0 && ct.Messages[len(ct.Messages)-1].AlertTitle != "" {
+				showDetail = false // the inline task alert already carries the reason
+			}
+			if showDetail {
 				ui.Text(c, ct.StatusDetail).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 			}
 		}
-		ui.Text(c, "Enter to send · Shift + Enter for a new line").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Enter to send · Shift + Enter for a new line").FontSize(10).LineHeight(1.4).TextColor(t.TextMuted)
 	})
 }
 
@@ -493,6 +509,40 @@ func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 		ui.Button(c, "Cancel").FontSize(13).OnClick(func() { a.closeAux() })
 		ui.PrimaryButton(c, "Save changes").FontSize(13).OnClick(func() { a.saveSettings() })
 	})
+}
+
+func toolTitle(m *message) string {
+	name := m.ToolName
+	if name == "" {
+		name = "Tool"
+	}
+	if m.ToolArgs == "" {
+		return name
+	}
+	var args map[string]any
+	if json.Unmarshal([]byte(m.ToolArgs), &args) == nil {
+		for _, key := range []string{"path", "command"} {
+			if value, ok := args[key].(string); ok && strings.TrimSpace(value) != "" {
+				return name + " · " + truncate(value, 70)
+			}
+		}
+	}
+	return name + " · " + truncate(m.ToolArgs, 70)
+}
+
+func toolOutputSummary(output string) string {
+	if strings.TrimSpace(output) == "" {
+		return ""
+	}
+	var value map[string]any
+	if json.Unmarshal([]byte(output), &value) == nil {
+		for _, key := range []string{"content", "stdout", "stderr", "error", "output"} {
+			if text, ok := value[key].(string); ok && strings.TrimSpace(text) != "" {
+				return truncate(text, 300)
+			}
+		}
+	}
+	return truncate(output, 300)
 }
 
 func truncate(text string, max int) string {
