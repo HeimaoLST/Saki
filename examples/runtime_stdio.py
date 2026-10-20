@@ -99,6 +99,8 @@ def completed(text):
 def self_test(binary):
     requests = []
     marker = "saki-stdio-cross-process-60"
+    disconnect_arrived = threading.Event()
+    disconnect_release = threading.Event()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -107,6 +109,9 @@ def self_test(binary):
         def do_POST(self):
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             requests.append(request)
+            if len(requests) == 4:
+                disconnect_arrived.set()
+                assert disconnect_release.wait(timeout=30)
             if len(requests) == 1:
                 response = {"id": "read", "status": "completed", "output": [{
                     "type": "function_call", "status": "completed", "id": "f", "call_id": "read-file",
@@ -163,8 +168,56 @@ def self_test(binary):
             assert len(requests) == 3
             assert "Continue new process" in json.dumps(requests[2]["input"])
             assert marker in json.dumps(requests[2]["input"])
-        print("PASS: real read tool, correlated journal, cross-process restore without replay, continuation; 3 model requests")
+            # Real OS pipes expose Tokio stdin's blocking-read shutdown boundary.
+            process = subprocess.Popen(
+                [str(binary), "--stdio"], cwd=root, env=env,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True,
+            )
+            try:
+                assert json.loads(process.stdout.readline())["type"] == "ready"
+
+                def raw_call(request_id, method, params):
+                    process.stdin.write(json.dumps({"version": 1, "id": request_id,
+                                                   "method": method, "params": params}) + "\n")
+                    process.stdin.flush()
+                    while True:
+                        message = json.loads(process.stdout.readline())
+                        if message.get("id") == request_id:
+                            assert "result" in message, message
+                            return message["result"]
+
+                raw_call("load", "session.load", {"session_id": session})
+                raw_call("send", "task.send", {"session_id": session,
+                                               "message": {"text": "Drain after output loss"}})
+                while True:
+                    message = json.loads(process.stdout.readline())
+                    if message.get("event", {}).get("type") == "model_request_started":
+                        break
+                assert disconnect_arrived.wait(timeout=30)
+                process.stdout.close()
+                disconnect_release.set()
+                # Keep stdin open: the child must drain and exit on its own.
+                assert process.wait(timeout=10) != 0
+                assert "broken pipe" in process.stderr.read().lower()
+            finally:
+                disconnect_release.set()
+                process.stdin.close()
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=10)
+                process.stdout.close()
+                process.stderr.close()
+            runtime = Runtime(binary, cwd=root, env=env)
+            assert runtime.call("session.load", {"session_id": session})["status"] == "completed"
+            history = runtime.call("session.history", {"session_id": session})
+            assert history["status"] == "completed"
+            runtime.close()
+            assert len(requests) == 4
+        print("PASS: real read, correlated journal, cross-process restore/continuation, "
+              "invalid startup, stdout-loss drain/exit with stdin open; 4 model requests")
     finally:
+        disconnect_release.set()
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
