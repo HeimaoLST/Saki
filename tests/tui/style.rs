@@ -21,6 +21,7 @@ fn screen(app: &mut App, editor: &Editor, width: u16, height: u16) -> String {
 fn replay(history: Vec<JournalRecord>, status: TaskStatus) -> Replay {
     Replay {
         context: Vec::new(),
+        history_timestamps: vec![0; history.len()],
         history,
         has_summary: false,
         status,
@@ -547,6 +548,7 @@ fn restore_collapses_completed_tasks_and_leaves_legacy_history_untouched() {
         vec![
             JournalRecord::TaskStarted {
                 task_id: "t1".into(),
+                message_id: None,
             },
             JournalRecord::Messages {
                 items: vec![
@@ -598,6 +600,7 @@ fn restore_interrupted_group_does_not_absorb_the_next_task() {
         vec![
             JournalRecord::TaskStarted {
                 task_id: "t1".into(),
+                message_id: None,
             },
             JournalRecord::Messages {
                 items: vec![

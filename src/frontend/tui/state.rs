@@ -431,6 +431,7 @@ impl App {
             AgentEvent::Reasoning { .. } | AgentEvent::ReasoningDelta { .. }
         );
         match event {
+            AgentEvent::TaskStarted { .. } | AgentEvent::ModelRequestStarted { .. } => {}
             AgentEvent::ContextUpdated {
                 model,
                 context_tokens,
