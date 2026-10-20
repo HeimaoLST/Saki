@@ -1,6 +1,6 @@
 # CI governance（Runtime／TUI／GUI）
 
-更新日期：2026-10-20。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。workflow 配置基线仍为 2026-10-17；2026-10-20 只调整职责描述，未修改 `.github/workflows`。
+更新日期：2026-10-20。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。当前 workflow 基线为 `dev@61079f5`（2026-10-20，含 [PR #80](https://github.com/HeimaoLST/Saki/pull/80) 的 Python 门禁）。本文职责调整本身不修改 workflow 或分支保护。
 
 ## 目的与范围
 
@@ -20,7 +20,7 @@
 - **主 agent**：负责代码评审和适用实际运行／验收；可评审自己或子 agent 的产物，但须真实记录作者／评审者，不冒充独立评审或人类结论。独立 peer review 可按需，不是强制前置。
 - **PM／用户**：负责真实试用与“是否好用”的判断；CI 绿不能证明用户体验。
 
-本文 2026-10-17 出现的「独立评审」要求由上述主 agent 评审口径取代；workflow、required check 与分支保护的真实配置未因此改动，仍以仓库实际状态为准。
+本文 2026-10-17 出现的「独立评审」要求由上述主 agent 评审口径取代；实际配置与证据见下文，required check 名称和分支保护未因职责调整而改变。
 
 ## 检查矩阵
 
@@ -28,14 +28,17 @@
 | --- | --- | --- | --- |
 | Runtime + TUI（共享 crate） | `rust` | `cargo fmt --all -- --check` | Rust 格式 |
 | Runtime + TUI | `rust` | `cargo clippy --locked --all-targets -- -D warnings` | 所有 target 的静态检查，warnings 视为失败 |
-| Runtime + TUI | `rust` | `cargo test --locked --all-targets` | 单元、集成与 example target（当前 313 主程序 + 42 成长实验；example tests 实际执行） |
+| Runtime + TUI | `rust` | `cargo test --locked --all-targets` | 单元、集成与 example target；测试数量以对应 SHA 的实际 run 为准 |
 | TUI（真实 PTY） | `rust` | `cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1` | 真实 PTY 上进入／退出终端并验证 panic 后 cooked mode 恢复 |
 | GUI（独立 Go module） | `gui` | `gofmt -l .`（必须为空）、`CGO_ENABLED=0 go vet ./...`、`go test ./... -count=1`、`go build` | 格式、vet、测试、构建 |
 | GUI（可复现图像） | `gui` | `SAKI_PREVIEW_DIR=... go test -run TestPreviewImages -count=1 .` | headless `ui.Tester` 生成 light/dark add／settings 等场景 PNG，作为 artifact 保留 14 天 |
+| 协作检查 | `python` | `python3 scripts/test_collaboration_check.py`；断言运行测试数非零 | 既有协作检查回归；pipefail 保留失败，空套件不能静默通过 |
 
-聚合检查：`ci-required`（`if: always()`，依赖 `rust` 与 `gui`）只在两者结果都为 `success` 时通过。`cancelled`／`failed`／`skipped` 都不算成功。若未来新增 job，必须同时更新 `ci-required` 的 `needs` 与判定。
+聚合检查：`ci-required`（`if: always()`，依赖 `rust`、`gui` 与 `python`）只在三者结果都为 `success` 时通过。`cancelled`／`failed`／`skipped` 都不算成功。若未来新增 job，必须同时更新 `ci-required` 的 `needs` 与判定。
 
-稳定检查名：`rust`、`gui`、`ci-required`。分支保护只需要引用聚合检查 `ci-required`，避免逐个维护子 job 名称。
+稳定检查名：`rust`、`gui`、`python`、`ci-required`。分支保护只需要引用聚合检查 `ci-required`，避免逐个维护子 job 名称。
+
+Python 门禁的真实失败传播：临时探针 `9480847` 的 [run 39381934207](https://github.com/HeimaoLST/Saki/actions/runs/39381934207) 中 Python 与聚合均失败，Rust／Go 成功；恢复探针并同步后的最终候选 `96ad987` 的 [run 39384000031](https://github.com/HeimaoLST/Saki/actions/runs/39384000031) 四个 job 均成功。探针已用追加提交撤回，不在最终树中。
 
 ## 触发、并发与权限
 
@@ -45,7 +48,8 @@
 - 运行平台：`ubuntu-24.04`（GitHub 官方 `ubuntu-latest` 当前指向的镜像；显式固定避免标签漂移）。
 - 工具链：Rust 固定 `1.99.0`（rustfmt + clippy，官方 rustup 安装，已验证该版本可从 static.rust-lang.org 下载）；Go 由 `desktop/go.mod`（当前 `1.27.1`）通过 `actions/setup-go` 的 `go-version-file` 决定，不使用本机未来版本随意钉死不可下载版本。
 - 缓存：Cargo registry／git／`target` 以 `runner.os + Rust 版本 + Cargo.lock` 为 key；Go 使用 `actions/setup-go` 内置缓存（`desktop/go.sum`）。缓存只加速，不改变 `--locked` 校验。
-- 超时：Rust 30 分钟，GUI 20 分钟，聚合 5 分钟。
+- Python：`actions/setup-python` 显式提供 3.12，运行现有 stdlib unittest 入口，不增加第三方测试框架。
+- 超时：Rust 30 分钟，GUI 20 分钟，Python 10 分钟，聚合 5 分钟。
 
 ## 失败处理与责任
 
@@ -121,6 +125,9 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
 cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1
+
+# Python（协作检查回归）
+python3 scripts/test_collaboration_check.py
 
 # GUI
 cd desktop
