@@ -52,7 +52,7 @@ func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
 				ui.Text(c, ct.Name).FontSize(14).FontWeight(500).TextColor(t.Text)
 				ui.Spacer(c)
 				if ct.Unread > 0 {
-					ui.Text(c, fmt.Sprintf("%d", ct.Unread)).FontSize(11).TextColor(t.Accent)
+					ui.Text(c, fmt.Sprintf("%d", ct.Unread)).FontSize(11).TextColor(t.Warning)
 				}
 			})
 			line := a.snippet(ct)
@@ -268,7 +268,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 		ui.Row(c).Justify(ui.End).Children(func() {
 			ui.Column(c).MaxWidthPercent(80).Gap(2).Children(func() {
 				if m.Key != "" && m.Key == a.highlight {
-					ui.Text(c, "Located in history").FontSize(11).TextColor(t.Accent)
+					ui.Text(c, "Located in history").FontSize(11).TextColor(t.TextMuted)
 				}
 				ui.Text(c, m.Text).FontSize(14).LineHeight(1.55).Padding(10, 14).Radius(14).Background(t.Selection).TextColor(t.Text)
 			})
@@ -276,7 +276,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 	default:
 		ui.Column(c).Gap(4).Children(func() {
 			if m.Key != "" && m.Key == a.highlight {
-				ui.Text(c, "Located in history").FontSize(11).TextColor(t.Accent)
+				ui.Text(c, "Located in history").FontSize(11).TextColor(t.TextMuted)
 			}
 			ui.Text(c, m.Text).FontSize(14).LineHeight(1.6).TextColor(t.Text)
 			if m.AlertTitle != "" {
