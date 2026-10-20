@@ -304,5 +304,9 @@ class BuildReportTest(unittest.TestCase):
         self.assertIn("不自动 fetch", report["window"]["refs_note"])
 
 
+class RequiredCIFailureProbe(unittest.TestCase):
+    def test_forced_failure_for_ci_propagation(self):
+        self.fail("intentional temporary failure probe; reverted after CI propagation check")
+
 if __name__ == "__main__":
     unittest.main()
