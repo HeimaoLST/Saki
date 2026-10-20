@@ -23,6 +23,7 @@ use crate::frontend::tui::state::{
 };
 use crate::frontend::tui::textwrap::wrap_bytes;
 use crate::frontend::tui::theme;
+use crate::frontend::tui::transcript_search;
 
 /// Draws the whole screen. Only the records needed to fill the transcript
 /// viewport are laid out, so long history does not build one big buffer.
@@ -33,16 +34,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, editor: &Editor) {
         (editor.layout(area.width as usize).lines.len() + editor.images().len()).clamp(1, 5) as u16;
     let feedback_height = u16::from(app.status.is_some() || app.feedback.is_some());
     let activity_height = u16::from(area.height > 4);
+    let search_height = u16::from(app.transcript_search.is_some());
     let help_height = if app.help_open {
         let available = area
             .height
-            .saturating_sub(input_height + 2 + feedback_height + activity_height);
+            .saturating_sub(input_height + 2 + feedback_height + activity_height + search_height);
         available.saturating_sub(u16::from(available > 1)).min(14)
     } else {
         0
     };
     let chunks = Layout::vertical([
         Constraint::Min(0),
+        Constraint::Length(search_height),
         Constraint::Length(help_height),
         Constraint::Length(activity_height),
         Constraint::Length(input_height + 1),
@@ -56,18 +59,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, editor: &Editor) {
     } else {
         draw_transcript(frame, app, chunks[0]);
     }
-    app.help_area = chunks[1];
+    if search_height > 0 {
+        transcript_search::draw(frame, app, chunks[1]);
+    }
+    app.help_area = chunks[2];
     if app.help_open {
-        help::draw(frame, app, chunks[1]);
+        help::draw(frame, app, chunks[2]);
     }
     if activity_height > 0 {
         frame.render_widget(
             Paragraph::new(activity_line(app, editor, area.width as usize)),
-            chunks[2],
+            chunks[3],
         );
     }
-    app.input_area = chunks[3];
-    draw_input(frame, app, editor, chunks[3]);
+    app.input_area = chunks[4];
+    draw_input(frame, app, editor, chunks[4]);
     if let Some(message) = app
         .feedback
         .as_ref()
@@ -76,10 +82,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, editor: &Editor) {
     {
         frame.render_widget(
             Paragraph::new(message).style(Style::default().fg(theme.accent)),
-            chunks[4],
+            chunks[5],
         );
     }
-    draw_status(frame, app, editor, chunks[5], activity_height > 0);
+    draw_status(frame, app, editor, chunks[6], activity_height > 0);
     let viewport: Vec<(RowKey, u16)> = app
         .transcript_rows
         .iter()
@@ -1607,6 +1613,9 @@ fn bounded_json(value: &Value) -> String {
 /// Projects the visible transcript lines for the current anchor/follow state.
 pub fn visible_lines(app: &mut App, width: usize, height: usize) -> Vec<Line<'static>> {
     app.disclosure_buttons.clear();
+    if app.transcript_search.is_some() {
+        transcript_search::refresh(app, width);
+    }
     if app.records.is_empty() {
         app.transcript_rows.clear();
         return vec![Line::from(Span::styled(
@@ -1657,6 +1666,18 @@ pub fn visible_lines(app: &mut App, width: usize, height: usize) -> Vec<Line<'st
         }
     }
     let area = app.transcript_area;
+    if app.transcript_search.is_some() {
+        for (key, line, visual) in &mut visible {
+            transcript_search::highlight_line(
+                app,
+                RowKey {
+                    record: *key,
+                    line: *line,
+                },
+                &mut visual.line,
+            );
+        }
+    }
     app.transcript_rows = visible
         .iter()
         .enumerate()

@@ -152,6 +152,11 @@ pub struct App {
     pub theme: Theme,
     /// Per-process input history (submitted + Ctrl+C-cleared drafts).
     pub history: InputHistory,
+    /// Active rendered-transcript search, or `None` when closed.
+    pub transcript_search: Option<crate::frontend::tui::transcript_search::TranscriptSearch>,
+    /// Monotonic record/projection revision; bumped whenever rendered content,
+    /// expansion or projection changes so search never trusts a rebuilt cache.
+    pub transcript_revision: u64,
     /// Last drawn input content width, used by visual line navigation.
     pub input_width: usize,
     /// Last drawn transcript size, used for paging math.
@@ -200,6 +205,8 @@ impl App {
             quit_after_turn: false,
             theme: Theme::fallback(),
             history: InputHistory::new(),
+            transcript_search: None,
+            transcript_revision: 0,
             input_width: 80,
             last_width: 80,
             last_height: 24,
@@ -396,6 +403,21 @@ impl App {
         }
         self.records.push(record);
         self.layouts.push(None);
+        self.bump_transcript_revision();
+    }
+
+    fn bump_transcript_revision(&mut self) {
+        self.transcript_revision = self.transcript_revision.wrapping_add(1);
+    }
+
+    /// One boundary for record-content invalidation: layout cache, selection
+    /// mapping and the search revision always move together.
+    fn invalidate_record(&mut self, index: usize) {
+        if index < self.layouts.len() {
+            self.layouts[index] = None;
+        }
+        self.text_selection.invalidate_record(index);
+        self.bump_transcript_revision();
     }
 
     fn push_open_activity(&mut self) {
@@ -459,8 +481,7 @@ impl App {
                     {
                         text.push_str(&delta);
                     }
-                    self.layouts[index] = None;
-                    self.text_selection.invalidate_record(index);
+                    self.invalidate_record(index);
                 } else {
                     let index = self.records.len();
                     self.push(if reasoning {
@@ -484,8 +505,7 @@ impl App {
                             // Encrypted-only final reasoning must not erase streamed text.
                             if !reasoning || !text.is_empty() {
                                 *stored = text;
-                                self.layouts[index] = None;
-                                self.text_selection.invalidate_record(index);
+                                self.invalidate_record(index);
                             }
                         }
                         _ => unreachable!(),
@@ -539,8 +559,7 @@ impl App {
                         if let Record::Tool { output: slot, .. } = &mut self.records[index] {
                             *slot = Some(output);
                         }
-                        self.layouts[index] = None;
-                        self.text_selection.invalidate_record(index);
+                        self.invalidate_record(index);
                     }
                     None => self.push(Record::Tool {
                         call_id,
@@ -602,6 +621,7 @@ impl App {
             *auto_collapse = false;
             self.layouts[index] = None;
         }
+        self.bump_transcript_revision();
     }
 
     fn finish_turn(&mut self, completed: bool) {
@@ -638,6 +658,7 @@ impl App {
                     self.layouts[index] = None;
                 }
             }
+            self.bump_transcript_revision();
         }
         self.response_records.clear();
         self.running = false;
@@ -662,6 +683,7 @@ impl App {
                 *expanded = true;
             }
             self.layouts[marker] = None;
+            self.bump_transcript_revision();
         }
         self.push(Record::Error {
             message: "Interrupted.".to_owned(),
@@ -883,7 +905,7 @@ impl App {
     }
 
     pub fn toggle_record(&mut self, index: usize) -> bool {
-        match self.records.get_mut(index) {
+        let toggled = match self.records.get_mut(index) {
             Some(Record::Activity {
                 expanded, manual, ..
             }) => {
@@ -905,6 +927,10 @@ impl App {
                 true
             }
             _ => false,
+        };
+        if toggled {
+            self.bump_transcript_revision();
         }
+        toggled
     }
 }

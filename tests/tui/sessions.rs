@@ -602,3 +602,22 @@ fn picker_search_keeps_the_query_tail_and_cursor_visible_when_narrow() {
         "backspace removes the combining grapheme: {screen}"
     );
 }
+
+#[test]
+fn opening_a_session_closes_an_active_transcript_search() {
+    let (a, a_history) = snapshot("Session A");
+    let (b, b_history) = snapshot("Session B");
+    let mut sessions = Sessions::default();
+    let mut app = App::new();
+    let mut editor = Editor::new();
+    sessions.apply_event(&mut app, &mut editor, opened(a, a_history));
+    app.last_width = 40;
+    app.last_height = 6;
+    crate::frontend::tui::transcript_search::open(&mut app);
+    assert!(crate::frontend::tui::transcript_search::active(&app));
+    sessions.apply_event(&mut app, &mut editor, opened(b, b_history));
+    assert!(
+        !crate::frontend::tui::transcript_search::active(&app),
+        "session replacement never caches an active search"
+    );
+}

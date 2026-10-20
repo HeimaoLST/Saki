@@ -12,6 +12,7 @@ pub mod terminal;
 pub mod terminal_input;
 pub mod textwrap;
 pub mod theme;
+pub mod transcript_search;
 pub mod view;
 
 use std::path::PathBuf;
@@ -75,6 +76,11 @@ pub async fn run(
                 let (copy, notify_copy) = match maybe {
                     Ok(Some(Input::Event(Event::Key(key)))) => {
                         let (handled, command) = sessions.key(&mut app, key);
+                        if (sessions.picker.is_some() || sessions.pending)
+                            && transcript_search::active(&app)
+                        {
+                            transcript_search::cancel(&mut app);
+                        }
                         if let Some(command) = command
                             && input.send(command).is_err()
                         {
@@ -154,6 +160,7 @@ pub async fn run(
                             // The global session picker closes any local search
                             // first so a switched session never caches it.
                             app.history.cancel_search();
+                            transcript_search::cancel(&mut app);
                             app.text_selection.clear();
                             sessions.pending = true;
                             if input.send(SessionCommand::List).is_err() { break; }
@@ -244,6 +251,12 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
     let alt = key.modifiers.contains(KeyModifiers::ALT);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     let had_selection = app.text_selection.active();
+
+    // A rendered-transcript search is modal: it owns every key (Esc/Ctrl+C
+    // close it before any cancel/clear), and only Ctrl+V reaches clipboard IO.
+    if transcript_search::active(app) {
+        return transcript_search_key(app, key);
+    }
 
     if ctrl
         && matches!(key.code, KeyCode::Char('c' | 'C'))
@@ -359,6 +372,12 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
             KeyCode::PageUp => view::log_page_nav(app, false),
             _ => {}
         }
+        return outcome;
+    }
+
+    // F3 opens rendered-transcript search; Ctrl+F stays character-right.
+    if !ctrl && !alt && key.code == KeyCode::F(3) {
+        transcript_search::open(app);
         return outcome;
     }
 
@@ -586,6 +605,32 @@ fn history_search_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyO
     KeyOutcome::default()
 }
 
+/// Modal rendered-transcript search key map. The composer and its history are
+/// never edited here; Ctrl+V only requests clipboard IO for query text.
+fn transcript_search_key(app: &mut App, key: KeyEvent) -> KeyOutcome {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    let mut outcome = KeyOutcome::default();
+    match key.code {
+        KeyCode::Esc => transcript_search::cancel(app),
+        KeyCode::Char('c') if ctrl => transcript_search::cancel(app),
+        KeyCode::Char('v') if ctrl => outcome.paste_clipboard = true,
+        KeyCode::F(1) if !ctrl && !alt => {
+            transcript_search::cancel(app);
+            app.toggle_help();
+        }
+        KeyCode::F(3) => transcript_search::step(app, !shift),
+        KeyCode::Enter | KeyCode::Down => transcript_search::step(app, true),
+        KeyCode::Up => transcript_search::step(app, false),
+        KeyCode::Backspace => transcript_search::backspace(app),
+        KeyCode::Char('h') if ctrl => transcript_search::backspace(app),
+        KeyCode::Char(character) if !ctrl && !alt => transcript_search::push_char(app, character),
+        _ => {}
+    }
+    outcome
+}
+
 /// Ctrl+C: close the log sub-view first, else save and clear a non-empty draft
 /// (even while busy, without requesting exit), else use the shared exit path.
 fn handle_ctrl_c(app: &mut App, editor: &mut Editor) -> bool {
@@ -618,6 +663,16 @@ fn exit_or_wait(app: &mut App) -> bool {
 /// Dragging copies visible text; navigation never edits the draft or its focus.
 /// Returns text for the event loop to write to the clipboard.
 pub fn handle_mouse(app: &mut App, mouse: MouseEvent) -> Option<String> {
+    if transcript_search::active(app) {
+        let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && app.help_button_area.contains(position)
+        {
+            transcript_search::cancel(app);
+            app.toggle_help();
+        }
+        return None;
+    }
     // A keyboard-owned history search consumes ordinary mouse events; only a
     // Help click is global and closes the search first.
     if app.history.searching() {
@@ -770,6 +825,10 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
 /// A failed explicit image path keeps the original paste as editable text and
 /// never clears existing attachments.
 fn handle_paste_text(app: &mut App, editor: &mut Editor, text: &str) {
+    if transcript_search::active(app) {
+        transcript_search::push_str(app, text);
+        return;
+    }
     app.help_open = false;
     if app.log_view.is_some() {
         log::close(app);
@@ -801,6 +860,18 @@ fn handle_clipboard(app: &mut App, editor: &mut Editor) {
             return;
         }
     };
+    // While a transcript search is open, text paste edits only the query and
+    // an image clipboard is reported without touching the preserved draft.
+    if transcript_search::active(app) {
+        match clipboard.get_image() {
+            Ok(_) => app.notify("Close transcript search before attaching an image.".to_owned()),
+            Err(_) => match clipboard.get_text() {
+                Ok(text) => transcript_search::push_str(app, &text),
+                Err(error) => app.notify(format!("Clipboard read failed: {error}")),
+            },
+        }
+        return;
+    }
     // While searching, text paste edits only the query and an image clipboard
     // is reported without touching the preserved draft or history images.
     if app.history.searching() {
