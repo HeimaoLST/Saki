@@ -290,6 +290,7 @@ impl<W: Write> ConsoleOutput<W> {
 
     fn apply_event(&mut self, event: AgentEvent) -> std::io::Result<()> {
         match event {
+            AgentEvent::TaskStarted { .. } | AgentEvent::ModelRequestStarted { .. } => {}
             AgentEvent::ResponseTextDelta { item_id, delta } => {
                 self.delta(false, item_id, delta)?
             }

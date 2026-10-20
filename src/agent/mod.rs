@@ -3,6 +3,7 @@ pub mod journal;
 pub mod message;
 
 use serde_json::Value;
+use std::sync::Arc;
 #[cfg(test)]
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
@@ -13,6 +14,12 @@ use crate::{
     protocol::{ModelRequest, ModelStreamEvent, OutputItem, OutputText},
     tools::tool_registry::{ToolCall, ToolRegistry},
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelRequestPurpose {
+    Generation,
+    Compaction,
+}
 
 /// Display data emitted by the agent's single model/tool loop.
 ///
@@ -28,6 +35,17 @@ pub enum AgentEvent {
         context_tokens: Option<usize>,
         context_window: Option<usize>,
         input_limit: Option<usize>,
+    },
+    /// The start boundary was successfully written to the journal. The ids are
+    /// the caller-visible ones and match the journal's TaskStarted record.
+    TaskStarted {
+        task_id: String,
+        message_id: Option<String>,
+    },
+    /// A model request is about to be made. Compaction is a summary request;
+    /// title generation is not a task and never emits this event.
+    ModelRequestStarted {
+        purpose: ModelRequestPurpose,
     },
     /// Assistant response text in the order it appeared in `response.output`,
     /// including the public explanation that precedes a tool call.
@@ -174,6 +192,12 @@ impl Agent {
 
     /// Attach the event channel used to report display data to the UI.
     pub fn with_events(mut self, events: UnboundedSender<AgentEvent>) -> Self {
+        let hook_events = events.clone();
+        self.conversation.set_model_request_hook(Arc::new(move || {
+            let _ = hook_events.send(AgentEvent::ModelRequestStarted {
+                purpose: ModelRequestPurpose::Compaction,
+            });
+        }));
         self.events = Some(events);
         self
     }
@@ -198,6 +222,39 @@ impl Agent {
         message: impl Into<UserMessage>,
     ) -> anyhow::Result<()> {
         self.conversation.begin_task()?;
+        let task_id = self
+            .conversation
+            .active_task_id()
+            .map(str::to_owned)
+            .ok_or_else(|| anyhow::anyhow!("task start did not establish an active task"))?;
+        self.run_started_task(message.into(), task_id, None).await
+    }
+
+    /// Starts a task with caller-supplied ids. The task id is written to the
+    /// journal before `TaskStarted` is emitted; terminal events still belong to
+    /// the worker at the `handle_*` return boundary.
+    pub async fn handle_task(
+        &mut self,
+        message: UserMessage,
+        task_id: String,
+        message_id: String,
+    ) -> anyhow::Result<()> {
+        self.conversation
+            .begin_task_with_id(task_id.clone(), Some(message_id.clone()))?;
+        self.run_started_task(message, task_id, Some(message_id))
+            .await
+    }
+
+    async fn run_started_task(
+        &mut self,
+        message: UserMessage,
+        task_id: String,
+        message_id: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.emit(AgentEvent::TaskStarted {
+            task_id,
+            message_id,
+        });
         self.conversation.add_user_message(message);
         self.conversation.save_history()?;
         let result = self.process_messages().await;
@@ -270,35 +327,42 @@ impl Agent {
                     tokio::select! {
                         biased;
                         _ = cancelled(cancel) => None,
-                        result = client.respond_stream(request, |event| {
-                            match &event {
-                                ModelStreamEvent::TextDelta { item_id, delta } => {
-                                    stream_has_output = true;
-                                    match partials.iter_mut().find(|(id, _)| id == item_id) {
-                                        Some((_, text)) => text.push_str(delta),
-                                        None => partials.push((item_id.clone(), delta.clone())),
-                                    }
-                                }
-                                ModelStreamEvent::ReasoningDelta { .. } => {
-                                    stream_has_output = true;
-                                }
-                                _ => {}
-                            }
-                            let event = match event {
-                                ModelStreamEvent::TextDelta { item_id, delta } => {
-                                    AgentEvent::ResponseTextDelta { item_id, delta }
-                                }
-                                ModelStreamEvent::ReasoningDelta { item_id, delta } => {
-                                    AgentEvent::ReasoningDelta { item_id, delta }
-                                }
-                                ModelStreamEvent::ReasoningCompleted { item_id } => {
-                                    AgentEvent::ReasoningCompleted { item_id }
-                                }
-                            };
+                        result = async {
                             if let Some(events) = &events {
-                                let _ = events.send(event);
+                                let _ = events.send(AgentEvent::ModelRequestStarted {
+                                    purpose: ModelRequestPurpose::Generation,
+                                });
                             }
-                        }) => Some(result),
+                            client.respond_stream(request, |event| {
+                                match &event {
+                                    ModelStreamEvent::TextDelta { item_id, delta } => {
+                                        stream_has_output = true;
+                                        match partials.iter_mut().find(|(id, _)| id == item_id) {
+                                            Some((_, text)) => text.push_str(delta),
+                                            None => partials.push((item_id.clone(), delta.clone())),
+                                        }
+                                    }
+                                    ModelStreamEvent::ReasoningDelta { .. } => {
+                                        stream_has_output = true;
+                                    }
+                                    _ => {}
+                                }
+                                let event = match event {
+                                    ModelStreamEvent::TextDelta { item_id, delta } => {
+                                        AgentEvent::ResponseTextDelta { item_id, delta }
+                                    }
+                                    ModelStreamEvent::ReasoningDelta { item_id, delta } => {
+                                        AgentEvent::ReasoningDelta { item_id, delta }
+                                    }
+                                    ModelStreamEvent::ReasoningCompleted { item_id } => {
+                                        AgentEvent::ReasoningCompleted { item_id }
+                                    }
+                                };
+                                if let Some(events) = &events {
+                                    let _ = events.send(event);
+                                }
+                            }).await
+                        } => Some(result),
                     }
                 };
                 let response = match outcome {
