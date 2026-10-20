@@ -3,6 +3,7 @@ use std::{
     fs::{File, TryLockError},
     io::{Seek, SeekFrom},
     path::Path,
+    sync::Arc,
     time::Duration,
 };
 
@@ -45,7 +46,8 @@ fn lock_journal(file: &File, path: &Path) -> Result<()> {
                 std::thread::sleep(RETRY_DELAY);
             }
             Err(TryLockError::WouldBlock) => {
-                anyhow::bail!("session is already in use: {}", path.display());
+                return Err(anyhow::Error::new(TryLockError::WouldBlock))
+                    .with_context(|| format!("session is already in use: {}", path.display()));
             }
             Err(TryLockError::Error(error)) => {
                 return Err(error).with_context(|| {
@@ -114,6 +116,11 @@ pub struct Conversation {
     persisted_items: usize,
     #[serde(skip)]
     active_task: Option<String>,
+    /// Invoked immediately before a compaction summary request; kept out of
+    /// serialization so the conversation remains usable by the experiment
+    /// harness without depending on the Agent event type.
+    #[serde(skip)]
+    model_request_hook: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Conversation {
@@ -129,6 +136,7 @@ impl Conversation {
             history_file: None,
             persisted_items: 0,
             active_task: None,
+            model_request_hook: None,
         }
     }
 
@@ -188,11 +196,29 @@ impl Conversation {
             has_summary: replay.has_summary,
             history_file: Some(file),
             active_task: replay.active_task.clone(),
+            model_request_hook: None,
         };
         Ok((conversation, replay))
     }
 
     pub fn begin_task(&mut self) -> Result<()> {
+        self.begin_task_with_id(journal::new_id()?, None)
+    }
+
+    /// The id of the task currently persisted as active, if any. Used by the
+    /// legacy entry point to report the journal-consistent id.
+    pub(crate) fn active_task_id(&self) -> Option<&str> {
+        self.active_task.as_deref()
+    }
+
+    /// Starts a task with caller-supplied ids. The machine entry uses this to
+    /// return the same `task_id` it writes to the journal; `message_id` is
+    /// absent for the legacy entry point and for old journals.
+    pub fn begin_task_with_id(
+        &mut self,
+        task_id: String,
+        message_id: Option<String>,
+    ) -> Result<()> {
         if let Some(task_id) = &self.active_task {
             if let Some(file) = &mut self.history_file {
                 journal::write(file, &JournalRecord::TaskFinished {
@@ -203,17 +229,23 @@ impl Conversation {
             self.active_task = None;
         }
         self.reconcile_pending_tool_calls()?;
-        let id = journal::new_id()?;
         if let Some(file) = &mut self.history_file {
             journal::write(
                 file,
                 &JournalRecord::TaskStarted {
-                    task_id: id.clone(),
+                    task_id: task_id.clone(),
+                    message_id,
                 },
             )?;
         }
-        self.active_task = Some(id);
+        self.active_task = Some(task_id);
         Ok(())
+    }
+
+    /// Registers the compaction request hook without making Conversation depend
+    /// on the agent's event enum.
+    pub(crate) fn set_model_request_hook(&mut self, hook: Arc<dyn Fn() + Send + Sync>) {
+        self.model_request_hook = Some(hook);
     }
 
     /// The single result shape stored for any tool call whose execution was
@@ -461,11 +493,13 @@ impl Conversation {
                     .is_none_or(|limit| summary_input_tokens <= limit),
             "summary request exceeds the configured budget; no history was discarded"
         );
-        let response = client
-            .respond_once(request)
-            .await
-            .result
-            .context("conversation compaction failed")?;
+        let response = {
+            if let Some(hook) = &self.model_request_hook {
+                hook();
+            }
+            client.respond_once(request).await.result
+        }
+        .context("conversation compaction failed")?;
         ensure!(
             response.incomplete_details.is_none()
                 && response

@@ -688,3 +688,79 @@ fn restore_reports_a_lock_that_is_still_held() {
     drop(holder);
     std::fs::remove_file(path).unwrap();
 }
+
+#[tokio::test]
+async fn compaction_request_hook_fires_only_for_a_real_summary_request() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let mut small = Conversation::new("system".to_owned())
+        .with_compaction_config(config())
+        .unwrap();
+    small.add_user_message("hello".to_owned());
+    let small_calls = Arc::new(AtomicUsize::new(0));
+    let small_counter = small_calls.clone();
+    small.set_model_request_hook(Arc::new(move || {
+        small_counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    let unreachable = ModelClient::for_test("http://127.0.0.1:1/v1".to_owned());
+    assert!(
+        small
+            .compact_if_needed(&unreachable, "test", &[])
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        small_calls.load(Ordering::SeqCst),
+        0,
+        "a no-op compact_if_needed must not announce a model request"
+    );
+
+    let mut long = long_history();
+    let long_calls = Arc::new(AtomicUsize::new(0));
+    let long_counter = long_calls.clone();
+    long.set_model_request_hook(Arc::new(move || {
+        long_counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    let (client, server) = mock_response(
+        200,
+        completed("The ongoing task still needs two tool results reviewed."),
+    )
+    .await;
+    long.compact_if_needed(&client, "test", &[]).await.unwrap();
+    server.await.unwrap();
+    assert_eq!(
+        long_calls.load(Ordering::SeqCst),
+        1,
+        "a real summary request must emit exactly one hook call"
+    );
+}
+
+#[test]
+fn old_task_records_without_message_id_remain_readable_with_timestamps() {
+    let path = temp_path();
+    let contents = concat!(
+        "{\"schema_version\":1,\"timestamp_ms\":11,\"type\":\"messages\",\"items\":[{\"type\":\"message\",\"role\":\"system\",\"content\":\"sys\"}]}\n",
+        "{\"schema_version\":1,\"type\":\"task_started\",\"task_id\":\"old-task\"}\n",
+        "{\"schema_version\":1,\"timestamp_ms\":13,\"type\":\"task_finished\",\"task_id\":\"old-task\",\"status\":\"completed\",\"error\":null}\n",
+    );
+    std::fs::write(&path, contents).unwrap();
+    let file = std::fs::File::open(&path).unwrap();
+    let replay = journal::read(&file, &path).unwrap();
+    assert_eq!(replay.history.len(), 3);
+    assert_eq!(replay.history_timestamps, vec![11, 0, 13]);
+    match &replay.history[1] {
+        JournalRecord::TaskStarted {
+            task_id,
+            message_id,
+        } => {
+            assert_eq!(task_id, "old-task");
+            assert_eq!(*message_id, None);
+        }
+        other => panic!("expected TaskStarted, got {other:?}"),
+    }
+    std::fs::remove_file(path).unwrap();
+}

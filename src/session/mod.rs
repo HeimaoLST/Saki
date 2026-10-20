@@ -1,3 +1,4 @@
+pub mod runtime;
 pub mod store;
 
 use anyhow::{Result, bail};
@@ -13,6 +14,23 @@ use crate::{
     tools::{ToolContext, register_builtins, tool_registry::ToolRegistry},
 };
 use store::{LoadedSession, SessionMetadata, SessionStore, SessionSummary};
+
+fn build_agent(store: &SessionStore, client: &ModelClient, loaded: LoadedSession) -> Result<Agent> {
+    // The API match was checked by `SessionStore::open_for_api` before the
+    // history was restored; every open path goes through that entry.
+    let conversation = loaded
+        .conversation
+        .with_compaction_config(loaded.metadata.compaction)?;
+    let mut registry = ToolRegistry::new();
+    register_builtins(
+        &mut registry,
+        ToolContext {
+            cwd: loaded.metadata.working_directory.clone(),
+            output_dir: store.directory(&loaded.metadata.id)?.join("tool-output"),
+        },
+    );
+    Ok(Agent::new(client.clone(), registry, conversation).with_model(loaded.metadata.model))
+}
 
 pub const SYSTEM_PROMPT: &str = "You are Saki, an agent that can use tools. Respond in English unless the user requests another language.";
 
@@ -143,24 +161,7 @@ impl SessionManager {
     }
 
     fn build_agent(&self, loaded: LoadedSession) -> Result<Agent> {
-        // The API match was checked by `SessionStore::open_for_api` before the
-        // history was restored; every open path goes through that entry.
-        let conversation = loaded
-            .conversation
-            .with_compaction_config(loaded.metadata.compaction)?;
-        let mut registry = ToolRegistry::new();
-        register_builtins(
-            &mut registry,
-            ToolContext {
-                cwd: loaded.metadata.working_directory.clone(),
-                output_dir: self
-                    .store
-                    .directory(&loaded.metadata.id)?
-                    .join("tool-output"),
-            },
-        );
-        Ok(Agent::new(self.client.clone(), registry, conversation)
-            .with_model(loaded.metadata.model))
+        build_agent(&self.store, &self.client, loaded)
     }
 
     fn opened(&self, replay: Replay) -> SessionEvent {

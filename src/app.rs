@@ -59,11 +59,21 @@ pub async fn run() -> anyhow::Result<()> {
     if let Ok(value) = std::env::var("SAKI_COMPACT_SUMMARY_TOKENS") {
         config.max_summary_tokens = value.parse()?;
     }
+    crate::agent::conversation::Conversation::new(SYSTEM_PROMPT.into())
+        .with_compaction_config(config)?;
     let cwd = std::env::current_dir()?.canonicalize()?;
     let root = std::env::var_os("SAKI_SESSION_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| cwd.join(".saki/sessions"));
     let store = SessionStore::new(root)?;
+    if std::env::args().skip(1).any(|arg| arg == "--stdio") {
+        return crate::session::runtime::Runtime::new(store, client, cwd, model, config)
+            .run(
+                tokio::io::BufReader::new(tokio::io::stdin()),
+                tokio::io::stdout(),
+            )
+            .await;
+    }
     let session_id = match std::env::var("SAKI_SESSION").ok().filter(|id| id != "new") {
         // Explicit `new` (or no value at all) starts a fresh session; plain
         // startup never resumes stored history. An explicit ID is opened below

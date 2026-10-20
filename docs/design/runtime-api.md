@@ -1,23 +1,18 @@
 # Runtime 调用契约与实施规划
 
-更新日期：2026-10-18。状态：**设计提案，待 GUI／TUI／PM ACK 与独立评审，尚未实施**。
+更新日期：2026-10-20。状态：**调用契约已确认；首轮机器入口由 #60 交付；跨端接入与后续能力分别追踪**。
 
 需求依据：[Agent runtime 需求](../requirements/agent-runtime.md)、[#43](https://github.com/HeimaoLST/Saki/issues/43) 及 [GUI 首轮交接](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6235030388)。本文定义跨宿主调用契约与验收边界；实时优先级、任务状态和负责人以 GitHub 为准。
 
+## 决策确认
+
+本契约已取得实际消费意见与独立提案评审：[GUI ACK](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6258133217)、[PM 范围 ACK](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6258394345)、[TUI 兼容 ACK](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6262714452)、[最终提案独立评审汇总](https://github.com/HeimaoLST/Saki/pull/59#issuecomment-6244513599)。[PM 实施交接](https://github.com/HeimaoLST/Saki/issues/60#issuecomment-6284753791)已确认 #60 的 DoR，首轮按 #60 → #63 推进；[QA 边界调整](https://github.com/HeimaoLST/Saki/issues/60#issuecomment-6284890371)将 #64 限定为 CI 工程，不作为逐 PR 人工产品验收前置。
+
+以上确认针对调用契约与范围，不代表代码或跨端验收完成。具体 v1 DTO 位于 `src/session/runtime.rs`，可执行驱动位于 `examples/runtime_stdio.py`，运行证据随 #60 交付；共享 typed 事件的实际字段与消费接线按 TUI ACK 继续协调。多会话并发、压缩后原文检索及 #31／#32／#33 仍为独立后续任务。
+
 ## 现状与目标
 
-实现事实（核对 `origin/dev@78e5d96`；#47 已于 `6b1d6cf` 合入 dev）：
-
-| 能力 | 已有实现 | 仍需交付 |
-| --- | --- | --- |
-| 模型／工具循环 | `Agent`、公共模型类型、四个内置工具；#47 新增 Chat 与统一客户端 | 可被 Go 消费的机器调用入口，不再解析 console 文本 |
-| 会话与恢复 | `SessionStore`、单一 journal reader、锁、原始历史及 compact；恢复不重跑 | 明确目标的会话操作与可渲染历史响应 |
-| 执行观察 | 文字增量／最终文本、推理、工具、usage、完成／失败／中断 | 请求接纳与开始的区分、task／输入关联、模型请求开始的事实 |
-| 取消 | `SessionCommand::Cancel` 和 Agent 协作式取消，bash 处理进程组 | 外部调用反馈、取消与完成竞争、连接生命周期 |
-| 多会话 | 多个持久 session；现有 manager 单个活动 Agent | 同一宿主中的独立重叠执行与失败隔离 |
-| 配置 | app 组装；#47 显式 `ClientConfig` | 机器入口复用组装；后续运行期模型／profile 更新契约 |
-
-首轮目标是 Go 调用创建／恢复 → 发送 → 真实模型 → 工具 → 回传 → 最终回答 → 保存 → 重启后继续。GUI 选中 B 不控制 A 的执行生命周期。首轮不要求 B 同时执行；同宿主并发、历史检索继续作为明确的后续交付，不以首轮验收替代。
+实现事实（#60；以同 PR 的代码和运行证据为准）：`src/session/runtime.rs` 提供 stdio v1 调用边界，按 ID 保留真实 loaded sessions，首轮只有一个执行槽。`Agent` 继续承担唯一模型／工具循环，`SessionStore` 和 journal reader 继续承担持久化／恢复，旧 TUI／console 入口保持。GUI 联系人接入由 #63 交付；重叠执行和 compact 后原文检索仍分别由 #61／#62 交付。
 
 ## 推荐方案与取舍
 
@@ -35,7 +30,7 @@ SAKI_API=openai-chat-completions SAKI_BASE_URL=https://provider.example/v1 \
 SAKI_MODEL=model-id SAKI_SESSION_DIR=/path/to/sessions target/debug/Saki --stdio
 ```
 
-示例假设宿主已经通过进程环境或既有 `.env` 提供 `API_KEY`；示例不表示无需凭据。该命令是待实现入口的调用约定，目前不能用于宣称已验证。
+示例假设宿主已经通过进程环境或既有 `.env` 提供 `API_KEY`；示例不表示无需凭据。实际 provider 与模型的兼容性以对应 smoke 运行证据为准。
 
 provider 的协议／endpoint／凭据归宿主，启动时注入一次；不进入请求、事件或 session metadata。模型、工作目录、system prompt、compact 配置归 session；省略覆盖值时使用宿主默认。首轮工具为现有 read/bash/edit/write，Rust 调用方继续用 ToolRegistry 组装，不开放由 JSON 上传可执行工具定义。
 
@@ -64,7 +59,7 @@ provider 的协议／endpoint／凭据归宿主，启动时注入一次；不进
 | `task.cancel` | `session_id,task_id`；仅取消匹配的活动任务；返回 `requested`、`already_requested` 或 `not_running`，均不是完成证明 |
 | `runtime.shutdown` | 停止接纳新工作，等待已接纳执行结束，再关闭写锁和进程；不是取消 |
 
-首轮错误 code 至少覆盖 `invalid_request`、`unsupported_version`、`unknown_method`、`not_found`、`busy`、`locked`、`api_mismatch`、`invalid_history`、`io_error`。最终实现测试固定实际 code 与失败边界；不能只把所有错误包装成一个字符串。
+首轮请求错误 code 覆盖 `invalid_request`、`unsupported_version`、`unknown_method`、`not_found`、`busy`、`locked`、`api_mismatch`、`invalid_history`、`io_error`。最终实现测试固定实际 code 与失败边界；不能只把所有错误包装成一个字符串。
 
 ### 最小往返示例
 
@@ -97,7 +92,7 @@ metadata 和工具 output 在示例中仅为形状示意，不替代 SessionMeta
 {"version":1,"type":"event","session_id":"s1","task_id":"t2","message_id":"i2","event":{"type":"task_finished","status":"failed","error":{"code":"model_error","message":"upstream request failed"}}}
 ```
 
-历史记录页至少含稳定 record offset 和已解析的 journal record；status 反映实际持久状态，空数组示例不表示有记录的会话应丢弃历史。创建／加载响应返回 metadata 和实际 loaded／active task 状态；完整字段在实施 PR 以 DTO 与行为测试固定，GUI 审核时可据此提出必要字段，不能在版本 1 上静默改变含义。
+历史记录页至少含稳定 record offset 和已解析的 journal record；status 反映实际持久状态，空数组示例不表示有记录的会话应丢弃历史。创建／加载响应返回 metadata 和实际 loaded／active task 状态；实际 v1 字段与下面的实现字段表一致；版本 1 不静默改变含义。
 
 ### 关联与顺序
 
@@ -122,54 +117,50 @@ stdin EOF 与显式 shutdown 都停止接纳，等待已接纳任务结束；不
 
 Go 侧用 `os/exec` 的 stdin/stdout pipe，持续独立读取 stdout；不能为了等一次请求响应而暂停事件读取。使用 CommandContext 时，context 应绑定整个子进程生命周期，不绑定当前查看对象。按 [Go StdoutPipe 契约](https://pkg.go.dev/os/exec#Cmd.StdoutPipe)，Start 后完成 pipe 读取再 Wait。默认 Scanner 的行长上限不足以承载图片或较大工具结果，应按 [Scanner.Buffer](https://pkg.go.dev/bufio#Scanner.Buffer) 设置 buffer 或用 Reader。任务结束与进程退出分开：读到 task_finished 不关闭整个 runtime。
 
-下面的最小无 GUI 驱动展示调用顺序，沿用启动环境和当前目录中的 `probe.txt`。它针对提案接口，需在 #60 实现后运行验证；当前不作为执行证据。恢复时将 create 换成 `session.load` 并传入已保存的 session_id，load/history 的零请求验收由独立 fixture 计数证明。
+可执行无 GUI 驱动位于 [`examples/runtime_stdio.py`](../../examples/runtime_stdio.py)，使用独立 stdout 读取线程分发响应和事件。构建和离线跨进程验收：
 
-```python
-import json
-import subprocess
-
-p = subprocess.Popen(["target/debug/Saki", "--stdio"], stdin=subprocess.PIPE,
-                     stdout=subprocess.PIPE, text=True)
-
-def call(request_id, method, params):
-    p.stdin.write(json.dumps({"version": 1, "id": request_id,
-                             "method": method, "params": params}) + "\n")
-    p.stdin.flush()
-    for line in p.stdout:
-        message = json.loads(line)
-        if message.get("type") == "response" and message.get("id") == request_id:
-            if "error" in message:
-                raise RuntimeError(message["error"])
-            return message["result"]
-    raise RuntimeError("runtime disconnected before response")
-
-session = call("create", "session.create", {})["session_id"]
-task = call("send", "task.send", {"session_id": session,
-            "message": {"text": "Use read to inspect probe.txt and report its marker."}})
-for line in p.stdout:
-    message = json.loads(line)
-    if (message.get("task_id") == task["task_id"]
-            and message.get("event", {}).get("type") == "task_finished"):
-        assert message["event"]["status"] == "completed", message
-        break
-else:
-    raise RuntimeError("runtime disconnected before task finished")
-call("shutdown", "runtime.shutdown", {})
-for line in p.stdout:
-    json.loads(line)
-assert p.wait() == 0
+```sh
+cargo build --locked
+python3 examples/runtime_stdio.py --self-test
 ```
 
-该示例串行消费首次任务；正式 GUI 必须持续路由所有 response/event，并独立处理 stderr 和子进程退出。完整可执行离线／子进程验收驱动及限制随首轮实现交付，不能把示例语法校验当作真实闭环。
+真实模型沿用环境中的 `API_KEY`、`SAKI_API`、`SAKI_BASE_URL`、`SAKI_MODEL`、compact 配置和 `SAKI_SESSION_DIR`，启动 `target/debug/Saki --stdio`。API_KEY 缺失时在 ready 前失败；stdout 只写 JSONL，诊断留在 stderr。示例真实试用：
+
+```sh
+python3 examples/runtime_stdio.py --prompt 'Use read to inspect probe.txt and report its marker.'
+python3 examples/runtime_stdio.py --session SAVED_ID --prompt 'Continue our previous task.'
+```
+
+示例记录并展示所有任务事件；正式 GUI 持续路由所有 response/event，并独立处理 stderr 和子进程退出。`--self-test` 使用受控本地模型服务和真实 read 工具，启动两个独立 Rust 进程，验证恢复／历史零模型调用和新任务继续前文；它不替代真实 provider smoke。
+
+### 实现字段
+
+所有时间为 Unix 毫秒；ID 为不透明字符串。metadata 沿用 `SessionMetadata`（schema_version、id、title、可选 title_source、created_at、working_directory、model、api、compaction）。省略或 null 的可选参数使用默认值，未知参数拒绝。
+
+| 输出 | v1 字段 |
+| --- | --- |
+| ready | `version:1,type:"ready",api`，api 为当前宿主实际协议标识 |
+| create/load result | `session_id,metadata,loaded,state,active_task,status`；state 为 idle/running，active_task 为空或含 task_id/message_id/cancel_requested |
+| status result | 同上去掉 metadata；本进程活动任务 status 为 running，其余由 journal replay 返回 completed/failed/interrupted/unknown |
+| list result | `sessions` 数组；元素为 metadata、updated_at、status、in_use、unavailable、loaded、state、active_task_id；损坏项保留 unavailable 信息 |
+| rename result | `session_id,metadata`；手工名称继续优先 |
+| history result | `session_id,records,next_offset,status,state,active_task_id`；records 元素为 `offset,timestamp_ms,record`，record 为唯一 reader 解析的 journal 语义；旧 timestamp 缺失为 0，旧 message_id 保持缺失；next_offset 到末尾为 null，默认 limit=100，必须大于0 |
+| release result | `session_id,loaded:false`；释放闲时写锁，不删文件 |
+| send result | `task_id,message_id`；ID 与 task_started journal record 一致 |
+| cancel result | `status:requested|already_requested|not_running` |
+| shutdown result | `state:draining`，等待已接纳任务收尾后进程退出 |
+| event 封套 | `version:1,type:"event",session_id,task_id,message_id,event`；event.type 显式 snake_case 映射，model_request_started.purpose 为 generation/compaction；task_finished.status 为 completed/failed/interrupted，failed 带 error.code/message |
+
+文字／推理 item_id 来自模型客户端，final 全文覆盖 delta 投影；工具 call_id 来自唯一执行循环。机器宿主首轮不启动自动标题请求，避免额外背景调用被混成任务阶段；可通过 rename 更新标题。默认终端自动标题路径保持。未加载会话的 send 返回 not_found，先显式 load；release 已释放会话幂等。未知方法、版本、参数不执行操作。
 
 ## 综合交付顺序与依赖
 
 | 阶段 | 交付 | 依赖／退出条件 |
 | --- | --- | --- |
 | 0 | #47 统一客户端合入 dev；#54 同步 README | 以实际最新 dev 为准同步／验收；质量修复 #58 与 CI 治理 #55 的影响须核对，不能沿用旧基线通过结果 |
-| 1 | #43 定稿本契约；拆 runtime／GUI／QA 实施任务 | GUI 消费 ACK、TUI 兼容 ACK、PM 范围 ACK、独立内容评审；文档合入 dev 后关闭 decision |
+| 1 | #43 定稿本契约；拆 runtime／GUI／QA 实施任务 | 真实三线 ACK 与最终独立提案评审齐备；#43 decision 已据证据关闭，状态与实现事实随 #60 同步 |
 | 2 | [#60](https://github.com/HeimaoLST/Saki/issues/60) Runtime 机器入口、关联、历史与取消；无 GUI 真实闭环 | 基于合入后的 #47；只改 runtime 路径和必要接线，默认 TUI/console 保持；最终 SHA 离线及真实 smoke 通过 |
-| 3 | [#63](https://github.com/HeimaoLST/Saki/issues/63) GUI 使用真实入口替换 demo；[#64](https://github.com/HeimaoLST/Saki/issues/64) 跨端 QA | GUI 负责人实施、独立 QA 验收；首轮完成不意味着后续并发／检索完成 |
+| 3 | [#63](https://github.com/HeimaoLST/Saki/issues/63) GUI 使用真实入口替换 demo；[#64](https://github.com/HeimaoLST/Saki/issues/64) CI 工程 | GUI 负责人实施并真实试用，主 agent 评审／运行验收与 required CI；首轮完成不意味着后续并发／检索完成 |
 | 4 | [#61](https://github.com/HeimaoLST/Saki/issues/61) 同宿主多 session 重叠执行与失败隔离 | 独立 runtime 实施项，保留同一个机器契约和同一个 Agent；A 活动时 B 创建／加载／提交，事件不串，A 失败不结束 B |
 | 5 | [#62](https://github.com/HeimaoLST/Saki/issues/62) compact 后 search_history／read_history | 独立 runtime 实施项；复用 journal 与 ToolRegistry，默认当前 session／绑定范围，返回来源与记录位置，不设向量库前提 |
 | 6 | #31 follow-up／steering 策略与实施 | 复用 task 接纳边界；推荐先显式 FIFO follow-up、默认 busy 不变；队列、取消、关闭策略定稿后实施，steering 单列取舍 |

@@ -35,6 +35,10 @@ pub enum JournalRecord {
     },
     TaskStarted {
         task_id: String,
+        /// The caller-visible input message, when the entry point supplied one.
+        /// Older journals omit it and read back as `None`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
     },
     TaskFinished {
         task_id: String,
@@ -56,6 +60,8 @@ struct Envelope {
 pub struct Replay {
     pub context: Vec<InputItem>,
     pub history: Vec<JournalRecord>,
+    /// Envelope `timestamp_ms` aligned with `history`; old records read as 0.
+    pub history_timestamps: Vec<u64>,
     pub has_summary: bool,
     pub status: TaskStatus,
     pub updated_at: u64,
@@ -98,6 +104,7 @@ pub fn read(file: &File, path: &Path) -> Result<Replay> {
     let mut replay = Replay {
         context: Vec::new(),
         history: Vec::new(),
+        history_timestamps: Vec::new(),
         has_summary: false,
         status: TaskStatus::Unknown,
         updated_at: 0,
@@ -181,7 +188,7 @@ pub fn read(file: &File, path: &Path) -> Result<Replay> {
                 replay.context = next;
                 replay.has_summary = true;
             }
-            JournalRecord::TaskStarted { task_id } => {
+            JournalRecord::TaskStarted { task_id, .. } => {
                 ensure!(
                     active_task.is_none(),
                     "{}:{line_number}: task started before previous task ended",
@@ -203,6 +210,7 @@ pub fn read(file: &File, path: &Path) -> Result<Replay> {
             }
         }
         replay.updated_at = replay.updated_at.max(envelope.timestamp_ms);
+        replay.history_timestamps.push(envelope.timestamp_ms);
         replay.history.push(envelope.record);
         replay.valid_bytes += count as u64;
         replay.needs_newline = !terminated;
