@@ -51,6 +51,7 @@ SAKI_UI=console cargo run
 | 鼠标滚轮 | 指针在记录／日志区时上下滚动，每次 3 行；不改变焦点和输入草稿 |
 | PgUp / PgDn | 按当前视口高度翻页；输入与记录焦点均可使用 |
 | Alt+Up / Alt+Down | 任意焦点逐行滚动，输入区普通方向键继续编辑草稿 |
+| Ctrl+Shift+Up / Ctrl+Shift+Down | 跳转到上一条／下一条真实用户消息边界；仅在普通记录／输入界面生效，帮助、输入历史搜索、日志与会话选择器优先。长消息内部先回到该消息起点，已在首行则跳到上一条；跳跃停止 follow 并保留草稿、光标、附件与焦点；无更早／更晚消息时给出英文提示 |
 | 记录区 Up / Down | 逐行滚动长消息；Shift+Up / Shift+Down 选择记录 |
 | 记录区 Home / End；Ctrl+Home / Ctrl+End | 跳到对话开头／最新输出；Ctrl 组合键在任意焦点可用，日志视图会先关闭 |
 | 点击 Thought / 记录区 Enter | 展开／收起选中的工具 |
@@ -119,6 +120,8 @@ Agent 通过 `ContextUpdated` 在 worker 启动、用户提交、响应 usage、
 界面、帮助、图片附件标签、剪贴板／图片错误和运行提示统一为英文。默认 system prompt 和遗留 calculator 的工具说明也改为英文；默认回复使用英文，用户明确要求其他语言时允许切换。用户原文、文件名和工具输出保持原样，中文／emoji 编辑与复制继续支持。历史设计说明里的中文标签代表当时方案。
 
 ## 实际验收
+
+2026-10-19 用户消息边界导航（#26）：Ctrl+Shift+Up/Down 在普通记录／输入界面跳转到上一条／下一条真实 User 记录；帮助、输入历史搜索、日志与会话选择器优先。边界取 User 块首个内容行（跳过前导背景留白），因此从长消息内部上移先回到该消息起点，已在起点则选择上一条；Next 取当前顶部记录之后的下一条 User。跳跃停止 follow，复用现有 `VisualAnchor`／`Anchor`（source offset 0）与 `current_top_row`／`record_layout`，resize、新输出与 Activity 收起后仍稳定。跳跃不改动草稿、光标、附件与焦点；无更早／更晚消息时显示英文提示。候选 User 先按现有可见顺序选取，只为当前 User（需要时）和最终目标构建首内容行布局。测试覆盖空／首／尾提示、长多行用户与工具记录、起点与内部、宽窄重排、新输出与 Activity 收起、Ctrl+Shift 双修饰键要求及既有 Alt/普通方向键行为。
 
 2026-10-19 撤销／重做游标语义修复（#35，独立 QA 回归）：`Snapshot` 原先未记录 `preferred_col`，`restore` 又强制置 `None`，使多行草稿在末行末尾上移后，经「编辑＋撤销」再上移会丢失首选显示列（QA 探针实测 control=(0,8) vs edit+undo=(0,1)，PTY 提交文本变成 `a|bcdefgh\nx\nabcdefgh`）。fix commit `d50fddae899581c5a2919f84d16d48ed6937b8bb`（tree `747e029122639870bad35c84c5c611109028c2f7`）把 `preferred_col` 纳入快照：撤销恢复编辑前的首选列，重做恢复其自身的编辑后游标态；普通编辑仍重置首选列，kill buffer 仍独立。QA 原始探针（`/tmp/saki-qa70-evidence/preferred-column-probe.rs`）在修复源上复现为 control=(0,8) == edit+undo=(0,8)，退出 0。修复冻结二进制 SHA256 `bcbb9c14afaf9b6d7cd13634e9603e878f392677ba080723b79482e88c019fa3`；真实 PTY 复跑 QA 场景（`/tmp/saki-tui-35-cursor-fix-evidence/undo_acceptance_cursor_fix.py`，只读复用原始 harness）：6/6 通过，`preferred-edit-undo` 提交文本修正为 `abcdefgh|\nx\nabcdefgh`。新源门禁：`cargo fmt --check` 0、`cargo clippy --locked --all-targets -- -D warnings` 0、`cargo test --locked` 344 通过 / 0 失败 / 6 忽略、显式 ignored 生命周期 PTY 通过。说明：2026-10-18 的作者自测未覆盖该回退；Runtime #58 的 EPERM 偶发仍是独立问题，本次全量运行未复现，不据此改写历史失败。
 

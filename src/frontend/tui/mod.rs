@@ -362,6 +362,23 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
         return outcome;
     }
 
+    // Ctrl+Shift+Up/Down jumps between real user-message boundaries. Both
+    // modifiers are required so plain/Alt line scrolling and editor movement
+    // stay untouched, and local overlays/log keep precedence above.
+    if ctrl && shift {
+        match key.code {
+            KeyCode::Up => {
+                view::previous_user(app);
+                return outcome;
+            }
+            KeyCode::Down => {
+                view::next_user(app);
+                return outcome;
+            }
+            _ => {}
+        }
+    }
+
     if key.code == KeyCode::Esc && !ctrl && !alt {
         // Local UI first: Esc clears an active selection before agent work.
         if had_selection {
