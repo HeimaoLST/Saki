@@ -15,6 +15,20 @@ fn deltas_flush_immediately_and_final_text_does_not_repeat() {
         String::from_utf8(output.writer.clone()).unwrap(),
         "Agent:\n\nHello"
     );
+    for event in [
+        AgentEvent::TaskStarted {
+            task_id: "task".into(),
+            message_id: None,
+        },
+        AgentEvent::ModelRequestStarted {
+            purpose: crate::agent::ModelRequestPurpose::Generation,
+        },
+        AgentEvent::ModelRequestStarted {
+            purpose: crate::agent::ModelRequestPurpose::Compaction,
+        },
+    ] {
+        output.apply_event(event).unwrap();
+    }
     output
         .apply_event(AgentEvent::ResponseTextDelta {
             item_id: "m".into(),

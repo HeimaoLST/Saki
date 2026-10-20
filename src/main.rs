@@ -15,7 +15,15 @@ pub mod tools;
 #[path = "../tests/support/mod.rs"]
 mod test_support;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    app::run().await
+fn main() -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let result = runtime.block_on(app::run());
+    if std::env::args().skip(1).any(|arg| arg == "--stdio") {
+        // The machine host has drained accepted work and released its locks.
+        // Tokio's blocking stdin read cannot be cancelled when stdout is lost.
+        runtime.shutdown_background();
+    }
+    result
 }

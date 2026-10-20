@@ -613,7 +613,14 @@ async fn events_follow_response_output_order_and_route_tool_results_by_call_id()
     assert_eq!(
         drain_events(&mut receiver)
             .into_iter()
-            .filter(|event| !matches!(event, AgentEvent::ContextUpdated { .. }))
+            .filter(|event| {
+                !matches!(
+                    event,
+                    AgentEvent::ContextUpdated { .. }
+                        | AgentEvent::TaskStarted { .. }
+                        | AgentEvent::ModelRequestStarted { .. }
+                )
+            })
             .collect::<Vec<_>>(),
         vec![
             AgentEvent::ResponseText {
@@ -1132,4 +1139,73 @@ async fn chat_completions_complete_a_tool_turn_and_a_follow_up() {
         .expect("tool result must follow the assistant call");
     assert_eq!(tool["tool_call_id"], "call_1");
     assert!(tool["content"].as_str().unwrap().contains("\"result\":37"));
+}
+
+#[tokio::test]
+async fn handle_task_keeps_caller_ids_in_events_and_journal() {
+    let journal = Journal::new();
+    let (client, server) = scripted_http(vec![(200, completed("done"))]).await;
+    let (sender, mut receiver) = event_channels();
+    let mut agent = Agent::new(
+        client,
+        ToolRegistry::new(),
+        conversation().with_history_file(&journal.0).unwrap(),
+    )
+    .with_events(sender);
+
+    agent
+        .handle_task(
+            "hello".into(),
+            "task-caller-fixed".to_owned(),
+            "message-caller-fixed".to_owned(),
+        )
+        .await
+        .unwrap();
+    let _ = requests(server).await;
+
+    let events = drain_events(&mut receiver);
+    let started = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                AgentEvent::TaskStarted { task_id, message_id }
+                    if task_id == "task-caller-fixed"
+                        && message_id.as_deref() == Some("message-caller-fixed")
+            )
+        })
+        .expect("the persisted start boundary must be emitted with caller ids");
+    let request = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                AgentEvent::ModelRequestStarted {
+                    purpose: ModelRequestPurpose::Generation
+                }
+            )
+        })
+        .expect("a generation request event must precede the model call");
+    assert!(
+        started < request,
+        "TaskStarted must precede the model request"
+    );
+    assert!(
+        !events.iter().any(is_terminal),
+        "the Agent must not emit worker-owned terminal events"
+    );
+
+    let records = journal.records();
+    let started_record = records
+        .iter()
+        .find(|record| record["type"] == "task_started")
+        .expect("TaskStarted must be journaled");
+    assert_eq!(started_record["task_id"], "task-caller-fixed");
+    assert_eq!(started_record["message_id"], "message-caller-fixed");
+    let finished_record = records
+        .iter()
+        .find(|record| record["type"] == "task_finished")
+        .expect("TaskFinished must be journaled");
+    assert_eq!(finished_record["task_id"], "task-caller-fixed");
+    assert_eq!(finished_record["status"], "completed");
 }

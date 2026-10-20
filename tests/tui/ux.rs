@@ -22,6 +22,28 @@ fn streaming_updates_one_record_reflows_cached_text_and_preserves_reading_positi
     let screen = render(&mut app, &editor, 48, 20);
     assert!(screen.contains("First"));
     assert!(app.layouts[1].is_some());
+    let record_count = app.records.len();
+    let anchor = app.anchor;
+    let follow = app.follow;
+    let running = app.running;
+    for event in [
+        AgentEvent::TaskStarted {
+            task_id: "task".into(),
+            message_id: None,
+        },
+        AgentEvent::ModelRequestStarted {
+            purpose: crate::agent::ModelRequestPurpose::Generation,
+        },
+        AgentEvent::ModelRequestStarted {
+            purpose: crate::agent::ModelRequestPurpose::Compaction,
+        },
+    ] {
+        app.apply_event(event);
+    }
+    assert_eq!(app.records.len(), record_count);
+    assert_eq!(app.anchor, anchor);
+    assert_eq!(app.follow, follow);
+    assert_eq!(app.running, running);
     app.apply_event(AgentEvent::ResponseTextDelta {
         item_id: "m".into(),
         delta: " second".into(),

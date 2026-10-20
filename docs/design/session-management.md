@@ -1,6 +1,6 @@
 # Session management
 
-Updated: 2026-10-18. Status: implemented. Local slash commands are implemented; see [Local command system](command-system.md). The proposed machine API and phased runtime work are documented in [Runtime API](runtime-api.md); that proposal is not yet implemented.
+Updated: 2026-10-20. Status: implemented. Local slash commands are implemented; see [Local command system](command-system.md). The accepted machine API contract and phased runtime work are documented in [Runtime API](runtime-api.md); implementation is delivered in #60.
 
 ## Behavior
 
@@ -138,3 +138,7 @@ The command layer should parse local user intent and dispatch existing typed ope
 The implemented vocabulary is `/new`, `/sessions`, `/resume <id>`, `/rename <title>`, and `/help`. TUI picker buttons/keys and slash commands call the same session handlers. The command implementation documents completion, argument errors, literal-slash escaping, draft preservation, and Busy feedback. TUI Esc cancellation and `SessionCommand::Cancel` are implemented and accepted (see Behavior). Future commands such as model switching or manual compact should be added only alongside their own supported core operations.
 
 Implemented local input routing: [Local command system](command-system.md).
+
+## Machine host
+
+The `--stdio` entry exposes the accepted [runtime API](runtime-api.md) through `src/session/runtime.rs`. It starts without selecting or creating a session, retains loaded sessions by ID, and permits loading/viewing B while A executes. One task executes at a time in this first phase; a second send returns busy. It reuses the same Agent builder, tool loop and journal reader as the terminal host. New TaskStarted records optionally include the caller-visible message_id; legacy records remain readable without invented IDs. Machine history pages include record offsets and Unix millisecond timestamps (0 when absent in old records).
