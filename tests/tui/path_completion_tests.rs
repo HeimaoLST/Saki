@@ -404,3 +404,37 @@ fn mixed_quoting_inside_one_component_declines_without_mutation() {
     assert_eq!(app.focus, Focus::Input);
     fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn opening_quote_after_dot_slash_is_not_consumed() {
+    let dir = workspace("openquote");
+    fs::create_dir(dir.join("my proj")).unwrap();
+    let text = r#"read ./"my proj"/file.rs"#;
+    let mut app = app_at(&dir);
+    let mut editor = editor_with(text);
+    editor.set_global_offset(cursor_after(text, r#"./"my pro"#));
+    handle_key(&mut app, &mut editor, key(KeyCode::Tab));
+    assert_eq!(editor.text(), text);
+    assert_eq!(editor.global_offset(), cursor_after(text, r#"./"my proj"#));
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn empty_quoted_component_is_declined_without_mutation() {
+    let dir = workspace("emptyquote");
+    fs::create_dir(dir.join("my proj")).unwrap();
+    for text in [r#"open ./""#, r#"open ./"""#] {
+        let mut app = app_at(&dir);
+        let mut editor = editor_with(text);
+        let before = editor.text();
+        handle_key(&mut app, &mut editor, key(KeyCode::Tab));
+        assert_eq!(
+            editor.text(),
+            before,
+            "unsupported empty quote keeps the draft"
+        );
+        assert!(!path_completion::active(&app));
+        assert_eq!(app.focus, Focus::Input);
+    }
+    fs::remove_dir_all(dir).ok();
+}

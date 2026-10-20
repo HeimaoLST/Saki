@@ -54,7 +54,11 @@ pub struct PathCompletion {
 
 struct Token {
     content_start: usize,
+    /// Document byte offset at the token end (after any closing quote).
+    end_doc: usize,
     empty_quote: Quote,
+    /// Quote state after the last parsed character / at token end.
+    end_quote: Quote,
     /// (char, document start, document end, active quote)
     chars: Vec<(char, usize, usize, Quote)>,
 }
@@ -141,7 +145,9 @@ fn token_at(text: &str, cursor: usize) -> Option<Token> {
             } else {
                 chars[0].1
             },
+            end_doc: index,
             empty_quote,
+            end_quote: quote,
             chars,
         };
         if start <= cursor && cursor <= index {
@@ -162,12 +168,6 @@ struct Decoded {
 }
 
 impl Decoded {
-    fn doc_at(&self, decoded: usize) -> Option<usize> {
-        self.bounds
-            .iter()
-            .find_map(|(position, doc)| (*position == decoded).then_some(*doc))
-    }
-
     fn decoded_at(&self, doc: usize) -> usize {
         self.bounds
             .iter()
@@ -203,10 +203,9 @@ fn decode(token: &Token) -> Decoded {
 }
 
 /// Quote mode for one component, indexed by character (not decoded byte).
-/// Mixed quoting inside the component is unsupported and returns `None`.
-fn component_quote(decoded: &Decoded, token: &Token, start: usize, end: usize) -> Option<Quote> {
-    let first = decoded.text[..start].chars().count();
-    let last = decoded.text[..end].chars().count();
+/// Mixed quoting inside the component is unsupported and returns `None`; an
+/// empty component uses the quote active at its insertion point.
+fn component_quote(decoded: &Decoded, token: &Token, first: usize, last: usize) -> Option<Quote> {
     if first < last {
         let mode = *decoded.modes.get(first)?;
         if decoded.modes[first..last].iter().all(|item| *item == mode) {
@@ -216,13 +215,53 @@ fn component_quote(decoded: &Decoded, token: &Token, start: usize, end: usize) -
         }
     } else if decoded.modes.is_empty() {
         Some(token.empty_quote)
+    } else if first < decoded.modes.len() {
+        Some(decoded.modes[first])
     } else {
-        decoded
-            .modes
-            .get(first)
-            .copied()
-            .or_else(|| decoded.modes.last().copied())
-            .or(Some(token.empty_quote))
+        Some(token.end_quote)
+    }
+}
+
+/// Raw replacement range plus character indices for one decoded component.
+/// Start comes from the first component character (inside any opening quote);
+/// end comes from the last component character (before any closing quote).
+fn char_bounds(
+    token: &Token,
+    decoded: &Decoded,
+    start: usize,
+    end: usize,
+) -> (usize, usize, usize, usize) {
+    let mut position = 0;
+    let mut first = None;
+    let mut last = 0;
+    for (index, (character, _, _, _)) in token.chars.iter().enumerate() {
+        if position == start {
+            first = Some(index);
+        }
+        position += character.len_utf8();
+        if position == end {
+            last = index + 1;
+        }
+    }
+    if start == decoded.text.len() {
+        first.get_or_insert(token.chars.len());
+    }
+    if end == decoded.text.len() {
+        last = token.chars.len();
+    }
+    let first = first.unwrap_or(token.chars.len());
+    if last > first {
+        (token.chars[first].1, token.chars[last - 1].2, first, last)
+    } else {
+        let doc = if first < token.chars.len() {
+            token.chars[first].1
+        } else {
+            token
+                .chars
+                .last()
+                .map_or(token.content_start, |(_, _, doc_end, _)| *doc_end)
+        };
+        (doc, doc, first, last)
     }
 }
 
@@ -360,21 +399,26 @@ pub fn tab(app: &mut App, editor: &mut Editor) -> bool {
     let Some(base) = base_for(prefix, &working_directory) else {
         return false;
     };
-    let (candidates, extra) = list_candidates(&base, partial, separator);
-    if candidates.is_empty() {
-        return false;
-    }
-    let Some(quote) = component_quote(&decoded, &token, component_start, component_end) else {
+    let Some(quote) = component_quote(
+        &decoded,
+        &token,
+        char_bounds(&token, &decoded, component_start, component_end).2,
+        char_bounds(&token, &decoded, component_start, component_end).3,
+    ) else {
         // Mixed quoting inside one component is not supported: consume the Tab
         // without editing the draft rather than generating malformed quotes.
         return true;
     };
-    let Some(start) = decoded.doc_at(component_start) else {
+    let (start, end, first, _) = char_bounds(&token, &decoded, component_start, component_end);
+    if first == token.chars.len() && component_start == component_end && start != token.end_doc {
+        // An empty trailing component with remaining quote characters (e.g.
+        // `./"`) has no safe insertion point inside those quotes.
+        return true;
+    }
+    let (candidates, extra) = list_candidates(&base, partial, separator);
+    if candidates.is_empty() {
         return false;
-    };
-    // Replace only the component; an existing separator and closing quote stay
-    // untouched. A directory adds '/' only when no separator exists yet.
-    let end = decoded.doc_at(component_end).unwrap_or(start);
+    }
     if candidates.len() == 1 {
         apply(app, editor, start, end, quote, separator, &candidates[0]);
         return true;
