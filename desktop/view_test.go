@@ -455,3 +455,100 @@ func writePreviewPNG(t *testing.T, path string, img image.Image) {
 		t.Fatal(err)
 	}
 }
+
+// TestLiveTaskStatesRenderWithoutWaitingConflict drives the real event
+// application and the view together: accepted-but-not-started, started,
+// streaming, tool activity, and completed must not show contradictory text.
+func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
+	ct := &contact{
+		ID: "bound", Name: "Saki", Role: "Assistant", SessionID: "s1", Loaded: true,
+		Status: statusReady, SendState: sendAccepted, ActiveTaskID: "t1", Draft: "hello",
+	}
+	a := &appModel{
+		demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1,
+		contacts: []*contact{ct},
+	}
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if !tr.HasText("Accepted; waiting for the runtime to start.") {
+		t.Fatal("accepted task should show the pre-start waiting state")
+	}
+
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
+		Event: &runtimeEvent{Type: "task_started"},
+	})
+	tr.Frame()
+	if tr.HasText("Accepted; waiting for the runtime to start.") {
+		t.Fatal("started task must not keep the pre-start waiting text")
+	}
+	if !tr.HasText("Starting") {
+		t.Fatal("started task should show the working row")
+	}
+
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
+		Event: &runtimeEvent{Type: "response_text_delta", ItemID: "a1", Delta: "Hel"},
+	})
+	tr.Frame()
+	if !tr.HasText("Hel") || !tr.HasText("Writing") {
+		t.Fatal("streaming delta should render with the writing state")
+	}
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
+		Event: &runtimeEvent{Type: "response_text", ItemID: "a1", Text: "Hello"},
+	})
+	tr.Frame()
+	if !tr.HasText("Hello") || tr.HasText("Hel\n") {
+		t.Fatal("final text should replace the delta projection")
+	}
+
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
+		Event: &runtimeEvent{Type: "tool_started", CallID: "k1", Name: "read", Arguments: `{"path":"probe.txt"}`},
+	})
+	tr.Frame()
+	if !tr.HasText("read") || !tr.HasText("Running read") {
+		t.Fatal("tool activity should render with its running state")
+	}
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
+		Event: &runtimeEvent{Type: "tool_finished", CallID: "k1", Name: "read", Output: []byte(`{"content":"marker"}`)},
+	})
+	tr.Frame()
+	if !tr.HasText("marker") {
+		t.Fatal("tool output should render")
+	}
+
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
+		Event: &runtimeEvent{Type: "task_finished", Status: "completed"},
+	})
+	tr.Frame()
+	if ct.SendState != sendIdle || ct.ActiveTaskID != "" {
+		t.Fatalf("finished state = %+v", ct)
+	}
+	if tr.HasText("Accepted; waiting for the runtime to start.") || tr.HasText("Working") {
+		t.Fatal("completed task must not keep waiting/working text")
+	}
+}
+
+func TestLiveSendUnknownAfterDisconnectSaysRestart(t *testing.T) {
+	ct := &contact{ID: "bound", Name: "Saki", SessionID: "s1", Loaded: true, SendState: sendUnknown}
+	a := &appModel{demo: false, runtimeStatus: runtimeStateExited, scrollTo: -1, contacts: []*contact{ct}}
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if !tr.HasText("restart Saki") {
+		t.Fatal("disconnected sendUnknown should tell the user to restart")
+	}
+	if tr.HasText("Reload to verify") {
+		t.Fatal("disconnected client must not offer an ineffective Reload instruction")
+	}
+
+	a.runtimeStatus = runtimeStateReady
+	a.rt = &runtimeClient{}
+	tr.Frame()
+	if !tr.HasText("Reload to verify") {
+		t.Fatal("a live connection should keep the Reload instruction")
+	}
+}

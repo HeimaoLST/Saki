@@ -87,6 +87,18 @@ func (a *appModel) statusColor(t *ui.Theme, s contactStatus) ui.Color {
 
 func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 	ui.Column(c).Grow(1).FillHeight().Background(t.Surface).Children(func() {
+		if !a.demo {
+			if a.runtimeStatus == runtimeStateDraining {
+				ui.Text(c, "Draining the runtime…").FontSize(12).Padding(8, 16).TextColor(t.TextMuted)
+			} else if a.runtimeErr != "" {
+				ui.Text(c, a.runtimeErr).FontSize(12).LineHeight(1.4).Padding(8, 16).TextColor(t.Danger)
+			} else if a.runtimeStatus == runtimeStateStarting {
+				ui.Text(c, "Connecting to runtime…").FontSize(12).Padding(8, 16).TextColor(t.TextMuted)
+			}
+			if ct := a.selectedContact(); ct.LoadErr != "" {
+				ui.Text(c, "Contact load: "+ct.LoadErr).FontSize(12).Padding(8, 16).TextColor(t.Warning)
+			}
+		}
 		a.header(c, t)
 		ui.Divider(c)
 		switch a.screen {
@@ -132,7 +144,11 @@ func (a *appModel) chat(c *ui.Context, t *ui.Theme) {
 	}
 	for _, m := range ct.Messages {
 		m := m
-		items = append(items, chatItem{id: fmt.Sprintf("m-%d", m.ID), msg: m})
+		key := fmt.Sprintf("m-%d", m.ID)
+		if m.Key != "" {
+			key = m.Key
+		}
+		items = append(items, chatItem{id: key, msg: m})
 	}
 	if ct.Status == statusWorking {
 		items = append(items, chatItem{id: "working", working: true})
@@ -188,6 +204,24 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) {
 	switch m.Kind {
 	case msgActivity:
+		if m.ToolName != "" || m.ToolOutput != "" {
+			label := m.ToolName
+			if label == "" {
+				label = "Tool"
+			}
+			if m.ToolArgs != "" {
+				label += " " + truncate(m.ToolArgs, 120)
+			}
+			ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
+				ui.Column(c).Gap(3).Children(func() {
+					ui.Text(c, label).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+					if m.ToolOutput != "" {
+						ui.Text(c, truncate(m.ToolOutput, 300)).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+					}
+				})
+			})
+			return
+		}
 		ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
 			ui.Column(c).Gap(4).Children(func() {
 				label := "Looked up earlier conversations"
@@ -214,6 +248,9 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 	case msgUser:
 		ui.Row(c).Justify(ui.End).Children(func() {
 			ui.Column(c).MaxWidth(460).Gap(4).Children(func() {
+				if m.Key != "" && m.Key == a.highlight {
+					ui.Text(c, "Located in history").FontSize(11).TextColor(t.Accent)
+				}
 				ui.Text(c, m.Text).FontSize(14).LineHeight(1.5).Padding(8, 12).Radius(12).Background(t.Selection).TextColor(t.Text)
 				ui.Text(c, "You · "+m.Time).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 			})
@@ -222,6 +259,9 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 		ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
 			a.avatarTile(c, t, 28)
 			ui.Column(c).MaxWidth(680).Gap(4).Children(func() {
+				if m.Key != "" && m.Key == a.highlight {
+					ui.Text(c, "Located in history").FontSize(11).TextColor(t.Accent)
+				}
 				ui.Text(c, ct.Name+"  "+m.Time).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 				ui.Text(c, m.Text).FontSize(14).LineHeight(1.5).TextColor(t.Text)
 				if m.AlertTitle != "" {
@@ -264,7 +304,11 @@ func (a *appModel) emptyState(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Column(c).Padding(16).Gap(6).Children(func() {
 		ui.Text(c, "No messages yet").FontSize(16).FontWeight(500).TextColor(t.Text)
-		ui.Text(c, "Start typing below to talk with "+ct.Name+"; you can personalize name, purpose, instructions and workspace any time in Settings.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+		if a.demo {
+			ui.Text(c, "Start typing below to talk with "+ct.Name+"; you can personalize name, purpose, instructions and workspace any time in Settings.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+		} else {
+			ui.Text(c, "Start typing below to talk with "+ct.Name+". Set purpose, instructions and workspace before the first message; after that only the display name can change.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+		}
 		ui.Row(c).Children(func() {
 			ui.Button(c, "Settings").FontSize(12).OnClick(func() { a.openSettings() })
 		})
@@ -277,7 +321,9 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Column(c).Padding(8, 16).Gap(4).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.End).Padding(6, 8).Radius(12).Background(t.SurfaceHover).Children(func() {
-			input := ui.TextArea(c, &ct.Draft).Label("Composer for " + ct.Name).FontSize(14).LineHeight(1.5).Background(ui.Transparent).BorderWidth(0).Padding(2).Placeholder("Message " + ct.Name).Grow(1).OnEnter(func(e ui.Enter) bool {
+			input := ui.TextArea(c, &ct.Draft).Label("Composer for " + ct.Name).FontSize(14).LineHeight(1.5).Background(ui.Transparent).BorderWidth(0).Padding(2).Placeholder("Message " + ct.Name).Grow(1).OnChange(func() {
+				a.draftChanged(ct)
+			}).OnEnter(func(e ui.Enter) bool {
 				if e.Mods&ui.Shift != 0 {
 					return false
 				}
@@ -285,7 +331,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				if text == "" {
 					return true
 				}
-				if a.send(ct, text) {
+				if a.send(ct, text) && a.demo {
 					e.SetText("")
 				}
 				return true
@@ -294,11 +340,49 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				input.Focus()
 				a.focusComposer = false
 			}
-			send := ui.PrimaryButton(c, "Send").FontSize(13).Disabled(ct.Status == statusWorking || strings.TrimSpace(ct.Draft) == "")
+			sendDisabled := strings.TrimSpace(ct.Draft) == "" || ct.Status == statusWorking
+			if !a.demo {
+				sendDisabled = strings.TrimSpace(ct.Draft) == "" || a.canSend(ct) != ""
+			}
+			send := ui.PrimaryButton(c, "Send").FontSize(13).Disabled(sendDisabled)
 			if send.Clicked() {
 				a.sendCurrent()
 			}
+			if !a.demo && ct.ActiveTaskID != "" {
+				if ui.Button(c, "Stop").FontSize(13).Clicked() {
+					a.cancelSelected()
+				}
+			}
 		})
+		if !a.demo {
+			switch {
+			case ct.SendState == sendSubmitting:
+				ui.Text(c, "Sending…").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+			case ct.SendState == sendAccepted && ct.Status != statusWorking:
+				ui.Text(c, "Accepted; waiting for the runtime to start.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+			case ct.SendState == sendUnknown:
+				if a.runtimeStatus == runtimeStateReady && a.rt != nil {
+					ui.Text(c, "Delivery not confirmed. Reload to verify before sending again.").FontSize(11).LineHeight(1.4).TextColor(t.Danger)
+				} else {
+					ui.Text(c, "Runtime disconnected; restart Saki to check the task and history.").FontSize(11).LineHeight(1.4).TextColor(t.Danger)
+				}
+			}
+			if ct.SendError != "" {
+				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+					ui.Text(c, ct.SendError).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
+					// Reload only makes sense while the same runtime connection is
+					// alive; after a disconnect it would call a closed client.
+					if (ct.SendState == sendUnknown || ct.SendError != "") && a.runtimeStatus == runtimeStateReady && a.rt != nil {
+						if ui.Button(c, "Reload").FontSize(11).Clicked() {
+							a.reloadSelected()
+						}
+					}
+				})
+			}
+			if ct.StatusDetail != "" {
+				ui.Text(c, ct.StatusDetail).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
+			}
+		}
 		ui.Text(c, "Enter to send · Shift + Enter for a new line").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 	})
 }
@@ -379,25 +463,43 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 }
 
 func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
+	ct := a.selectedContact()
+	locked := a.profileLocked(ct)
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "Contact settings").FontSize(16).FontWeight(500).TextColor(t.Text)
 		ui.Spacer(c)
 		ui.Button(c, "Close").FontSize(12).OnClick(func() { a.closeAux() })
 	})
-	ui.Text(c, "Changes apply to future messages. Saved history stays intact.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+	switch {
+	case a.demo:
+		ui.Text(c, "Changes apply to the demo only. Saved history stays intact.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+	case locked:
+		ui.Text(c, "Purpose, instructions and workspace are fixed once this contact's session starts. They can be set before the first message; the name can still change.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+	default:
+		ui.Text(c, "Optional. These are used when the first message creates this contact's session.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+	}
 	ui.Text(c, "Name").FontSize(12).FontWeight(500).TextColor(t.Text)
 	ui.TextInput(c, &a.settingsDraft.Name).Label("Contact name").FontSize(14).Placeholder("Name")
 	if a.settingsError {
 		ui.Text(c, "Enter a name for this contact.").FontSize(12).TextColor(t.Danger)
 	}
 	ui.Text(c, "Purpose").FontSize(12).FontWeight(500).TextColor(t.Text)
-	ui.TextArea(c, &a.settingsDraft.Purpose).Label("Contact purpose").FontSize(14).Placeholder("Purpose")
+	ui.TextArea(c, &a.settingsDraft.Purpose).Label("Contact purpose").FontSize(14).Placeholder("Purpose").Disabled(locked)
 	ui.Text(c, "Instructions").FontSize(12).FontWeight(500).TextColor(t.Text)
-	ui.TextArea(c, &a.settingsDraft.Instructions).Label("Contact instructions").FontSize(14).Placeholder("Instructions")
+	ui.TextArea(c, &a.settingsDraft.Instructions).Label("Contact instructions").FontSize(14).Placeholder("Instructions").Disabled(locked)
 	ui.Text(c, "Workspace").FontSize(12).FontWeight(500).TextColor(t.Text)
-	ui.TextInput(c, &a.settingsDraft.Workspace).Label("Contact workspace").FontSize(14).Placeholder("~/Workspace/my-project")
+	ui.TextInput(c, &a.settingsDraft.Workspace).Label("Contact workspace").FontSize(14).Placeholder("/absolute/path/to/workspace").Disabled(locked)
 	ui.Row(c).Gap(8).Children(func() {
 		ui.Button(c, "Cancel").FontSize(13).OnClick(func() { a.closeAux() })
 		ui.PrimaryButton(c, "Save changes").FontSize(13).OnClick(func() { a.saveSettings() })
 	})
+}
+
+func truncate(text string, max int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
+	if len(runes) <= max {
+		return text
+	}
+	return string(runes[:max]) + "…"
 }
