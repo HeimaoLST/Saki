@@ -275,3 +275,18 @@ func TestReloadSelectedRequiresLiveRuntime(t *testing.T) {
 		t.Fatalf("disconnected reload message = %q", bound.SendError)
 	}
 }
+
+func TestCanSendRejectsDisconnectedOrDrainingRuntime(t *testing.T) {
+	a, bound, _ := testRuntimeModel(t)
+	a.rt = &runtimeClient{}
+	a.runtimeStatus = runtimeStateDraining
+	if reason := a.canSend(bound); reason == "" {
+		t.Fatal("draining runtime must not accept a send")
+	}
+	a.runtimeStatus = runtimeStateReady
+	bound.SessionID = "s1"
+	bound.Loaded = false
+	if reason := a.canSend(bound); !strings.Contains(reason, "loading") {
+		t.Fatalf("unloaded session reason = %q", reason)
+	}
+}

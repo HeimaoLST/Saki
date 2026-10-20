@@ -1,38 +1,52 @@
-# Desktop contacts：首版交互设计
+# Desktop contacts：首版运行时接入
 
-更新日期：2026-10-19。状态：**设计预览**。实现事实以 dev 已集成的 GUI PR [#48](https://github.com/HeimaoLST/Saki/pull/48)（`fce8495`）为准：原生 MyGo 预览已支持直接创建默认联系人；contact store、IPC／后端模型调用尚未实现，Rust core 不承担 contact 产品模型。
-[previews/desktop-contacts.html](previews/desktop-contacts.html) 是可交互浏览器示意；仓库内 `desktop/` 是可运行的 MyGo **原生 UI** 设计预览（非 WebView 包 HTML）。浏览器示意保留早期创建表单，不是当前原生创建流程的验收对象。两者都是 UI demo，只含本地演示数据；Working／回复／历史检索／source 跳转均为本地状态机模拟，不代表后端已支持并行执行、后台任务或真实模型调用。
+更新日期：2026-10-21。状态：**实现事实（#63 分支；依赖 #60 已合入的 stdio v1 契约）**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
 
-调色板：Rose Pine（dark）与 Rosé Pine Dawn（light），来源 [rosepinetheme.com/palette](https://rosepinetheme.com/palette/)，跟随宿主外观。角色分配保持克制：rose 只用于主操作与选中态，可读的 `--link`（Dawn pine / Main foam）用于链接、来源与进行中状态，foam 的填充与图标用于引用和历史，gold 只用于 needs attention，love 只用于校验错误，iris 只用于焦点环与临时的消息定位高亮。
+[previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。调色板与布局设计沿用下文。concurrency、`search_history`／`read_history`、附件、模型切换等仍是后续独立任务，不在首轮。
 
 ## 已确认需求与交付边界
 
-需求／产品决定（用户确认，#44）：首次使用无需先定义 agent。添加联系人即得到可输入的默认通用助手，个性化的 name／purpose／instructions／workspace 为可选设置；默认助手并不免除真实运行时所需的宿主模型、凭据与工具配置。
+需求／产品决定（用户确认，#44）：首次使用无需先定义 agent。添加联系人即得到可输入的默认通用助手；name／purpose／instructions／workspace 为可选设置。默认助手不解决 host 的模型、凭据与工具配置。
 
-实现事实：当前原生预览一次点击 Add contact 即创建并选中 `New contact N`、`Role=Assistant`、Ready 的空联系人，输入区取得一次焦点；不弹创建表单或要求额外确认。Settings 保留编辑与非空名称校验，保存不丢失已有消息、历史和草稿。profile 改动只影响未来请求是产品契约，当前演示回复不构成真实模型已应用 profile 的证据。
+实现事实（#63）：
+- 正常启动从 GUI contact store 恢复；默认创建一个 `Saki` 联系人，零配置即可看到界面。测试/截图 fixture 仍保留在 `seededApp()`，正常真实启动不会混入种子历史。
+- Add contact 一次点击创建并选中 `New contact N`、`Role=Assistant`、Ready 的空联系人，composer 取得一次焦点；不创建 runtime session，直到第一次发送。
+- contact → runtime `session_id` 的映射、显示名、profile、草稿和选中项由 GUI 持久化；消息正文不复制，历史只来自 `session.history` 的已解析 journal 记录。
+- Settings：显示名始终可改；`purpose/instructions/workspace` 只在首次 `session.create` 时作为 profile/system prompt 与 working directory 使用。已有 `SessionID` 或首次 create 在途时，这三项只读，保存设置也只更新名字，不重建 session、不丢历史/草稿、不伪称热更新生效。
+- 首轮单执行槽：`busy` 明确拒绝且草稿保留；不做队列或并发。查看另一个联系人不会 cancel/release 当前任务，事件按 `(session,task)` 路由。
+- 接纳 response 与 `task_started` 分开：前者显示“已接受，等待开始”，只有 `task_started` 才进入 Working；delta 追加、final 覆盖同一 `(session,task,item_id)`，工具按 `call_id` 归属，工具业务错误不自动判整轮失败。
+- `task_finished` 是唯一终态；`failed/interrupted` 的已保存原因在历史刷新后仍可见。取消按 `(session,task)`，迟到 cancel 不会改写已完成或别的 task。
+- 断连/协议失败标记为未知；`sendUnknown` 只有在同一连接、`session.load/status` 确认 idle 且 history 取回后才恢复可发送状态。连接已退出时不提供“Reload”假恢复，明确提示重启应用；不做透明重连框架。
+- 退出（关窗与 Cmd+Q）先阻止默认关闭，持久化草稿，异步 `runtime.shutdown` 等待已接纳任务收尾和进程 Wait，再退出；不阻塞 UI 线程、不静默 Kill。
 
-待验证／待定：真实窗口与输入法、联系人与 runtime session／长期身份的持久映射、预设集合、“已读”含义仍须分别核对。不得把已读等同于模型理解，头像暂不扩展设计。通用 runtime 的并发与历史检索需求只在 [Agent runtime 需求](../requirements/agent-runtime.md) 维护；[调用契约提案](runtime-api.md)、[#60](https://github.com/HeimaoLST/Saki/issues/60)、[#63](https://github.com/HeimaoLST/Saki/issues/63) 与 [#64](https://github.com/HeimaoLST/Saki/issues/64) 分别承载核心入口、GUI 消费和独立验收，当前文档不声称它们已实现。
+## 文件与配置（实现事实）
 
-## Native preview（已实现）
+- `desktop/runtime.go`：stdio v1 client／DTO（request id 路由、持续读 stdout、stderr 诊断、协议失败单一边界、迟到 response 丢弃、读完后 Wait）。
+- `desktop/runtime_model.go`：启动/恢复、真实发送、事件应用、history 转换、取消、退出与配置。
+- `desktop/store.go`：GUI contact store（原子写，损坏不覆盖）。
+- `desktop/model.go`／`view.go`／`main.go`：状态模型、原生布局与入口；`seededApp` 仅测试/截图。
+- Store：`SAKI_GUI_STORE`，否则 `<UserConfigDir>/Saki/contacts.json`（macOS 通常 `~/Library/Application Support/Saki/contacts.json`）。
+- Session 目录：`SAKI_SESSION_DIR`，否则 `<store 目录>/sessions`；作为子进程环境注入。
+- Runtime 可执行：`SAKI_RUNTIME_BIN`；否则查找 GUI 可执行文件旁的 `Saki-runtime`／`saki-runtime`、`../Resources/Saki-runtime`／`../Resources/Saki`；最后查 `PATH` 的 `Saki`。
+- 工作目录：`SAKI_GUI_WORKDIR`；否则当前目录（Finder 的 `/` 除外，退回 home）。作为子进程 cwd 与默认 `session.create.working_directory`。
+- 模型/API/base URL/凭据沿用宿主环境或子进程 cwd 的 `.env`；GUI 不持久化、不打印 key，也不提供 Keychain/向导/全配置系统。Finder 启动不继承 shell cwd/env，需要在明确位置提供 `.env` 或从终端启动。
 
-- 形态：仓库内单独立 Go module `desktop/`，用 MyGo 的**原生 UI**（`ui` 包，非 WebView 包 HTML）承载同一套 contact 界面。它是设计预览而不是 native runtime：没有 contact store、没有 IPC、没有真实模型调用，也不修改 Rust/Cargo。
-- 依赖：Go 1.27.1；`github.com/egoist/mygo v0.4.9-0.20261014025635-fea932a7a2a9`（commit `fea932a7a2a9`），`CGO_ENABLED=0`。`go.mod` 固定该 pseudo-version，没有 replace。
-- 文件：`desktop/main.go`（窗口入口、embed+decode 默认 mascot）、`desktop/model.go`（contact／消息／草稿／来源与本地演示调度）、`desktop/view.go`（原生布局）、`desktop/theme.go`（Rose Pine Main／Dawn）、`desktop/model_test.go`、`desktop/view_test.go`、`desktop/assets/saki-avatar-default.png`。
-- 已实现行为：contact rail／会话／按需 aux；每个 contact 独立 profile、消息与草稿（切换保留）；直接创建并选中默认联系人、一次性请求 composer 焦点（后续 Frame 不抢回）；Settings 保存保留消息／历史／草稿，空名只在设置保存时校验；多行 composer 的 Enter 发送与 Shift+Enter 换行（`ui.Enter.Text()`／`SetText()`，IME 组合期不发送）；Sources 与 contact 范围 History；Ren 的 Working→Needs attention→Try again；发送后的回复按 contact 归属。native 窗口允许内部滚动。
-- 命令（均在 `desktop/`）：
-  - `CGO_ENABLED=0 go build -o /private/tmp/saki-desktop-design-qa/saki-desktop .`
-  - `CGO_ENABLED=0 go run .`（直接运行原生预览）
-  - `CGO_ENABLED=0 go vet ./...` 与 `CGO_ENABLED=0 go test ./... -count=1`
-  - `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /private/tmp/saki-desktop-design-qa/saki-desktop-linux-amd64 .`
-  - `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /private/tmp/saki-desktop-design-qa/saki-desktop-windows-amd64.exe .`
-  - `SAKI_PREVIEW_DIR=/private/tmp/saki-desktop-design-qa/previews CGO_ENABLED=0 go test -run TestPreviewImages -count=1 .`
-- 当前验证／作者与独立 QA 报告（2026-10-19，候选 `bbbe9ef`，随后 squash 为 `fce8495`）：[`#49 独立验收`](https://github.com/HeimaoLST/Saki/issues/49#issuecomment-6258219718) 记录 Go test／vet／build、连续两次创建后直接输入与发送、设置字段实际键入与 Tab 后不抢焦点、非空消息／历史／草稿保留均通过；候选重新生成的 12 张 headless PNG 与参考图逐字节一致。场景为 light/dark × chat/new-contact/settings/sources/history，以及最小窗口 chat/settings；这些证据不覆盖真实 macOS 窗口、系统键盘或 IME。
-- 历史作者报告（2026-10-15）：初版默认测试 14/14、导出预览时 15/15，macOS arm64／Linux amd64／Windows amd64 构建通过；macOS QA `.app` bundle 只在 `/private/tmp/saki-desktop-design-qa` 生成。该报告中的 add 表单属于旧行为，测试数量不作为当前基线。
-- macOS QA bundle 打包：按 Apple 本地开发做法在组装后做 bundle 级 ad-hoc 签名（`codesign --force --sign - --identifier dev.saki.desktop.preview`），绑定现有 Info.plist 与资源。`codesign --verify --strict` 与 `--deep --strict` 均 exit 0；`Identifier=dev.saki.desktop.preview`，Info.plist 已绑定，Sealed Resources 存在。bundle id／显示名／路径不变；独立原始二进制保留，bundle 内可执行文件代码未改（哈希因签名而不同）。打包脚本只保存在 QA 目录，不进入仓库。
-- 浏览器（WebAssembly）预览：同一 `desktop/` Go UI 用固定 MyGo 版本构建为 wasm。在 `desktop/` 运行 `go run github.com/egoist/mygo/cmd/mygo@v0.4.9-0.20261014025635-fea932a7a2a9 build -platform web -o /private/tmp/saki-desktop-design-qa .`，产物为 `web/index.html`、内容哈希 `desktop.ea7d761f7873.wasm`（约 11.2 MB）与 `wasm_exec.js`；产物只在 QA 目录。本地 URL `http://127.0.0.1:8137/`（`python3 -m http.server 8137 --bind 127.0.0.1`）供手动查看。
-- 验证边界：浏览器版本尚未实际在浏览器中操作或核对（当前 CUA 无浏览器连接：iab unavailable、browsers=[]，Chrome 也未获批准）；这条路径不覆盖 macOS 原生窗口、系统主题与输入法行为。原生 app 已按本地开发做法 ad-hoc 签名且 `--verify --strict` 通过，但 Computer Use 依旧拒绝访问，因此不能声称签名修复解决了授权问题。
-- 真实 vs 模拟：真实的是 MyGo 原生窗口、布局、主题、输入与 contact 状态隔离；模拟的是回复内容、Working／attention、history 检索与 sources 引用。contact 状态归 app（Go）所有；Saki 仍是单 active job 的 Rust 进程，两者尚未连接。
-- 已知限制：mascot 仍是 candidate；没有附件、托盘／菜单与 picker；QA app 仅做本地 ad-hoc 签名，未使用开发者证书、未打包分发；真实窗口的键盘／滚动行为尚未由作者实测。
+## 验证与证据
+
+- Go：`CGO_ENABLED=0 go test ./... -count=1`、`go vet ./...`、`go build ./...`、`go test -race ./...` 均通过（本分支候选）。
+- 真实 runtime 集成（opt-in）：`SAKI_TEST_RUNTIME_BIN=/abs/path/to/Saki CGO_ENABLED=0 go test -run TestRuntimeProcessIntegration -count=1 .`。使用本地受控 Responses fixture 与候选进程，覆盖 read 工具、task/message 关联、跨进程恢复零模型调用、history input 形状与继续；默认 CI 未设置该 env 时跳过，需要 CI 提供编译后的 runtime binary。
+- 最终候选 `4001fd4` binary sha256 `f095bb77…588f6`；官方 driver `--self-test` 单次 PASS（real read、correlated journal、cross-process restore、invalid startup、stdout-loss drain/exit，4 model requests）。
+- 真实 provider smoke（宿主已有 `.env`，临时 session 目录，只读 `README.md`、提示不写文件）：显式 `SAKI_API=openai-chat-completions` 时完成并报告首个 heading；同一 host 使用默认 Responses 时 runtime 返回 `model_error: missing field status`，属该 provider 与 Responses 形状不兼容，GUI 继承宿主配置、不自行改写。不要把单次结果写成所有 provider 普遍兼容。
+- macOS 候选包：`/private/tmp/saki-gui-63-app/Saki.app`，`Contents/MacOS/Saki` 为 GUI，`Saki-runtime` 为候选 runtime；Info.plist `dev.saki.desktop`，ad-hoc 签名，`codesign --verify --strict` 与 `--deep --strict` 通过。未在真实窗口中人工操作，也未验证系统键盘/IME。
+
+## 已知限制
+
+- 单 active task；并发/后台执行由 #61 承载，不承诺 UI 的并行观感。
+- `search_history`／`read_history` 未实现；History 只对已加载 transcript 做本地过滤，不是模型检索工具。
+- profile 热更新不支持；绑定后只有名字可改，purpose/instructions/workspace 不生效于既有 session。
+- 无自动重连；断连后重启应用重新加载 history。未知接纳不自动重发。
+- 无附件、托盘/菜单、contact 级模型配置、头像 picker；真实 macOS 窗口、滚动、输入法与真实 provider 的紧张组合仍需人工验收。
+- GUI 不解析 Rust JSONL；旧 journal 的零时间戳显示为空，不伪造日期，缺失 message_id 保持缺失。
 
 ## 产品模型
 
