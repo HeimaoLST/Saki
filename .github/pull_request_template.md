@@ -27,7 +27,8 @@ Closes #  <!-- 目标为默认分支 dev 且完成该任务时填写；hotfix、
 - [ ] PTY / 真实终端验证（如适用）：
 - [ ] 行为变化已同步既有 `docs/` 文档，或已开 follow-up issue：
 - 已知基线失败（与本次改动无关，附证据）：
-- CI 失败处理：定位失败 job 与 owner；不得用 skip／`continue-on-error`／放宽 lint 掩盖真实失败。基线失败单独列出，不能写成本次通过。CI 绿只表示门禁通过，不替代独立评审，也不授权 breaking migration。详见 `docs/design/ci.md`。
+- CI 失败处理：定位失败 job 与 owner；不得用 skip／`continue-on-error`／放宽 lint 掩盖真实失败。基线失败单独列出，不能写成本次通过。CI 绿只表示门禁通过，不替代主 agent 代码评审、适用验收或 PM／用户真实试用，也不授权 breaking migration。详见 `docs/design/ci.md`。
+- 职责分工：实现 agent 提供功能与有价值回归；QA 维护 CI／自动检查运行可靠性；主 agent 负责代码评审与适用实际运行／验收；CI 绿不证明用户觉得好用。
 
 ## 合并后收尾（主责执行，按真实阶段分流）
 
@@ -51,6 +52,6 @@ Closes #  <!-- 目标为默认分支 dev 且完成该任务时填写；hotfix、
 
 FROM: agent:<line>#<instance>      <!-- 例如 agent:tui#nova -->
 IMPLEMENTER: <!-- 有子 agent 时注明实际实施实例；内部指导走 tmux，由主 agent 汇总，不写固定 pane 地址 -->
-REVIEWER: agent:<line>#<instance>  <!-- 实际独立审查者；主 agent 可附已发生的审查证据汇总，不能伪造结论或将同一交付的主子互审称为独立评审 -->
+REVIEWER: agent:<line>#<instance>  <!-- 实际评审者；主 agent 可评审自己或子 agent 产物，但须如实记录作者／评审者，不能冒充独立评审或人类结论；peer review 按需 -->
 兼容性: <!-- 非 breaking change：说明依据；breaking change：影响、迁移／回滚方案与人类确认来源 -->
-MERGE 责任与授权: <!-- 主责实例；非 breaking change 引用 AGENTS.md §0.2 持续预授权，无需逐 PR 询问；breaking change 记录人类明确批准。独立评审／门禁／适用 QA 与发布协调仍须满足。 -->
+MERGE 责任与授权: <!-- 主责实例；非 breaking change 引用 AGENTS.md §0.2 持续预授权，无需逐 PR 询问；breaking change 记录人类明确批准。主责代码评审／required CI／适用验收与发布协调仍须满足。 -->

@@ -1,6 +1,6 @@
 # CI governance（Runtime／TUI／GUI）
 
-更新日期：2026-10-17。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。
+更新日期：2026-10-20。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。workflow 配置基线仍为 2026-10-17；2026-10-20 只调整职责描述，未修改 `.github/workflows`。
 
 ## 目的与范围
 
@@ -9,7 +9,18 @@
 - Runtime 与 TUI 位于同一个 Rust crate，共享一组 Rust 门禁，不为两条线复制两套实现。
 - GUI 是独立 `desktop/` Go module，使用 Go 门禁与 headless 预览产物。
 - 所有 PR、`dev`／`master` 的 push 和手动触发使用同一套检查；首期不做路径分类器，避免 required check 因 workflow 被跳过而永久 pending。
-- CI 通过只代表机器门禁通过，**不替代独立评审**，也不授权 breaking change 的迁移。
+- CI 通过只代表机器门禁通过，**不替代主 agent 代码评审、适用验收或 PM／用户真实试用**，也不授权 breaking change 的迁移。
+
+## 职责调整（2026-10-20）
+
+用户明确调整现阶段 QA 职责，避免团队继续按旧要求排队等待独立 QA：
+
+- **QA**：只负责 CI 工程与自动检查的运行可靠性（现有 `.github/workflows`、CI 支撑脚本、失败定位与复验），不接产品人工验收或独立 `APPROVE` 队列。
+- **实现 agent（runtime／tui／gui）**：负责功能实现与有价值的回归测试；模块行为测试归实现模块。
+- **主 agent**：负责代码评审和适用实际运行／验收；可评审自己或子 agent 的产物，但须真实记录作者／评审者，不冒充独立评审或人类结论。独立 peer review 可按需，不是强制前置。
+- **PM／用户**：负责真实试用与“是否好用”的判断；CI 绿不能证明用户体验。
+
+本文 2026-10-17 出现的「独立评审」要求由上述主 agent 评审口径取代；workflow、required check 与分支保护的真实配置未因此改动，仍以仓库实际状态为准。
 
 ## 检查矩阵
 
@@ -40,10 +51,10 @@
 
 | 角色 | 责任 |
 | --- | --- |
-| 研发作者（runtime／tui／gui） | 维护受影响测试与命令；PR 前在本地执行同一组命令；CI 失败先定位并修复，不以 skip、`continue-on-error` 或放宽 lint 掩盖真实失败。 |
-| QA | 维护覆盖策略与跨模块／PTY 验收入口；核对 PR 的实际 run URL、SHA 与退出码；区分“本次改动失败”与“基线失败”，并给出复验结论。不代替作者修产品代码。 |
-| PM | 维护需求边界、验收标准、协作规范与文档结构；确认 CI 约定与仓库流程一致。 |
-| 主责／合并者 | 独立评审与必需门禁都通过、适用 QA 验收完成且属非 breaking change 后，按 AGENTS.md §0.2 预授权合并；CI 绿不替代评审，也不授权 breaking migration。 |
+| 实现作者（runtime／tui／gui） | 维护受影响测试与命令，提供功能与有价值的回归；PR 前在本地执行同一组命令；CI 失败先定位并修复，不以 skip、`continue-on-error` 或放宽 lint 掩盖真实失败。 |
+| QA | 维护现有 workflow、CI 支撑脚本与自动检查运行可靠性；核对 PR 的实际 run URL、SHA 与退出码；区分“本次改动失败”与“基线失败”，把真实失败反馈给对应 owner。不接产品人工验收或独立 `APPROVE` 队列，不代替作者修产品代码。 |
+| PM | 维护需求边界、验收标准、协作规范与文档结构；确认 CI 约定与仓库流程一致；真实试用与用户体验判断由 PM／用户负责。 |
+| 主责／合并者 | 主 agent 代码评审与适用验收通过、required CI 真实通过、无未解决阻塞且属非 breaking change 后，按 AGENTS.md §0.2 预授权合并；CI 绿不替代评审或用户试用，也不授权 breaking migration。 |
 
 真实失败的处理顺序：
 
@@ -62,7 +73,7 @@
 
 ## 分支保护（2026-10-17 已配置）
 
-实现事实（2026-10-17 主 agent 应用并读回）：`dev`／`master` 均要求 `ci-required`（GitHub Actions app id `15368`，strict=true）；`enforce_admins=true`；PR 必需但 `required_approving_review_count=0`（共享账号不要求原生审批，独立评审仍按 AGENTS.md 流程）；force-push 与分支删除均禁止；同时核对 rulesets 为空。
+实现事实（2026-10-17 主 agent 应用并读回）：`dev`／`master` 均要求 `ci-required`（GitHub Actions app id `15368`，strict=true）；`enforce_admins=true`；PR 必需但 `required_approving_review_count=0`（共享账号不要求原生审批；主 agent 代码评审与适用验收仍按 AGENTS.md §5 执行）；force-push 与分支删除均禁止；同时核对 rulesets 为空。
 
 以下 schema／runbook 保留用于变更前重读、复验或回滚；再次应用前仍须读取现状，若已有不同规则先合并而不是覆盖：
 

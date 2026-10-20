@@ -13,6 +13,6 @@ argument-hint: "<line>#<name>"
 - 需要盘点时运行只读检查 `python3 scripts/collaboration_check.py --limit 50`；它只给候选，不改标签、不关 issue、不删资源。
 - `agent:pm` 可通过动态核实的 tmux 通知其他独立主 agent 读取 GitHub 任务；正式接收／决定／证据仍在 GitHub，不直接派他线子 agent、不打断执行中的任务、不按固定 pane 编号。
 - 未获任务或队列执行授权时：只读巡检并报告 `ready`／`review`／`blocked` 状态，不自行扩展范围或创建空 worktree。
-- 非 breaking change 已获用户持续预授权：独立 agent 评审、必需检查与适用 QA 通过后，由主 agent 按 §5 自行合并并收尾，不逐 PR 询问用户；子 agent 的 merge 动作须由主 agent 明确分派。breaking change 按 §0.2／§8 升级人类。`master` 保持生产稳定，发布需确定范围并全套验证；`dev` 是开发集成分支。清理按 §9，保留长期分支。
+- 非 breaking change 已获用户持续预授权：主 agent 完成代码评审与适用实际运行／验收，required CI 真实通过后，由主 agent 按 §5 自行合并并收尾，不逐 PR 询问用户，也不排队等独立 QA／`APPROVE`；子 agent 的 merge 动作须由主 agent 明确分派。主 agent 可评审自己或子 agent 的产物，但须真实记录作者／评审者，不冒充独立评审或人类结论；peer review 按需。QA 只负责 CI／自动检查运行可靠性，不接产品人工验收；实现 agent 提供功能与有价值回归。CI 绿不证明用户觉得好用，真实试用由 PM／用户判断。breaking change 按 §0.2／§8 升级人类。`master` 保持生产稳定，发布需确定范围并全套验证；`dev` 是开发集成分支。清理按 §9，保留长期分支。
 
 本次身份：`agent:$1`
