@@ -3,11 +3,11 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/signal"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -35,6 +35,11 @@ func helperMain() int {
 		writeMu.Unlock()
 	}
 	write(map[string]any{"version": 1, "type": "ready", "api": "openai-responses"})
+	writeStderr := func(message string) {
+		writeMu.Lock()
+		fmt.Fprintln(os.Stderr, message)
+		writeMu.Unlock()
+	}
 
 	event := func(taskID string, payload map[string]any) {
 		write(map[string]any{
@@ -44,17 +49,18 @@ func helperMain() int {
 	}
 
 	gateMode := os.Getenv("RUNTIME_HELPER_GATE") == "1"
-	var active, everActive atomic.Bool
-	released := make(chan struct{}, 1)
+	accepted := false
+	completed := make(chan struct{})
+	var completeOnce sync.Once
 	if gateMode {
 		signals := make(chan os.Signal, 1)
 		signal.Notify(signals, syscall.SIGUSR1)
 		go func() {
 			for range signals {
-				if active.CompareAndSwap(true, false) {
+				completeOnce.Do(func() {
 					event("t1", map[string]any{"type": "task_finished", "status": "completed"})
-					released <- struct{}{}
-				}
+					close(completed)
+				})
 			}
 		}()
 	}
@@ -95,8 +101,7 @@ func helperMain() int {
 		case "task.send":
 			respond(map[string]any{"task_id": "t1", "message_id": "m1"})
 			if gateMode {
-				active.Store(true)
-				everActive.Store(true)
+				accepted = true
 			}
 			event("t1", map[string]any{"type": "task_started"})
 			if gateMode {
@@ -144,13 +149,17 @@ func helperMain() int {
 			return 0
 		case "runtime.shutdown":
 			respond(map[string]any{"state": "draining"})
-			// Keep reading until stdin EOF; accepted gated work must drain.
+			writeStderr("draining")
+			if !gateMode {
+				return 0
+			}
+			// Keep reading until EOF; accepted gated work must drain.
 		default:
 			write(map[string]any{"version": 1, "type": "response", "id": request.ID, "error": map[string]any{"code": "unknown_method", "message": request.Method}})
 		}
 	}
-	if everActive.Load() {
-		<-released
+	if accepted {
+		<-completed
 	}
 	return 0
 }
@@ -160,6 +169,7 @@ type testRuntime struct {
 	ready    chan runtimeReady
 	events   chan runtimeEventEnvelope
 	protocol chan string
+	stderr   chan string
 	exit     chan error
 }
 
@@ -169,6 +179,7 @@ func startTestRuntime(t *testing.T, extraEnv ...string) *testRuntime {
 		ready:    make(chan runtimeReady, 1),
 		events:   make(chan runtimeEventEnvelope, 64),
 		protocol: make(chan string, 8),
+		stderr:   make(chan string, 8),
 		exit:     make(chan error, 1),
 	}
 	env := append(os.Environ(), "GO_WANT_RUNTIME_HELPER=1")
@@ -183,6 +194,7 @@ func startTestRuntime(t *testing.T, extraEnv ...string) *testRuntime {
 			OnEvent:         func(event runtimeEventEnvelope) { tr.events <- event },
 			OnExit:          func(err error) { tr.exit <- err },
 			OnProtocolError: func(message string) { tr.protocol <- message },
+			OnStderr:        func(line string) { tr.stderr <- line },
 		},
 	})
 	if err != nil {
@@ -370,8 +382,21 @@ func TestRuntimeShutdownDrainsAcceptedTask(t *testing.T) {
 
 	shutdownErr := make(chan error, 1)
 	go func() { shutdownErr <- tr.client.shutdown() }()
-	// Release the accepted task while shutdown is draining. A clean exit proves
-	// the client did not kill the process.
+	// Wait until the core has observed shutdown and started draining before
+	// releasing the accepted task. No sleeps: the helper reports this barrier.
+	select {
+	case line := <-tr.stderr:
+		if line != "draining" {
+			t.Fatalf("stderr = %q", line)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not start draining")
+	}
+	select {
+	case <-shutdownErr:
+		t.Fatal("shutdown returned before the accepted task was released")
+	default:
+	}
 	if err := tr.client.cmd.Process.Signal(syscall.SIGUSR1); err != nil {
 		t.Fatal(err)
 	}

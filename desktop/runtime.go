@@ -177,6 +177,7 @@ type runtimeHandlers struct {
 	OnEvent         func(runtimeEventEnvelope)
 	OnExit          func(error)
 	OnProtocolError func(string)
+	OnStderr        func(string)
 }
 
 type runtimeOptions struct {
@@ -284,11 +285,15 @@ func (c *runtimeClient) readStderr(r io.Reader) {
 	scanner.Buffer(make([]byte, 4096), 256*1024)
 	for scanner.Scan() {
 		c.stderrMu.Lock()
-		c.stderr = append(c.stderr, scanner.Text())
+		line := scanner.Text()
+		c.stderr = append(c.stderr, line)
 		if len(c.stderr) > 200 {
 			c.stderr = c.stderr[len(c.stderr)-200:]
 		}
 		c.stderrMu.Unlock()
+		if c.handlers.OnStderr != nil {
+			c.handlers.OnStderr(line)
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		c.failProtocol("stderr read failed: " + err.Error())
