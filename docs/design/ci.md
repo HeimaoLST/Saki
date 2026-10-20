@@ -1,6 +1,6 @@
 # CI governance（Runtime／TUI／GUI）
 
-更新日期：2026-10-20。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。当前 workflow 基线为 `dev@4001fd4`（2026-10-20，含 [PR #80](https://github.com/HeimaoLST/Saki/pull/80) 的 Python 门禁与 [PR #82](https://github.com/HeimaoLST/Saki/pull/82) 的 Runtime stdio driver）。本文职责调整本身不修改 workflow 或分支保护。
+更新日期：2026-10-20。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。当前 workflow 基线为 `dev@10511b2`（2026-10-20，含 [PR #80](https://github.com/HeimaoLST/Saki/pull/80) 的 Python 门禁、[PR #82](https://github.com/HeimaoLST/Saki/pull/82) 的 Runtime stdio driver 与 [PR #86](https://github.com/HeimaoLST/Saki/pull/86) 的 stdio required 接线）；GUI→Runtime 集成门禁待 #63/PR88 合入后启用。本文职责调整本身不修改 workflow 或分支保护。
 
 ## 目的与范围
 
@@ -31,6 +31,7 @@
 | Runtime + TUI | `rust` | `cargo test --locked --all-targets` | 单元、集成与 example target；测试数量以对应 SHA 的实际 run 为准 |
 | TUI（真实 PTY） | `rust` | `cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1` | 真实 PTY 上进入／退出终端并验证 panic 后 cooked mode 恢复 |
 | Runtime stdio（真实子进程） | `rust` | `cargo build --locked --bin Saki`；`python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki` | 两个真实 OS 进程、临时 read、task/message/journal 关联、恢复/history 零重放、继续前文与 stdout 断连 drain；driver 自带本地 fixture，无外部 provider/key |
+| GUI→Runtime（真实子进程，待 #63） | `rust` | `SAKI_TEST_RUNTIME_BIN=${{ github.workspace }}/target/debug/Saki CGO_ENABLED=0 go test -run '^TestRuntimeProcessIntegration$' -count=1 -v .`（在 `desktop/`） | Go 客户端→真实 Saki `--stdio`、本地 httptest provider、真实 read、事件/工具关联、跨进程恢复零重放与继续；断言指定测试 PASS（非 Skip/空跑） |
 | GUI（独立 Go module） | `gui` | `gofmt -l .`（必须为空）、`CGO_ENABLED=0 go vet ./...`、`go test ./... -count=1`、`go build` | 格式、vet、测试、构建 |
 | GUI（可复现图像） | `gui` | `SAKI_PREVIEW_DIR=... go test -run TestPreviewImages -count=1 .` | headless `ui.Tester` 生成 light/dark add／settings 等场景 PNG，作为 artifact 保留 14 天 |
 | 协作检查 | `python` | `python3 scripts/test_collaboration_check.py`；断言运行测试数非零 | 既有协作检查回归；pipefail 保留失败，空套件不能静默通过 |
@@ -51,6 +52,17 @@ python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
 ```
 
 driver 自建本地 fixture HTTP 服务，不需要外部 provider/key；其断言覆盖两个真实 OS 进程、临时文件 read、task/message/journal 关联、跨进程保存/恢复/history 零模型重放、继续前文，以及 stdout 断连且 stdin 仍打开时的 drain/exit。Python 由 `actions/setup-python@v7` 显式固定为 3.12；step 使用 `set -o pipefail` + `tee`，step 超时 5 分钟，非零退出不会被后续命令吞掉。该步骤属于既有 `rust` job，失败沿 `rust` → `ci-required` 传播，不使用 if-file-exists、continue-on-error 或 skip。
+
+## GUI→Runtime 进程集成（依赖 #63 / PR88，待启用）
+
+状态：**待启用**。`desktop/integration_runtime_test.go::TestRuntimeProcessIntegration` 由 GUI 提供，当前 `dev@10511b2` 尚未包含它；不得把准备配置写成已运行。`#63` 合入后，在 `rust` job 的真实 binary 构建之后增加：
+
+```sh
+cd desktop
+SAKI_TEST_RUNTIME_BIN="$GITHUB_WORKSPACE/target/debug/Saki" CGO_ENABLED=0 go test -run '^TestRuntimeProcessIntegration$' -count=1 -v .
+```
+
+Go 由 `actions/setup-go@v7` 按 `desktop/go.mod` 提供（当前 1.27.1），缓存 `desktop/go.sum`；`SAKI_TEST_RUNTIME_BIN` 使用绝对 `$GITHUB_WORKSPACE` 路径，指向本次 `cargo build --locked --bin Saki` 产物，`-count=1` 避免缓存替代新 binary。测试自带本地 httptest provider，不访问外部 provider/key。step 使用 `pipefail`+`tee`，并断言日志出现 `--- PASS: TestRuntimeProcessIntegration`：只匹配该顶层测试，缺变量导致的 Skip、未匹配测试的空跑或失败都不能绿。超时 5 分钟；Linux/headless 测试，不覆盖真实窗口/IME。失败留在既有 `rust` job，沿 `rust` → `ci-required` 传播；无 if-file-exists、continue-on-error 或 skip。
 
 ## 触发、并发与权限
 
@@ -144,6 +156,11 @@ python3 scripts/test_collaboration_check.py
 # Runtime stdio 跨进程 smoke（dev@4001fd4 起）
 cargo build --locked --bin Saki
 python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
+
+# GUI→Runtime 进程集成（需 #63/PR88 已合入）
+cd desktop
+SAKI_TEST_RUNTIME_BIN="$PWD/../target/debug/Saki" CGO_ENABLED=0 \
+  go test -run '^TestRuntimeProcessIntegration$' -count=1 -v .
 
 # GUI
 cd desktop
