@@ -590,8 +590,7 @@ func runtimePreviewApp(scene string) *appModel {
 		bound.StatusDetail = "Task failed: model_error: upstream request failed"
 		bound.Messages = []*message{
 			{Key: "u3", Kind: msgUser, Text: "Inspect README.md and summarize the project."},
-			{Key: "a3", Kind: msgContact, Text: "The request failed before an answer was produced.",
-				AlertTitle: "Task failed", AlertDetail: "model_error: upstream request failed"},
+			{Key: "a3", Kind: msgContact, Text: "Checking the README"},
 		}
 	case "runtime-settings":
 		a.openSettings()
@@ -623,5 +622,43 @@ func TestPreviewRuntimeStates(t *testing.T) {
 		tr := ui.NewTester(a.view, 960, 640)
 		tr.Frame()
 		writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("headless-light-min-%s.png", scene)), tr.Image())
+	}
+	a := runtimePreviewApp("runtime-chat")
+	tr := ui.NewTester(a.view, 1600, 900)
+	tr.Frame()
+	writePreviewPNG(t, filepath.Join(dir, "headless-light-wide-runtime-chat.png"), tr.Image())
+}
+
+func TestToolFailureIsVisibleBeforeDetails(t *testing.T) {
+	cases := []struct {
+		name   string
+		output string
+		want   string
+		raw    string
+	}{
+		{"exit", `{"output":"normal text","exit_code":1,"timed_out":false}`, "Failed (exit 1)", "exit_code"},
+		{"timeout", `{"output":"still working","timed_out":true}`, "Timed out", "timed_out"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ct := &contact{ID: "saki", Name: "Saki", Role: "Assistant", Loaded: true}
+			ct.Messages = []*message{{
+				Key: "tool", Kind: msgActivity, ToolName: "bash", ToolArgs: `{"command":"false"}`,
+				ToolOutput: tc.output,
+			}}
+			a := &appModel{demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1, contacts: []*contact{ct}}
+			tr := ui.NewTester(a.view, 1040, 720)
+			tr.Frame()
+			if !tr.HasText(tc.want) || !tr.HasText("normal text") && !tr.HasText("still working") {
+				t.Fatalf("failure summary not visible: %v", tr.Texts())
+			}
+			if err := tr.Click("Details"); err != nil {
+				t.Fatal(err)
+			}
+			tr.Frame()
+			if !tr.HasText(tc.raw) {
+				t.Fatalf("raw tool result not visible after Details: %v", tr.Texts())
+			}
+		})
 	}
 }
