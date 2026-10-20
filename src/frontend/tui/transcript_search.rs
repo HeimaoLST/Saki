@@ -18,6 +18,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::frontend::tui::selection::{RowKey, VisualAnchor};
 use crate::frontend::tui::state::{Anchor, App, Focus};
+use crate::frontend::tui::textwrap;
 use crate::frontend::tui::view::record_layout;
 
 /// Cursor glyph in the compact search strip (not stripped from record text).
@@ -376,7 +377,8 @@ fn flush(
     spans.push(Span::styled(content.to_owned(), style));
 }
 
-/// Compact strip shown only while the search is active.
+/// Compact strip shown only while the search is active. The query cursor stays
+/// visible at narrow widths by showing the query tail before the status.
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let Some(search) = &app.transcript_search else {
         return;
@@ -390,25 +392,44 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         format!("{}/{}", search.selected + 1, total)
     };
+    let label = if area.width as usize >= 10 {
+        "Search: "
+    } else {
+        "S:"
+    };
+    let label_width = UnicodeWidthStr::width(label);
+    let status_width = UnicodeWidthStr::width(status.as_str()) + 2;
+    let room = (area.width as usize)
+        .saturating_sub(label_width + status_width + 1)
+        .max(1);
+    let query_width = UnicodeWidthStr::width(search.query.as_str());
+    let shown = if query_width <= room {
+        search.query.clone()
+    } else {
+        textwrap::visible_suffix(&search.query, room)
+    };
+    let shown_width = UnicodeWidthStr::width(shown.as_str());
     let mut spans = vec![
         Span::styled(
-            "Search: ",
+            label,
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(search.query.clone(), Style::default().fg(theme.text)),
+        Span::styled(shown, Style::default().fg(theme.text)),
         Span::styled(CURSOR, Style::default().fg(theme.accent)),
-        Span::raw("  "),
-        Span::styled(status, Style::default().fg(theme.secondary)),
     ];
-    let hint = "  F3/Enter next · Shift+F3/Up prev · Esc close";
-    let used: usize = spans
-        .iter()
-        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
-        .sum();
-    if (area.width as usize) > used + hint.len() {
-        spans.push(Span::styled(hint, Style::default().fg(theme.secondary)));
+    if (area.width as usize) > label_width + shown_width + 1 + status_width {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(status, Style::default().fg(theme.secondary)));
+        let hint = "  F3/Enter next · Shift+F3/Up prev · Esc close";
+        let used: usize = spans
+            .iter()
+            .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+            .sum();
+        if (area.width as usize) > used + hint.len() {
+            spans.push(Span::styled(hint, Style::default().fg(theme.secondary)));
+        }
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }

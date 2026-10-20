@@ -386,3 +386,98 @@ fn literal_marker_glyph_in_record_text_is_searchable() {
     assert_eq!(found[0].start, cell_start(&row, "▌literal"));
     assert_eq!(found[0].end, found[0].start + 8);
 }
+
+#[test]
+fn commands_popup_is_suspended_while_search_owns_input() {
+    use crate::frontend::tui::commands::Commands;
+
+    let mut app = App::new();
+    app.push(assistant("alpha"));
+    app.last_width = 40;
+    app.last_height = 8;
+    let mut editor = Editor::new();
+    editor.set_draft("/");
+    let mut commands = Commands::default();
+    commands.sync(&app, &editor);
+    assert!(commands.key(&mut editor, key(KeyCode::Down)));
+
+    // F3 opens search with the slash draft still in the hidden composer.
+    handle_key(&mut app, &mut editor, key(KeyCode::F(3)));
+    assert!(search::active(&app));
+    commands.sync(&app, &editor);
+    assert!(
+        !commands.key(&mut editor, key(KeyCode::Tab)),
+        "Tab must not complete the hidden draft"
+    );
+    assert!(
+        !commands.key(&mut editor, key(KeyCode::Up)),
+        "Up must not move a stale command popup"
+    );
+    handle_key(&mut app, &mut editor, key(KeyCode::Tab));
+    handle_key(&mut app, &mut editor, key(KeyCode::Up));
+    assert_eq!(editor.text(), "/", "routing preserved the exact draft");
+
+    for character in "alpha".chars() {
+        handle_key(&mut app, &mut editor, key(KeyCode::Char(character)));
+    }
+    handle_key(&mut app, &mut editor, key(KeyCode::F(3)));
+    handle_key(&mut app, &mut editor, key(KeyCode::Up));
+    handle_key(&mut app, &mut editor, key(KeyCode::Esc));
+    assert!(!search::active(&app));
+    assert_eq!(
+        editor.text(),
+        "/",
+        "Esc after navigation preserved the draft"
+    );
+
+    commands.sync(&app, &editor);
+    assert!(
+        commands.key(&mut editor, key(KeyCode::Tab)),
+        "completion works again once search is closed"
+    );
+    assert_ne!(editor.text(), "/");
+}
+
+#[test]
+fn composer_cursor_is_hidden_and_narrow_search_keeps_its_cursor() {
+    let mut app = App::new();
+    app.push(assistant("alpha"));
+    app.last_width = 40;
+    app.last_height = 8;
+    let mut editor = Editor::new();
+    editor.insert_str("draft");
+    app.focus = Focus::Input;
+
+    let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
+    terminal
+        .draw(|frame| view::draw(frame, &mut app, &editor))
+        .unwrap();
+    let composer = terminal.get_cursor_position().unwrap();
+    assert!(composer.y > 0, "composer owns the cursor normally");
+
+    open_on(&mut app, 40);
+    search::push_str(&mut app, "alpha");
+    // A fresh backend shows whether the composer claimed the hardware cursor:
+    // with search active nothing may call set_cursor_position.
+    let mut search_terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
+    search_terminal
+        .draw(|frame| view::draw(frame, &mut app, &editor))
+        .unwrap();
+    let search_cursor = search_terminal.get_cursor_position().unwrap();
+    assert_eq!(
+        (search_cursor.x, search_cursor.y),
+        (0, 0),
+        "the composer cursor is suppressed while search owns input"
+    );
+
+    // Very narrow strip: only the label, the query tail and the cursor glyph fit.
+    let mut narrow = Terminal::new(TestBackend::new(6, 1)).unwrap();
+    narrow
+        .draw(|frame| {
+            crate::frontend::tui::transcript_search::draw(frame, &app, frame.area());
+        })
+        .unwrap();
+    let text = buffer_text(narrow.backend().buffer());
+    assert!(text.contains("▌"), "query cursor stays visible: {text:?}");
+    assert!(text.contains("S:") || text.contains("Search:"), "{text:?}");
+}

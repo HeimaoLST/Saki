@@ -53,7 +53,7 @@ pub async fn run(
         session.draw(|frame| {
             view::draw(frame, &mut app, &editor);
             if sessions.picker.is_none() && !sessions.pending {
-                if !app.history.searching() {
+                if !app.history.searching() && !transcript_search::active(&app) {
                     commands.draw(frame, &app);
                 }
                 history::draw(frame, &app);
@@ -93,7 +93,10 @@ pub async fn run(
                             app.text_selection.clear();
                             continue;
                         }
-                        if !app.history.searching() && commands.key(&mut editor, key) {
+                        if !app.history.searching()
+                            && !transcript_search::active(&app)
+                            && commands.key(&mut editor, key)
+                        {
                             app.text_selection.clear();
                             continue;
                         }
@@ -151,7 +154,10 @@ pub async fn run(
                             app.text_selection.clear();
                             continue;
                         }
-                        if !app.history.searching() && commands.mouse(&mut editor, mouse) {
+                        if !app.history.searching()
+                            && !transcript_search::active(&app)
+                            && commands.mouse(&mut editor, mouse)
+                        {
                             app.text_selection.clear();
                             continue;
                         }

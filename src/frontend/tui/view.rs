@@ -246,7 +246,12 @@ fn draw_input(frame: &mut Frame, app: &mut App, editor: &Editor, area: Rect) {
     );
     // The input cursor is only shown when the input actually owns the focus and
     // no log sub-view is open.
-    if height > 0 && app.focus == Focus::Input && app.log_view.is_none() && !app.help_open {
+    if height > 0
+        && app.focus == Focus::Input
+        && app.log_view.is_none()
+        && !app.help_open
+        && app.transcript_search.is_none()
+    {
         let x = inner.x + (layout.cursor_cell as u16).min(inner.width.saturating_sub(1));
         let y = inner.y + (cursor_display - start) as u16;
         frame.set_cursor_position((x, y));
