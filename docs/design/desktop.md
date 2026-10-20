@@ -23,17 +23,25 @@
 ## 布局打磨（#90，实现事实）
 
 一次局部布局调整，不改发送/取消/runtime/store 语义：
-- 联系人侧栏保持 220px：品牌与 Contacts/Add contact 收敛为低权重文本入口；行内统一 32px 头像、名称和单行摘要；选中态只使用 surface hover，无边框；Working/Needs attention 合并在摘要行显示，未读仍归原联系人。
-- 顶部降为 28px 头像、15px 名称、11px 状态/角色；History/Settings 作为低权重文本按钮，移除 header 下的 divider。
-- 聊天主体使用 `MaxWidthPercent(86)` 居中阅读列；用户气泡 `MaxWidthPercent(80)`，助手正文不再重复头像/姓名/时间；历史引用仍保留日期/说话人。工具活动收敛为 `name · path/command`、摘要和 Details（展开显示原始 output 截断）；错误仍由 task alert/StatusDetail 呈现。
+- 联系人侧栏保持 220px：品牌与 Contacts/Add contact 收敛为轻量入口；行内统一 32px 头像、名称和单行摘要；选中态只使用 surface hover，无边框；Working/Needs attention 合并在摘要行显示，未读仍归原联系人。
+- 顶部降为 28px 头像、15px 名称、11px 状态/角色；History/Settings 作为次级按钮，移除 header 下的 divider。History/Settings/Add contact/Details 使用至少 12px 文字和可用点击 padding，靠背景/对比分层，不引入图标库。
+- 聊天主体采用 `WidthPercent(86) + MaxWidth(760)` 的同一居中列（header/chat/composer 共用），宽窗口有绝对阅读上限，窄窗口按 86% 收缩；用户气泡 `MaxWidthPercent(80)`。助手正文不再重复头像/姓名/时间；历史引用仍保留日期/说话人。
+- 工具活动收敛为 `name · path/command`、摘要和 Details。摘要优先显示 `error`、`timed_out`、非零 `exit_code`，再显示普通 output，因此失败/超时默认可见；Details 展开保留原始结果截断。工具失败仍作为工具结果交给模型，不把整轮 Task 判失败。
+- 真实终态原因始终由 `StatusDetail` 显示，不因最后一条 message 有 AlertTitle 就隐藏；错误展示不做 fixture 猜测。
 - Composer 贴底，输入区从 44px 高起，圆角 14；保留多行、Enter/Shift+Enter、IME 组合不发送、一次性焦点、Send/Stop/错误与 unknown 恢复提示。
 - 960×640 与打开 settings 的 300px aux 下，阅读列按百分比收缩，不横向溢出；没有提高最小窗口。
 
 Headless 证据（fixture，不等于线上模型或原生窗口）：
-- before：`/private/tmp/saki-gui-90/before/`（改动前 demo 场景）。
-- after：`/private/tmp/saki-gui-90/after/`（demo 场景 + `headless-*runtime-*` 场景；runtime-backed 形状的消息/工具/Working/错误/只读 settings）。
+- before：`/private/tmp/saki-gui-90/before/`（12 张 demo + 11 张同场景 `headless-*runtime-*`，由临时 `git archive 50d6b9c` baseline module 加上同一截图 fixture 生成；旧 view）。
+- after：`/private/tmp/saki-gui-90/after/`（12 张 demo + 11 张 `headless-*runtime-*`，含 1600×900 宽窗口；runtime-backed 形状的消息/工具/Working/错误/只读 settings）。
 - 生成：`SAKI_PREVIEW_DIR=/private/tmp/saki-gui-90/after CGO_ENABLED=0 go test -run 'TestPreviewImages|TestPreviewRuntimeStates' -count=1 .`
+- 真实 runtime 五项集成：`SAKI_TEST_RUNTIME_BIN=/abs/Saki go test -run '^(TestRuntimeProcessIntegration|TestGUIAppRuntimeFlow|TestGUIFirstCreateUsesProfileSnapshot|TestGUIAppPersistsMappingBeforeSend|TestGUIAppSaveFailureStopsBeforeSend)$' -count=1 -v .`
 - 不新增样式数值测试；键盘焦点、草稿隔离、绑定 profile 只读、运行中切换/Stop/history 的回归仍由现有 Go 测试与真实 runtime 集成覆盖。
+- 本轮已 merge `origin/dev=6a682d8`（含 #87 required CI 五项 GUI runtime 门禁）；该布局的原生窗口/CUA 定向验收仍待主责执行。
+
+独立 #90 候选包（不覆盖 #63 试用包）：
+- `/private/tmp/saki-gui-90-app/Saki.app`；GUI sha256 `6de1c6da168d2f19dd411f3b6e5efe73f0ea2d7195fba9b166639687728eedfc`，runtime helper sha256 `0828c59072c313e74e458f78e7f25122c30d1e838ebc17db3c77eac6aafb0379`（复用 #63 helper）。
+- 构建源码 SHA `3b2fcd021c32af1e2ab28d47c176c69c18076bf8`；日志 `/private/tmp/saki-gui-90-app/logs/`；ad-hoc 签名，`codesign --verify --strict` / `--deep --strict` 通过，arm64。
 
 ## 文件与配置（实现事实）
 
