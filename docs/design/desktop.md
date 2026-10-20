@@ -215,14 +215,14 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 
 ### 语义映射与可读派生
 
-应用只向组件暴露语义角色；下表的 Moon/Dawn 值是设计基线（原始 + 有依据的派生）。`SurfacePressed` 明确复用 `SurfaceHover`，避免把 `TextMuted` 放到更深的 highlightMed 上造成低于 4.5；控件按下仍由框架的按钮状态表达。
+应用只向组件暴露语义角色；下表的 Moon/Dawn 值是设计基线（原始 + 有依据的派生）。`SurfacePressed` 明确复用 `SurfaceHover`；该 overlay 上的 `TextMuted` 已 ≥4.5（Moon 5.78 / Dawn 5.00）。只有 `highlightMed` 不承载 muted 小字；pressed/hover 同色，真实按压/焦点反馈列入实施验收，不假称已有额外视觉区分。
 
 | 语义角色 | Moon | Dawn | 说明 |
 | --- | --- | --- | --- |
 | Background | `#232136` | `#faf4ed` | 官方 base |
 | Surface | `#2a273f` | `#fffaf3` | 官方 surface |
 | SurfaceHover | `#393552` | `#f2e9e1` | 官方 overlay |
-| SurfacePressed | `#393552` | `#f2e9e1` | 与 hover 同色；不把 muted 小字放此层 |
+| SurfacePressed | `#393552` | `#f2e9e1` | 与 hover 同色；muted 在此 overlay 仍 ≥4.5 |
 | Border | `#44415a` | `#dfdad9` | 官方 highlightMed；只作非文字边界，不单独承担控件识别 |
 | Text | `#e0def4` | `#464261` | 官方 text |
 | TextMuted | `#b8b4cc` | `#64607b` | Moon 派生；Dawn 沿用 #90 派生 |
@@ -239,9 +239,23 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 | Progress（app） | `#9ccfd8` | `#286983` | 与 Link 初始复用，但独立语义 |
 | BubbleUser（app） | `#393552` | `#f2e9e1` | user 气泡背景；不再借用 Selection |
 | QuoteHighlight（app） | `#2a283e` | `#f4ede8` | history 定位高亮 |
-| Scrollbar（app） | `TextMuted` @ 35% alpha | `TextMuted` @ 35% alpha | 非文字；无对比度门槛 |
+| Scrollbar（MyGo） | `TextMuted`（不透明） | `TextMuted`（不透明） | `ui.Theme` 字段；对 base/surface/overlay ≥3（Moon 7.78/7.15/5.78，Dawn 5.49/5.78/5.00） |
 | Inverse（MyGo） | `Text` | `Text` | 零值 fallback 即可 |
 | InverseText（MyGo） | `Background` | `Background` | 零值 fallback 即可 |
+
+**唯一小型 resolved 容器**：`ui.Theme` 没有 Link/Progress/BubbleUser/QuoteHighlight 字段。resolver 返回一个容器，例如：
+
+```go
+type resolvedTheme struct {
+    Widgets        *ui.Theme
+    Link           ui.Color
+    Progress       ui.Color
+    BubbleUser     ui.Color
+    QuoteHighlight ui.Color
+}
+```
+
+`view` 把 `resolvedTheme` 传给组件；组件读取 `resolved.Widgets` 的框架语义与四个 app 角色。不要往 `ui.Theme` 强塞新字段，不要复用 `Selection`/`Success` 顶替这四个职责，也不预建组件主题框架。A 只有这四个 app 角色；未来 tool/code 块若需要独立 surface，优先复用 `Surface`/`TextMuted`，不为尚未接入的 Markdown 预建主题系统。
 
 **可读性计算**（WCAG；正文/小字目标 ≥4.5:1，背景列为 base / surface / overlay）：
 
@@ -256,15 +270,16 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 | Focus（非文字 3:1） | 7.47 / 6.87 / 5.56 | 3.47 / 3.65 / 3.16 |
 
 - 官方 raw 的 `subtle/love/gold` 在 Dawn 不足 4.5，`subtle` 在 Moon 的 overlay 也不足；因此 TextMuted/Danger/Warning 采用派生值。
-- `Border`（highlightMed）对 Surface 对比不足 3:1，不能作为唯一控件边界；控件通过 surface 层级、文字和 Focus 识别。`TextMuted` 不放在 SurfacePressed/highlightMed 上。
+- `Border`（highlightMed）对 Surface 对比不足 3:1，不能作为唯一控件边界；控件通过 surface 层级、文字和 Focus 识别。`TextMuted` 不放在 highlightMed 上；当前 `SurfacePressed` 是 overlay，已 ≥4.5。pressed/hover 同色，真实按压/焦点反馈列入实施验收。
 - 不为每个 hex 写机械测试；对比度作为设计计算，实施验收检查真实组合。
 
 ### Appearance、模式与解析
 
 - **入口**：应用级 `Appearance`，独立于 Contact Settings；建议放在联系人侧栏底部的低权重入口，显示当前有效主题名。Contact Settings 仍只编辑联系人 profile。
 - **模式**：`system`（默认）/`light`/`dark`；按 OS 明暗，不做定时切换。light 与 dark 各自记录 scheme ID，默认 `rose-pine-dawn` / `rose-pine-moon`。当前每类只有一个内置方案，A 阶段只显示“当前有效主题”（不显示没有选择意义的空下拉）；B 阶段有多个方案/自定义后再显示选择器。
-- **app model**：持有 `Appearance{mode, lightID, darkID}`；每帧只有一个 resolver：根据 mode 与 OS 明暗选出 scheme，再映射成 `ui.Theme`。`view` 只在入口调用一次 resolver，后续组件只接收 `*ui.Theme` 并读取语义角色；不在组件里判断 Moon/Dawn/品牌名。
+- **app model**：持有 `Appearance{mode, lightID, darkID}`；每帧只有一个 resolver：根据 mode 与 OS 明暗选出 scheme，再生成上文的 `resolvedTheme`（`Widgets *ui.Theme` + 四个 app 角色）。`view` 只在入口调用一次 resolver，后续组件接收 `resolvedTheme` 并读取语义角色；不在组件里判断 Moon/Dawn/品牌名。
 - **解析顺序**：`mode=system` 时读取当帧 `c.Theme().Dark`（这是 SetTheme 之前的默认主题，反映 OS/后端 effective appearance）；`mode=light|dark` 时直接使用存储的 mode，不把 `SetSource` 后的 forced Dark 当 OS。解析后立即 `c.SetTheme`，本帧后续使用该主题。
+- **无效设置值与 fallback**：appearance 独立校验，不能因 mode/ID 错误把整个 contacts store 判坏。`mode` 非法→按 `system`；light/dark ID 缺失、未知或 kind 不匹配（例如 light 槽指向 dark 主题）→该槽回退内置默认同 kind 主题，保留用户选择 ID 并显示非阻塞提示；不覆写用户偏好。恢复 `system` 时必须让 backend source 为 `ThemeSystem`；首次创建窗口时用当前 resolved scheme 的 base 作为 backing color，避免先显示错误色再切换。
 - **禁用项**：不改布局、字体大小、圆角、spacing；不重建 runtime/session/contact，不取消/重发任务，不清草稿、焦点、选择项、滚动位置。换主题不是换 app 状态。
 - **框架重绘**：`Context.SetTheme` 每帧局部（`ui/context.go:305-315`，[链接](https://github.com/egoist/mygo/blob/fea932a7a2a9/ui/context.go#L305-L315)）；`ui/runtime.go:118` 每帧重置默认主题。因此不要只在启动时 SetTheme，也不要注册重复 listener 来维护 effective 状态；每帧 resolver 即可。
 - **禁止重复 SetSource**：`mygo.Theme.SetSource` 只在启动和模式变更时调用一次；不在每帧调用，以免每帧触发 `contentThemeChanged`。系统模式恢复 `ThemeSystem`，手动模式设 `ThemeLight/ThemeDark`；`SetSource` 的说明见 `modules.go:411-429`（[链接](https://github.com/egoist/mygo/blob/fea932a7a2a9/modules.go#L411-L429)）。
@@ -302,7 +317,7 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 
 ### 自定义主题（B 阶段设计）
 
-- **目录**：`UserConfigDir()/Saki/themes/*.json`；一个文件一个主题。`id` 必须是小写 kebab-case 且与文件名（去 `.json`）一致；内置 ID 前缀 `rose-pine-` 保留，用户不能覆盖。
+- **目录**：`UserConfigDir()/Saki/themes/*.json`；一个文件一个主题。文件名自由；`id` 必须是小写 kebab-case、稳定且唯一，不能与任何注册内置 ID 相同。不强制 `id` 等于文件名，也不另设前缀命名系统；内置注册表 ID 受保护。
 - **格式**：完整语义颜色定义，不做继承、表达式、脚本、模板或品牌角色输入。`schema_version` 当前为 `1`，必须与 `id`、`name`、`kind`（`light|dark`）、`colors` 一起提供。
 - **必填 colors**：`background/surface/surfaceHover/border/text/textMuted/accent/accentHover/accentPressed/accentText/danger/warning/success/selection/focus`。
 - **可选 colors 与唯一 fallback**：`surfacePressed→surfaceHover`、`link→success`、`progress→link`、`bubbleUser→selection`、`quoteHighlight→selection`、`scrollbar→textMuted`、`inverse→text`、`inverseText→background`。可选字段缺失时使用该 fallback，不继承其他主题。
@@ -363,11 +378,11 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 ### 依赖快照与上游差异（只读核对，不作为冻结政策）
 
 - 当前 `desktop/go.mod:5`（[源码](https://github.com/HeimaoLST/Saki/blob/3c449404a3648ae0a7932bab749adf3a884ef062/desktop/go.mod#L5)）依赖 `github.com/egoist/mygo v0.4.9-0.20261014025635-fea932a7a2a9`（10/14，[Theme 源码](https://github.com/egoist/mygo/blob/fea932a7a2a9/ui/theme.go)）。这是当前 app 的已验证快照，不是长期冻结版本。
-- 用户报告 `@latest` 为 v0.5.5（10/16）；本次用 `go mod download -json` 只读核对官方 main commit `163d50e2acc1b5361d29bc6d26a8a0e11ebdb847`（10/20），解析为 `v0.5.6-0.20261020115920-163d50e2acc1`。仅缓存，未改 `go.mod/sum`。
+- 主责 sora 实际执行 `go list -m` 查询到 `@latest` 为 v0.5.5（10/16）；本次用 `go mod download -json` 只读核对官方 main commit `163d50e2acc1b5361d29bc6d26a8a0e11ebdb847`（10/20），解析为 `v0.5.6-0.20261020115920-163d50e2acc1`。仅缓存，未改 `go.mod/sum`。
 - 已核对差异：
   - `ui.Theme` 字段、`Context.Theme/SetTheme`、`ui.Preferences`、`mygo.Theme.SetSource/Source/IsDark/OnUpdated` 的语义未变。
-  - `mygo.ThemePreferences`：`Accent` 从 `ui.Color` 改为 `color.NRGBA`，新增 `ReduceTransparency`，删除 `AccentColor/ReduceMotion/HighContrast/TextScale` 便利方法（[最新定义](https://github.com/egoist/mygo/blob/163d50e2acc1b5361d29bc6d26a8a0e11ebdb847/modules.go#L320-L350)）；设计使用 view 内的 `c.Preferences()`（`ui.Preferences` 未变）避免绑定这些便利方法。
-  - `ui/markdown` 的 `View/Stream/Theme` 未变，链接颜色应用有修正；本设计不需要新 API。
+  - `mygo.ThemePreferences`：`Accent` 从 root `mygo.Color`（[color.go:12-16](https://github.com/egoist/mygo/blob/fea932a7a2a9/color.go#L12-L16)）改为 `color.NRGBA`，新增 `ReduceTransparency`，删除 `AccentColor/ReduceMotion/HighContrast/TextScale` 便利方法（[最新定义](https://github.com/egoist/mygo/blob/163d50e2acc1b5361d29bc6d26a8a0e11ebdb847/modules.go#L320-L350)）；设计使用 view 内的 `c.Preferences()`（`ui.Preferences` 未变）避免绑定这些便利方法。
+  - `ui/markdown` 的 `View/Stream/Theme` 未变，链接颜色应用有修正；本设计不需要新 API。这些是 MyGo 框架能力，Saki 尚未接入 Markdown/RichText/Timeline，不据此宣称产品支持。
   - 动画 `Animate/AnimateColor/Keyframes/Transition` 仍存在；新版本增加 `Timeline`（[`ui/timeline.go`](https://github.com/egoist/mygo/blob/163d50e2acc1b5361d29bc6d26a8a0e11ebdb847/ui/timeline.go#L27)），A 不使用。
   - 窗口 `SetBackgroundColor`、`TitleBarStyle/Transparent/Vibrancy/BackgroundColor` 仍存在。
   - 其他为内部布局/选择/性能变化，不构成本设计的主题契约。
