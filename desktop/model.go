@@ -25,6 +25,15 @@ const (
 	msgActivity
 )
 
+type sendState int
+
+const (
+	sendIdle sendState = iota
+	sendSubmitting
+	sendAccepted
+	sendUnknown
+)
+
 type historyEntry struct {
 	ID   string
 	Date string
@@ -63,6 +72,20 @@ type contact struct {
 	Draft        string
 	replyIndex   int
 	list         ui.ListState
+
+	// Runtime-backed state. Empty SessionID means the contact has no runtime
+	// session yet; it is created lazily before the first task.send.
+	SessionID      string
+	Loaded         bool
+	LoadErr        string
+	Unavailable    string
+	ActiveTaskID   string
+	SendState      sendState
+	SendError      string
+	SubmittedDraft string
+	SubmittedRev   int
+	draftRev       int
+	HistoryDirty   bool
 }
 
 type viewMode int
