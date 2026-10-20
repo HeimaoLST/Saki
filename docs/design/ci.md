@@ -1,6 +1,6 @@
 # CI governance（Runtime／TUI／GUI）
 
-更新日期：2026-10-20。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。当前 workflow 基线为 `dev@426d04e`（2026-10-20，含 [PR #80](https://github.com/HeimaoLST/Saki/pull/80) 的 Python 门禁）；Runtime stdio 门禁准备中，依赖 #60/PR82 合入后生效。本文职责调整本身不修改 workflow 或分支保护。
+更新日期：2026-10-20。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。当前 workflow 基线为 `dev@4001fd4`（2026-10-20，含 [PR #80](https://github.com/HeimaoLST/Saki/pull/80) 的 Python 门禁与 [PR #82](https://github.com/HeimaoLST/Saki/pull/82) 的 Runtime stdio driver）。本文职责调整本身不修改 workflow 或分支保护。
 
 ## 目的与范围
 
@@ -30,6 +30,7 @@
 | Runtime + TUI | `rust` | `cargo clippy --locked --all-targets -- -D warnings` | 所有 target 的静态检查，warnings 视为失败 |
 | Runtime + TUI | `rust` | `cargo test --locked --all-targets` | 单元、集成与 example target；测试数量以对应 SHA 的实际 run 为准 |
 | TUI（真实 PTY） | `rust` | `cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1` | 真实 PTY 上进入／退出终端并验证 panic 后 cooked mode 恢复 |
+| Runtime stdio（真实子进程） | `rust` | `cargo build --locked --bin Saki`；`python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki` | 两个真实 OS 进程、临时 read、task/message/journal 关联、恢复/history 零重放、继续前文与 stdout 断连 drain；driver 自带本地 fixture，无外部 provider/key |
 | GUI（独立 Go module） | `gui` | `gofmt -l .`（必须为空）、`CGO_ENABLED=0 go vet ./...`、`go test ./... -count=1`、`go build` | 格式、vet、测试、构建 |
 | GUI（可复现图像） | `gui` | `SAKI_PREVIEW_DIR=... go test -run TestPreviewImages -count=1 .` | headless `ui.Tester` 生成 light/dark add／settings 等场景 PNG，作为 artifact 保留 14 天 |
 | 协作检查 | `python` | `python3 scripts/test_collaboration_check.py`；断言运行测试数非零 | 既有协作检查回归；pipefail 保留失败，空套件不能静默通过 |
@@ -40,16 +41,16 @@
 
 Python 门禁的真实失败传播：临时探针 `9480847` 的 [run 39381934207](https://github.com/HeimaoLST/Saki/actions/runs/39381934207) 中 Python 与聚合均失败，Rust／Go 成功；恢复探针并同步后的最终候选 `96ad987` 的 [run 39384000031](https://github.com/HeimaoLST/Saki/actions/runs/39384000031) 四个 job 均成功。探针已用追加提交撤回，不在最终树中。
 
-## 准备中的 Runtime stdio 门禁（依赖 #60 / PR #82）
+## Runtime stdio 门禁（2026-10-20 已启用）
 
-状态：**待启用**。当前 `dev@426d04e` 尚无 `examples/runtime_stdio.py`，因此以下步骤尚未运行；不得把准备配置写成已通过。`#60`/PR82 合入后，`rust` job 将增加：
+`rust` job 在已有 Rust 测试后显式构建真实二进制，并运行 Runtime 提供的无 GUI driver：
 
 ```sh
 cargo build --locked --bin Saki
 python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
 ```
 
-覆盖：两个真实 OS 进程、临时文件 read、task/message/journal 关联、跨进程保存/恢复/history 零模型重放、继续前文，以及 stdout 断连时已接纳任务的 drain/exit；driver 自带本地 fixture HTTP 与断言，不需要外部 provider/key。Python 通过 `actions/setup-python@v7` 显式固定 3.12；driver step 超时 5 分钟，使用 `pipefail`+`tee`，非零退出不会被吞掉。合入并同步后，这一步骤属于 `rust` job，失败会沿现有 `rust` → `ci-required` 链传播；不会使用 if-file-exists、continue-on-error 或 skip。
+driver 自建本地 fixture HTTP 服务，不需要外部 provider/key；其断言覆盖两个真实 OS 进程、临时文件 read、task/message/journal 关联、跨进程保存/恢复/history 零模型重放、继续前文，以及 stdout 断连且 stdin 仍打开时的 drain/exit。Python 由 `actions/setup-python@v7` 显式固定为 3.12；step 使用 `set -o pipefail` + `tee`，step 超时 5 分钟，非零退出不会被后续命令吞掉。该步骤属于既有 `rust` job，失败沿 `rust` → `ci-required` 传播，不使用 if-file-exists、continue-on-error 或 skip。
 
 ## 触发、并发与权限
 
@@ -59,7 +60,7 @@ python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
 - 运行平台：`ubuntu-24.04`（GitHub 官方 `ubuntu-latest` 当前指向的镜像；显式固定避免标签漂移）。
 - 工具链：Rust 固定 `1.99.0`（rustfmt + clippy，官方 rustup 安装，已验证该版本可从 static.rust-lang.org 下载）；Go 由 `desktop/go.mod`（当前 `1.27.1`）通过 `actions/setup-go` 的 `go-version-file` 决定，不使用本机未来版本随意钉死不可下载版本。
 - 缓存：Cargo registry／git／`target` 以 `runner.os + Rust 版本 + Cargo.lock` 为 key；Go 使用 `actions/setup-go` 内置缓存（`desktop/go.sum`）。缓存只加速，不改变 `--locked` 校验。
-- Python：`actions/setup-python` 显式提供 3.12，运行现有 stdlib unittest 入口，不增加第三方测试框架。
+- Python：`actions/setup-python@v7` 显式提供 3.12；协作检查 job 运行现有 stdlib unittest，rust job 的 stdio self-test 使用同一版本，不依赖 runner 偶然环境。
 - 超时：Rust 30 分钟（含 stdio self-test step 的 5 分钟上限），GUI 20 分钟，Python 10 分钟，聚合 5 分钟。
 
 ## 失败处理与责任
@@ -140,7 +141,7 @@ cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_ter
 # Python（协作检查回归）
 python3 scripts/test_collaboration_check.py
 
-# Runtime stdio 跨进程 smoke（需 #60/PR82 已合入；当前 dev 尚未提供 examples/runtime_stdio.py）
+# Runtime stdio 跨进程 smoke（dev@4001fd4 起）
 cargo build --locked --bin Saki
 python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
 

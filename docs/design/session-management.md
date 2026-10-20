@@ -1,6 +1,6 @@
 # Session management
 
-Updated: 2026-10-20. Status: implemented. Local slash commands are implemented; see [Local command system](command-system.md). The accepted machine API contract and phased runtime work are documented in [Runtime API](runtime-api.md); implementation is tracked separately in #60 and is not yet delivered.
+Updated: 2026-10-20. Status: implemented. Local slash commands are implemented; see [Local command system](command-system.md). The accepted machine API contract and phased runtime work are documented in [Runtime API](runtime-api.md); implementation is delivered in #60.
 
 ## Behavior
 
