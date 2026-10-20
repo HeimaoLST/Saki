@@ -1354,6 +1354,105 @@ pub fn page_down(app: &mut App, page: usize) {
     });
 }
 
+/// Visible user-message boundaries as `(display position, record)`. This only
+/// walks the existing display order; historical User layouts are not built.
+fn user_positions(app: &App) -> Vec<(usize, usize)> {
+    app.visible_record_keys()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, record)| matches!(app.records.get(*record), Some(Record::User { .. })))
+        .collect()
+}
+
+/// First content row of the current user record, resolved only while the top
+/// record itself is a User (previous navigation needs its boundary line).
+fn current_user_start(app: &mut App, current: RowKey, width: usize) -> Option<usize> {
+    if !matches!(app.records.get(current.record), Some(Record::User { .. })) {
+        return None;
+    }
+    record_layout(app, current.record, width)
+        .iter()
+        .position(|visual| !is_blank_line(visual))
+}
+
+/// Jumps to a user boundary, resolving its first content row once.
+fn jump_to_user(app: &mut App, record: usize, width: usize) {
+    let layout = record_layout(app, record, width);
+    let line = layout
+        .iter()
+        .position(|visual| !is_blank_line(visual))
+        .unwrap_or(0);
+    let offset = layout.get(line).map_or(0, |visual| visual.source_start);
+    app.follow = false;
+    app.visual_anchor = Some(VisualAnchor {
+        key: RowKey { record, line },
+        width,
+    });
+    app.anchor = Some(Anchor { record, offset });
+}
+
+/// Jumps the viewport to the previous real user-message boundary. From inside
+/// a long user message it returns that message's start; from its first content
+/// row it moves to the prior user message.
+pub fn previous_user(app: &mut App) {
+    if app.records.is_empty() {
+        app.notify("No messages yet.".to_owned());
+        return;
+    }
+    let width = app.last_width.max(1);
+    let Some(current) = current_top_row(app, width) else {
+        app.notify("No earlier message.".to_owned());
+        return;
+    };
+    let keys = app.visible_record_keys();
+    let Some(position) = keys.iter().position(|key| *key == current.record) else {
+        app.notify("No earlier message.".to_owned());
+        return;
+    };
+    if let Some(start) = current_user_start(app, current, width)
+        && start < current.line
+    {
+        jump_to_user(app, current.record, width);
+        return;
+    }
+    let target = user_positions(app)
+        .into_iter()
+        .rev()
+        .find(|(start_position, _)| *start_position < position)
+        .map(|(_, record)| record);
+    match target {
+        Some(record) => jump_to_user(app, record, width),
+        None => app.notify("Already at the first message.".to_owned()),
+    }
+}
+
+/// Jumps the viewport to the next real user-message boundary after the current
+/// top record.
+pub fn next_user(app: &mut App) {
+    if app.records.is_empty() {
+        app.notify("No messages yet.".to_owned());
+        return;
+    }
+    let width = app.last_width.max(1);
+    let Some(current) = current_top_row(app, width) else {
+        app.notify("No later message.".to_owned());
+        return;
+    };
+    let keys = app.visible_record_keys();
+    let Some(position) = keys.iter().position(|key| *key == current.record) else {
+        app.notify("No later message.".to_owned());
+        return;
+    };
+    let target = user_positions(app)
+        .into_iter()
+        .find(|(start_position, _)| *start_position > position)
+        .map(|(_, record)| record);
+    match target {
+        Some(record) => jump_to_user(app, record, width),
+        None => app.notify("Already at the latest message.".to_owned()),
+    }
+}
+
 fn push_visual(
     out: &mut Vec<VisualLine>,
     text: &str,
