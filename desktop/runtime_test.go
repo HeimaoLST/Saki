@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -22,15 +25,42 @@ func TestRuntimeHelperProcess(t *testing.T) {
 
 func helperMain() int {
 	out := bufio.NewWriter(os.Stdout)
+	var writeMu sync.Mutex
 	write := func(value any) {
 		bytes, _ := json.Marshal(value)
+		writeMu.Lock()
 		out.Write(bytes)
 		out.WriteByte('\n')
 		out.Flush()
+		writeMu.Unlock()
 	}
 	write(map[string]any{"version": 1, "type": "ready", "api": "openai-responses"})
 
+	event := func(taskID string, payload map[string]any) {
+		write(map[string]any{
+			"version": 1, "type": "event", "session_id": "s1",
+			"task_id": taskID, "message_id": "m1", "event": payload,
+		})
+	}
+
+	gateMode := os.Getenv("RUNTIME_HELPER_GATE") == "1"
+	var active, everActive atomic.Bool
+	released := make(chan struct{}, 1)
+	if gateMode {
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, syscall.SIGUSR1)
+		go func() {
+			for range signals {
+				if active.CompareAndSwap(true, false) {
+					event("t1", map[string]any{"type": "task_finished", "status": "completed"})
+					released <- struct{}{}
+				}
+			}
+		}()
+	}
+
 	var reorder []map[string]any
+	slowID := ""
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 64*1024), runtimeMaxLine)
 	for scanner.Scan() {
@@ -45,12 +75,6 @@ func helperMain() int {
 		}
 		respond := func(result any) {
 			write(map[string]any{"version": 1, "type": "response", "id": request.ID, "result": result})
-		}
-		event := func(taskID string, payload map[string]any) {
-			write(map[string]any{
-				"version": 1, "type": "event", "session_id": "s1",
-				"task_id": taskID, "message_id": "m1", "event": payload,
-			})
 		}
 		switch request.Method {
 		case "session.create", "session.load", "session.status":
@@ -70,7 +94,14 @@ func helperMain() int {
 			})
 		case "task.send":
 			respond(map[string]any{"task_id": "t1", "message_id": "m1"})
+			if gateMode {
+				active.Store(true)
+				everActive.Store(true)
+			}
 			event("t1", map[string]any{"type": "task_started"})
+			if gateMode {
+				continue
+			}
 			event("t1", map[string]any{"type": "model_request_started", "purpose": "generation"})
 			event("t1", map[string]any{"type": "response_text_delta", "item_id": "a1", "delta": "hel"})
 			event("t1", map[string]any{"type": "response_text", "item_id": "a1", "text": strings.Repeat("x", 200_000)})
@@ -88,17 +119,38 @@ func helperMain() int {
 				reorder = nil
 			}
 		case "test.malformed":
+			writeMu.Lock()
 			out.WriteString("this is not json\n")
 			out.Flush()
+			writeMu.Unlock()
 			respond(map[string]any{"ok": true})
+		case "test.noshape":
+			write(map[string]any{"version": 1, "type": "response", "id": request.ID})
+		case "test.slow":
+			slowID = request.ID
+		case "test.release":
+			if slowID != "" {
+				write(map[string]any{"version": 1, "type": "response", "id": slowID, "result": map[string]any{"late": true}})
+				slowID = ""
+			}
+			respond(map[string]any{"released": true})
+		case "test.large":
+			var params struct {
+				Payload string `json:"payload"`
+			}
+			_ = json.Unmarshal(request.Params, &params)
+			respond(map[string]any{"data": strings.Repeat("y", 200_000), "n": len(params.Payload)})
 		case "test.exit":
 			return 0
 		case "runtime.shutdown":
 			respond(map[string]any{"state": "draining"})
-			return 0
+			// Keep reading until stdin EOF; accepted gated work must drain.
 		default:
 			write(map[string]any{"version": 1, "type": "response", "id": request.ID, "error": map[string]any{"code": "unknown_method", "message": request.Method}})
 		}
+	}
+	if everActive.Load() {
+		<-released
 	}
 	return 0
 }
@@ -111,7 +163,7 @@ type testRuntime struct {
 	exit     chan error
 }
 
-func startTestRuntime(t *testing.T) *testRuntime {
+func startTestRuntime(t *testing.T, extraEnv ...string) *testRuntime {
 	t.Helper()
 	tr := &testRuntime{
 		ready:    make(chan runtimeReady, 1),
@@ -119,11 +171,13 @@ func startTestRuntime(t *testing.T) *testRuntime {
 		protocol: make(chan string, 8),
 		exit:     make(chan error, 1),
 	}
+	env := append(os.Environ(), "GO_WANT_RUNTIME_HELPER=1")
+	env = append(env, extraEnv...)
 	client, err := startRuntime(runtimeOptions{
 		Binary: os.Args[0],
 		Args:   []string{"-test.run=^TestRuntimeHelperProcess$"},
 		Dir:    t.TempDir(),
-		Env:    append(os.Environ(), "GO_WANT_RUNTIME_HELPER=1"),
+		Env:    env,
 		Handlers: runtimeHandlers{
 			OnReady:         func(ready runtimeReady) { tr.ready <- ready },
 			OnEvent:         func(event runtimeEventEnvelope) { tr.events <- event },
@@ -230,13 +284,11 @@ func TestRuntimeClientRoutesConcurrentResponsesByID(t *testing.T) {
 	}
 }
 
-func TestRuntimeClientReportsMalformedOutput(t *testing.T) {
+func TestRuntimeClientProtocolFailureIsTerminal(t *testing.T) {
 	tr := startTestRuntime(t)
-	var out struct {
-		OK bool `json:"ok"`
-	}
-	if err := tr.client.call("test.malformed", map[string]any{}, &out, runtimeControlTimeout); err != nil {
-		t.Fatal(err)
+	err := tr.client.call("test.malformed", map[string]any{}, nil, runtimeControlTimeout)
+	if err == nil {
+		t.Fatal("malformed output must fail the pending call")
 	}
 	select {
 	case message := <-tr.protocol:
@@ -245,6 +297,44 @@ func TestRuntimeClientReportsMalformedOutput(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("malformed output was not reported")
+	}
+	// A later response from the same connection must not become a success.
+	if err := tr.client.call("session.status", map[string]any{"session_id": "s1"}, nil, runtimeControlTimeout); err == nil {
+		t.Fatal("calls after a protocol failure must not succeed")
+	}
+}
+
+func TestRuntimeClientRejectsResponseWithoutResultOrError(t *testing.T) {
+	tr := startTestRuntime(t)
+	if err := tr.client.call("test.noshape", map[string]any{}, nil, runtimeControlTimeout); err == nil {
+		t.Fatal("a response with neither result nor error must fail")
+	}
+	select {
+	case message := <-tr.protocol:
+		if !strings.Contains(message, "exactly one") {
+			t.Fatalf("protocol error = %q", message)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("empty response shape was not reported")
+	}
+}
+
+func TestRuntimeClientDiscardsLateResponseAfterTimeout(t *testing.T) {
+	tr := startTestRuntime(t)
+	if err := tr.client.call("test.slow", map[string]any{}, nil, 100*time.Millisecond); err == nil {
+		t.Fatal("expected a timeout")
+	}
+	if err := tr.client.call("test.release", map[string]any{}, nil, runtimeControlTimeout); err != nil {
+		t.Fatal(err)
+	}
+	var session runtimeSession
+	if err := tr.client.call("session.status", map[string]any{"session_id": "s1"}, &session, runtimeControlTimeout); err != nil {
+		t.Fatalf("late response broke the connection: %v", err)
+	}
+	select {
+	case message := <-tr.protocol:
+		t.Fatalf("late response was treated as a protocol failure: %q", message)
+	default:
 	}
 }
 
@@ -258,6 +348,82 @@ func TestRuntimeClientDisconnectFailsPendingCall(t *testing.T) {
 	case <-tr.exit:
 	case <-time.After(5 * time.Second):
 		t.Fatal("runtime exit was not reported")
+	}
+}
+
+func TestRuntimeShutdownDrainsAcceptedTask(t *testing.T) {
+	tr := startTestRuntime(t, "RUNTIME_HELPER_GATE=1")
+	if _, err := tr.client.createSession("/tmp", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.client.sendTask("s1", "gated"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-tr.events:
+		if event.Event.Type != "task_started" {
+			t.Fatalf("first event = %+v", event.Event)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("task did not start")
+	}
+
+	shutdownErr := make(chan error, 1)
+	go func() { shutdownErr <- tr.client.shutdown() }()
+	// Release the accepted task while shutdown is draining. A clean exit proves
+	// the client did not kill the process.
+	if err := tr.client.cmd.Process.Signal(syscall.SIGUSR1); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-shutdownErr:
+		if err != nil {
+			t.Fatalf("shutdown = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not finish after the task was released")
+	}
+	select {
+	case event := <-tr.events:
+		if event.Event.Type != "task_finished" || event.Event.Status != "completed" {
+			t.Fatalf("release event = %+v", event.Event)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("drained task did not finish")
+	}
+	if state := tr.client.cmd.ProcessState; state == nil || state.ExitCode() != 0 {
+		t.Fatalf("process state = %+v", state)
+	}
+}
+
+func TestRuntimeClientParallelLargeIO(t *testing.T) {
+	tr := startTestRuntime(t)
+	payload := strings.Repeat("z", 1_000_000)
+	type result struct {
+		n   int
+		len int
+		err error
+	}
+	results := make(chan result, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var out struct {
+				Data string `json:"data"`
+				N    int    `json:"n"`
+			}
+			err := tr.client.call("test.large", map[string]any{"payload": payload}, &out, 10*time.Second)
+			results <- result{n: out.N, len: len(out.Data), err: err}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	for got := range results {
+		if got.err != nil || got.n != len(payload) || got.len != 200_000 {
+			t.Fatalf("result = %+v", got)
+		}
 	}
 }
 

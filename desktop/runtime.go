@@ -188,14 +188,23 @@ type runtimeOptions struct {
 }
 
 type runtimeClient struct {
-	cmd      *exec.Cmd
-	stdin    io.WriteCloser
-	handlers runtimeHandlers
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	stdinOnce sync.Once
+	handlers  runtimeHandlers
 
-	mu      sync.Mutex
-	nextID  int
-	pending map[string]chan runtimeResponse
-	closed  bool
+	// stateMu guards request bookkeeping only; blocking pipe I/O never holds it.
+	stateMu     sync.Mutex
+	nextID      int
+	pending     map[string]chan runtimeResponse
+	issued      map[string]bool
+	closed      bool
+	failed      *runtimeError
+	failureOnce sync.Once
+
+	// writeMu serializes stdin writes; a blocked write must not block the
+	// reader from delivering responses/events.
+	writeMu sync.Mutex
 
 	done     chan struct{}
 	doneOnce sync.Once
@@ -234,6 +243,7 @@ func startRuntime(opts runtimeOptions) (*runtimeClient, error) {
 		stdin:    stdin,
 		handlers: opts.Handlers,
 		pending:  make(map[string]chan runtimeResponse),
+		issued:   make(map[string]bool),
 		done:     make(chan struct{}),
 	}
 	if err := cmd.Start(); err != nil {
@@ -264,7 +274,8 @@ func (c *runtimeClient) readStdout(r io.Reader) {
 		c.handleLine(scanner.Bytes())
 	}
 	if err := scanner.Err(); err != nil {
-		c.protocolError("stdout read failed: " + err.Error())
+		c.failProtocol("stdout read failed: " + err.Error())
+		_, _ = io.Copy(io.Discard, r)
 	}
 }
 
@@ -279,70 +290,149 @@ func (c *runtimeClient) readStderr(r io.Reader) {
 		}
 		c.stderrMu.Unlock()
 	}
+	if err := scanner.Err(); err != nil {
+		c.failProtocol("stderr read failed: " + err.Error())
+		_, _ = io.Copy(io.Discard, r)
+	}
+}
+
+type wireEnvelope struct {
+	Version   int             `json:"version"`
+	Type      string          `json:"type"`
+	ID        string          `json:"id"`
+	Result    json.RawMessage `json:"result"`
+	Error     *runtimeError   `json:"error"`
+	SessionID string          `json:"session_id"`
+	TaskID    string          `json:"task_id"`
+	MessageID string          `json:"message_id"`
+	Event     *runtimeEvent   `json:"event"`
 }
 
 func (c *runtimeClient) handleLine(line []byte) {
-	var env runtimeEventEnvelope
+	if c.isFailed() {
+		return // keep reading to EOF so the core can drain
+	}
+	var env wireEnvelope
 	if err := json.Unmarshal(line, &env); err != nil {
-		c.protocolError("malformed JSON from runtime: " + err.Error())
+		c.failProtocol("malformed JSON from runtime: " + err.Error())
 		return
 	}
 	if env.Version != runtimeProtocolVersion {
-		c.protocolError(fmt.Sprintf("unsupported runtime protocol version %d", env.Version))
+		c.failProtocol(fmt.Sprintf("unsupported runtime protocol version %d", env.Version))
 		return
 	}
 	switch env.Type {
 	case "ready":
 		var ready runtimeReady
 		if err := json.Unmarshal(line, &ready); err != nil {
-			c.protocolError("malformed ready message: " + err.Error())
+			c.failProtocol("malformed ready message: " + err.Error())
 			return
 		}
 		if c.handlers.OnReady != nil {
 			c.handlers.OnReady(ready)
 		}
 	case "response":
-		var resp runtimeResponse
-		if err := json.Unmarshal(line, &resp); err != nil {
-			c.protocolError("malformed response: " + err.Error())
-			return
-		}
-		c.mu.Lock()
-		ch := c.pending[resp.ID]
-		c.mu.Unlock()
-		if ch == nil {
-			c.protocolError("response for unknown request id " + strconv.Quote(resp.ID))
-			return
-		}
-		ch <- resp
+		c.deliverResponse(env)
 	case "event":
 		if env.Event == nil {
-			c.protocolError("event envelope without event")
+			c.failProtocol("event envelope without event")
 			return
 		}
 		if c.handlers.OnEvent != nil {
-			c.handlers.OnEvent(env)
+			c.handlers.OnEvent(runtimeEventEnvelope{
+				Version: env.Version, Type: env.Type, SessionID: env.SessionID,
+				TaskID: env.TaskID, MessageID: env.MessageID, Event: env.Event,
+			})
 		}
 	default:
-		c.protocolError("unknown runtime message type " + strconv.Quote(env.Type))
+		c.failProtocol("unknown runtime message type " + strconv.Quote(env.Type))
 	}
 }
 
-func (c *runtimeClient) protocolError(message string) {
-	if c.handlers.OnProtocolError != nil {
-		c.handlers.OnProtocolError(message)
+func (c *runtimeClient) deliverResponse(env wireEnvelope) {
+	hasResult := len(env.Result) > 0
+	if hasResult == (env.Error != nil) {
+		c.failProtocol("response must contain exactly one of result or error")
+		return
 	}
+	response := runtimeResponse{Version: env.Version, Type: env.Type, ID: env.ID, Result: env.Result, Error: env.Error}
+	c.stateMu.Lock()
+	ch, pending := c.pending[env.ID]
+	if pending {
+		delete(c.pending, env.ID)
+	}
+	issued := c.issued[env.ID]
+	c.stateMu.Unlock()
+	if pending {
+		select {
+		case ch <- response:
+		default:
+		}
+		return
+	}
+	if issued {
+		// A response for a request that already timed out/finished. Discard it;
+		// it must not be mistaken for a new success nor break the connection.
+		return
+	}
+	c.failProtocol("response for unknown request id " + strconv.Quote(env.ID))
+}
+
+func (c *runtimeClient) isFailed() bool {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.failed != nil
+}
+
+// failProtocol is the single protocol-failure boundary: stop accepting new
+// requests, fail pending calls with an observable error, close stdin so the
+// core drains, and keep reading stdout/stderr to EOF before Wait.
+func (c *runtimeClient) failProtocol(message string) {
+	c.failureOnce.Do(func() {
+		failure := &runtimeError{Code: "protocol_error", Message: message}
+		c.stateMu.Lock()
+		c.failed = failure
+		pending := c.pending
+		c.pending = make(map[string]chan runtimeResponse)
+		c.stateMu.Unlock()
+		for _, ch := range pending {
+			select {
+			case ch <- runtimeResponse{Error: failure}:
+			default:
+			}
+		}
+		c.closeStdin()
+		if c.handlers.OnProtocolError != nil {
+			c.handlers.OnProtocolError(message)
+		}
+	})
+}
+
+func (c *runtimeClient) closeStdin() {
+	c.stdinOnce.Do(func() {
+		if c.stdin != nil {
+			_ = c.stdin.Close()
+		}
+	})
 }
 
 func (c *runtimeClient) finish(err error) {
 	c.doneOnce.Do(func() {
-		c.mu.Lock()
+		c.stateMu.Lock()
 		c.closed = true
 		pending := c.pending
 		c.pending = make(map[string]chan runtimeResponse)
-		c.mu.Unlock()
+		failed := c.failed
+		c.stateMu.Unlock()
 		for _, ch := range pending {
-			close(ch)
+			if failed != nil {
+				select {
+				case ch <- runtimeResponse{Error: failed}:
+				default:
+				}
+			} else {
+				close(ch)
+			}
 		}
 		c.exitErr = err
 		close(c.done)
@@ -353,30 +443,40 @@ func (c *runtimeClient) finish(err error) {
 }
 
 func (c *runtimeClient) call(method string, params any, result any, timeout time.Duration) error {
-	c.mu.Lock()
+	c.stateMu.Lock()
+	if c.failed != nil {
+		err := c.failed
+		c.stateMu.Unlock()
+		return err
+	}
 	if c.closed {
-		c.mu.Unlock()
+		c.stateMu.Unlock()
 		return errRuntimeDisconnected
 	}
 	c.nextID++
 	id := "g" + strconv.Itoa(c.nextID)
 	ch := make(chan runtimeResponse, 1)
 	c.pending[id] = ch
+	c.issued[id] = true
+	c.stateMu.Unlock()
+	defer func() {
+		c.stateMu.Lock()
+		delete(c.pending, id)
+		c.stateMu.Unlock()
+	}()
+
 	request, err := json.Marshal(map[string]any{
 		"version": runtimeProtocolVersion,
 		"id":      id,
 		"method":  method,
 		"params":  params,
 	})
-	if err == nil {
-		_, err = c.stdin.Write(append(request, '\n'))
+	if err != nil {
+		return err
 	}
-	c.mu.Unlock()
-	defer func() {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-	}()
+	c.writeMu.Lock()
+	_, err = c.stdin.Write(append(request, '\n'))
+	c.writeMu.Unlock()
 	if err != nil {
 		return err
 	}
@@ -428,70 +528,88 @@ func (c *runtimeClient) createSession(workingDir, systemPrompt string) (runtimeS
 		params["system_prompt"] = systemPrompt
 	}
 	var session runtimeSession
-	err := c.call("session.create", params, &session, runtimeControlTimeout)
-	return session, err
+	if err := c.call("session.create", params, &session, runtimeControlTimeout); err != nil {
+		return runtimeSession{}, err
+	}
+	if session.SessionID == "" {
+		return runtimeSession{}, errors.New("runtime returned a session without session_id")
+	}
+	return session, nil
 }
 
 func (c *runtimeClient) loadSession(sessionID string) (runtimeSession, error) {
 	var session runtimeSession
-	err := c.call("session.load", map[string]any{"session_id": sessionID}, &session, runtimeControlTimeout)
-	return session, err
+	if err := c.call("session.load", map[string]any{"session_id": sessionID}, &session, runtimeControlTimeout); err != nil {
+		return runtimeSession{}, err
+	}
+	if session.SessionID == "" {
+		return runtimeSession{}, errors.New("runtime returned a session without session_id")
+	}
+	return session, nil
 }
 
 func (c *runtimeClient) sessionStatus(sessionID string) (runtimeSession, error) {
 	var session runtimeSession
-	err := c.call("session.status", map[string]any{"session_id": sessionID}, &session, runtimeControlTimeout)
-	return session, err
+	if err := c.call("session.status", map[string]any{"session_id": sessionID}, &session, runtimeControlTimeout); err != nil {
+		return runtimeSession{}, err
+	}
+	if session.SessionID == "" {
+		return runtimeSession{}, errors.New("runtime returned a session without session_id")
+	}
+	return session, nil
 }
 
 func (c *runtimeClient) historyPage(sessionID string, offset, limit int) (runtimeHistory, error) {
 	var page runtimeHistory
-	err := c.call("session.history", map[string]any{
+	if err := c.call("session.history", map[string]any{
 		"session_id": sessionID,
 		"offset":     offset,
 		"limit":      limit,
-	}, &page, runtimeControlTimeout)
-	return page, err
+	}, &page, runtimeControlTimeout); err != nil {
+		return runtimeHistory{}, err
+	}
+	if page.SessionID == "" {
+		return runtimeHistory{}, errors.New("runtime returned history without session_id")
+	}
+	return page, nil
 }
 
 func (c *runtimeClient) sendTask(sessionID, text string) (runtimeSendResult, error) {
 	var result runtimeSendResult
-	err := c.call("task.send", map[string]any{
+	if err := c.call("task.send", map[string]any{
 		"session_id": sessionID,
 		"message":    map[string]any{"text": text},
-	}, &result, runtimeSendTimeout)
-	return result, err
+	}, &result, runtimeSendTimeout); err != nil {
+		return runtimeSendResult{}, err
+	}
+	if result.TaskID == "" || result.MessageID == "" {
+		return runtimeSendResult{}, errors.New("runtime accepted task without task_id/message_id")
+	}
+	return result, nil
 }
 
 func (c *runtimeClient) cancelTask(sessionID, taskID string) (string, error) {
 	var result runtimeCancelResult
-	err := c.call("task.cancel", map[string]any{
+	if err := c.call("task.cancel", map[string]any{
 		"session_id": sessionID,
 		"task_id":    taskID,
-	}, &result, runtimeControlTimeout)
-	return result.Status, err
+	}, &result, runtimeControlTimeout); err != nil {
+		return "", err
+	}
+	return result.Status, nil
 }
 
+// shutdown asks the core to drain accepted work, closes stdin, and waits for
+// the process to exit. It never kills the process; callers run it off the UI
+// thread and can show a draining state while it waits.
 func (c *runtimeClient) shutdown() error {
-	err := c.call("runtime.shutdown", map[string]any{}, nil, runtimeControlTimeout)
-	c.mu.Lock()
-	if c.stdin != nil {
-		_ = c.stdin.Close()
+	_ = c.call("runtime.shutdown", map[string]any{}, nil, runtimeControlTimeout)
+	c.closeStdin()
+	<-c.done
+	if c.exitErr != nil {
+		return c.exitErr
 	}
-	c.mu.Unlock()
-	select {
-	case <-c.done:
-		if err != nil && !errors.Is(err, errRuntimeDisconnected) {
-			return err
-		}
-		return nil
-	case <-time.After(runtimeShutdownTimeout):
-		if c.cmd.Process != nil {
-			_ = c.cmd.Process.Kill()
-		}
-		<-c.done
-		return errors.New("runtime did not shut down; killed")
-	}
+	return nil
 }
 
 func (c *runtimeClient) diagnostics() []string {
