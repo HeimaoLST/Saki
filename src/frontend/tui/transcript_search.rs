@@ -20,8 +20,8 @@ use crate::frontend::tui::selection::{RowKey, VisualAnchor};
 use crate::frontend::tui::state::{Anchor, App, Focus};
 use crate::frontend::tui::view::record_layout;
 
-/// Selection marker injected by the renderer on the selected record's first row.
-const SELECTION_MARKER: &str = "▌";
+/// Cursor glyph in the compact search strip (not stripped from record text).
+const CURSOR: &str = "▌";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SavedView {
@@ -244,9 +244,12 @@ fn jump_to_selected(app: &mut App) {
     });
 }
 
-/// Case-insensitive cell ranges for `needle` on one rendered row. The optional
-/// selection marker is kept as a zero-searchable cell so reported ranges stay
-/// aligned with the row actually drawn.
+/// Case-insensitive cell ranges for `needle` on one rendered row.
+///
+/// The haystack is the whole rendered text lowercased, matching the query's
+/// whole-string lowercase (Greek final sigma included). Per-grapheme lowercase
+/// pieces only supply byte boundaries for mapping a hit back to original cells;
+/// expansion such as U+0130 keeps its correct original width.
 pub(crate) fn line_matches(line: &Line<'_>, needle: &str) -> Vec<(usize, usize)> {
     if needle.is_empty() {
         return Vec::new();
@@ -256,30 +259,32 @@ pub(crate) fn line_matches(line: &Line<'_>, needle: &str) -> Vec<(usize, usize)>
         .iter()
         .map(|span| span.content.as_ref())
         .collect();
-    let mut haystack = String::new();
-    // (cell, width, lowercase_start, lowercase_end, searchable)
-    let mut pieces: Vec<(usize, usize, usize, usize, bool)> = Vec::new();
+    let whole = text.to_lowercase();
+    let mut joined = String::new();
+    // (cell_start, width, lowercase_byte_start, lowercase_byte_end)
+    let mut pieces: Vec<(usize, usize, usize, usize)> = Vec::new();
     let mut cell = 0usize;
     for grapheme in text.graphemes(true) {
         let width = UnicodeWidthStr::width(grapheme);
-        let searchable = grapheme != SELECTION_MARKER;
-        let lower = if searchable {
-            grapheme.to_lowercase()
-        } else {
-            String::new()
-        };
-        let start = haystack.len();
-        haystack.push_str(&lower);
-        pieces.push((cell, width, start, haystack.len(), searchable));
+        let start = joined.len();
+        joined.push_str(&grapheme.to_lowercase());
+        pieces.push((cell, width, start, joined.len()));
         cell += width;
     }
+    // Context-sensitive casing can differ inside a piece but keeps its byte
+    // length; a length mismatch is the only case where boundaries are unsafe.
+    let haystack = if joined.len() == whole.len() {
+        whole.as_str()
+    } else {
+        joined.as_str()
+    };
     let mut ranges = Vec::new();
     for (start, _) in haystack.match_indices(needle) {
         let end = start + needle.len();
         let mut first = None;
         let mut last = None;
-        for (cell, width, lower_start, lower_end, searchable) in &pieces {
-            if *searchable && *lower_end > start && *lower_start < end {
+        for (cell, width, lower_start, lower_end) in &pieces {
+            if *lower_end > start && *lower_start < end {
                 first.get_or_insert(*cell);
                 last = Some(*cell + *width);
             }
@@ -293,8 +298,9 @@ pub(crate) fn line_matches(line: &Line<'_>, needle: &str) -> Vec<(usize, usize)>
     ranges
 }
 
-/// Applies highlight styles to one rendered row in place. Content is untouched,
-/// so copying source never sees injected text.
+/// Applies highlight styles to one rendered row in place. Hits are ordered by
+/// `RowKey`, so only this row's slice is visited: navigation cost is row cells
+/// plus row hits, never the whole history per grapheme.
 pub fn highlight_line(app: &App, key: RowKey, line: &mut Line<'static>) {
     let Some(search) = &app.transcript_search else {
         return;
@@ -302,30 +308,38 @@ pub fn highlight_line(app: &App, key: RowKey, line: &mut Line<'static>) {
     if search.matches.is_empty() {
         return;
     }
+    let lo = search.matches.partition_point(|item| item.key < key);
+    let hi = lo + search.matches[lo..].partition_point(|item| item.key == key);
+    if lo == hi {
+        return;
+    }
     let theme = app.theme;
     let mut spans = Vec::new();
     let mut cell = 0usize;
+    let mut cursor = lo;
     for span in &line.spans {
         let base = span.style;
         let mut buffer = String::new();
         let mut class: Option<bool> = None;
         for grapheme in span.content.graphemes(true) {
             let width = UnicodeWidthStr::width(grapheme);
-            let mut hit = None;
-            for (index, item) in search.matches.iter().enumerate() {
-                if item.key != key {
-                    continue;
-                }
-                let intersects = if width == 0 {
-                    cell >= item.start && cell < item.end
-                } else {
-                    cell < item.end && cell + width > item.start
-                };
-                if intersects {
-                    hit = Some(index == search.selected);
-                    break;
-                }
+            let start = cell;
+            let end = cell + width;
+            // Ranges are sorted and non-overlapping; advance past finished ones.
+            while cursor < hi && search.matches[cursor].end <= start {
+                cursor += 1;
             }
+            let hit = if cursor < hi {
+                let item = &search.matches[cursor];
+                let intersects = if width == 0 {
+                    start >= item.start && start < item.end
+                } else {
+                    start < item.end && end > item.start
+                };
+                intersects.then_some(cursor == search.selected)
+            } else {
+                None
+            };
             if hit != class {
                 flush(&mut spans, &buffer, base, class, theme);
                 buffer.clear();
@@ -384,7 +398,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(search.query.clone(), Style::default().fg(theme.text)),
-        Span::styled(SELECTION_MARKER, Style::default().fg(theme.accent)),
+        Span::styled(CURSOR, Style::default().fg(theme.accent)),
         Span::raw("  "),
         Span::styled(status, Style::default().fg(theme.secondary)),
     ];

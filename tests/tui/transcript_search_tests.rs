@@ -357,3 +357,32 @@ fn ctrl_f_keeps_character_motion_and_f3_requires_no_ctrl() {
     handle_key(&mut app, &mut editor, key(KeyCode::F(3)));
     assert!(search::active(&app));
 }
+
+#[test]
+fn whole_string_lowercase_matches_greek_final_sigma() {
+    // "ΟΣ".to_lowercase() is "ος" (final sigma), unlike per-grapheme "οσ".
+    for query in ["ΟΣ", "ος"] {
+        let mut app = App::new();
+        app.push(assistant("ΟΣ identical uppercase"));
+        open_on(&mut app, 40);
+        search::push_str(&mut app, query);
+        let found = hits(&app);
+        assert_eq!(found.len(), 1, "query {query} must match");
+        assert_eq!((found[0].start, found[0].end), (3, 5));
+    }
+}
+
+#[test]
+fn literal_marker_glyph_in_record_text_is_searchable() {
+    let mut app = App::new();
+    app.push(assistant("▌literal content"));
+    open_on(&mut app, 40);
+    search::push_str(&mut app, "▌literal");
+    let found = hits(&app);
+    assert_eq!(found.len(), 1, "a real ▌ in content is not stripped");
+    let row = view::record_layout(&mut app, 0, 40)[found[0].key.line]
+        .line
+        .to_string();
+    assert_eq!(found[0].start, cell_start(&row, "▌literal"));
+    assert_eq!(found[0].end, found[0].start + 8);
+}
