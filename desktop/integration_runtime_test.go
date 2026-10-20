@@ -12,6 +12,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -42,8 +43,7 @@ func (p *providerFixture) body(i int) string {
 
 func (p *providerFixture) handler(t *testing.T, marker string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		body := make([]byte, r.ContentLength)
-		_, _ = r.Body.Read(body)
+		body, _ := io.ReadAll(r.Body)
 		index := int(p.requests.Add(1))
 		p.mu.Lock()
 		p.bodies = append(p.bodies, string(body))
@@ -120,6 +120,9 @@ func (l *liveRuntime) finishTask(t *testing.T, taskID string) []runtimeEventEnve
 		case event := <-l.events:
 			events = append(events, event)
 			if event.TaskID == taskID && event.Event.Type == "task_finished" {
+				if event.Event.Status != "completed" {
+					t.Fatalf("task %s finished as %q: %+v", taskID, event.Event.Status, event.Event.Error)
+				}
 				return events
 			}
 		case message := <-l.protocol:
