@@ -295,6 +295,10 @@ func (p *uiPump) do(fn func()) {
 }
 
 func (p *uiPump) wait(cond func() bool) {
+	p.waitTimeout(cond, 15*time.Second)
+}
+
+func (p *uiPump) waitTimeout(cond func() bool, timeout time.Duration) {
 	waiter := &uiWaiter{cond: cond, ch: make(chan struct{})}
 	p.mu.Lock()
 	p.waiters = append(p.waiters, waiter)
@@ -302,7 +306,7 @@ func (p *uiPump) wait(cond func() bool) {
 	p.q <- func() {} // trigger a check for an already-true condition
 	select {
 	case <-waiter.ch:
-	case <-time.After(15 * time.Second):
+	case <-time.After(timeout):
 		p.t.Fatal("timed out waiting for GUI runtime state")
 	}
 }
@@ -566,6 +570,93 @@ func TestGUIFirstCreateUsesProfileSnapshot(t *testing.T) {
 	firstBody := provider.body(0)
 	if !strings.Contains(firstBody, "Purpose: B purpose") || !strings.Contains(firstBody, "Instructions: B instructions") {
 		t.Fatalf("first create did not use the profile snapshot: %s", firstBody)
+	}
+	h.shutdown(t)
+}
+
+// TestGUIOnlineSmoke is the real-provider application-layer smoke. It is
+// opt-in and never substitutes the controlled fixture:
+//
+//	SAKI_TEST_ONLINE=1 SAKI_TEST_ONLINE_WORKDIR=/path/to/repo \
+//	SAKI_TEST_RUNTIME_BIN=/abs/path/to/Saki \
+//	go test -run TestGUIOnlineSmoke -count=1 .
+//
+// The directory must contain the host's .env; no value is read or printed by
+// the test. The verified host combination uses Chat Completions.
+func TestGUIOnlineSmoke(t *testing.T) {
+	if os.Getenv("SAKI_TEST_ONLINE") != "1" {
+		t.Skip("set SAKI_TEST_ONLINE=1 for the online provider smoke")
+	}
+	binary := requireRuntimeBinary(t)
+	workdir := os.Getenv("SAKI_TEST_ONLINE_WORKDIR")
+	if workdir == "" {
+		wd, _ := os.Getwd()
+		workdir = filepath.Dir(wd)
+	}
+	if _, err := os.Stat(filepath.Join(workdir, ".env")); err != nil {
+		t.Fatalf("online workdir %s has no .env: %v", workdir, err)
+	}
+	root := t.TempDir()
+	marker := fmt.Sprintf("saki-online-%d", time.Now().UnixNano())
+	if err := os.Symlink(filepath.Join(workdir, ".env"), filepath.Join(root, ".env")); err != nil {
+		t.Fatalf("link host .env: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "probe.txt"), []byte(marker), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SAKI_GUI_STORE", filepath.Join(root, "gui", "contacts.json"))
+	t.Setenv("SAKI_SESSION_DIR", filepath.Join(root, "sessions"))
+	t.Setenv("SAKI_GUI_WORKDIR", root)
+	t.Setenv("SAKI_RUNTIME_BIN", binary)
+	api := os.Getenv("SAKI_TEST_ONLINE_API")
+	if api == "" {
+		api = "openai-chat-completions"
+	}
+	t.Setenv("SAKI_API", api)
+
+	app, err := newRuntimeApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pump := newUIPump(t, app)
+	h := &guiHarness{app: app, pump: pump, root: root}
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	app.startRuntime()
+	pump.waitTimeout(func() bool { return app.runtimeStatus == runtimeStateReady }, 30*time.Second)
+	pump.do(func() {
+		ct := app.contacts[0]
+		ct.Draft = "Use read to inspect probe.txt and report its exact contents. Do not write files."
+		app.sendCurrent()
+	})
+	pump.waitTimeout(func() bool {
+		ct := app.contacts[0]
+		return ct.LastTaskID != "" && ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty
+	}, 180*time.Second)
+
+	var status contactStatus
+	var detail string
+	var sawTool, sawFinal bool
+	pump.do(func() {
+		ct := app.contacts[0]
+		status, detail = ct.Status, ct.StatusDetail
+		for _, m := range ct.Messages {
+			if m.ToolOutput != "" && strings.Contains(m.ToolOutput, marker) {
+				sawTool = true
+			}
+			if m.Kind == msgContact && strings.Contains(m.Text, marker) && m.ToolName == "" {
+				sawFinal = true
+			}
+		}
+	})
+	if status != statusReady || detail != "" {
+		t.Fatalf("online task status=%v detail=%q", status, detail)
+	}
+	if !sawTool || !sawFinal {
+		t.Fatalf("online tool=%v final=%v", sawTool, sawFinal)
 	}
 	h.shutdown(t)
 }
