@@ -473,6 +473,21 @@ impl Editor {
         self.replace_global_range(start, end, "");
     }
 
+    /// Replaces one byte range as a single undo step without touching images or
+    /// the kill buffer. Returns whether the text changed; the cursor always
+    /// lands after the inserted text (a no-op still moves it there).
+    pub fn complete_global_range(&mut self, start: usize, end: usize, insert: &str) -> bool {
+        let before = self.text();
+        let changed = before[start..end] != *insert;
+        if changed {
+            self.checkpoint(false);
+            self.replace_global_range(start, end, insert);
+        } else {
+            self.set_global_offset(start + insert.len());
+        }
+        changed
+    }
+
     /// Inserts pasted text as one atomic undo step. Newlines never submit.
     pub fn insert_str(&mut self, text: &str) {
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
