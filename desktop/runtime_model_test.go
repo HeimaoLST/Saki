@@ -266,3 +266,12 @@ func TestBeginShutdownIsIdempotentWithoutRuntime(t *testing.T) {
 	default:
 	}
 }
+
+func TestReloadSelectedRequiresLiveRuntime(t *testing.T) {
+	a, bound, _ := testRuntimeModel(t)
+	a.runtimeStatus = runtimeStateExited
+	a.reloadSelected()
+	if !strings.Contains(bound.SendError, "restart Saki") {
+		t.Fatalf("disconnected reload message = %q", bound.SendError)
+	}
+}

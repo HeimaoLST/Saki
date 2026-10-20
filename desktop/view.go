@@ -358,7 +358,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 			switch {
 			case ct.SendState == sendSubmitting:
 				ui.Text(c, "Sending…").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
-			case ct.SendState == sendAccepted:
+			case ct.SendState == sendAccepted && ct.Status != statusWorking:
 				ui.Text(c, "Accepted; waiting for the runtime to start.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 			case ct.SendState == sendUnknown:
 				ui.Text(c, "Delivery not confirmed. Reload to verify before sending again.").FontSize(11).LineHeight(1.4).TextColor(t.Danger)
@@ -366,7 +366,9 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 			if ct.SendError != "" {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 					ui.Text(c, ct.SendError).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
-					if ct.SendState == sendUnknown || ct.SendError != "" {
+					// Reload only makes sense while the same runtime connection is
+					// alive; after a disconnect it would call a closed client.
+					if (ct.SendState == sendUnknown || ct.SendError != "") && a.runtimeStatus == runtimeStateReady && a.rt != nil {
 						if ui.Button(c, "Reload").FontSize(11).Clicked() {
 							a.reloadSelected()
 						}
@@ -482,7 +484,7 @@ func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 	ui.Text(c, "Instructions").FontSize(12).FontWeight(500).TextColor(t.Text)
 	ui.TextArea(c, &a.settingsDraft.Instructions).Label("Contact instructions").FontSize(14).Placeholder("Instructions").Disabled(locked)
 	ui.Text(c, "Workspace").FontSize(12).FontWeight(500).TextColor(t.Text)
-	ui.TextInput(c, &a.settingsDraft.Workspace).Label("Contact workspace").FontSize(14).Placeholder("~/Workspace/my-project").Disabled(locked)
+	ui.TextInput(c, &a.settingsDraft.Workspace).Label("Contact workspace").FontSize(14).Placeholder("/absolute/path/to/workspace").Disabled(locked)
 	ui.Row(c).Gap(8).Children(func() {
 		ui.Button(c, "Cancel").FontSize(13).OnClick(func() { a.closeAux() })
 		ui.PrimaryButton(c, "Save changes").FontSize(13).OnClick(func() { a.saveSettings() })

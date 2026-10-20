@@ -180,6 +180,11 @@ func (a *appModel) startRuntime() {
 					} else {
 						a.runtimeErr = "Runtime exited."
 					}
+					if a.rt != nil {
+						if lines := a.rt.diagnostics(); len(lines) > 0 {
+							a.runtimeErr += " — " + truncate(lines[len(lines)-1], 300)
+						}
+					}
 					for _, ct := range a.contacts {
 						if ct.ActiveTaskID != "" {
 							ct.ActiveTaskID = ""
@@ -800,6 +805,10 @@ func (a *appModel) applyCancelResult(contactID, taskID, status string, err error
 func (a *appModel) reloadSelected() {
 	ct := a.selectedContact()
 	if ct.SessionID == "" {
+		return
+	}
+	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
+		ct.SendError = "Runtime disconnected; restart Saki to reload history."
 		return
 	}
 	a.reloadContactByID(ct.ID)
