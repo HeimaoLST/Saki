@@ -69,7 +69,7 @@
 | --- | --- | --- | --- |
 | `agent:runtime` | Agent Runtime 开发 | Agent 执行循环、模型调用、上下文压缩、会话存储、公共协议、模型目录、应用组装、内置工具（read/bash/edit/write）与输出边界 | `src/agent/`、`src/client/`、`src/protocol/`、`src/model/`、`src/session/`、`src/tools/`、`src/app.rs`、`src/main.rs`、`Cargo.toml`、`Cargo.lock` |
 | `agent:tui` | TUI 开发 | TUI、console、输入与展示适配、本地命令系统 | `src/frontend/`、`src/command/` |
-| `agent:gui` | GUI 开发 | Go 桌面 contacts 设计预览（独立 module，不接入 Rust core） | `desktop/` |
+| `agent:gui` | GUI 开发 | Go 桌面应用、联系人与会话交互，以及 Runtime 机器接口消费；不复制核心执行循环，实现状态见 `docs/design/desktop.md` | `desktop/` |
 | `agent:qa` | 测试 | CI 工程、质量与自动检查运行可靠性：workflow、CI 支撑脚本、失败归因与复验 | 现有 `.github/workflows/` 与相关 CI 支撑 `scripts/`；**不修改产线代码，不接产品人工验收** |
 | `agent:pm` | 产品经理 | 产品方向、需求边界、优先级、triage、验收标准、文档结构与索引、Milestone、协作模板与真实试用判断 | `docs/`、`README.md`、`AGENTS.md`、`.github/` 协作模板与配置、`.pi/prompts/`、`scripts/` |
 
