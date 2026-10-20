@@ -552,3 +552,116 @@ func TestLiveSendUnknownAfterDisconnectSaysRestart(t *testing.T) {
 		t.Fatal("a live connection should keep the Reload instruction")
 	}
 }
+
+// runtimePreviewApp builds a runtime-backed model state without starting a
+// process. It is a headless layout fixture, not an online model or native
+// window capture.
+func runtimePreviewApp(scene string) *appModel {
+	bound := &contact{
+		ID: "saki", Name: "Saki", Role: "Assistant", SessionID: "preview-session", Loaded: true,
+		Status: statusReady, WorkLabel: "Preparing a reply",
+		Purpose: "Keep earlier decisions in view.", Instructions: "Cite earlier decisions when they shape an answer.",
+		Workspace: "/Users/you/Workspace/saki",
+		Messages: []*message{
+			{Key: "u1", Kind: msgUser, Text: "Use read to inspect README.md and report its first heading. Do not write files."},
+			{Key: "k1", Kind: msgActivity, ToolName: "read", ToolArgs: `{"path":"README.md"}`,
+				ToolOutput: `{"content":"# Saki\n\nA small agent runtime with a shared core.","start_line":1,"end_line":2}`},
+			{Key: "a1", Kind: msgContact, Text: "The first heading is # Saki."},
+		},
+	}
+	unbound := &contact{ID: "mio", Name: "Mio", Role: "Assistant", Draft: "draft for Mio"}
+	a := &appModel{
+		demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1,
+		contacts: []*contact{bound, unbound}, selected: 0,
+	}
+	switch scene {
+	case "runtime-working":
+		bound.Status = statusWorking
+		bound.Work = "Running read"
+		bound.ActiveTaskID = "task-preview"
+		bound.SendState = sendAccepted
+		bound.Messages = []*message{
+			{Key: "u2", Kind: msgUser, Text: "Inspect README.md and summarize the project."},
+			{Key: "k2", Kind: msgActivity, ToolName: "read", ToolArgs: `{"path":"README.md"}`},
+			{Key: "a2", Kind: msgContact, Text: "Checking the README", Streaming: true},
+		}
+	case "runtime-error":
+		bound.Status = statusAttention
+		bound.StatusDetail = "Task failed: model_error: upstream request failed"
+		bound.Messages = []*message{
+			{Key: "u3", Kind: msgUser, Text: "Inspect README.md and summarize the project."},
+			{Key: "a3", Kind: msgContact, Text: "Checking the README"},
+		}
+	case "runtime-settings":
+		a.openSettings()
+	}
+	return a
+}
+
+func TestPreviewRuntimeStates(t *testing.T) {
+	dir := os.Getenv("SAKI_PREVIEW_DIR")
+	if dir == "" {
+		t.Skip("set SAKI_PREVIEW_DIR to write runtime-backed headless previews")
+	}
+	if err := loadAvatar(); err != nil {
+		t.Fatal(err)
+	}
+	scenes := []string{"runtime-chat", "runtime-working", "runtime-error", "runtime-settings"}
+	for _, dark := range []bool{false, true} {
+		theme := "light"
+		if dark {
+			theme = "dark"
+		}
+		for _, scene := range scenes {
+			a := runtimePreviewApp(scene)
+			tr := ui.NewTester(a.view, 1040, 720)
+			tr.SetDark(dark)
+			tr.Frame()
+			writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("headless-%s-%s.png", theme, scene)), tr.Image())
+		}
+	}
+	for _, scene := range []string{"runtime-chat", "runtime-settings"} {
+		a := runtimePreviewApp(scene)
+		tr := ui.NewTester(a.view, 960, 640)
+		tr.Frame()
+		writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("headless-light-min-%s.png", scene)), tr.Image())
+	}
+	a := runtimePreviewApp("runtime-chat")
+	tr := ui.NewTester(a.view, 1600, 900)
+	tr.Frame()
+	writePreviewPNG(t, filepath.Join(dir, "headless-light-wide-runtime-chat.png"), tr.Image())
+}
+
+func TestToolFailureIsVisibleBeforeDetails(t *testing.T) {
+	cases := []struct {
+		name   string
+		output string
+		want   string
+		raw    string
+	}{
+		{"exit", `{"output":"normal text","exit_code":1,"timed_out":false}`, "Failed (exit 1)", "exit_code"},
+		{"timeout", `{"output":"still working","timed_out":true}`, "Timed out", "timed_out"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ct := &contact{ID: "saki", Name: "Saki", Role: "Assistant", Loaded: true}
+			ct.Messages = []*message{{
+				Key: "tool", Kind: msgActivity, ToolName: "bash", ToolArgs: `{"command":"false"}`,
+				ToolOutput: tc.output,
+			}}
+			a := &appModel{demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1, contacts: []*contact{ct}}
+			tr := ui.NewTester(a.view, 1040, 720)
+			tr.Frame()
+			if !tr.HasText(tc.want) || !tr.HasText("normal text") && !tr.HasText("still working") {
+				t.Fatalf("failure summary not visible: %v", tr.Texts())
+			}
+			if err := tr.Click("Details"); err != nil {
+				t.Fatal(err)
+			}
+			tr.Frame()
+			if !tr.HasText(tc.raw) {
+				t.Fatalf("raw tool result not visible after Details: %v", tr.Texts())
+			}
+		})
+	}
+}
