@@ -31,7 +31,7 @@
 | Runtime + TUI | `rust` | `cargo test --locked --all-targets` | 单元、集成与 example target；测试数量以对应 SHA 的实际 run 为准 |
 | TUI（真实 PTY） | `rust` | `cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1` | 真实 PTY 上进入／退出终端并验证 panic 后 cooked mode 恢复 |
 | Runtime stdio（真实子进程） | `rust` | `cargo build --locked --bin Saki`；`python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki` | 两个真实 OS 进程、临时 read、task/message/journal 关联、恢复/history 零重放、继续前文与 stdout 断连 drain；driver 自带本地 fixture，无外部 provider/key |
-| GUI→Runtime（五个离线测试） | `rust` | `SAKI_TEST_RUNTIME_BIN=${{ github.workspace }}/target/debug/Saki CGO_ENABLED=0 go test -run '^(TestRuntimeProcessIntegration|TestGUIAppRuntimeFlow|TestGUIFirstCreateUsesProfileSnapshot|TestGUIAppPersistsMappingBeforeSend|TestGUIAppSaveFailureStopsBeforeSend)$' -count=1 -v .`（在 `desktop/`） | Go 客户端→真实 Saki `--stdio`、本地 httptest provider、真实 read、事件/工具关联、应用层流程、profile snapshot、mapping 保存顺序/失败边界、跨进程恢复零重放与继续；逐项断言 PASS（非 Skip/空跑）；线上 smoke 不接入 |
+| GUI→Runtime（五个离线测试） | `rust` | 见下方「GUI→Runtime 进程集成」权威命令（与 workflow 使用同一命令） | Go 客户端→真实 Saki `--stdio`、本地 httptest provider、真实 read、事件/工具关联、应用层流程、profile snapshot、mapping 保存顺序/失败边界、跨进程恢复零重放与继续；逐项断言 PASS（非 Skip/空跑）；线上 smoke 不接入 |
 | GUI（独立 Go module） | `gui` | `gofmt -l .`（必须为空）、`CGO_ENABLED=0 go vet ./...`、`go test ./... -count=1`、`go build` | 格式、vet、测试、构建 |
 | GUI（可复现图像） | `gui` | `SAKI_PREVIEW_DIR=... go test -run TestPreviewImages -count=1 .` | headless `ui.Tester` 生成 light/dark add／settings 等场景 PNG，作为 artifact 保留 14 天 |
 | 协作检查 | `python` | `python3 scripts/test_collaboration_check.py`；断言运行测试数非零 | 既有协作检查回归；pipefail 保留失败，空套件不能静默通过 |
@@ -158,10 +158,12 @@ python3 scripts/test_collaboration_check.py
 cargo build --locked --bin Saki
 python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
 
-# GUI→Runtime 进程集成（五个离线入口）
-cd desktop
-SAKI_TEST_RUNTIME_BIN="$PWD/../target/debug/Saki" CGO_ENABLED=0 \
-  go test -run '^(TestRuntimeProcessIntegration|TestGUIAppRuntimeFlow|TestGUIFirstCreateUsesProfileSnapshot|TestGUIAppPersistsMappingBeforeSend|TestGUIAppSaveFailureStopsBeforeSend)$' -count=1 -v .
+# GUI→Runtime 进程集成（五个离线入口；子 shell 保持后续命令仍在仓库根）
+(
+  cd desktop
+  SAKI_TEST_RUNTIME_BIN="$PWD/../target/debug/Saki" CGO_ENABLED=0 \
+    go test -run '^(TestRuntimeProcessIntegration|TestGUIAppRuntimeFlow|TestGUIFirstCreateUsesProfileSnapshot|TestGUIAppPersistsMappingBeforeSend|TestGUIAppSaveFailureStopsBeforeSend)$' -count=1 -v .
+)
 
 # GUI
 cd desktop
