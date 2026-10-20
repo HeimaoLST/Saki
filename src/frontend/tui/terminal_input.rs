@@ -1,8 +1,11 @@
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crossterm::event as ce;
-use futures_util::StreamExt;
+use termina::EventReader;
 use termina::escape::csi::{Csi, Mode, ThemeMode};
 use termina::escape::osc::{ColorOrQuery, DynamicColorNumber, Osc};
 use termina::event::{
@@ -11,7 +14,6 @@ use termina::event::{
     Modifiers as TerminaModifiers, MouseButton as TerminaMouseButton,
     MouseEvent as TerminaMouseEvent, MouseEventKind as TerminaMouseKind,
 };
-use termina::{EventReader, EventStream};
 
 use super::theme::{NativeColors, ThemeSetting};
 
@@ -151,11 +153,26 @@ impl ProtocolState {
     }
 }
 
-/// The single Termina-backed input stream. Protocol replies are consumed here
+/// Joinable demand-driven reader around Termina's blocked `EventReader`.
+/// One request is outstanding per pending `next()`; stopping wakes and joins
+/// the worker before any external program reads the terminal.
+struct InputWorker {
+    events: tokio::sync::mpsc::UnboundedReceiver<io::Result<TerminaEvent>>,
+    request: Option<mpsc::SyncSender<()>>,
+    stop: Arc<AtomicBool>,
+    wake: Box<dyn Fn() + Send + Sync>,
+    join: Option<JoinHandle<()>>,
+    /// A request was sent but its event has not been consumed yet; a cancelled
+    /// `next()` keeps this true so the next call does not issue a second read.
+    pending: bool,
+}
+
+/// The single Termina-backed input path. Protocol replies are consumed here
 /// and never become editor input.
 pub(crate) struct TerminalInput {
-    stream: EventStream,
+    reader: EventReader,
     protocol: ProtocolState,
+    worker: Option<InputWorker>,
 }
 
 impl TerminalInput {
@@ -164,13 +181,128 @@ impl TerminalInput {
     pub(crate) fn new(reader: EventReader, setting: ThemeSetting) -> (Self, Option<&'static [u8]>) {
         let protocol = ProtocolState::new(setting);
         let detect = protocol.detect.then_some(DETECT_SEQUENCE);
-        (
-            Self {
-                stream: EventStream::new(reader, |_| true),
-                protocol,
-            },
-            detect,
-        )
+        let mut input = Self {
+            reader,
+            protocol,
+            worker: None,
+        };
+        input.start_worker();
+        (input, detect)
+    }
+
+    fn start_worker(&mut self) {
+        if self.worker.is_some() {
+            return;
+        }
+        let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (request_tx, request_rx) = mpsc::sync_channel::<()>(1);
+        let stop = Arc::new(AtomicBool::new(false));
+        // Capture the waker before the worker can take the reader mutex.
+        let waker = self.reader.waker();
+        let wake: Box<dyn Fn() + Send + Sync> = Box::new(move || {
+            let _ = waker.wake();
+        });
+        let reader = self.reader.clone();
+        let stop_thread = Arc::clone(&stop);
+        let join = thread::spawn(move || {
+            while request_rx.recv().is_ok() {
+                if stop_thread.load(Ordering::SeqCst) {
+                    return;
+                }
+                loop {
+                    if stop_thread.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    match reader.poll(None, |_| true) {
+                        Ok(true) => break,
+                        Ok(false) => continue,
+                        Err(error) => {
+                            let _ = events_tx.send(Err(error));
+                            return;
+                        }
+                    }
+                }
+                if stop_thread.load(Ordering::SeqCst) {
+                    return;
+                }
+                match reader.read(|_| true) {
+                    Ok(event) => {
+                        if events_tx.send(Ok(event)).is_err() {
+                            return;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = events_tx.send(Err(error));
+                        return;
+                    }
+                }
+            }
+        });
+        self.worker = Some(InputWorker {
+            events: events_rx,
+            request: Some(request_tx),
+            stop,
+            wake,
+            join: Some(join),
+            pending: false,
+        });
+    }
+
+    /// Deterministic stop: set the flag, close the request channel, wake a
+    /// blocked poll, then join. No grace period or detached reader remains.
+    fn stop_worker(&mut self) {
+        let Some(mut worker) = self.worker.take() else {
+            return;
+        };
+        worker.stop.store(true, Ordering::SeqCst);
+        worker.request.take();
+        (worker.wake)();
+        if let Some(join) = worker.join.take() {
+            let _ = join.join();
+        }
+    }
+
+    /// Stops the reader before an external program reads the terminal. The
+    /// protocol state is kept so auto theme detection resumes coherently.
+    pub(crate) fn suspend(&mut self) {
+        self.stop_worker();
+    }
+
+    /// Restarts the reader after the external program exits. Focus change may
+    /// queue one auto-theme refresh; manual themes stay query-free.
+    pub(crate) fn resume(&mut self) {
+        self.protocol.on_focus();
+        self.start_worker();
+    }
+
+    async fn next_terminal_event(&mut self) -> io::Result<Option<TerminaEvent>> {
+        let Some(worker) = self.worker.as_mut() else {
+            return Ok(None);
+        };
+        if !worker.pending {
+            let sent = worker
+                .request
+                .as_ref()
+                .is_some_and(|request| request.send(()).is_ok());
+            if !sent {
+                return Ok(None);
+            }
+            worker.pending = true;
+        }
+        match worker.events.recv().await {
+            Some(Ok(event)) => {
+                worker.pending = false;
+                Ok(Some(event))
+            }
+            Some(Err(error)) => {
+                worker.pending = false;
+                Err(error)
+            }
+            None => {
+                worker.pending = false;
+                Ok(None)
+            }
+        }
     }
 
     pub(crate) async fn next(&mut self) -> io::Result<Option<Input>> {
@@ -179,7 +311,7 @@ impl TerminalInput {
                 let sleep = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline));
                 tokio::pin!(sleep);
                 tokio::select! {
-                    event = self.stream.next() => event,
+                    event = self.next_terminal_event() => event,
                     _ = &mut sleep => {
                         // The window closed and a queued scheme change still
                         // flushes here, without needing another input.
@@ -188,12 +320,12 @@ impl TerminalInput {
                     }
                 }
             } else {
-                self.stream.next().await
+                self.next_terminal_event().await
             };
             let event = match maybe_event {
-                Some(Ok(event)) => event,
-                Some(Err(error)) => return Err(error),
-                None => return Ok(None),
+                Ok(Some(event)) => event,
+                Err(error) => return Err(error),
+                Ok(None) => return Ok(None),
             };
             match event {
                 TerminaEvent::Osc(_) | TerminaEvent::Csi(_) | TerminaEvent::Dcs(_) => {
@@ -222,6 +354,12 @@ impl TerminalInput {
             write_terminal(bytes)?;
         }
         Ok(())
+    }
+}
+
+impl Drop for TerminalInput {
+    fn drop(&mut self) {
+        self.stop_worker();
     }
 }
 

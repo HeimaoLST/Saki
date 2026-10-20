@@ -9,7 +9,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 use termina::{PlatformTerminal, Terminal as TerminaTerminal};
 
 use super::terminal_input::{Input, TerminalInput};
@@ -24,14 +24,18 @@ impl ScreenModes {
         // The local guard's Drop restores the output modes if any part of the
         // setup fails, so failure and normal exit share one cleanup path.
         let modes = Self;
+        modes.apply()?;
+        Ok(modes)
+    }
+
+    fn apply(&self) -> io::Result<()> {
         execute!(
             io::stdout(),
             EnterAlternateScreen,
             EnableBracketedPaste,
             EnableMouseCapture,
             EnableFocusChange
-        )?;
-        Ok(modes)
+        )
     }
 
     fn restore(&self) {
@@ -82,6 +86,29 @@ impl TerminalSession {
     /// adapter and never surface as editor input.
     pub async fn next_input(&mut self) -> io::Result<Option<Input>> {
         self.input.next().await
+    }
+
+    /// Deterministic suspension for a cooked child process: join the input
+    /// reader, restore the screen, then restore the same terminal's captured
+    /// termios. The `PlatformTerminal` is kept so resume re-enters raw mode on
+    /// the original handle instead of creating a second cooked snapshot.
+    pub fn suspend_external(&mut self) -> io::Result<()> {
+        self.input.suspend();
+        self._modes.restore();
+        self._terminal.enter_cooked_mode()
+    }
+
+    /// Re-enter raw mode, output modes and the reader, then invalidate the
+    /// Ratatui buffers so the next draw is a full redraw.
+    pub fn resume_external(&mut self) -> io::Result<()> {
+        self._terminal.enter_raw_mode()?;
+        self._modes.apply()?;
+        self.input.resume();
+        // Resize to the current PTY size: this clears the screen and resets the
+        // back buffer without querying the cursor (which needs a terminal reply).
+        let size = self._terminal.get_dimensions()?;
+        self.screen.resize(Rect::new(0, 0, size.cols, size.rows))?;
+        Ok(())
     }
 
     pub fn draw<F>(&mut self, draw: F) -> io::Result<()>
