@@ -124,6 +124,10 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         ),
         (
             false,
+            "Tab  Complete a path token; Up/Down choose, Enter/Tab insert, Esc dismiss".to_owned(),
+        ),
+        (
+            false,
             "Ctrl+B/F  Move by character; Ctrl/Alt+Left/Right, Alt+B/F  Move by word".to_owned(),
         ),
         (

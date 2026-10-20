@@ -193,6 +193,7 @@ impl Sessions {
                 next.normalize_selection();
                 next.normalize_anchor();
                 crate::frontend::tui::transcript_search::cancel(app);
+                crate::frontend::tui::path_completion::cancel(app);
                 let previous = std::mem::replace(app, next);
                 let draft = std::mem::replace(editor, next_editor);
                 if let Some(metadata) = &previous.session {

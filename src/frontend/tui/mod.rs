@@ -5,6 +5,7 @@ pub mod history;
 pub mod log;
 pub mod markdown;
 pub mod markdown_layout;
+pub mod path_completion;
 pub mod selection;
 pub mod sessions;
 pub mod state;
@@ -55,6 +56,7 @@ pub async fn run(
             if sessions.picker.is_none() && !sessions.pending {
                 if !app.history.searching() && !transcript_search::active(&app) {
                     commands.draw(frame, &app);
+                    path_completion::draw(frame, &app);
                 }
                 history::draw(frame, &app);
             }
@@ -76,10 +78,9 @@ pub async fn run(
                 let (copy, notify_copy) = match maybe {
                     Ok(Some(Input::Event(Event::Key(key)))) => {
                         let (handled, command) = sessions.key(&mut app, key);
-                        if (sessions.picker.is_some() || sessions.pending)
-                            && transcript_search::active(&app)
-                        {
+                        if sessions.picker.is_some() || sessions.pending {
                             transcript_search::cancel(&mut app);
+                            path_completion::cancel(&mut app);
                         }
                         if let Some(command) = command
                             && input.send(command).is_err()
@@ -95,6 +96,7 @@ pub async fn run(
                         }
                         if !app.history.searching()
                             && !transcript_search::active(&app)
+                            && !path_completion::active(&app)
                             && commands.key(&mut editor, key)
                         {
                             app.text_selection.clear();
@@ -156,6 +158,7 @@ pub async fn run(
                         }
                         if !app.history.searching()
                             && !transcript_search::active(&app)
+                            && !path_completion::active(&app)
                             && commands.mouse(&mut editor, mouse)
                         {
                             app.text_selection.clear();
@@ -167,9 +170,14 @@ pub async fn run(
                             // first so a switched session never caches it.
                             app.history.cancel_search();
                             transcript_search::cancel(&mut app);
+                            path_completion::cancel(&mut app);
                             app.text_selection.clear();
                             sessions.pending = true;
                             if input.send(SessionCommand::List).is_err() { break; }
+                            continue;
+                        }
+                        if path_completion::active(&app) {
+                            app.text_selection.clear();
                             continue;
                         }
                         (handle_mouse(&mut app, mouse), false)
@@ -262,6 +270,31 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
     // close it before any cancel/clear), and only Ctrl+V reaches clipboard IO.
     if transcript_search::active(app) {
         return transcript_search_key(app, key);
+    }
+
+    // The path popup owns only its navigation/confirm keys; any other key
+    // dismisses it and continues through the normal map (typing edits normally).
+    if path_completion::active(app) {
+        let plain = !ctrl && !alt;
+        match key.code {
+            KeyCode::Esc if plain => {
+                path_completion::cancel(app);
+                return outcome;
+            }
+            KeyCode::Up if plain => {
+                path_completion::move_selection(app, false);
+                return outcome;
+            }
+            KeyCode::Down if plain => {
+                path_completion::move_selection(app, true);
+                return outcome;
+            }
+            KeyCode::Tab | KeyCode::Enter if plain => {
+                path_completion::confirm(app, editor);
+                return outcome;
+            }
+            _ => path_completion::cancel(app),
+        }
     }
 
     if ctrl
@@ -383,6 +416,7 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
 
     // F3 opens rendered-transcript search; Ctrl+F stays character-right.
     if !ctrl && !alt && key.code == KeyCode::F(3) {
+        path_completion::cancel(app);
         transcript_search::open(app);
         return outcome;
     }
@@ -431,6 +465,9 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
             return outcome;
         }
         KeyCode::Tab => {
+            if app.focus == Focus::Input && path_completion::tab(app, editor) {
+                return outcome;
+            }
             match app.focus {
                 Focus::Input => view::focus_transcript(app),
                 Focus::Transcript => app.focus = Focus::Input,

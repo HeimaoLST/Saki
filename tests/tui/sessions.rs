@@ -621,3 +621,40 @@ fn opening_a_session_closes_an_active_transcript_search() {
         "session replacement never caches an active search"
     );
 }
+
+#[test]
+fn session_switch_never_caches_a_path_completion_popup() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("saki28-session-{unique}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir(dir.join("alpha-dir")).unwrap();
+    std::fs::write(dir.join("alpha-file.txt"), "x").unwrap();
+
+    let (a, a_history) = snapshot("Session A");
+    let (b, b_history) = snapshot("Session B");
+    let mut sessions = Sessions::default();
+    let mut app = App::new();
+    let mut editor = Editor::new();
+    sessions.apply_event(&mut app, &mut editor, opened(a.clone(), a_history));
+    app.working_directory = Some(dir.clone());
+    app.last_width = 80;
+    app.last_height = 20;
+    editor.set_draft("open a");
+    handle_key(&mut app, &mut editor, key(KeyCode::Tab));
+    assert!(crate::frontend::tui::path_completion::active(&app));
+
+    sessions.apply_event(&mut app, &mut editor, opened(b, b_history));
+    assert!(
+        !crate::frontend::tui::path_completion::active(&app),
+        "a different cwd must not inherit the cached popup"
+    );
+    sessions.apply_event(&mut app, &mut editor, opened(a, snapshot("Session A").1));
+    assert!(
+        !crate::frontend::tui::path_completion::active(&app),
+        "reopening the cached session must not resurrect the popup"
+    );
+    std::fs::remove_dir_all(dir).ok();
+}

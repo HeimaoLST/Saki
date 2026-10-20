@@ -154,6 +154,8 @@ pub struct App {
     pub history: InputHistory,
     /// Active rendered-transcript search, or `None` when closed.
     pub transcript_search: Option<crate::frontend::tui::transcript_search::TranscriptSearch>,
+    /// Active path-completion popup, or `None` when closed.
+    pub path_completion: Option<crate::frontend::tui::path_completion::PathCompletion>,
     /// Monotonic record/projection revision; bumped whenever rendered content,
     /// expansion or projection changes so search never trusts a rebuilt cache.
     pub transcript_revision: u64,
@@ -206,6 +208,7 @@ impl App {
             theme: Theme::fallback(),
             history: InputHistory::new(),
             transcript_search: None,
+            path_completion: None,
             transcript_revision: 0,
             input_width: 80,
             last_width: 80,
