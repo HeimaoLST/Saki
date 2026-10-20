@@ -131,6 +131,11 @@ def self_test(binary):
                        SAKI_BASE_URL=f"http://127.0.0.1:{server.server_port}/v1",
                        SAKI_MODEL="fixture", SAKI_CONTEXT_TOKENS="65536",
                        SAKI_SESSION_DIR=str(Path(root, "sessions")), SAKI_SESSION="missing")
+            for broken in (dict(env, SAKI_CONTEXT_TOKENS="1"),
+                           {key: value for key, value in env.items() if key != "API_KEY"}):
+                rejected = subprocess.run([str(binary), "--stdio"], cwd=root, env=broken,
+                                          input="", capture_output=True, text=True, timeout=30)
+                assert rejected.returncode != 0 and rejected.stdout == "", rejected.stdout
             runtime = Runtime(binary, cwd=root, env=env)
             assert not list(Path(root, "sessions").iterdir())
             session = runtime.call("session.create", {})["session_id"]

@@ -113,6 +113,8 @@ cancel 的接纳只表示发送协作式信号。任务实际退出并完成 jou
 
 stdin EOF 与显式 shutdown 都停止接纳，等待已接纳任务结束；不自动取消。stdout 写端断开表示观察通道丢失：停止接纳新请求，等待已接纳执行落盘／收尾后退出，不冒报 completed；GUI 将状态标为连接中断／未知并重新加载历史核对。首版没有透明重连、事件游标和断线续传；重新启动是新进程，不承诺强杀后任务存活。
 
+输出断连在下一次写入失败时可观察；空闲时没有心跳或独立断连探测，宿主关闭连接时应同时关闭 stdin，不能只关闭 stdout 后保持 stdin 永久打开。已接纳但回包未成功写出的任务仍按不确定接纳语义收尾。
+
 如果调用方没收到 task.send 的接纳响应就失去连接，不能自动重发；任务可能已执行。先恢复对应 session 的历史／状态，只有明确新意图才再次提交。后续若需要幂等提交，必须另定义 durable 接纳和去重契约。
 
 Go 侧用 `os/exec` 的 stdin/stdout pipe，持续独立读取 stdout；不能为了等一次请求响应而暂停事件读取。使用 CommandContext 时，context 应绑定整个子进程生命周期，不绑定当前查看对象。按 [Go StdoutPipe 契约](https://pkg.go.dev/os/exec#Cmd.StdoutPipe)，Start 后完成 pipe 读取再 Wait。默认 Scanner 的行长上限不足以承载图片或较大工具结果，应按 [Scanner.Buffer](https://pkg.go.dev/bufio#Scanner.Buffer) 设置 buffer 或用 Reader。任务结束与进程退出分开：读到 task_finished 不关闭整个 runtime。

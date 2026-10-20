@@ -240,6 +240,17 @@ async fn active_a_allows_real_load_of_b_and_cancel_is_directed_and_unique() {
         .await["result"]
         .clone();
     arrived.await.unwrap();
+    for session_id in [&b, "missing"] {
+        assert_eq!(
+            driver
+                .call(
+                    "task.send",
+                    json!({"session_id":session_id,"message":{"text":"not loaded"}})
+                )
+                .await["error"]["code"],
+            "not_found"
+        );
+    }
     assert_eq!(
         driver.call("session.load", json!({"session_id":b})).await["result"]["loaded"],
         true
@@ -309,7 +320,7 @@ async fn active_a_allows_real_load_of_b_and_cancel_is_directed_and_unique() {
 }
 
 #[tokio::test]
-async fn eof_drains_accepted_task_and_finish_wins_late_cancel() {
+async fn eof_drains_accepted_task() {
     let directory = Directory::new();
     let (client, arrived, release, server) = paused_model().await;
     let mut driver = Driver::new(&directory, client).await;
@@ -328,8 +339,24 @@ async fn eof_drains_accepted_task_and_finish_wins_late_cancel() {
     assert!(driver.output.next_line().await.unwrap().is_none());
     driver.worker.await.unwrap().unwrap();
     server.await.unwrap();
-    let (client, server) = scripted_http(vec![]).await;
+}
+
+#[tokio::test]
+async fn completion_before_cancel_keeps_one_completed_terminal_in_the_same_runtime() {
+    let directory = Directory::new();
+    let (client, arrived, release, server) = paused_model().await;
     let mut driver = Driver::new(&directory, client).await;
+    let id = driver.create().await;
+    let task = driver
+        .call(
+            "task.send",
+            json!({"session_id":id,"message":{"text":"finish first"}}),
+        )
+        .await["result"]
+        .clone();
+    arrived.await.unwrap();
+    release.send(()).unwrap();
+    assert_eq!(driver.finish(&task).await["event"]["status"], "completed");
     assert_eq!(
         driver
             .call(
@@ -339,8 +366,20 @@ async fn eof_drains_accepted_task_and_finish_wins_late_cancel() {
             .await["result"]["status"],
         "not_running"
     );
-    driver.shutdown().await;
-    requests(server).await;
+    assert_eq!(
+        driver
+            .call("session.history", json!({"session_id":id}))
+            .await["result"]["status"],
+        "completed"
+    );
+    let seen = driver.shutdown().await;
+    assert_eq!(
+        seen.iter()
+            .filter(|v| v["task_id"] == task["task_id"] && v["event"]["type"] == "task_finished")
+            .count(),
+        1
+    );
+    server.await.unwrap();
 }
 
 #[tokio::test]

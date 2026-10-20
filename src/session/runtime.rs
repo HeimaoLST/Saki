@@ -375,6 +375,9 @@ impl Runtime {
             }
             "task.send" => {
                 let p: SendTask = params(value)?;
+                let session = self.sessions.get_mut(&p.session_id).ok_or_else(|| {
+                    Error::new("not_found", "session is not loaded").session(&p.session_id)
+                })?;
                 if self.active.is_some() {
                     return Err(Error::new("busy", "runtime execution slot is occupied")
                         .session(&p.session_id));
@@ -391,9 +394,6 @@ impl Runtime {
                     )
                     .session(&p.session_id));
                 }
-                let session = self.sessions.get_mut(&p.session_id).ok_or_else(|| {
-                    Error::new("not_found", "session is not loaded").session(&p.session_id)
-                })?;
                 let task_id = journal::new_id().map_err(io_error)?;
                 let message_id = journal::new_id().map_err(io_error)?;
                 let (cancel, cancel_rx) = watch::channel(false);
