@@ -168,6 +168,10 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         ),
         (
             false,
+            "F3  Search rendered transcript; Enter/F3 next, Shift+F3/Up prev; Esc closes".to_owned(),
+        ),
+        (
+            false,
             "Ctrl+Home/End  First/latest; Home/End also work in records".to_owned(),
         ),
         (
