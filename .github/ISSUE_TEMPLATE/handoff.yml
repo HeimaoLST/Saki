@@ -9,7 +9,8 @@ body:
         > 协作协议见根目录 `AGENTS.md` §8（交接、阻塞与升级）。
         > 主 agent 给自己的子 agent 派活或接收结果，使用 tmux；不使用本模板、不另认领或改标签。只写稳定实例 ID，不把 session／pane 数字当作后续路由。
         > 优先在**原 issue** 评论交接，只有目标确实不同才新开本 issue。
-        > 新目标默认 `status:triage`：类型／归属／优先级由 PM 按目标补齐，DoR 完整后才置 `ready`。接收方评论确认才完成交接。
+        > 新目标默认 `status:triage`：类型／归属／优先级由 PM 按目标补齐，DoR 完整后才置 `ready`。
+        > 接收方评论回 `实例 ID + 责任／文件范围 + 第一步动作` 才算完成接收；发送方追踪到接收评论，超时由 `agent:pm` 兜底。接收不等于设计 ACK，设计／契约变更仍走 §9。
 
   - type: input
     id: source_issue
@@ -153,6 +154,8 @@ body:
         - label: 新任务已注明来源 issue、目标与建议类型；单纯换执行者使用原 issue
           required: true
         - label: 目标业务线已知则改 `agent:*`；不确定时留给 `agent:pm` 分诊
+          required: true
+        - label: 接收方恰好回复实例／范围／第一步才算接收；发送方追踪至接收评论，超时由 `agent:pm` 兜底
           required: true
         - label: 接收方确认接手后才移除 `handoff`；置 `ready` 前 DoR 完整
           required: true
