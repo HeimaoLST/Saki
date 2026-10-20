@@ -361,7 +361,11 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 			case ct.SendState == sendAccepted && ct.Status != statusWorking:
 				ui.Text(c, "Accepted; waiting for the runtime to start.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 			case ct.SendState == sendUnknown:
-				ui.Text(c, "Delivery not confirmed. Reload to verify before sending again.").FontSize(11).LineHeight(1.4).TextColor(t.Danger)
+				if a.runtimeStatus == runtimeStateReady && a.rt != nil {
+					ui.Text(c, "Delivery not confirmed. Reload to verify before sending again.").FontSize(11).LineHeight(1.4).TextColor(t.Danger)
+				} else {
+					ui.Text(c, "Runtime disconnected; restart Saki to check the task and history.").FontSize(11).LineHeight(1.4).TextColor(t.Danger)
+				}
 			}
 			if ct.SendError != "" {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {

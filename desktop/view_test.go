@@ -532,3 +532,23 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 		t.Fatal("completed task must not keep waiting/working text")
 	}
 }
+
+func TestLiveSendUnknownAfterDisconnectSaysRestart(t *testing.T) {
+	ct := &contact{ID: "bound", Name: "Saki", SessionID: "s1", Loaded: true, SendState: sendUnknown}
+	a := &appModel{demo: false, runtimeStatus: runtimeStateExited, scrollTo: -1, contacts: []*contact{ct}}
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if !tr.HasText("restart Saki") {
+		t.Fatal("disconnected sendUnknown should tell the user to restart")
+	}
+	if tr.HasText("Reload to verify") {
+		t.Fatal("disconnected client must not offer an ineffective Reload instruction")
+	}
+
+	a.runtimeStatus = runtimeStateReady
+	a.rt = &runtimeClient{}
+	tr.Frame()
+	if !tr.HasText("Reload to verify") {
+		t.Fatal("a live connection should keep the Reload instruction")
+	}
+}
