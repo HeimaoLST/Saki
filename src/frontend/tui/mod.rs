@@ -1,3 +1,4 @@
+pub mod code_highlight;
 pub mod commands;
 pub mod editor;
 pub mod external_editor;

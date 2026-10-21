@@ -2,6 +2,7 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
+use crate::frontend::tui::code_highlight;
 use crate::frontend::tui::theme;
 
 /// Explicit Markdown column alignment.
@@ -115,6 +116,9 @@ struct Markdown {
     cursor: usize,
     table: Option<TableBuild>,
     theme: theme::Theme,
+    code_language: String,
+    code_buffer: String,
+    code_source: Option<usize>,
 }
 
 impl Markdown {
@@ -131,6 +135,9 @@ impl Markdown {
             cursor: 0,
             table: None,
             theme,
+            code_language: String::new(),
+            code_buffer: String::new(),
+            code_source: None,
         }
     }
 
@@ -152,6 +159,52 @@ impl Markdown {
 
     fn style(&self) -> Style {
         self.state.style(self.theme)
+    }
+
+    /// Emits a buffered fenced block with syntax roles while preserving exact
+    /// text and source advance. Unknown/indented blocks keep one code style.
+    fn flush_code(&mut self) {
+        let text = std::mem::take(&mut self.code_buffer);
+        let language = std::mem::take(&mut self.code_language);
+        let Some(source) = self.code_source.take() else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        self.cursor = self.cursor.max(source + text.len());
+        let base = Style::default().fg(self.theme.code);
+        let Some(runs) = code_highlight::roles(&text, &language) else {
+            self.push_text(&text, base, source, text.len());
+            return;
+        };
+        let mut position = 0usize;
+        for run in runs.iter() {
+            if run.start > position {
+                self.push_text(
+                    &text[position..run.start],
+                    base,
+                    source + position,
+                    run.start - position,
+                );
+            }
+            let style = run.style(self.theme);
+            self.push_text(
+                &text[run.start..run.end],
+                style,
+                source + run.start,
+                run.end - run.start,
+            );
+            position = run.end;
+        }
+        if position < text.len() {
+            self.push_text(
+                &text[position..],
+                base,
+                source + position,
+                text.len() - position,
+            );
+        }
     }
 
     fn flush_flow(&mut self) {
@@ -343,9 +396,13 @@ pub fn blocks_with_theme(text: &str, theme: theme::Theme) -> Vec<Block> {
                     let style = Style::default().fg(parser.theme.secondary);
                     parser.push_text(&format!("{language}\n"), style, range.start, 0);
                 }
+                parser.code_language = language;
+                parser.code_buffer.clear();
+                parser.code_source = None;
                 parser.state.code = true;
             }
             Event::End(TagEnd::CodeBlock) => {
+                parser.flush_code();
                 parser.state.code = false;
                 if parser.in_list() || parser.in_quote() {
                     parser.ensure_newline();
@@ -473,15 +530,22 @@ pub fn blocks_with_theme(text: &str, theme: theme::Theme) -> Vec<Block> {
                 }));
             }
             Event::Text(item) => {
-                let style = parser.style();
-                push_into(
-                    &mut parser,
-                    item.as_ref(),
-                    style,
-                    range.start,
-                    range.len(),
-                    range.end,
-                );
+                if parser.state.code {
+                    if parser.code_source.is_none() {
+                        parser.code_source = Some(range.start);
+                    }
+                    parser.code_buffer.push_str(item.as_ref());
+                } else {
+                    let style = parser.style();
+                    push_into(
+                        &mut parser,
+                        item.as_ref(),
+                        style,
+                        range.start,
+                        range.len(),
+                        range.end,
+                    );
+                }
             }
             Event::Code(code) => {
                 let style = parser.style().fg(parser.theme.code);
@@ -508,6 +572,7 @@ pub fn blocks_with_theme(text: &str, theme: theme::Theme) -> Vec<Block> {
             _ => {}
         }
     }
+    parser.flush_code();
     parser.flush_flow();
     parser.blocks
 }

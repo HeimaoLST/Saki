@@ -1695,3 +1695,5 @@ mod transcript_search_tests;
 mod path_completion_tests;
 
 mod external_editor_tests;
+
+mod code_highlight_tests;
