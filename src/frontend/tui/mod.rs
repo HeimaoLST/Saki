@@ -137,8 +137,11 @@ pub async fn run(
                         if outcome.paste_clipboard {
                             handle_clipboard(&mut app, &mut editor);
                         }
-                        if outcome.external_editor {
-                            open_external_editor(&mut session, &mut app, &mut editor);
+                        if outcome.external_editor
+                            && let Err(error) =
+                                open_external_editor(&mut session, &mut app, &mut editor)
+                        {
+                            return Err(error.into());
                         }
                         if outcome.quit {
                             break;
@@ -908,35 +911,40 @@ fn open_external_editor(
     session: &mut terminal::TerminalSession,
     app: &mut App,
     editor: &mut Editor,
-) {
+) -> std::io::Result<()> {
     let launch = match external_editor::from_env() {
         Ok(launch) => launch,
         Err(message) => {
             app.notify(message);
-            return;
+            return Ok(());
         }
     };
     let original = editor.text();
     let suspended = session.suspend_external();
-    let edited = suspended
-        .is_ok()
-        .then(|| external_editor::edit(&launch, &original));
+    let edited = if suspended.is_ok() {
+        match external_editor::SigintGuard::install() {
+            Ok(guard) => {
+                let result = external_editor::edit(&launch, &original);
+                drop(guard);
+                Some(result)
+            }
+            Err(message) => Some(Err(message)),
+        }
+    } else {
+        None
+    };
     let resumed = session.resume_external();
     if let Err(error) = suspended {
         app.notify(format!(
             "External editor could not suspend the terminal: {error}"
         ));
-        return;
     }
-    if let Err(error) = resumed {
-        app.notify(format!(
-            "External editor could not restore the terminal: {error}"
-        ));
-        return;
-    }
+    // Terminal restoration failure is fatal: never pretend the UI is usable.
+    resumed?;
     if let Some(result) = edited {
         load_external_text(app, editor, result);
     }
+    Ok(())
 }
 
 /// Applies a finished editor result. Errors only notify: the draft, cursor,

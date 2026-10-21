@@ -178,7 +178,8 @@ fn pty_reader_cancel_and_suspend() {
 
         let mut output = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(20);
-        let mut input_written = false;
+        let mut cancel_key_written = false;
+        let mut resume_key_written = false;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             assert!(
@@ -190,10 +191,15 @@ fn pty_reader_cancel_and_suspend() {
                 output.extend_from_slice(&chunk);
             }
             let text = String::from_utf8_lossy(&output);
-            if !input_written && text.contains("CANCEL_READY") {
+            if !cancel_key_written && text.contains("CANCEL_READY") {
                 let mut master = std::fs::File::from_raw_fd(libc::dup(master));
                 master.write_all(b"k").expect("write key to PTY");
-                input_written = true;
+                cancel_key_written = true;
+            }
+            if !resume_key_written && text.contains("RESUMED") {
+                let mut master = std::fs::File::from_raw_fd(libc::dup(master));
+                master.write_all(b"z").expect("write resume key to PTY");
+                resume_key_written = true;
             }
             if text.contains("READER_DONE") {
                 break;
@@ -211,6 +217,8 @@ fn pty_reader_cancel_and_suspend() {
         assert!(status.success(), "reader child failed: {status}");
         let text = String::from_utf8_lossy(&output);
         assert!(text.contains("CANCEL_READY"), "{text}");
+        assert!(text.contains("PAUSE_READY"), "{text}");
+        assert!(text.contains("RESUMED"), "{text}");
         assert!(text.contains("READER_DONE"), "{text}");
 
         let mut termios: libc::termios = std::mem::zeroed();
@@ -257,6 +265,16 @@ fn pty_reader_cancel_child() {
             )) if key.code == crossterm::event::KeyCode::Char('k') => {}
             _ => panic!("expected the first real key to survive cancellation"),
         }
+        // Leave an outstanding blocked poll, then suspend: stop must wake and
+        // join it deterministically. No input arrives for this request.
+        let mut paused = Box::pin(session.next_input());
+        std::future::poll_fn(|context| {
+            let _ = std::future::Future::poll(paused.as_mut(), context);
+            std::task::Poll::Ready(())
+        })
+        .await;
+        drop(paused);
+        println!("PAUSE_READY");
     });
 
     session.suspend_external().expect("suspend terminal");
@@ -268,6 +286,20 @@ fn pty_reader_cancel_child() {
     let mut raw: libc::termios = unsafe { std::mem::zeroed() };
     assert_eq!(unsafe { libc::tcgetattr(0, &mut raw) }, 0, "tcgetattr");
     assert_eq!(raw.c_lflag & libc::ICANON, 0, "raw after resume");
+    println!("RESUMED");
+    runtime.block_on(async {
+        let event = tokio::time::timeout(Duration::from_secs(10), session.next_input())
+            .await
+            .expect("post-resume key must arrive")
+            .expect("input io")
+            .expect("input stream");
+        match event {
+            crate::frontend::tui::terminal_input::Input::Event(crossterm::event::Event::Key(
+                key,
+            )) if key.code == crossterm::event::KeyCode::Char('z') => {}
+            _ => panic!("expected the first post-resume key"),
+        }
+    });
     drop(session);
     println!("READER_DONE");
 }

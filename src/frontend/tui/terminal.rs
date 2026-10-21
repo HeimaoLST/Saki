@@ -56,6 +56,9 @@ pub struct TerminalSession {
     _modes: ScreenModes,
     screen: Terminal<CrosstermBackend<Stdout>>,
     input: TerminalInput,
+    /// Auto-theme startup sequence (subscription + scheme/color query); None
+    /// for manual themes so resume never enables 2031 or sends queries.
+    detect: Option<&'static [u8]>,
     _terminal: PlatformTerminal,
 }
 
@@ -78,6 +81,7 @@ impl TerminalSession {
             _modes: modes,
             screen,
             input,
+            detect: detect_sequence,
             _terminal: terminal,
         })
     }
@@ -108,6 +112,11 @@ impl TerminalSession {
         // back buffer without querying the cursor (which needs a terminal reply).
         let size = self._terminal.get_dimensions()?;
         self.screen.resize(Rect::new(0, 0, size.cols, size.rows))?;
+        // ScreenModes::restore disabled 2031; re-enable auto subscription and
+        // refresh the pair through the same ProtocolState. Manual stays silent.
+        if let Some(sequence) = self.detect {
+            write_stdout(sequence)?;
+        }
         Ok(())
     }
 

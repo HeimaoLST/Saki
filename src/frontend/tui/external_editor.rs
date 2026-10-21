@@ -5,7 +5,8 @@
 //! fallback. The terminal suspension/restoration lives in `TerminalSession` so
 //! this module only owns the file and child lifecycle.
 
-use std::path::PathBuf;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -46,17 +47,43 @@ pub fn from_env() -> Result<Launch, String> {
 /// Writes the draft, runs the editor, and returns the new UTF-8 text. Any
 /// failure leaves the caller's draft untouched; the temp file is always removed.
 pub fn edit(launch: &Launch, draft: &str) -> Result<String, String> {
-    let path = temp_path();
-    if let Err(error) = std::fs::write(&path, draft.as_bytes()) {
-        return Err(format!("Could not create the editor file: {error}"));
-    }
-    let status = run(launch, &path);
-    let contents = std::fs::read(&path).ok();
-    let _ = std::fs::remove_file(&path);
-    status?;
-    let contents = contents.ok_or_else(|| "Could not read the editor file.".to_owned())?;
+    let file = TempFile::create(draft)?;
+    run(launch, file.path())?;
+    let contents = std::fs::read(file.path())
+        .map_err(|error| format!("Could not read the editor file: {error}"))?;
     String::from_utf8(contents)
         .map_err(|_| "External editor saved text that is not valid UTF-8.".to_owned())
+}
+
+/// Owns the temp file; every return/error path removes it.
+struct TempFile {
+    path: PathBuf,
+}
+
+impl TempFile {
+    fn create(draft: &str) -> Result<Self, String> {
+        let path = temp_path();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| format!("Could not create the editor file: {error}"))?;
+        if let Err(error) = file.write_all(draft.as_bytes()) {
+            let _ = std::fs::remove_file(&path);
+            return Err(format!("Could not write the editor file: {error}"));
+        }
+        Ok(Self { path })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 fn temp_path() -> PathBuf {
@@ -66,12 +93,7 @@ fn temp_path() -> PathBuf {
     std::env::temp_dir().join(format!("saki-editor-{}-{nanos}.txt", std::process::id()))
 }
 
-fn run(launch: &Launch, path: &std::path::Path) -> Result<(), String> {
-    // In cooked mode Ctrl+C reaches the whole foreground group (Saki and the
-    // editor). Catch it here so the parent survives; a caught action is reset
-    // by exec in the child, so the editor still behaves normally.
-    #[cfg(unix)]
-    let _sigint = SigintGuard::install();
+fn run(launch: &Launch, path: &Path) -> Result<(), String> {
     let status = Command::new(&launch.program)
         .args(&launch.args)
         .arg(path)
@@ -84,18 +106,33 @@ fn run(launch: &Launch, path: &std::path::Path) -> Result<(), String> {
     }
 }
 
+/// Process-global SIGINT guard for the UI invocation only. In cooked mode a
+/// terminal Ctrl+C reaches the whole foreground group (Saki and the editor);
+/// catching it here keeps the parent alive while exec resets the child to the
+/// default action. The exact prior sigaction (handler, flags, mask) is restored.
 #[cfg(unix)]
-struct SigintGuard {
-    previous: libc::sighandler_t,
+pub struct SigintGuard {
+    previous: libc::sigaction,
 }
 
 #[cfg(unix)]
 impl SigintGuard {
-    fn install() -> Self {
+    pub fn install() -> Result<Self, String> {
         extern "C" fn catch(_: libc::c_int) {}
-        let previous =
-            unsafe { libc::signal(libc::SIGINT, catch as *const () as libc::sighandler_t) };
-        Self { previous }
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = catch as *const () as libc::sighandler_t;
+            action.sa_flags = libc::SA_RESTART;
+            libc::sigemptyset(&mut action.sa_mask);
+            let mut previous: libc::sigaction = std::mem::zeroed();
+            if libc::sigaction(libc::SIGINT, &action, &mut previous) != 0 {
+                return Err(format!(
+                    "Could not install the SIGINT guard: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            Ok(Self { previous })
+        }
     }
 }
 
@@ -103,7 +140,7 @@ impl SigintGuard {
 impl Drop for SigintGuard {
     fn drop(&mut self) {
         unsafe {
-            libc::signal(libc::SIGINT, self.previous);
+            libc::sigaction(libc::SIGINT, &self.previous, std::ptr::null_mut());
         }
     }
 }
