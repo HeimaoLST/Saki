@@ -920,20 +920,23 @@ fn open_external_editor(
         }
     };
     let original = editor.text();
-    let suspended = session.suspend_external();
-    let edited = if suspended.is_ok() {
-        match external_editor::SigintGuard::install() {
-            Ok(guard) => {
-                let result = external_editor::edit(&launch, &original);
-                drop(guard);
-                Some(result)
-            }
-            Err(message) => Some(Err(message)),
+    // Catch SIGINT while still raw and hold the guard through the whole cooked
+    // interval, including resume, so a terminal Ctrl+C can never kill the
+    // parent in a default-signal window. Installation failure aborts before
+    // any terminal state changes.
+    let guard = match external_editor::SigintGuard::install() {
+        Ok(guard) => guard,
+        Err(message) => {
+            app.notify(message);
+            return Ok(());
         }
-    } else {
-        None
     };
+    let suspended = session.suspend_external();
+    let edited = suspended
+        .is_ok()
+        .then(|| external_editor::edit(&launch, &original));
     let resumed = session.resume_external();
+    drop(guard);
     if let Err(error) = suspended {
         app.notify(format!(
             "External editor could not suspend the terminal: {error}"
