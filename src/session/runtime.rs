@@ -282,6 +282,7 @@ pub enum RuntimeReply {
 pub struct RuntimeHandle {
     commands: mpsc::Sender<Envelope>,
     output: OutputState,
+    work_drained: watch::Receiver<bool>,
 }
 
 type ReplyResult = std::result::Result<RuntimeReply, RuntimeError>;
@@ -323,6 +324,10 @@ impl RuntimeHandle {
                 "runtime stopped before replying",
             )),
         }
+    }
+
+    pub(crate) fn work_drained(&self) -> watch::Receiver<bool> {
+        self.work_drained.clone()
     }
 
     pub fn output_state(&self) -> OutputState {
@@ -387,9 +392,11 @@ impl Runtime {
         let (workers_tx, workers_rx) = mpsc::channel(1);
         let (releases_tx, releases_rx) = mpsc::channel(8);
         let output = OutputState::default();
+        let (drained_tx, drained_rx) = watch::channel(false);
         let handle = RuntimeHandle {
             commands: commands_tx,
             output: output.clone(),
+            work_drained: drained_rx,
         };
         let actor = RuntimeActor {
             store: self.store,
@@ -399,6 +406,7 @@ impl Runtime {
             config: self.config,
             limits: self.limits,
             output,
+            work_drained: drained_tx,
             sessions: HashMap::new(),
             active: None,
             preparing: HashSet::new(),
@@ -487,6 +495,7 @@ struct RuntimeActor {
     config: CompactionConfig,
     limits: EventLimits,
     output: OutputState,
+    work_drained: watch::Sender<bool>,
     sessions: HashMap<String, SessionEntry>,
     active: Option<Active>,
     preparing: HashSet<String>,
@@ -510,6 +519,12 @@ impl RuntimeActor {
             self.accepting = false;
         }
         loop {
+            if !self.accepting
+                && self.in_flight == 0
+                && self.active.as_ref().is_none_or(|active| active.done)
+            {
+                self.work_drained.send_replace(true);
+            }
             if !self.accepting && self.active.is_none() && self.in_flight == 0 {
                 self.drain_stopped_commands();
                 break;

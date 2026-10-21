@@ -797,9 +797,9 @@ Send 成功得到 `AcceptedTask { association, events }`，关联在接纳时固
 | Agent / compact → TaskEvents | 32 项，合计 8 MiB，单事件最多 4 MiB；可 await 的 EventSink，compact hook 同样等待；无逐事件 spawn |
 | stdio 控制响应 / 事件输出 | 两条独立队列各 32 项、各 8 MiB；单帧最多 8 MiB（含换行）。先计数再分配序列化副本；控制优先，任务内部事件 FIFO |
 | 等待 stdio 回复的作业 | 最多 32 项，包含持续转发任务的作业。容量耗尽转入 OutputClosed；当前已读 Cancel/Shutdown 仍提交，不能无限保留请求 |
-| writer | 单帧 write_all + flush 共用 30 秒绝对期限，部分写入不重置；超时、断管或超大事件关闭观察通道并释放展示等待 |
+| writer | 单帧 write_all + flush 共用 30 秒绝对期限，部分写入不重置；停止接纳且业务 worker/文件准备收尾后，剩余展示另有总计 30 秒排空期限；超时、断管或超大事件关闭观察通道并释放展示等待 |
 
-事件的字节许可跟随帧直到 writer 处理结束，不能因 dispatcher 出队就提前归还。`TaskEvents::buffer_stats()` 提供当前及峰值 bytes/messages；该计数覆盖持有字节许可的事件，也包括转发中事件。控制与事件输出也以相同 permit 计数机制跟踪。原子快照只用于观测，不是准入依据。确定性测试记录一份出队后仍占许可的事件达到单事件字节预算，第二份发送保持 Pending，取消或 OutputClosed 后释放等待；实际 OS pipe 写满的测试验证原生写入期限。
+事件的字节许可跟随帧直到 writer 处理结束，不能因 dispatcher 出队就提前归还。`TaskEvents::buffer_stats()` 提供当前及峰值 bytes/messages；该计数覆盖持有字节许可的事件，也包括转发中事件。控制与事件输出也以相同 permit 计数机制跟踪。原子快照只用于观测，不是准入依据。确定性测试记录一份出队后仍占许可的事件达到单事件字节预算，第二份发送保持 Pending，取消或 OutputClosed 后释放等待；实际 OS pipe 写满的测试验证原生写入期限。暂停 Tokio 时钟的测试验证：单帧持续有进展也不能重置整个 backlog 的排空期限；业务完成观察独立于 terminal 展示确认。测试只启用 Tokio 的 test-util feature，不改变生产时钟。
 
 默认展示队列字节预算共 24 MiB（事件流 8 + 控制帧 8 + 事件帧 8），另有单活动生产者/转发者持有的有界事件及 JSON 映射副本（各最多 4 MiB），不使用事件数无限增长的缓存。32 个请求的输入/回复和 8 项文件准备分别有数量上限；历史、模型上下文、原始工具结果属于业务数据，沿用既有 reader/模型/工具限制，不能据此声称整个进程内存固定为 24 MiB。下层 HTTP 库的单块分配和操作系统缓冲也不属于本层队列预算。
 

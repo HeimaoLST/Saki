@@ -1171,3 +1171,37 @@ async fn output_loss_before_acceptance_rejects_send_without_changing_history() {
     actor.await.unwrap().unwrap();
     assert_eq!(before, fs::read(journal_file(&workspace, &id)).unwrap());
 }
+
+#[tokio::test]
+async fn drain_observation_waits_for_business_but_not_for_terminal_delivery() {
+    let workspace = Workspace::new();
+    let (client, arrived, release, server) = paused_model().await;
+    let (handle, actor) = runtime(client, &workspace).start();
+    let id = create_session(&handle).await;
+    let task = accepted(
+        handle
+            .call(RuntimeCommand::Send {
+                session_id: id,
+                message: UserMessage::text("finish"),
+            })
+            .await
+            .unwrap(),
+    );
+    arrived.await.unwrap();
+    let mut drained = handle.work_drained();
+    handle.call(RuntimeCommand::Shutdown).await.unwrap();
+    assert!(!*drained.borrow());
+    release.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), drained.wait_for(|drained| *drained))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !actor.is_finished(),
+        "terminal still occupies admission until consumed"
+    );
+    assert_eq!(finish(task.events).await.status, "completed");
+    drop(handle);
+    actor.await.unwrap().unwrap();
+    server.await.unwrap();
+}

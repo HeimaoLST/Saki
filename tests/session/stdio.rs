@@ -379,3 +379,71 @@ async fn finishing_a_task_does_not_discard_a_partially_received_request() {
     worker.await.unwrap().unwrap();
     server.await.unwrap();
 }
+
+struct SlowWriter {
+    delay: Pin<Box<tokio::time::Sleep>>,
+    completed: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl AsyncWrite for SlowWriter {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        use std::future::Future;
+        std::task::ready!(self.delay.as_mut().poll(cx));
+        self.completed.fetch_add(1, Ordering::SeqCst);
+        self.delay
+            .as_mut()
+            .reset(tokio::time::Instant::now() + Duration::from_secs(2));
+        Poll::Ready(Ok(bytes.len()))
+    }
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn drain_deadline_bounds_the_whole_backlog_despite_progress_on_each_frame() {
+    let state = OutputState::default();
+    let (sender, control_rx) = mpsc::channel(8);
+    let (event_tx, event_rx) = mpsc::channel(1);
+    let output = Output {
+        sender,
+        budget: Arc::new(Semaphore::new(1024)),
+        state: state.clone(),
+        limit: 1024,
+        metrics: BufferMetrics::default(),
+    };
+    for _ in 0..5 {
+        assert!(output.send(&json!({"text":"frame"}), None).await);
+    }
+    let metrics = output.metrics.clone();
+    drop(output);
+    drop(event_tx);
+    let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let writer = SlowWriter {
+        delay: Box::pin(tokio::time::sleep(Duration::from_secs(2))),
+        completed: completed.clone(),
+    };
+    let (drained_tx, drained_rx) = watch::channel(false);
+    let deadline = tokio::spawn(drain_output(
+        drained_rx,
+        state.clone(),
+        Duration::from_secs(3),
+    ));
+    let started = tokio::time::Instant::now();
+    drained_tx.send_replace(true);
+    let result = write_output(writer, control_rx, event_rx, state, Duration::from_secs(3)).await;
+    deadline.await.unwrap();
+    assert!(result.is_err());
+    assert_eq!(
+        tokio::time::Instant::now() - started,
+        Duration::from_secs(3)
+    );
+    assert_eq!(completed.load(Ordering::SeqCst), 1);
+    assert_eq!(metrics.snapshot().bytes, 0);
+}

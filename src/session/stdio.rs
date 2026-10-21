@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt},
-    sync::{Semaphore, mpsc},
+    sync::{Semaphore, mpsc, watch},
     task::JoinSet,
 };
 
@@ -535,6 +535,20 @@ async fn read_frame<R: AsyncBufRead + Unpin>(input: &mut R) -> io::Result<Option
     }
 }
 
+async fn drain_output(
+    mut work_drained: watch::Receiver<bool>,
+    state: OutputState,
+    timeout: Duration,
+) {
+    while !*work_drained.borrow_and_update() {
+        if work_drained.changed().await.is_err() {
+            return;
+        }
+    }
+    tokio::time::sleep(timeout).await;
+    state.close();
+}
+
 pub async fn run<R, W>(runtime: Runtime, input: R, writer: W) -> anyhow::Result<()>
 where
     R: AsyncBufRead + Unpin,
@@ -563,6 +577,11 @@ where
     let api = runtime.api().as_str();
     let (handle, mut worker) = runtime.start();
     let state = handle.output_state();
+    let drain_job = tokio::spawn(drain_output(
+        handle.work_drained(),
+        state.clone(),
+        options.write_timeout,
+    ));
     let (control_tx, control_rx) = mpsc::channel(options.output_messages);
     let (event_tx, event_rx) = mpsc::channel(options.output_messages);
     let control = Output {
@@ -650,14 +669,19 @@ where
         }
     }
     let service_result = match service_result {
-        Some(result) => result?,
-        None => worker.await?,
+        Some(result) => result,
+        None => worker.await,
     };
+    if service_result.is_err() {
+        state.close();
+    }
     drop(control);
     drop(events);
-    let writer_result = write_job.await?;
+    let writer_result = write_job.await;
+    drain_job.abort();
+    let writer_result = writer_result?;
     writer_result?;
-    service_result?;
+    service_result??;
     if let Some(error) = input_error {
         return Err(error.into());
     }
