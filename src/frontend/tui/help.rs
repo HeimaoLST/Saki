@@ -128,6 +128,10 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         ),
         (
             false,
+            "Ctrl+G  Edit the draft in $VISUAL/$EDITOR; returns without sending".to_owned(),
+        ),
+        (
+            false,
             "Ctrl+B/F  Move by character; Ctrl/Alt+Left/Right, Alt+B/F  Move by word".to_owned(),
         ),
         (

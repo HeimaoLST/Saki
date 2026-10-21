@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod editor;
+pub mod external_editor;
 pub mod help;
 pub mod history;
 pub mod log;
@@ -136,6 +137,12 @@ pub async fn run(
                         if outcome.paste_clipboard {
                             handle_clipboard(&mut app, &mut editor);
                         }
+                        if outcome.external_editor
+                            && let Err(error) =
+                                open_external_editor(&mut session, &mut app, &mut editor)
+                        {
+                            return Err(error.into());
+                        }
                         if outcome.quit {
                             break;
                         }
@@ -244,6 +251,7 @@ pub struct KeyOutcome {
     /// Esc intent while the agent is running; the run loop sends Cancel.
     pub cancel: bool,
     pub quit: bool,
+    pub external_editor: bool,
 }
 
 /// Maps one key event to state changes. Kept free of terminal I/O so it can be
@@ -257,6 +265,7 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
         paste_clipboard: false,
         cancel: false,
         quit: false,
+        external_editor: false,
     };
     if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
         return outcome;
@@ -512,6 +521,7 @@ fn input_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutcome {
         paste_clipboard: false,
         cancel: false,
         quit: false,
+        external_editor: false,
     };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
@@ -561,6 +571,7 @@ fn input_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutcome {
         KeyCode::Char('p') if ctrl => navigate_or_move(app, editor, false),
         KeyCode::Char('n') if ctrl => navigate_or_move(app, editor, true),
         KeyCode::Char('r') if ctrl => app.history.open_or_older(),
+        KeyCode::Char('g') if ctrl => outcome.external_editor = true,
         KeyCode::Char('u') if alt => {
             editor.undo();
         }
@@ -890,6 +901,63 @@ fn handle_paste_text(app: &mut App, editor: &mut Editor, text: &str) {
             }
         }
         None => editor.insert_str(text),
+    }
+}
+
+/// Ctrl+G: suspend the same terminal, run the configured editor with the draft
+/// in a temp file, restore the terminal, then load changed UTF-8 text as one
+/// undoable edit. Failures only notify and leave the exact draft/cursor/history.
+fn open_external_editor(
+    session: &mut terminal::TerminalSession,
+    app: &mut App,
+    editor: &mut Editor,
+) -> std::io::Result<()> {
+    let launch = match external_editor::from_env() {
+        Ok(launch) => launch,
+        Err(message) => {
+            app.notify(message);
+            return Ok(());
+        }
+    };
+    let original = editor.text();
+    // Catch SIGINT while still raw and hold the guard through the whole cooked
+    // interval, including resume, so a terminal Ctrl+C can never kill the
+    // parent in a default-signal window. Installation failure aborts before
+    // any terminal state changes.
+    let guard = match external_editor::SigintGuard::install() {
+        Ok(guard) => guard,
+        Err(message) => {
+            app.notify(message);
+            return Ok(());
+        }
+    };
+    let suspended = session.suspend_external();
+    let edited = suspended
+        .is_ok()
+        .then(|| external_editor::edit(&launch, &original));
+    let resumed = session.resume_external();
+    drop(guard);
+    if let Err(error) = suspended {
+        app.notify(format!(
+            "External editor could not suspend the terminal: {error}"
+        ));
+    }
+    // Terminal restoration failure is fatal: never pretend the UI is usable.
+    resumed?;
+    if let Some(result) = edited {
+        load_external_text(app, editor, result);
+    }
+    Ok(())
+}
+
+/// Applies a finished editor result. Errors only notify: the draft, cursor,
+/// images, kill buffer and undo history stay exactly as they were.
+fn load_external_text(app: &mut App, editor: &mut Editor, result: Result<String, String>) {
+    match result {
+        Ok(text) => {
+            editor.replace_text(&text);
+        }
+        Err(message) => app.notify(message),
     }
 }
 

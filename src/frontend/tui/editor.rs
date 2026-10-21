@@ -488,6 +488,19 @@ impl Editor {
         changed
     }
 
+    /// Replaces the whole draft after an external editor run. A changed text is
+    /// one undo step with the cursor at the end; an exact no-op does not
+    /// checkpoint or move the cursor. Images and the kill buffer are untouched.
+    pub fn replace_text(&mut self, text: &str) -> bool {
+        if self.text() == text {
+            return false;
+        }
+        self.checkpoint(false);
+        self.set_text_with_cursor(text, text.len());
+        self.preferred_col = None;
+        true
+    }
+
     /// Inserts pasted text as one atomic undo step. Newlines never submit.
     pub fn insert_str(&mut self, text: &str) {
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");

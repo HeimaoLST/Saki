@@ -1693,3 +1693,5 @@ fn message_navigation_requires_ctrl_and_shift() {
 mod transcript_search_tests;
 
 mod path_completion_tests;
+
+mod external_editor_tests;
