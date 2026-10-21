@@ -194,14 +194,20 @@ impl Markdown {
             return;
         };
         let mut decoded_start = 0usize;
+        let mut run_index = 0usize;
         for chunk in &chunks {
             let decoded_end = decoded_start + chunk.text.len();
+            // Chunks and runs are both ordered: advance once instead of
+            // rescanning every run for every chunk/window.
+            while run_index < runs.len() && runs[run_index].end <= decoded_start {
+                run_index += 1;
+            }
             let mut points = vec![0usize, chunk.text.len()];
-            for run in runs.iter() {
-                if run.end > decoded_start && run.start < decoded_end {
-                    points.push(run.start.saturating_sub(decoded_start));
-                    points.push(run.end.min(decoded_end) - decoded_start);
-                }
+            let mut scan = run_index;
+            while scan < runs.len() && runs[scan].start < decoded_end {
+                points.push(runs[scan].start.saturating_sub(decoded_start));
+                points.push(runs[scan].end.min(decoded_end) - decoded_start);
+                scan += 1;
             }
             for (index, byte) in chunk.text.bytes().enumerate() {
                 if byte == b'\n' {
@@ -210,21 +216,26 @@ impl Markdown {
             }
             points.sort_unstable();
             points.dedup();
+            let mut style_index = run_index;
             for window in points.windows(2) {
                 let (start, end) = (window[0], window[1]);
                 if start == end {
                     continue;
                 }
                 let absolute = decoded_start + start;
+                while style_index < runs.len() && runs[style_index].end <= absolute {
+                    style_index += 1;
+                }
                 let style = runs
-                    .iter()
-                    .find(|run| run.start <= absolute && absolute < run.end)
+                    .get(style_index)
+                    .filter(|run| run.start <= absolute)
                     .map_or(base, |run| run.style(self.theme));
                 let from = mapped(chunk, start);
                 let to = mapped(chunk, end);
                 push_into(self, &chunk.text[start..end], style, from, to - from, to);
             }
             decoded_start = decoded_end;
+            run_index = style_index;
         }
     }
 

@@ -286,6 +286,42 @@ fn syntax_parse_is_reused_across_width_and_theme_but_not_content_or_language() {
 }
 
 #[test]
+fn oversized_known_code_renders_unchanged_without_parsing() {
+    let long_line = format!("let value = \"{}\";", "a".repeat(5_000));
+    let text = format!("```rust\n{long_line}\nlet second = 2;\n```");
+    let mut app = assistant_with(&text);
+    let theme = app.theme;
+    let before = code_highlight::test_parse_count();
+    let layout = view::record_layout(&mut app, 0, 80);
+    let after = code_highlight::test_parse_count();
+    assert_eq!(after, before, "oversized block must skip the syntax parse");
+    let spans: Vec<_> = layout
+        .into_iter()
+        .flat_map(|line| line.line.spans.into_iter())
+        .map(|span| (span.content.to_string(), span.style))
+        .collect();
+    assert!(
+        spans
+            .iter()
+            .all(|(_, style)| style.fg != Some(theme.accent)),
+        "no syntax colors on the fallback block"
+    );
+    assert!(
+        spans.iter().any(|(content, style)| {
+            content.contains("let value") && style.fg == Some(theme.code)
+        })
+    );
+    assert!(spans.iter().any(|(content, style)| {
+        content.contains("let second") && style.fg == Some(theme.code)
+    }));
+    let original = match &app.records[0] {
+        Record::Assistant { text } => text.clone(),
+        other => panic!("expected assistant, got {other:?}"),
+    };
+    assert_eq!(view::copy_source(&app), Some(original));
+}
+
+#[test]
 fn highlight_perf_probe() {
     let rust = (0..40)
         .map(|index| format!("fn item{index}() -> u64 {{ let value = {index}; value + 1 }}"))
@@ -405,15 +441,20 @@ fn highlight_large_probe() {
             .collect::<Vec<_>>()
             .join("\n");
         let started = std::time::Instant::now();
-        let runs = code_highlight::roles(&code, "rust").expect("syntax");
+        let outcome = code_highlight::roles(&code, "rust");
         let cold = started.elapsed();
         let started = std::time::Instant::now();
-        let _ = code_highlight::roles(&code, "rust").expect("cached");
+        let cached = code_highlight::roles(&code, "rust");
         let warm = started.elapsed();
         eprintln!(
-            "large rust {lines} lines / {} bytes / {} runs: cold={cold:?} warm={warm:?}",
+            "large rust {lines} lines / {} bytes: {} cold={cold:?} warm={warm:?}",
             code.len(),
-            runs.len()
+            describe(&outcome)
+        );
+        assert_eq!(
+            outcome.is_some(),
+            cached.is_some(),
+            "cache mirrors the bounded decision"
         );
     }
     for lines in [50usize, 200, 400] {
@@ -422,32 +463,64 @@ fn highlight_large_probe() {
             .collect::<Vec<_>>()
             .join("\n");
         let started = std::time::Instant::now();
-        let _ = code_highlight::roles(&code, "rust").expect("syntax");
+        let outcome = code_highlight::roles(&code, "rust");
         eprintln!(
-            "changed rust {lines} lines / {} bytes: parse={:?}",
+            "changed rust {lines} lines / {} bytes: {} parse={:?}",
             code.len(),
+            describe(&outcome),
             started.elapsed()
         );
     }
     for length in [8_000usize, 16_000, 32_000] {
         let long = format!("let value = \"{}\"; // tail", "a".repeat(length));
         let started = std::time::Instant::now();
-        let _ = code_highlight::roles(&long, "rust").expect("syntax");
+        let outcome = code_highlight::roles(&long, "rust");
         eprintln!(
-            "long rust line / {} bytes: parse={:?}",
+            "long rust line / {} bytes: {} parse={:?}",
             long.len(),
+            describe(&outcome),
             started.elapsed()
         );
     }
     let long = format!("let value = \"{}\"; // tail", "a".repeat(40_000));
     let started = std::time::Instant::now();
-    let runs = code_highlight::roles(&long, "rust").expect("syntax");
+    let outcome = code_highlight::roles(&long, "rust");
     eprintln!(
-        "large rust one line / {} bytes / {} runs: cold={:?}",
+        "large rust one line / {} bytes: {} cold={:?}",
         long.len(),
-        runs.len(),
+        describe(&outcome),
         started.elapsed()
     );
+
+    // Supported ~15KB block: cached narrow/wide layout after chunk mapping.
+    let code = (0..380)
+        .map(|index| format!("fn layout{index}() {{ let value = \"text {index}\"; }}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        code.len() < 16 * 1024,
+        "probe block stays inside the supported bound: {}",
+        code.len()
+    );
+    let text = format!("```rust\n{code}\n```");
+    let mut app = assistant_with(&text);
+    assert!(code_highlight::roles(&code, "rust").is_some(), "supported");
+    for width in [40usize, 120, 40, 120] {
+        let started = std::time::Instant::now();
+        let _ = view::record_layout(&mut app, 0, width);
+        eprintln!(
+            "layout 15KB {} bytes width {width}: {:?}",
+            code.len(),
+            started.elapsed()
+        );
+    }
+}
+
+fn describe(outcome: &Option<std::sync::Arc<Vec<code_highlight::RoleRun>>>) -> String {
+    match outcome {
+        Some(runs) => format!("highlighted({} runs)", runs.len()),
+        None => "fallback(single color)".to_owned(),
+    }
 }
 
 #[test]
