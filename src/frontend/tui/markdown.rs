@@ -118,7 +118,15 @@ struct Markdown {
     theme: theme::Theme,
     code_language: String,
     code_buffer: String,
-    code_source: Option<usize>,
+    code_chunks: Vec<CodeChunk>,
+}
+
+/// One pulldown Text chunk inside a code block. Decoded text can be shorter than
+/// the raw range (quote/list prefixes removed), so both ranges are retained.
+struct CodeChunk {
+    text: String,
+    source: usize,
+    advance: usize,
 }
 
 impl Markdown {
@@ -137,7 +145,7 @@ impl Markdown {
             theme,
             code_language: String::new(),
             code_buffer: String::new(),
-            code_source: None,
+            code_chunks: Vec::new(),
         }
     }
 
@@ -161,49 +169,58 @@ impl Markdown {
         self.state.style(self.theme)
     }
 
-    /// Emits a buffered fenced block with syntax roles while preserving exact
-    /// text and source advance. Unknown/indented blocks keep one code style.
+    /// Emits a buffered fenced block with syntax roles while preserving each
+    /// original Text chunk's raw source/advance. Unknown/indented blocks emit
+    /// each chunk whole, exactly like the previous single-color path.
     fn flush_code(&mut self) {
         let text = std::mem::take(&mut self.code_buffer);
         let language = std::mem::take(&mut self.code_language);
-        let Some(source) = self.code_source.take() else {
-            return;
-        };
-        if text.is_empty() {
+        let chunks = std::mem::take(&mut self.code_chunks);
+        if text.is_empty() || chunks.is_empty() {
             return;
         }
-        self.cursor = self.cursor.max(source + text.len());
+        for chunk in &chunks {
+            self.cursor = self.cursor.max(chunk.source + chunk.advance);
+        }
         let base = Style::default().fg(self.theme.code);
         let Some(runs) = code_highlight::roles(&text, &language) else {
-            self.push_text(&text, base, source, text.len());
+            for chunk in chunks {
+                self.push_text(&chunk.text, base, chunk.source, chunk.advance);
+            }
             return;
         };
-        let mut position = 0usize;
-        for run in runs.iter() {
-            if run.start > position {
-                self.push_text(
-                    &text[position..run.start],
-                    base,
-                    source + position,
-                    run.start - position,
-                );
+        let mut decoded_start = 0usize;
+        for chunk in &chunks {
+            let decoded_end = decoded_start + chunk.text.len();
+            let mut points = vec![0usize, chunk.text.len()];
+            for run in runs.iter() {
+                if run.end > decoded_start && run.start < decoded_end {
+                    points.push(run.start.saturating_sub(decoded_start));
+                    points.push(run.end.min(decoded_end) - decoded_start);
+                }
             }
-            let style = run.style(self.theme);
-            self.push_text(
-                &text[run.start..run.end],
-                style,
-                source + run.start,
-                run.end - run.start,
-            );
-            position = run.end;
-        }
-        if position < text.len() {
-            self.push_text(
-                &text[position..],
-                base,
-                source + position,
-                text.len() - position,
-            );
+            for (index, byte) in chunk.text.bytes().enumerate() {
+                if byte == b'\n' {
+                    points.push(index + 1);
+                }
+            }
+            points.sort_unstable();
+            points.dedup();
+            for window in points.windows(2) {
+                let (start, end) = (window[0], window[1]);
+                if start == end {
+                    continue;
+                }
+                let absolute = decoded_start + start;
+                let style = runs
+                    .iter()
+                    .find(|run| run.start <= absolute && absolute < run.end)
+                    .map_or(base, |run| run.style(self.theme));
+                let from = mapped(chunk, start);
+                let to = mapped(chunk, end);
+                self.push_text(&chunk.text[start..end], style, from, to - from);
+            }
+            decoded_start = decoded_end;
         }
     }
 
@@ -398,7 +415,7 @@ pub fn blocks_with_theme(text: &str, theme: theme::Theme) -> Vec<Block> {
                 }
                 parser.code_language = language;
                 parser.code_buffer.clear();
-                parser.code_source = None;
+                parser.code_chunks.clear();
                 parser.state.code = true;
             }
             Event::End(TagEnd::CodeBlock) => {
@@ -531,10 +548,12 @@ pub fn blocks_with_theme(text: &str, theme: theme::Theme) -> Vec<Block> {
             }
             Event::Text(item) => {
                 if parser.state.code {
-                    if parser.code_source.is_none() {
-                        parser.code_source = Some(range.start);
-                    }
                     parser.code_buffer.push_str(item.as_ref());
+                    parser.code_chunks.push(CodeChunk {
+                        text: item.to_string(),
+                        source: range.start,
+                        advance: range.len(),
+                    });
                 } else {
                     let style = parser.style();
                     push_into(
@@ -575,6 +594,14 @@ pub fn blocks_with_theme(text: &str, theme: theme::Theme) -> Vec<Block> {
     parser.flush_code();
     parser.flush_flow();
     parser.blocks
+}
+
+fn mapped(chunk: &CodeChunk, local: usize) -> usize {
+    if chunk.text.is_empty() {
+        return chunk.source;
+    }
+    let scaled = (local as u128 * chunk.advance as u128 / chunk.text.len() as u128) as usize;
+    chunk.source + scaled
 }
 
 fn push_into(

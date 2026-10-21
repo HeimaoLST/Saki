@@ -184,7 +184,23 @@ fn search_highlights_and_selection_marker_do_not_break_syntax_roles() {
 
 #[test]
 fn roles_use_existing_light_dark_and_derived_palettes() {
-    for theme in [Theme::dark(), Theme::light(), Theme::fallback()] {
+    let derived_dark =
+        crate::frontend::tui::theme::native_theme(crate::frontend::tui::theme::NativeColors {
+            foreground: (0xdc, 0xe4, 0xde),
+            background: (0x27, 0x39, 0x2f),
+        });
+    let derived_light =
+        crate::frontend::tui::theme::native_theme(crate::frontend::tui::theme::NativeColors {
+            foreground: (0x29, 0x33, 0x2f),
+            background: (0xfa, 0xfa, 0xf7),
+        });
+    for theme in [
+        Theme::dark(),
+        Theme::light(),
+        Theme::fallback(),
+        derived_dark,
+        derived_light,
+    ] {
         let text = "```rust\nlet n = 1; // c\n```";
         let mut app = App::new();
         app.theme = theme;
@@ -194,6 +210,42 @@ fn roles_use_existing_light_dark_and_derived_palettes() {
         assert!(has_span(&spans, "1", theme.warning, Modifier::empty()));
         assert!(has_span(&spans, "// c", theme.secondary, Modifier::ITALIC));
     }
+}
+
+#[test]
+fn oversized_blocks_and_lines_fall_back_to_one_color_without_text_loss() {
+    let long_line = format!("let value = \"{}\";", "a".repeat(5_000));
+    assert!(
+        code_highlight::roles(&long_line, "rust").is_none(),
+        "a line over the measured bound stays single-color"
+    );
+    let huge = (0..700)
+        .map(|index| format!("fn big{index}() {{ let n = {index}; }}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        code_highlight::roles(&huge, "rust").is_none(),
+        "a block over the measured byte bound stays single-color"
+    );
+
+    let text = format!("```rust\n{long_line}\n```");
+    let mut app = assistant_with(&text);
+    let theme = app.theme;
+    let spans = styled_spans(&mut app, 80);
+    assert!(
+        !has_span(&spans, "let", theme.accent, Modifier::BOLD),
+        "fallback has no syntax colors"
+    );
+    assert!(
+        spans.iter().any(|(content, style)| {
+            content.contains("let value") && style.fg == Some(theme.code)
+        })
+    );
+    assert!(
+        markdown::code_blocks(&text)
+            .iter()
+            .any(|block| block.contains("let value"))
+    );
 }
 
 #[test]
@@ -277,4 +329,123 @@ fn highlight_perf_probe() {
             );
         }
     }
+}
+
+#[test]
+fn nested_quote_list_code_line_sources_match_raw_offsets() {
+    let text =
+        "> - item\n>   ```rust\n>   // first\n>   let second = 2;\n>   fn third() {}\n>   ```\n";
+    let mut app = assistant_with(text);
+    let layout = view::record_layout(&mut app, 0, 80);
+    for needle in ["// first", "let second", "fn third"] {
+        let expected = text.find(needle).expect("raw line");
+        let row = layout
+            .iter()
+            .find(|visual| visual.line.to_string().contains(needle))
+            .unwrap_or_else(|| {
+                let rendered: String = layout.iter().map(|line| line.line.to_string()).collect();
+                panic!("rendered {needle}: {rendered}")
+            });
+        eprintln!(
+            "CHECK {needle} expected {expected} actual {}",
+            row.source_start
+        );
+        assert_eq!(
+            row.source_start, expected,
+            "{needle}: source_start must point at its raw code position"
+        );
+    }
+    // An anchor at the raw second-line position resolves there after reflow.
+    let anchor = text.find("let second").unwrap();
+    app.follow = false;
+    app.anchor = Some(Anchor {
+        record: 0,
+        offset: anchor,
+    });
+    for width in [40usize, 80] {
+        let lines = view::visible_lines(&mut app, width, 8);
+        let joined = lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("let second"),
+            "width {width}: anchor keeps {anchor} on screen: {joined}"
+        );
+    }
+}
+
+#[test]
+fn indented_fallback_line_sources_match_raw_offsets() {
+    let text = "    let first = 1;\n    let second = 2;\n    let third = 3;\n";
+    let mut app = assistant_with(text);
+    let layout = view::record_layout(&mut app, 0, 80);
+    for needle in ["let first", "let second", "let third"] {
+        let expected = text.find(needle).expect("raw line");
+        let row = layout
+            .iter()
+            .find(|visual| visual.line.to_string().contains(needle))
+            .unwrap_or_else(|| {
+                let rendered: String = layout.iter().map(|line| line.line.to_string()).collect();
+                panic!("rendered {needle}: {rendered}")
+            });
+        assert_eq!(row.source_start, expected, "{needle}: indented source");
+    }
+}
+
+#[test]
+#[ignore = "manual performance probe: no wall-clock assertions in CI"]
+fn highlight_large_probe() {
+    for lines in [100usize, 1000] {
+        let code = (0..lines)
+            .map(|index| {
+                format!("fn item{index}() {{ let value = \"text {index}\"; let n = {index}; }}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let started = std::time::Instant::now();
+        let runs = code_highlight::roles(&code, "rust").expect("syntax");
+        let cold = started.elapsed();
+        let started = std::time::Instant::now();
+        let _ = code_highlight::roles(&code, "rust").expect("cached");
+        let warm = started.elapsed();
+        eprintln!(
+            "large rust {lines} lines / {} bytes / {} runs: cold={cold:?} warm={warm:?}",
+            code.len(),
+            runs.len()
+        );
+    }
+    for lines in [50usize, 200, 400] {
+        let code = (0..lines)
+            .map(|index| format!("fn changed{index}_{}() {{ let n = {index}; }}", index * 7))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let started = std::time::Instant::now();
+        let _ = code_highlight::roles(&code, "rust").expect("syntax");
+        eprintln!(
+            "changed rust {lines} lines / {} bytes: parse={:?}",
+            code.len(),
+            started.elapsed()
+        );
+    }
+    for length in [8_000usize, 16_000, 32_000] {
+        let long = format!("let value = \"{}\"; // tail", "a".repeat(length));
+        let started = std::time::Instant::now();
+        let _ = code_highlight::roles(&long, "rust").expect("syntax");
+        eprintln!(
+            "long rust line / {} bytes: parse={:?}",
+            long.len(),
+            started.elapsed()
+        );
+    }
+    let long = format!("let value = \"{}\"; // tail", "a".repeat(40_000));
+    let started = std::time::Instant::now();
+    let runs = code_highlight::roles(&long, "rust").expect("syntax");
+    eprintln!(
+        "large rust one line / {} bytes / {} runs: cold={:?}",
+        long.len(),
+        runs.len(),
+        started.elapsed()
+    );
 }

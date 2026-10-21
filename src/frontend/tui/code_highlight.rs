@@ -14,6 +14,12 @@ use super::theme::Theme;
 
 const MAX_ENTRIES: usize = 64;
 const MAX_RETAINED_BYTES: usize = 2 * 1024 * 1024;
+/// Debug measurements: an 8 KiB single line takes ~0.9 s and a 32 KiB line
+/// ~1.1 s with the fancy backend; 15 KiB / 400 lines costs ~0.17 s on every
+/// changed stream parse. Both bounds fall back to the existing single color so
+/// the UI thread never runs an unbounded block parse.
+const MAX_BLOCK_BYTES: usize = 16 * 1024;
+const MAX_LINE_BYTES: usize = 4 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -77,7 +83,12 @@ fn cache() -> &'static Mutex<Cache> {
 /// Highlight roles for one fenced block. `None` means "keep single color".
 pub fn roles(code: &str, language: &str) -> Option<std::sync::Arc<Vec<RoleRun>>> {
     let token = language.split_whitespace().next()?.to_ascii_lowercase();
-    if token.is_empty() {
+    if token.is_empty()
+        || code.len() > MAX_BLOCK_BYTES
+        || code
+            .split_inclusive('\n')
+            .any(|line| line.len() > MAX_LINE_BYTES)
+    {
         return None;
     }
     if let Ok(lock) = cache().lock()
