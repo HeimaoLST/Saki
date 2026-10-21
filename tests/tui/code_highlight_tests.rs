@@ -449,3 +449,37 @@ fn highlight_large_probe() {
         started.elapsed()
     );
 }
+
+#[test]
+fn list_item_starting_with_fence_keeps_bullet_hang_and_offsets() {
+    let text = "- ```rust\n  let first = 1;\n  let long_value = 12345;\n  ```\n";
+    let mut app = assistant_with(text);
+    let layout = view::record_layout(&mut app, 0, 80);
+    let rows: Vec<String> = layout.iter().map(|line| line.line.to_string()).collect();
+    assert!(
+        rows.iter().any(|row| row.contains("• let first")),
+        "the pending list bullet must land on the first code line: {rows:?}"
+    );
+    // The first code row starts at the synthetic list bullet, while the second
+    // code row must retain its real raw offset.
+    let second = "let long_value";
+    let expected = text.find(second).expect("raw line");
+    let row = layout
+        .iter()
+        .find(|visual| visual.line.to_string().contains(second))
+        .unwrap_or_else(|| panic!("rendered {second}: {rows:?}"));
+    assert_eq!(row.source_start, expected, "{second}: list code source");
+
+    // Narrow wrapping keeps the list hang for continuation lines.
+    let narrow = view::record_layout(&mut app, 0, 16);
+    let rows: Vec<String> = narrow.iter().map(|line| line.line.to_string()).collect();
+    let continued = rows
+        .iter()
+        .find(|row| row.contains("12345"))
+        .unwrap_or_else(|| panic!("wrapped continuation: {rows:?}"));
+    let leading = continued.chars().take_while(|c| *c == ' ').count();
+    assert!(
+        leading >= 5,
+        "continuation keeps padding+bullet hang: {continued:?} ({rows:?})"
+    );
+}

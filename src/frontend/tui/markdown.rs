@@ -179,13 +179,17 @@ impl Markdown {
         if text.is_empty() || chunks.is_empty() {
             return;
         }
-        for chunk in &chunks {
-            self.cursor = self.cursor.max(chunk.source + chunk.advance);
-        }
         let base = Style::default().fg(self.theme.code);
         let Some(runs) = code_highlight::roles(&text, &language) else {
             for chunk in chunks {
-                self.push_text(&chunk.text, base, chunk.source, chunk.advance);
+                push_into(
+                    self,
+                    &chunk.text,
+                    base,
+                    chunk.source,
+                    chunk.advance,
+                    chunk.source + chunk.advance,
+                );
             }
             return;
         };
@@ -218,7 +222,7 @@ impl Markdown {
                     .map_or(base, |run| run.style(self.theme));
                 let from = mapped(chunk, start);
                 let to = mapped(chunk, end);
-                self.push_text(&chunk.text[start..end], style, from, to - from);
+                push_into(self, &chunk.text[start..end], style, from, to - from, to);
             }
             decoded_start = decoded_end;
         }
