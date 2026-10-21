@@ -704,6 +704,7 @@ async fn compaction_request_hook_fires_only_for_a_real_summary_request() {
     let small_counter = small_calls.clone();
     small.set_model_request_hook(Arc::new(move || {
         small_counter.fetch_add(1, Ordering::SeqCst);
+        Box::pin(std::future::ready(()))
     }));
     let unreachable = ModelClient::for_test("http://127.0.0.1:1/v1".to_owned());
     assert!(
@@ -724,6 +725,7 @@ async fn compaction_request_hook_fires_only_for_a_real_summary_request() {
     let long_counter = long_calls.clone();
     long.set_model_request_hook(Arc::new(move || {
         long_counter.fetch_add(1, Ordering::SeqCst);
+        Box::pin(std::future::ready(()))
     }));
     let (client, server) = mock_response(
         200,
@@ -763,4 +765,48 @@ fn old_task_records_without_message_id_remain_readable_with_timestamps() {
         other => panic!("expected TaskStarted, got {other:?}"),
     }
     std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
+async fn cancelling_while_compaction_hook_is_backpressured_preserves_context() {
+    use std::{
+        future::Future,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        task::Poll,
+    };
+    let mut conversation = long_history();
+    let before = conversation.items().to_vec();
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+    sender.send(()).await.unwrap();
+    let entered = Arc::new(AtomicBool::new(false));
+    let hook_entered = entered.clone();
+    conversation.set_model_request_hook(Arc::new(move || {
+        let sender = sender.clone();
+        let entered = hook_entered.clone();
+        Box::pin(async move {
+            entered.store(true, Ordering::SeqCst);
+            sender.send(()).await.unwrap();
+        })
+    }));
+    let client = ModelClient::for_test("http://127.0.0.1:1/v1".to_owned());
+    let mut compact = Box::pin(conversation.compact_if_needed(&client, "test", &[]));
+    std::future::poll_fn(|cx| {
+        assert!(compact.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    assert!(
+        entered.load(Ordering::SeqCst),
+        "compaction must await the hook inline"
+    );
+    drop(compact);
+    assert_eq!(
+        serde_json::to_value(conversation.items()).unwrap(),
+        serde_json::to_value(before).unwrap()
+    );
+    assert_eq!(receiver.try_recv(), Ok(()));
+    assert!(receiver.try_recv().is_err());
 }

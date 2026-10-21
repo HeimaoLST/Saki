@@ -1,4 +1,5 @@
 pub mod runtime;
+pub mod stdio;
 pub mod store;
 
 use anyhow::{Result, bail};

@@ -1,5 +1,6 @@
 mod stream;
 
+use std::future::Future;
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -176,14 +177,34 @@ impl ResponsesClient {
     }
 
     /// Delivers deltas synchronously as they arrive and returns the final response.
-    /// The callback must stay cheap. Dropping this future closes the HTTP body.
-    /// Stream errors and missing terminal events fail without automatic replay.
-    /// Gateways that return application/json are accepted as a complete response.
+    /// Kept for existing callers/tests; the async callback path owns decoding.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "synchronous callback compatibility adapter")
+    )]
     pub async fn respond_stream(
         &self,
         request: ModelRequest<'_>,
-        on_event: impl FnMut(ModelStreamEvent),
+        mut on_event: impl FnMut(ModelStreamEvent),
     ) -> anyhow::Result<ModelResponse> {
+        self.respond_stream_async(request, |event| {
+            on_event(event);
+            std::future::ready(())
+        })
+        .await
+    }
+
+    /// Async-callback streaming: each event is awaited before the next upstream
+    /// frame is pulled, providing backpressure without an unbounded queue.
+    pub async fn respond_stream_async<F, Fut>(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: F,
+    ) -> anyhow::Result<ModelResponse>
+    where
+        F: FnMut(ModelStreamEvent) -> Fut,
+        Fut: Future<Output = ()>,
+    {
         let mut body = Self::request_body(&request)?;
         body["stream"] = json!(true);
         let response = stream::decode(self.send_with_retry(&body).await?, on_event).await?;
@@ -349,7 +370,8 @@ fn decode_item(mut value: Value) -> anyhow::Result<OutputItem> {
 }
 
 async fn decode_response(response: reqwest::Response) -> anyhow::Result<ModelResponse> {
-    decode_response_value(response.json::<Response>().await?)
+    let body = crate::client::transport::read_body_limited(response).await?;
+    decode_response_value(serde_json::from_slice::<Response>(&body)?)
 }
 
 fn decode_response_value(response: Response) -> anyhow::Result<ModelResponse> {

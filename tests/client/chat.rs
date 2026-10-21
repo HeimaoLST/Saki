@@ -1,9 +1,15 @@
 use super::*;
 use crate::protocol::ToolDefinition;
+use futures_util::FutureExt;
 use serde_json::json;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::oneshot,
     task::JoinHandle,
 };
 
@@ -510,5 +516,70 @@ async fn null_tool_calls_mean_no_calls() {
         .unwrap();
     assert!(
         matches!(&response.output[0], OutputItem::Message { content, .. } if content[0].text == "direct")
+    );
+}
+
+#[tokio::test]
+async fn async_callback_backpressure_holds_chat_deltas_until_released() {
+    let body = sse(json!({"id":"c1","choices":[{"delta":{"content":"Hel"}}]}))
+        + &sse(json!({"id":"c1","choices":[{"delta":{"content":"lo"}}]}))
+        + &sse(json!({"id":"c1","choices":[{"delta":{},"finish_reason":"stop"}]}))
+        + "data: [DONE]\n\n";
+    let (client, server) = mock_once(200, "text/event-stream", body).await;
+    let (seen_tx, seen_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen_events = Arc::new(Mutex::new(Vec::new()));
+    let mut gate = Some(release_rx);
+    let mut notify = Some(seen_tx);
+    let task_calls = calls.clone();
+    let task_events = seen_events.clone();
+    let task = tokio::spawn(async move {
+        client
+            .respond_stream_async(
+                ModelRequest::new("m".to_owned(), &[], Vec::new()),
+                move |event| {
+                    task_calls.fetch_add(1, Ordering::SeqCst);
+                    task_events.lock().unwrap().push(event.clone());
+                    let gate = gate.take();
+                    let notify = notify.take();
+                    async move {
+                        if let Some(notify) = notify {
+                            let _ = notify.send(());
+                        }
+                        if let Some(gate) = gate {
+                            let _ = gate.await;
+                        }
+                    }
+                    .boxed()
+                },
+            )
+            .await
+    });
+    seen_rx.await.unwrap();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the decoder must not deliver another Chat delta while the first callback is gated"
+    );
+    release_tx.send(()).unwrap();
+    let response = task.await.unwrap().unwrap();
+    let _ = server.await.unwrap();
+    let events = seen_events.lock().unwrap();
+    assert_eq!(
+        events.as_slice(),
+        &[
+            ModelStreamEvent::TextDelta {
+                item_id: "c1-text".to_owned(),
+                delta: "Hel".to_owned()
+            },
+            ModelStreamEvent::TextDelta {
+                item_id: "c1-text".to_owned(),
+                delta: "lo".to_owned()
+            }
+        ]
+    );
+    assert!(
+        matches!(&response.output[0], OutputItem::Message { content, .. } if content[0].text == "Hello")
     );
 }
