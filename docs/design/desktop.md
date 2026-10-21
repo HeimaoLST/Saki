@@ -1,6 +1,6 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-20。状态：**实现事实（#63 运行时接入、#90 局部布局打磨）；#92 主题系统仅完成设计，功能尚未实现**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
+更新日期：2026-10-21。状态：**实现事实（#63 运行时接入、#90 局部布局打磨）；#92 主题系统仅完成设计，功能尚未实现**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
 
 [previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。当前代码仍使用 Main/Dawn 派生色；#92 设计目标是用户确认的 Moon/Dawn，但本轮只交付设计，不代表换色功能已实现。concurrency、`search_history`／`read_history`、附件、模型切换等仍是后续独立任务，不在首轮。
 
@@ -56,6 +56,14 @@ Headless 证据（fixture，不等于线上模型或原生窗口）：
 独立 #90 候选包（不覆盖 #63 试用包；已冻结）：
 - `/private/tmp/saki-gui-90-app/Saki.app`；GUI sha256 `ba5fda24c811fb226995c4f2fae6fd6fa6203976c7557789d5bc8d39fe1855c1`，runtime helper sha256 `0828c59072c313e74e458f78e7f25122c30d1e838ebc17db3c77eac6aafb0379`（复用 #63 helper）。
 - 构建源码 SHA `fe964f4769d78f845dc8d5487b0ac8cc434fd7fd`；`go version -m` 记录 `vcs.revision=fe964f4`、`vcs.modified=false`，日志 `/private/tmp/saki-gui-90-app/logs/`；ad-hoc 签名，`codesign --verify --strict` / `--deep --strict` 通过，arm64。
+
+## 一体式窗口标题栏（#101，候选实现事实）
+
+本节描述 #101 候选，集成状态以对应 PR 为准。主窗口使用已锁定 MyGo 的 `TitleBarHiddenInset`：内容绘制到窗口顶部，隐藏独立的系统标题文字，保留原生关闭／最小化／全屏按钮。侧栏与聊天区域沿用各自语义背景，不增加横贯窗口的标题条或分割线。
+
+侧栏顶部根据 `c.TitleBar()` 返回的按钮区域留出位置；顶部品牌行与聊天 header 的空白区域使用 `DragWindow()`，History／Settings 继续使用独立按钮。全屏时按钮区域为零，品牌回到侧栏正常左边距。没有改动 Runtime、模型配置、联系人存储或发送／取消语义，也没有升级 MyGo。
+
+验证范围：Go 测试／vet／构建通过；最小 960×640 的现有行为测试注入原生按钮占位，并通过 header Settings 实际点击打开面板。macOS 原生窗口已观察到独立标题条消失，History／Settings 点击正常；原生绿色按钮进入全屏，再用系统快捷键退出，原生按钮仍在 AX 树中。窗口拖动已执行操作，但当前工具未提供位置变化证据，不能据此记作位置验收通过。窗口截图期间可出现系统共享提示占用按钮位置；未修改或规避系统捕获提示。Windows／Linux 原生窗口未验。
 
 ## 文件与配置（实现事实）
 

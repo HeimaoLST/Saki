@@ -34,11 +34,14 @@ func TestViewRendersBothThemes(t *testing.T) {
 func TestMinimumWindowRenders(t *testing.T) {
 	a := testApp(t)
 	tr := ui.NewTester(a.view, 960, 640)
+	tr.SetTitleBar(ui.TitleBar{Height: 52, Left: 80})
 	tr.Frame()
 	if !tr.HasText("Send") || !tr.HasText("Saki") {
 		t.Fatal("chat should render at the 960x640 minimum")
 	}
-	a.openSettings()
+	if err := tr.Click("Settings"); err != nil {
+		t.Fatal(err)
+	}
 	tr.Frame()
 	if !tr.HasText("Save changes") {
 		t.Fatal("settings should render at the 960x640 minimum")
