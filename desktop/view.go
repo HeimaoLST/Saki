@@ -23,11 +23,8 @@ func (a *appModel) view(c *ui.Context) {
 // ---------- rail ----------
 
 func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
-	bar := c.TitleBar()
 	ui.Column(c).Width(220).FillHeight().Padding(0, 10, 12, 10).Gap(10).Background(t.Background).Children(func() {
-		ui.Row(c).Height(max(bar.Height, 52)).Padding(0, 0, 0, max(bar.Left-10, 0)).AlignItems(ui.Center).DragWindow().Children(func() {
-			ui.Text(c, "Saki").FontSize(14).FontWeight(600).TextColor(t.Text)
-		})
+		ui.Row(c).FillWidth().Height(max(c.TitleBar().Height, 52)).DragWindow()
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 			ui.Text(c, "Contacts").FontSize(11).TextColor(t.TextMuted)
 			ui.Spacer(c)
