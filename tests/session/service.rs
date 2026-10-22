@@ -14,6 +14,9 @@ use std::{
 };
 use tokio::{io::AsyncWriteExt, net::TcpListener, sync::oneshot, task::JoinHandle};
 
+#[path = "runtime_title.rs"]
+mod title_tests;
+
 struct Workspace(PathBuf);
 
 impl Workspace {

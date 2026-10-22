@@ -3,7 +3,10 @@ use std::time::Duration;
 use crate::{
     agent::AgentEvent,
     client::ModelClient,
-    protocol::{InputItem, InputMessageContent, MessageRole, ModelRequest, OutputItem, OutputText},
+    protocol::{
+        InputContentPart, InputItem, InputMessageContent, MessageRole, ModelRequest, OutputItem,
+        OutputText,
+    },
 };
 
 use super::store;
@@ -54,6 +57,43 @@ pub(super) fn remember_reply(reply: &mut String, event: &AgentEvent) {
             reply.extend(text.chars().take(remaining));
             reply.push('\n');
         }
+    }
+}
+
+pub(super) fn reply_excerpt(items: &[InputItem]) -> String {
+    let Some(content) = items
+        .iter()
+        .rev()
+        .take_while(|item| {
+            !matches!(
+                item,
+                InputItem::Message {
+                    role: MessageRole::User,
+                    ..
+                }
+            )
+        })
+        .find_map(|item| match item {
+            InputItem::Message {
+                role: MessageRole::Assistant,
+                content,
+            } => Some(content),
+            _ => None,
+        })
+    else {
+        return String::new();
+    };
+    match content {
+        InputMessageContent::Text(text) => truncate_chars(text, TITLE_INPUT_CHARS),
+        InputMessageContent::Parts(parts) => parts
+            .iter()
+            .filter_map(|part| match part {
+                InputContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .flat_map(str::chars)
+            .take(TITLE_INPUT_CHARS)
+            .collect(),
     }
 }
 
