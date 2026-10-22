@@ -510,3 +510,176 @@ async fn cancelled_close_retains_cleanup_and_force_kills_source_after_stdin_eof(
     assert!(handler.await.expect("control handler").is_ok());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn rejected_subscription_filter_falls_back_to_fresh_lists_and_ended_subscription_rebuilds() {
+    let root = test_root("subscription-recovery");
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handler = tokio::spawn(async move {
+        let mut control = accept_ready(&listener).await?;
+        let discover = control.next_request().await?;
+        ensure!(discover["method"] == "server/discover");
+        control
+            .respond(&discover["id"], discover_result(true))
+            .await?;
+        let first = control.next_request().await?;
+        ensure!(first["method"] == "subscriptions/listen");
+        let mut invalid = listen_ack(&first["id"]);
+        invalid["params"]["notifications"]["promptsListChanged"] = json!(true);
+        control.send(invalid).await?;
+        serve_tools_pages(&mut control, &[vec![tool("alpha")]], true).await?;
+
+        let second = control.next_request().await?;
+        ensure!(second["method"] == "subscriptions/listen");
+        control.send(listen_ack(&second["id"])).await?;
+        serve_tools_pages(&mut control, &[vec![tool("beta")]], true).await?;
+        let barrier = control.next_request().await?;
+        ensure!(barrier["method"] == "tools/call");
+        control.send(json!({"jsonrpc":"2.0","id":second["id"],"error":{"code":-32603,"message":"subscription ended"}})).await?;
+        control
+            .respond(
+                &barrier["id"],
+                json!({"resultType":"complete","content":[],"isError":false}),
+            )
+            .await?;
+
+        let third = control.next_request().await?;
+        ensure!(third["method"] == "subscriptions/listen");
+        ensure!(third["id"] != second["id"]);
+        control.send(listen_ack(&third["id"])).await?;
+        control.send(list_changed(&second["id"])).await?;
+        serve_tools_pages(&mut control, &[vec![tool("gamma")]], true).await?;
+        loop {
+            match control.recv().await {
+                Ok(message) if message["event"] == "stdin_eof" => break,
+                Ok(_) => {}
+                Err(error) if error.to_string() == "control EOF" => break,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    });
+    let slots = Arc::new(Semaphore::new(1));
+    let config = source_config(&root, port, "modern", 120000, 2000);
+    let (mut source, tools) = start_source(config, &root, 1, &slots).await.unwrap();
+    assert_eq!(names(&tools), ["alpha"]);
+    assert_eq!(source.monitoring(), "polling");
+    assert_eq!(names(&source.discover().await.unwrap()), ["beta"]);
+    assert_eq!(source.monitoring(), "subscribed");
+    source.call("barrier", json!({})).await.unwrap();
+    assert_eq!(source.monitoring(), "polling");
+    assert_eq!(names(&source.discover().await.unwrap()), ["gamma"]);
+    assert_eq!(source.monitoring(), "subscribed");
+    source.close().await.unwrap();
+    assert_eq!(slots.available_permits(), 1);
+    handler.await.unwrap().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+async fn unconfirmed_subscription_case(wrong_ack: bool) {
+    let root = test_root(if wrong_ack {
+        "wrong-ack"
+    } else {
+        "missing-ack"
+    });
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (listen_seen_tx, listen_seen_rx) = oneshot::channel();
+    let handler = tokio::spawn(async move {
+        let mut control = accept_ready(&listener).await?;
+        let discover = control.next_request().await?;
+        ensure!(discover["method"].as_str() == Some("server/discover"));
+        control
+            .respond(&discover["id"], discover_result(true))
+            .await?;
+
+        let first = control.next_request().await?;
+        ensure!(first["method"].as_str() == Some("subscriptions/listen"));
+        ensure!(
+            first["params"]["notifications"] == json!({"toolsListChanged": true}),
+            "initial subscription was not tools-only"
+        );
+        let _ = listen_seen_tx.send(first["id"].clone());
+        if wrong_ack {
+            let wrong_id = first["id"]
+                .as_i64()
+                .map(|id| json!(id + 1))
+                .unwrap_or_else(|| json!("wrong-subscription"));
+            let mut ack = listen_ack(&first["id"]);
+            ack["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"] = wrong_id;
+            control.send(ack).await?;
+        }
+        serve_tools_pages(&mut control, &[vec![tool("initial")]], true).await?;
+
+        let second = control.next_request().await?;
+        ensure!(second["method"].as_str() == Some("subscriptions/listen"));
+        ensure!(
+            second["params"]["notifications"] == json!({"toolsListChanged": true}),
+            "retry subscription was not tools-only"
+        );
+        control.send(listen_ack(&second["id"])).await?;
+        serve_tools_pages(&mut control, &[vec![tool("refreshed")]], true).await?;
+        loop {
+            match control.recv().await {
+                Ok(message) if message["event"] == "stdin_eof" => break,
+                Ok(_) => {}
+                Err(error) if error.to_string() == "control EOF" => break,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    });
+
+    let slots = Arc::new(Semaphore::new(1));
+    let config = source_config(&root, port, "modern", 120_000, 2_000);
+    let permit = slots.clone().try_acquire_owned().unwrap();
+    let mut start = Box::pin(SourceProcess::start(config, &root, 1, permit));
+    timeout(WIRE_TIMEOUT, async {
+        tokio::select! {
+            _ = listen_seen_rx => {}
+            _ = &mut start => panic!("startup finished before listen"),
+        }
+    })
+    .await
+    .expect("listen request was not observed");
+
+    // Do not start the runtime paused: the Python process must first complete the
+    // real discover/listen exchange. Only after the listen frame arrives do we
+    // move the ACK deadline forward.
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_millis(1_500)).await;
+    tokio::time::resume();
+
+    let (mut source, tools) = timeout(WIRE_TIMEOUT, start)
+        .await
+        .expect("startup timed out after ACK deadline")
+        .expect("startup should finish with polling discovery");
+    assert_eq!(names(&tools), ["initial"]);
+    assert_eq!(source.monitoring(), "polling");
+
+    let refreshed = timeout(WIRE_TIMEOUT, source.discover())
+        .await
+        .expect("rediscovery timed out")
+        .expect("rediscovery should use a real tools/list");
+    assert_eq!(names(&refreshed), ["refreshed"]);
+
+    source.close().await.expect("source close");
+    assert_eq!(slots.available_permits(), 1);
+    timeout(WIRE_TIMEOUT, handler)
+        .await
+        .expect("control handler timed out")
+        .expect("control handler")
+        .expect("control handler result");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn missing_listen_ack_keeps_polling_and_rediscovers_from_wire() {
+    unconfirmed_subscription_case(false).await;
+}
+
+#[tokio::test]
+async fn wrong_listen_ack_subscription_id_keeps_polling_and_rediscovers_from_wire() {
+    unconfirmed_subscription_case(true).await;
+}

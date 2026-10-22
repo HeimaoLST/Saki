@@ -59,7 +59,11 @@ impl Fixture {
                             trace.lock().unwrap().push((pid,ready));
                             let mut count = 0;
                             loop {
-                                let message = control.recv().await.unwrap();
+                                let message = match control.recv().await {
+                                    Ok(message) => message,
+                                    Err(error) if error.to_string() == "control EOF" => break,
+                                    Err(error) => panic!("invalid fixture frame: {error:#}"),
+                                };
                                 trace.lock().unwrap().push((pid,message.clone()));
                                 if message["event"] == "stdin_eof" { break; }
                                 let method = message["method"].as_str().unwrap_or("");
@@ -598,4 +602,153 @@ async fn failed_tool_preparation_preserves_configuration_and_reclaims_new_proces
     for (pid, _) in trace.iter().filter(|(_, v)| v["event"] == "ready") {
         assert_eq!(unsafe { libc::kill(*pid as i32, 0) }, -1);
     }
+}
+
+#[tokio::test]
+async fn crashed_business_call_is_not_replayed_and_only_next_task_reconnects() {
+    let directory = Directory::new();
+    let mut fixture = Fixture::new(true).await;
+    let replies = vec![
+        tool_call(),
+        completed("reported tool failure"),
+        completed("next task without a call"),
+    ];
+    let (base, server) = scripted_server(
+        replies
+            .into_iter()
+            .map(|reply| (200, "application/json", serde_json::to_vec(&reply).unwrap()))
+            .collect(),
+    )
+    .await;
+    let mut driver = Driver::from_runtime(runtime(&directory, base, &fixture, 1)).await;
+    let id = create(&mut driver, &directory.0).await;
+    let accepted = driver
+        .call(
+            "task.send",
+            json!({"session_id":id,"message":{"text":"first call"}}),
+        )
+        .await;
+    let (pid, _) = tokio::time::timeout(WIRE_TIMEOUT, fixture.calls.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGKILL) }, 0);
+    assert_eq!(
+        driver.finish(&accepted["result"]).await["event"]["status"],
+        "completed"
+    );
+    let tool = driver
+        .seen
+        .iter()
+        .find(|event| {
+            event["task_id"] == accepted["result"]["task_id"]
+                && event["event"]["type"] == "tool_finished"
+        })
+        .unwrap()["event"]["output"]
+        .clone();
+    assert!(tool["error"].as_str().is_some());
+    assert_eq!(
+        fixture
+            .trace
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, v)| v["event"] == "ready")
+            .count(),
+        1,
+        "failed business call was silently restarted"
+    );
+    assert_eq!(
+        unsafe { libc::kill(pid as i32, 0) },
+        -1,
+        "failed-call cleanup must precede model continuation"
+    );
+    assert_eq!(send(&mut driver, &id).await["event"]["status"], "completed");
+    let wire = requests(server).await;
+    let replay = wire[1]["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["type"] == "function_call_output")
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(replay["output"].as_str().unwrap()).unwrap(),
+        tool
+    );
+    driver.shutdown().await;
+    let trace = fixture.finish().await;
+    assert_eq!(
+        trace.iter().filter(|(_, v)| v["event"] == "ready").count(),
+        2,
+        "new task did not prepare a fresh process"
+    );
+    assert_eq!(
+        trace
+            .iter()
+            .filter(|(_, v)| v["method"] == "tools/call")
+            .count(),
+        1,
+        "business side effect was replayed"
+    );
+}
+
+#[tokio::test]
+async fn global_discovery_is_ephemeral_and_noop_confirmation_preserves_revision() {
+    let directory = Directory::new();
+    let fixture = Fixture::new(false).await;
+    let mut driver = Driver::from_runtime(runtime(
+        &directory,
+        "http://127.0.0.1:9/v1".into(),
+        &fixture,
+        1,
+    ))
+    .await;
+    let listed = driver
+        .call("tool.list", json!({"source_id":"controlled"}))
+        .await;
+    assert_eq!(listed["result"]["sources"][0]["available"], true);
+    assert_eq!(listed["result"]["sources"][0]["monitoring"], "polling");
+    assert_eq!(listed["result"]["sources"][0]["tools"][0]["name"], "alpha");
+    let pid = fixture
+        .trace
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(_, v)| v["event"] == "ready")
+        .unwrap()
+        .0;
+    assert_eq!(
+        unsafe { libc::kill(pid as i32, 0) },
+        -1,
+        "tool.list replied before reclaiming source"
+    );
+    let id = create(&mut driver, &directory.0).await;
+    fixture.catalog.write().unwrap().push(tool("unselected"));
+    let confirmed = driver
+        .call(
+            "session.config.update",
+            json!({"session_id":id,"expected_revision":1,"patch":{"tool_selection":selection()}}),
+        )
+        .await;
+    assert_eq!(
+        confirmed["result"]["config_revision"], 1,
+        "unselected change or identical selection bumped revision"
+    );
+    let full = driver
+        .call("tool.list", json!({"source_id":"controlled"}))
+        .await;
+    assert_eq!(full["result"]["sources"][0]["available"], false);
+    assert!(
+        full["result"]["sources"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("capacity")
+    );
+    driver.shutdown().await;
+    let trace = fixture.finish().await;
+    assert_eq!(
+        trace.iter().filter(|(_, v)| v["event"] == "ready").count(),
+        2
+    );
+    assert!(!trace.iter().any(|(_, v)| v["method"] == "tools/call"));
 }
