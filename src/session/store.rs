@@ -655,10 +655,12 @@ fn validate_metadata(metadata: &SessionMetadata, id: &str) -> Result<()> {
             metadata.system_prompt.is_some(),
             "schema 2 metadata is missing system_prompt"
         );
-        ensure!(
-            metadata.tool_selection.is_some(),
-            "schema 2 metadata is missing tool_selection"
-        );
+        let tools = metadata
+            .tool_selection
+            .as_ref()
+            .context("schema 2 metadata is missing tool_selection")?;
+        super::config::validate_tool_selection(tools)
+            .map_err(|error| anyhow::anyhow!("unsupported session tools: {}", error.message))?;
     }
     Ok(())
 }
