@@ -64,6 +64,7 @@ struct BufferCounters {
     messages: AtomicUsize,
     peak_bytes: AtomicUsize,
     peak_messages: AtomicUsize,
+    waiting_producers: AtomicUsize,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -72,6 +73,7 @@ pub struct BufferStats {
     pub messages: usize,
     pub peak_bytes: usize,
     pub peak_messages: usize,
+    pub waiting_producers: usize,
 }
 impl BufferMetrics {
     pub fn snapshot(&self) -> BufferStats {
@@ -80,7 +82,24 @@ impl BufferMetrics {
             messages: self.0.messages.load(Ordering::Relaxed),
             peak_bytes: self.0.peak_bytes.load(Ordering::Relaxed),
             peak_messages: self.0.peak_messages.load(Ordering::Relaxed),
+            waiting_producers: self.0.waiting_producers.load(Ordering::Relaxed),
         }
+    }
+    pub(crate) async fn wait<F: std::future::Future>(&self, future: F) -> F::Output {
+        let mut future = std::pin::pin!(future);
+        let mut waiter = BufferWaiter {
+            metrics: self,
+            waiting: false,
+        };
+        std::future::poll_fn(|context| {
+            let result = future.as_mut().poll(context);
+            if result.is_pending() && !waiter.waiting {
+                self.0.waiting_producers.fetch_add(1, Ordering::Relaxed);
+                waiter.waiting = true;
+            }
+            result
+        })
+        .await
     }
     pub(crate) fn track(&self, permit: OwnedSemaphorePermit) -> BufferPermit {
         let bytes = self
@@ -97,6 +116,21 @@ impl BufferMetrics {
         }
     }
 }
+struct BufferWaiter<'a> {
+    metrics: &'a BufferMetrics,
+    waiting: bool,
+}
+impl Drop for BufferWaiter<'_> {
+    fn drop(&mut self) {
+        if self.waiting {
+            self.metrics
+                .0
+                .waiting_producers
+                .fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
 pub(crate) struct BufferPermit {
     permit: OwnedSemaphorePermit,
     metrics: BufferMetrics,
@@ -224,7 +258,7 @@ impl EventSink {
             biased;
             _ = output.closed() => {}
             _ = super::cancelled(&mut cancellation) => {}
-            _ = delivery => { observation.sent = true; }
+            _ = self.metrics.wait(delivery) => { observation.sent = true; }
         }
     }
 }

@@ -76,7 +76,10 @@ pub async fn run() -> anyhow::Result<()> {
         let output = crate::session::stdio::NativeStdout::new()?;
         #[cfg(not(unix))]
         let output = tokio::io::stdout();
+        let capacity =
+            std::env::var("SAKI_MAX_ACTIVE_TASKS").map_or(Ok(1), |value| value.parse::<usize>())?;
         return crate::session::runtime::Runtime::new(store, client, cwd, model, config)
+            .with_max_active_tasks(capacity)?
             .with_catalog(loaded_catalog)
             .run(tokio::io::BufReader::new(tokio::io::stdin()), output)
             .await;

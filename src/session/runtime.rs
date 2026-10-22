@@ -49,6 +49,8 @@ pub struct RuntimeError {
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<&'static str>,
 }
 
 impl RuntimeError {
@@ -58,7 +60,14 @@ impl RuntimeError {
             message: message.into(),
             session_id: None,
             current_revision: None,
+            reason: None,
         }
+    }
+
+    fn busy(reason: &'static str, message: &'static str) -> Self {
+        let mut error = Self::new("busy", message);
+        error.reason = Some(reason);
+        error
     }
 
     pub(crate) fn conflict(revision: u64) -> Self {
@@ -138,6 +147,18 @@ pub struct HistoryPage {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct TaskState {
+    pub session_id: String,
+    pub task_id: String,
+    pub status: String,
+    pub phase: &'static str,
+    pub cancel_requested: bool,
+    pub config_revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persistence: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct Association {
     pub session_id: String,
     pub task_id: String,
@@ -177,6 +198,11 @@ pub struct TaskEvents {
 }
 
 impl TaskEvents {
+    #[cfg(test)]
+    pub(crate) fn buffer_metrics(&self) -> BufferMetrics {
+        self.metrics.clone()
+    }
+
     #[cfg_attr(
         not(test),
         expect(
@@ -244,6 +270,10 @@ pub struct AcceptedTask {
 
 #[derive(Serialize)]
 pub enum RuntimeCommand {
+    TaskStatus {
+        session_id: String,
+        task_id: String,
+    },
     Capabilities,
     Models {
         connection_id: String,
@@ -291,6 +321,7 @@ pub enum RuntimeCommand {
 }
 
 pub enum RuntimeReply {
+    TaskStatus(TaskState),
     Capabilities(Capabilities),
     Models {
         connection_id: String,
@@ -400,6 +431,9 @@ pub struct Runtime {
     config: CompactionConfig,
     limits: EventLimits,
     catalog: Option<Arc<ModelCatalog>>,
+    max_active_tasks: usize,
+    #[cfg(test)]
+    panicking_sessions: HashSet<String>,
 }
 
 impl Runtime {
@@ -418,7 +452,29 @@ impl Runtime {
             config,
             limits: EventLimits::default(),
             catalog: None,
+            max_active_tasks: 1,
+            #[cfg(test)]
+            panicking_sessions: HashSet::new(),
         }
+    }
+
+    pub fn with_max_active_tasks(mut self, capacity: usize) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            capacity > 0 && capacity <= tokio::sync::Semaphore::MAX_PERMITS,
+            "max_active_tasks is outside the supported channel capacity"
+        );
+        self.max_active_tasks = capacity;
+        Ok(self)
+    }
+
+    pub fn max_active_tasks(&self) -> usize {
+        self.max_active_tasks
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_panicking_session(mut self, session_id: String) -> Self {
+        self.panicking_sessions.insert(session_id);
+        self
     }
 
     pub fn with_catalog(mut self, catalog: Option<ModelCatalog>) -> Self {
@@ -453,8 +509,8 @@ impl Runtime {
     pub fn start(self) -> (RuntimeHandle, JoinHandle<anyhow::Result<()>>) {
         let (commands_tx, commands_rx) = mpsc::channel(32);
         let (ops_tx, ops_rx) = mpsc::channel(MAX_PREPARED);
-        let (workers_tx, workers_rx) = mpsc::channel(1);
-        let (releases_tx, releases_rx) = mpsc::channel(8);
+        let (workers_tx, workers_rx) = mpsc::channel(self.max_active_tasks);
+        let (releases_tx, releases_rx) = mpsc::channel(self.max_active_tasks);
         let output = OutputState::default();
         let (drained_tx, drained_rx) = watch::channel(false);
         let handle = RuntimeHandle {
@@ -473,7 +529,10 @@ impl Runtime {
             output,
             work_drained: drained_tx,
             sessions: HashMap::new(),
-            active: None,
+            active: HashMap::new(),
+            max_active_tasks: self.max_active_tasks,
+            #[cfg(test)]
+            panicking_sessions: self.panicking_sessions,
             preparing: HashSet::new(),
             configuring: HashSet::new(),
             in_flight: 0,
@@ -504,6 +563,7 @@ struct OpDone {
 }
 
 enum Prepared {
+    TaskStatus(TaskState),
     Configuration(ConfigView),
     Configured {
         session_id: String,
@@ -553,7 +613,9 @@ struct Active {
     cancel: watch::Sender<bool>,
     terminal: Option<oneshot::Sender<TaskFinished>>,
     sink: Option<EventSink>,
-    done: bool,
+    result: Option<TaskFinished>,
+    started: watch::Receiver<bool>,
+    config_revision: u64,
 }
 
 struct WorkerDone {
@@ -572,7 +634,10 @@ struct RuntimeActor {
     output: OutputState,
     work_drained: watch::Sender<bool>,
     sessions: HashMap<String, SessionEntry>,
-    active: Option<Active>,
+    active: HashMap<String, Active>,
+    max_active_tasks: usize,
+    #[cfg(test)]
+    panicking_sessions: HashSet<String>,
     preparing: HashSet<String>,
     configuring: HashSet<String>,
     in_flight: usize,
@@ -597,11 +662,11 @@ impl RuntimeActor {
         loop {
             if !self.accepting
                 && self.in_flight == 0
-                && self.active.as_ref().is_none_or(|active| active.done)
+                && self.active.values().all(|active| active.result.is_some())
             {
                 self.work_drained.send_replace(true);
             }
-            if !self.accepting && self.active.is_none() && self.in_flight == 0 {
+            if !self.accepting && self.active.is_empty() && self.in_flight == 0 {
                 self.drain_stopped_commands();
                 break;
             }
@@ -610,15 +675,13 @@ impl RuntimeActor {
                 _ = &mut output_closed, if !output_closed_seen => {
                     output_closed_seen = true;
                     self.accepting = false;
-                    if self.active.as_ref().is_some_and(|active| active.done) {
-                        self.active = None;
-                    }
+                    self.active.retain(|_, active| active.result.is_none());
                 }
                 Some(done) = self.ops_rx.recv() => self.finish_op(done),
                 Some(done) = self.workers_rx.recv() => self.finish_worker(done),
-                Some(task_id) = self.releases_rx.recv(), if self.active.as_ref().is_some_and(|active| active.done) => {
-                    if self.active.as_ref().is_some_and(|active| active.association.task_id == task_id) {
-                        self.active = None;
+                Some(task_id) = self.releases_rx.recv(), if self.active.values().any(|active| active.result.is_some()) => {
+                    if self.active.get(&task_id).is_some_and(|active| active.result.is_some()) {
+                        self.active.remove(&task_id);
                     }
                 }
                 command = self.commands.recv(), if !commands_closed => {
@@ -646,6 +709,12 @@ impl RuntimeActor {
             }
         }
         Ok(())
+    }
+
+    fn active_for_session(&self, session_id: &str) -> Option<&Active> {
+        self.active
+            .values()
+            .find(|active| active.association.session_id == session_id)
     }
 
     fn admit(&self) -> bool {
@@ -731,6 +800,44 @@ impl RuntimeActor {
     fn handle_command(&mut self, envelope: Envelope) {
         let Envelope { command, reply } = envelope;
         match command {
+            RuntimeCommand::TaskStatus {
+                session_id,
+                task_id,
+            } => {
+                if let Some(active) = self
+                    .active
+                    .get(&task_id)
+                    .filter(|active| active.association.session_id == session_id)
+                {
+                    let (status, phase, persistence) = match &active.result {
+                        Some(result) => (result.status, "finished", result.persistence),
+                        None if *active.started.borrow() => ("running", "running", None),
+                        None => ("accepted", "accepted", None),
+                    };
+                    let _ = reply.send(Ok(RuntimeReply::TaskStatus(TaskState {
+                        session_id,
+                        task_id,
+                        status: status.to_owned(),
+                        phase,
+                        cancel_requested: *active.cancel.borrow(),
+                        config_revision: Some(active.config_revision),
+                        persistence,
+                    })));
+                    return;
+                }
+                if !self.admit() {
+                    self.reject_busy(reply);
+                    return;
+                }
+                let store = self.store.clone();
+                let api = self.client.api().as_str().to_owned();
+                self.spawn_op(reply, None, move || {
+                    let replay = replay_for(&store, &api, &session_id)?;
+                    Ok(Prepared::TaskStatus(replayed_task_state(
+                        session_id, task_id, replay,
+                    )))
+                });
+            }
             RuntimeCommand::Capabilities => {
                 let _ = reply.send(Ok(RuntimeReply::Capabilities(Capabilities {
                     protocol_version: 1,
@@ -747,10 +854,11 @@ impl RuntimeActor {
                         "session.status",
                         "session.release",
                         "task.send",
+                        "task.status",
                         "task.cancel",
                         "runtime.shutdown",
                     ],
-                    max_active_tasks: 1,
+                    max_active_tasks: self.max_active_tasks,
                     session_configuration: true,
                     multi_connection: false,
                     external_tools: false,
@@ -839,11 +947,7 @@ impl RuntimeActor {
             }
             RuntimeCommand::Load { session_id } => {
                 if let Some(session) = self.sessions.get(&session_id)
-                    && (session.agent.is_some()
-                        || self
-                            .active
-                            .as_ref()
-                            .is_some_and(|active| active.association.session_id == session_id))
+                    && (session.agent.is_some() || self.active_for_session(&session_id).is_some())
                 {
                     let metadata = Some(session.metadata.clone());
                     let _ = reply.send(Ok(RuntimeReply::Session(self.session_state(
@@ -976,11 +1080,7 @@ impl RuntimeActor {
                 });
             }
             RuntimeCommand::Release { session_id } => {
-                if self
-                    .active
-                    .as_ref()
-                    .is_some_and(|active| active.association.session_id == session_id)
-                {
+                if self.active_for_session(&session_id).is_some() {
                     let _ =
                         reply.send(Err(RuntimeError::new("busy", "session has an active task")
                             .session(&session_id)));
@@ -1015,11 +1115,10 @@ impl RuntimeActor {
                 session_id,
                 task_id,
             } => {
-                let status = match &self.active {
+                let status = match self.active.get(&task_id) {
                     Some(active)
                         if active.association.session_id == session_id
-                            && active.association.task_id == task_id
-                            && !active.done =>
+                            && active.result.is_none() =>
                     {
                         if *active.cancel.borrow() {
                             "already_requested"
@@ -1060,12 +1159,7 @@ impl RuntimeActor {
             let _ = reply.send(Err(error.session(&session_id)));
             return;
         }
-        if self.preparing.contains(&session_id)
-            || self
-                .active
-                .as_ref()
-                .is_some_and(|active| active.association.session_id == session_id)
-        {
+        if self.preparing.contains(&session_id) || self.active_for_session(&session_id).is_some() {
             let _ = reply.send(Err(RuntimeError::new(
                 "busy",
                 "session has accepted work or a configuration operation",
@@ -1157,10 +1251,18 @@ impl RuntimeActor {
                         .session(&session_id)));
             return;
         };
-        if self.active.is_some() {
-            let _ = reply.send(Err(RuntimeError::new(
-                "busy",
-                "runtime already has an active task",
+        if self.active_for_session(&session_id).is_some() {
+            let _ = reply.send(Err(RuntimeError::busy(
+                "session_busy",
+                "session already has an accepted task",
+            )
+            .session(&session_id)));
+            return;
+        }
+        if self.active.len() >= self.max_active_tasks {
+            let _ = reply.send(Err(RuntimeError::busy(
+                "capacity_exceeded",
+                "runtime task capacity is full",
             )
             .session(&session_id)));
             return;
@@ -1240,7 +1342,11 @@ impl RuntimeActor {
         let (sink, events) =
             EventSink::bounded(self.limits, cancel_rx.clone(), self.output.clone());
         let history_sink = sink.clone();
-        let agent = agent.with_event_sink(sink).with_cancel(cancel_rx);
+        let (started_tx, started) = watch::channel(false);
+        let agent = agent
+            .with_event_sink(sink)
+            .with_cancel(cancel_rx)
+            .with_started_signal(started_tx);
         let (terminal, finished) = oneshot::channel();
         let association = Association {
             session_id,
@@ -1249,8 +1355,15 @@ impl RuntimeActor {
         };
         let worker_task_id = task_id.clone();
         let worker_message_id = message_id.clone();
+        #[cfg(test)]
+        let should_panic = self.panicking_sessions.remove(&association.session_id);
+        let config_revision = configuration.config_revision;
         let worker = tokio::spawn(async move {
             let mut agent = agent;
+            #[cfg(test)]
+            if should_panic {
+                panic!("injected task worker panic");
+            }
             let result = agent
                 .handle_configured_task(
                     message,
@@ -1273,13 +1386,18 @@ impl RuntimeActor {
                 .await;
         });
         let metrics = history_sink.metrics();
-        self.active = Some(Active {
-            association: association.clone(),
-            cancel,
-            terminal: Some(terminal),
-            sink: Some(history_sink),
-            done: false,
-        });
+        self.active.insert(
+            task_id.clone(),
+            Active {
+                association: association.clone(),
+                cancel,
+                terminal: Some(terminal),
+                sink: Some(history_sink),
+                result: None,
+                started,
+                config_revision,
+            },
+        );
         let _ = reply.send(Ok(RuntimeReply::Accepted(AcceptedTask {
             association,
             events: TaskEvents {
@@ -1298,13 +1416,9 @@ impl RuntimeActor {
 }
 impl RuntimeActor {
     fn finish_worker(&mut self, done: WorkerDone) {
-        let Some(mut active) = self.active.take() else {
+        let Some(mut active) = self.active.remove(&done.task_id) else {
             return;
         };
-        if active.association.task_id != done.task_id {
-            self.active = Some(active);
-            return;
-        }
         let history_required = active
             .sink
             .as_ref()
@@ -1373,25 +1487,24 @@ impl RuntimeActor {
             session.status = status;
             session.agent = restored_agent;
         }
-        active.done = true;
         let finished = TaskFinished {
             status: finished_status,
             error,
             persistence,
             history_required,
         };
+        active.result = Some(finished.clone());
         if let Some(terminal) = active.terminal.take() {
             let _ = terminal.send(finished);
         }
-        if self.output.is_closed() {
-            self.active = None;
-        } else {
-            self.active = Some(active);
+        if !self.output.is_closed() {
+            self.active.insert(done.task_id, active);
         }
     }
 
     fn apply(&mut self, prepared: Prepared) -> std::result::Result<RuntimeReply, RuntimeError> {
         match prepared {
+            Prepared::TaskStatus(state) => Ok(RuntimeReply::TaskStatus(state)),
             Prepared::Configuration(view) => Ok(RuntimeReply::Config(view)),
             Prepared::Configured {
                 session_id,
@@ -1493,9 +1606,8 @@ impl RuntimeActor {
         fallback: Option<TaskStatus>,
     ) -> SessionState {
         let active = self
-            .active
-            .as_ref()
-            .filter(|active| !active.done && active.association.session_id == session_id);
+            .active_for_session(session_id)
+            .filter(|active| active.result.is_none());
         let running = active.is_some();
         let status = if running {
             "running".to_owned()
@@ -1534,9 +1646,8 @@ impl RuntimeActor {
     fn summary_view(&self, summary: SessionSummary) -> SessionSummaryView {
         let id = summary.metadata.id.clone();
         let active = self
-            .active
-            .as_ref()
-            .filter(|active| !active.done && active.association.session_id == id);
+            .active_for_session(&id)
+            .filter(|active| active.result.is_none());
         let running = active.is_some();
         let loaded = self.sessions.contains_key(&id);
         let status = if running {
@@ -1582,9 +1693,8 @@ impl RuntimeActor {
             })
             .collect();
         let active = self
-            .active
-            .as_ref()
-            .filter(|active| !active.done && active.association.session_id == session_id);
+            .active_for_session(session_id)
+            .filter(|active| active.result.is_none());
         let status = if active.is_some() {
             "running".to_owned()
         } else if let Some(session) = self.sessions.get(session_id) {
@@ -1600,6 +1710,45 @@ impl RuntimeActor {
             state: if active.is_some() { "running" } else { "idle" },
             active_task_id: active.map(|active| active.association.task_id.clone()),
         }
+    }
+}
+
+fn replayed_task_state(session_id: String, task_id: String, replay: Replay) -> TaskState {
+    let mut known = false;
+    let mut status = None;
+    let mut config_revision = None;
+    for record in replay.history {
+        match record {
+            JournalRecord::TaskStarted {
+                task_id: id,
+                configuration,
+                ..
+            } if id == task_id => {
+                known = true;
+                config_revision = configuration.map(|config| config.config_revision);
+            }
+            JournalRecord::TaskFinished {
+                task_id: id,
+                status: finished,
+                ..
+            } if id == task_id => status = Some(status_str(&finished)),
+            _ => {}
+        }
+    }
+    TaskState {
+        session_id,
+        task_id,
+        status: status.unwrap_or("unknown").to_owned(),
+        phase: if status.is_some() {
+            "finished"
+        } else if known {
+            "recovery"
+        } else {
+            "unknown"
+        },
+        cancel_requested: false,
+        config_revision,
+        persistence: (known && status.is_none()).then_some("unconfirmed"),
     }
 }
 
@@ -1720,3 +1869,7 @@ mod service_tests;
 #[cfg(test)]
 #[path = "../../tests/session/config.rs"]
 mod config_tests;
+
+#[cfg(test)]
+#[path = "../../tests/session/concurrent.rs"]
+mod concurrent_tests;
