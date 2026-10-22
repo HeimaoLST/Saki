@@ -105,8 +105,8 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 						ui.Text(c, a.runtimeHint).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 					}
 					ui.Row(c).Children(func() {
-						if ui.Button(c, "Configuration details").FontSize(11).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).Clicked() {
-							a.openSettings()
+						if ui.Button(c, "Configuration details").FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).Clicked() {
+							a.openConfiguration()
 						}
 					})
 				})
@@ -458,11 +458,14 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 	ui.Column(c).Width(300).FillHeight().Background(t.Surface).BorderWidth(0, 0, 0, 1).BorderColor(t.Border).Children(func() {
 		ui.Scroll(c).Grow(1).Padding(12).Children(func() {
 			ui.Column(c).Gap(10).Children(func() {
-				if a.aux == "sources" {
+				switch a.aux {
+				case "sources":
 					a.sourcesPanel(c, t)
-					return
+				case "configuration":
+					a.configurationPanel(c, t)
+				default:
+					a.settingsPanel(c, t)
 				}
-				a.settingsPanel(c, t)
 			})
 		})
 	})
@@ -492,13 +495,12 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	locked := a.profileLocked(ct)
-	if !a.demo {
-		a.runtimePanel(c, t, ct)
-		ui.Divider(c)
-	}
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "Contact settings").FontSize(16).FontWeight(500).TextColor(t.Text)
 		ui.Spacer(c)
+		if !a.demo {
+			ui.Button(c, "Runtime status").FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openConfiguration() })
+		}
 		ui.Button(c, "Close").FontSize(12).OnClick(func() { a.closeAux() })
 	})
 	switch {
@@ -526,11 +528,26 @@ func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 	})
 }
 
+func (a *appModel) openConfiguration() {
+	a.aux = "configuration"
+}
+
+func (a *appModel) configurationPanel(c *ui.Context, t *ui.Theme) {
+	ui.Row(c).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "Runtime & configuration").FontSize(16).FontWeight(500).TextColor(t.Text)
+		ui.Spacer(c)
+		ui.Button(c, "Close").FontSize(12).OnClick(func() { a.closeAux() })
+	})
+	a.runtimePanel(c, t, a.selectedContact())
+}
+
 func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
-	ui.Text(c, "Runtime & configuration").FontSize(14).FontWeight(500).TextColor(t.Text)
 	status := a.runtimeStatus
 	if status == "" {
 		status = "unknown"
+	}
+	if status == runtimeStateReady {
+		status += " (connection only)"
 	}
 	ui.Text(c, "Runtime: "+status).FontSize(12).LineHeight(1.4).TextColor(t.Text)
 	if a.runtimeErr != "" {
@@ -565,13 +582,16 @@ func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 		state = "unknown"
 	}
 	ui.Text(c, "Session: "+session+" · state: "+state).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
-	api := ct.SessionAPI
-	if api == "" {
-		api = a.runtimeAPI
+	switch {
+	case ct.SessionAPI != "":
+		ui.Text(c, "Session API: "+ct.SessionAPI).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	case a.runtimeAPI != "":
+		ui.Text(c, "Runtime API (connected): "+a.runtimeAPI+"; no session API loaded").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	default:
+		ui.Text(c, "Session API: unknown until the runtime session is loaded").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 	}
-	ui.Text(c, "API: "+valueOr(api, "unknown until the runtime session is loaded")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
-	ui.Text(c, "Model: "+valueOr(ct.SessionModel, "unknown until the runtime session is loaded; selection is a later task")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
-	ui.Text(c, "Host configuration: set API_KEY, SAKI_API, SAKI_BASE_URL and SAKI_MODEL in the environment or in the GUI work directory's .env; values stay hidden.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Session model: "+valueOr(ct.SessionModel, "unknown until the runtime session is loaded; selection is a later task")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Host configuration: API_KEY is required; SAKI_API, SAKI_BASE_URL and SAKI_MODEL have runtime defaults. Set them in the environment or in the GUI work directory's .env; values stay hidden.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 }
 
 func valueOr(value, fallback string) string {

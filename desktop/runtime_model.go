@@ -154,16 +154,20 @@ func (a *appModel) runtimeHelperHint() string {
 }
 
 func (a *appModel) runtimeConfigHint() string {
-	return "Set API_KEY, SAKI_API, SAKI_BASE_URL and SAKI_MODEL in the environment or in " +
-		a.workDir + "/.env, then restart Saki. Open Settings to review the current paths."
+	return "API_KEY is required. SAKI_API, SAKI_BASE_URL and SAKI_MODEL have runtime defaults; " +
+		"set them in the environment or in " + a.workDir + "/.env, then restart Saki. Open Configuration for the current paths."
 }
 
 var diagnosticSecret = regexp.MustCompile(`(?i)\b(api[_-]?key|token)\s*[:=]\s*[^\s,;]+|\bauthorization\s*:\s*(?:bearer\s+)?[^\s,;]+|\bbearer\s+[^\s,;]+`)
+var diagnosticJSONSecret = regexp.MustCompile(`(?i)"(?:api[_-]?key|token|secret|password|authorization)"\s*:\s*"[^"]*"`)
+var diagnosticSkKey = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}`)
 var diagnosticURLCred = regexp.MustCompile(`://[^/\s@]+@`)
 
 func safeDiagnostic(text string) string {
 	text = strings.TrimSpace(text)
 	text = diagnosticSecret.ReplaceAllString(text, "[redacted]")
+	text = diagnosticJSONSecret.ReplaceAllString(text, "[redacted]")
+	text = diagnosticSkKey.ReplaceAllString(text, "[redacted]")
 	text = diagnosticURLCred.ReplaceAllString(text, "://[redacted]@")
 	return truncate(text, 500)
 }
@@ -201,6 +205,7 @@ func (a *appModel) startRuntime() {
 					a.runtimeStage = ""
 					a.runtimeHint = ""
 					a.runtimeAPI = ready.API
+					a.runtimeHandshake = true
 					a.restoreContacts()
 				})
 			},
@@ -239,17 +244,22 @@ func (a *appModel) startRuntime() {
 	a.rt = rt
 }
 
-// beginShutdown is the single quit path for the window close button and
-// Cmd+Q. It prevents the default close, drains the runtime, then asks the app
-// to quit. The UI thread is never blocked on the process wait.
 func (a *appModel) applyRuntimeExit(err error) {
-	wasReady := a.runtimeStatus == runtimeStateReady
+	if a.runtimeStatus == runtimeStateDraining {
+		a.runtimeStatus = runtimeStateExited
+		return
+	}
+	if a.runtimeStage == "Runtime protocol" {
+		a.runtimeStatus = runtimeStateExited
+		return
+	}
 	diagnostic := ""
 	if a.rt != nil {
 		if lines := a.rt.diagnostics(); len(lines) > 0 {
 			diagnostic = safeDiagnostic(lines[len(lines)-1])
 		}
 	}
+	wasReady := a.runtimeHandshake
 	a.runtimeStatus = runtimeStateExited
 	if wasReady {
 		a.runtimeStage = "Runtime connection"
@@ -259,19 +269,21 @@ func (a *appModel) applyRuntimeExit(err error) {
 		}
 		a.runtimeHint = "Restart Saki and reload history. Accepted work may be unconfirmed; no automatic retry."
 	} else {
-		a.runtimeStage = "Runtime configuration"
-		a.runtimeHint = a.runtimeConfigHint()
 		switch {
 		case strings.Contains(diagnostic, "API_KEY is not set"):
+			a.runtimeStage = "Runtime configuration"
 			a.runtimeErr = "API_KEY is not set."
 			a.runtimeHint = "Set API_KEY in the environment or in " + a.workDir + "/.env, then restart Saki."
 		case strings.Contains(diagnostic, ".env exists but could not be parsed"):
+			a.runtimeStage = "Runtime configuration"
 			a.runtimeErr = ".env could not be parsed."
 			a.runtimeHint = "Fix or replace the .env file in " + a.workDir + ", then restart Saki."
-		case diagnostic != "":
-			a.runtimeErr = "Runtime exited before ready: " + diagnostic
 		default:
-			if err != nil {
+			a.runtimeStage = "Runtime startup"
+			a.runtimeHint = "Check the helper path and the startup diagnostic, then restart Saki."
+			if diagnostic != "" {
+				a.runtimeErr = "Runtime exited before ready: " + diagnostic
+			} else if err != nil {
 				a.runtimeErr = "Runtime exited before ready: " + safeDiagnostic(err.Error())
 			} else {
 				a.runtimeErr = "Runtime exited before ready."
@@ -290,6 +302,9 @@ func (a *appModel) applyRuntimeExit(err error) {
 	}
 }
 
+// beginShutdown is the single quit path for the window close button and
+// Cmd+Q. It prevents the default close, drains the runtime, then asks the app
+// to quit. The UI thread is never blocked on the process wait.
 func (a *appModel) beginShutdown() {
 	if a.shutdownStarted {
 		return
@@ -675,7 +690,7 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 		ct.Work = ""
 		ct.HistoryDirty = true
 		ct.historyGen++
-		ct.SessionState = payload.Status
+		ct.SessionState = "unknown"
 		ct.Status = statusFromString(payload.Status)
 		ct.StatusDetail = taskFinishedDetail(payload)
 		if ct.Status == statusAttention && ct.StatusDetail == "" {
@@ -688,10 +703,21 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 	}
 }
 
-func providerAuthFailure(message string) bool {
+func httpAuthStatus(message string) string {
 	message = strings.TrimSpace(message)
-	return strings.HasPrefix(message, "HTTP 401") || strings.HasPrefix(message, "HTTP 403")
+	for _, status := range []string{"HTTP 401", "HTTP 403"} {
+		if !strings.HasPrefix(message, status) {
+			continue
+		}
+		n := len(status)
+		if len(message) == n || message[n] < '0' || message[n] > '9' {
+			return status
+		}
+	}
+	return ""
 }
+
+func providerAuthFailure(message string) bool { return httpAuthStatus(message) != "" }
 
 func taskFinishedDetail(payload *runtimeEvent) string {
 	switch payload.Status {
@@ -699,10 +725,11 @@ func taskFinishedDetail(payload *runtimeEvent) string {
 		if payload.Error != nil {
 			stage := "Task failed"
 			if payload.Error.Code == "model_error" {
-				stage = "Model request failed"
-				if providerAuthFailure(payload.Error.Message) {
-					stage = "Provider authentication failed"
+				if status := httpAuthStatus(payload.Error.Message); status != "" {
+					return "Provider authentication failed: " + status +
+						". Check API_KEY and provider configuration; no automatic retry."
 				}
+				stage = "Model request failed"
 			}
 			return stage + ": " + payload.Error.Code + ": " + safeDiagnostic(payload.Error.Message) +
 				". Check provider configuration (API_KEY / SAKI_BASE_URL / SAKI_MODEL); no automatic retry."

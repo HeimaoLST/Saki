@@ -77,7 +77,8 @@ func TestRuntimeExitClassifiesConfigAndRedacts(t *testing.T) {
 	}
 
 	c := &appModel{
-		runtimeStatus: runtimeStateReady,
+		runtimeStatus:    runtimeStateReady,
+		runtimeHandshake: true,
 		contacts: []*contact{{
 			ID: "saki", Name: "Saki", ActiveTaskID: "task-1", Draft: "later draft",
 		}},
@@ -99,6 +100,9 @@ func TestSafeDiagnosticRedactsSecrets(t *testing.T) {
 		"API_KEY=sk-sentinel-112",
 		"Authorization: Bearer sentinel-112",
 		"token=token-sentinel-112",
+		`{"api_key":"json-sentinel-112"}`,
+		`{"token": "json-token-sentinel-112"}`,
+		"Incorrect API key provided: sk-sentinel-112",
 		"https://user:pass-sentinel-112@example.test/v1",
 	}
 	for _, input := range cases {
@@ -117,7 +121,7 @@ func TestRuntimePanelShowsPathsAndMetadata(t *testing.T) {
 		ID: "saki", Name: "Saki", Role: "Assistant",
 		Workspace: "/tmp/contact-ws", SessionID: "session-1", Loaded: true,
 		SessionWorkingDir: "/tmp/session-ws", SessionModel: "model-x",
-		SessionAPI: "openai-chat-completions", SessionState: "completed", Draft: "keep",
+		SessionAPI: "openai-chat-completions", SessionState: "running", Draft: "keep",
 	}
 	a := &appModel{
 		demo: false, runtimeStatus: runtimeStateReady,
@@ -125,7 +129,7 @@ func TestRuntimePanelShowsPathsAndMetadata(t *testing.T) {
 		storePath: "/tmp/contacts.json", sessionDir: "/tmp/sessions", workDir: "/tmp/work",
 		scrollTo: -1, contacts: []*contact{ct},
 	}
-	a.openSettings()
+	a.openConfiguration()
 	tr := ui.NewTester(a.view, 960, 640)
 	tr.Frame()
 	for _, want := range []string{
@@ -136,9 +140,9 @@ func TestRuntimePanelShowsPathsAndMetadata(t *testing.T) {
 		"GUI work directory: /tmp/work",
 		"Contact workspace: /tmp/session-ws",
 		"Session: session-1",
-		"state: completed",
-		"API: openai-chat-completions",
-		"Model: model-x",
+		"state: running",
+		"Session API: openai-chat-completions",
+		"Session model: model-x",
 	} {
 		if !tr.HasText(want) {
 			t.Errorf("runtime panel missing %q", want)
@@ -146,6 +150,45 @@ func TestRuntimePanelShowsPathsAndMetadata(t *testing.T) {
 	}
 	if ct.Draft != "keep" {
 		t.Fatalf("runtime status changed the draft: %q", ct.Draft)
+	}
+}
+
+func TestConfigurationEntryKeepsContactSettingsUsable(t *testing.T) {
+	ct := &contact{ID: "saki", Name: "Saki", Role: "Assistant", Draft: "keep"}
+	a := &appModel{
+		demo: false, runtimeStatus: runtimeStateReady, runtimeHandshake: true,
+		runtimeBinary: "/tmp/Saki-runtime", storePath: "/tmp/contacts.json",
+		sessionDir: "/tmp/sessions", workDir: "/tmp/work", scrollTo: -1,
+		contacts: []*contact{ct},
+	}
+	a.openSettings()
+	tr := ui.NewTester(a.view, 960, 640)
+	tr.Frame()
+	for _, want := range []string{"Contact settings", "Contact name", "Save changes", "Close", "Runtime status"} {
+		if !tr.HasText(want) {
+			t.Fatalf("contact settings missing %q", want)
+		}
+	}
+	if err := tr.Click("Runtime status"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.aux != "configuration" {
+		t.Fatalf("aux = %q, want configuration", a.aux)
+	}
+	for _, want := range []string{"Runtime & configuration", "Helper: /tmp/Saki-runtime", "Close"} {
+		if !tr.HasText(want) {
+			t.Fatalf("configuration panel missing %q", want)
+		}
+	}
+	if ct.Draft != "keep" {
+		t.Fatalf("configuration view changed the draft: %q", ct.Draft)
+	}
+	if err := tr.Click("Close"); err != nil {
+		t.Fatal(err)
+	}
+	if a.aux != "" {
+		t.Fatalf("close left aux = %q", a.aux)
 	}
 }
 
@@ -174,6 +217,13 @@ func TestStartupBannerKeepsComposerFocusAndDraft(t *testing.T) {
 	if ct.Draft != "keep" {
 		t.Fatalf("startup banner changed the draft: %q", ct.Draft)
 	}
+	if err := tr.Click("Configuration details"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.aux != "configuration" {
+		t.Fatalf("banner opened aux %q, want configuration", a.aux)
+	}
 }
 
 func TestTaskFailureKeepsAcceptedHistoryAndLaterDraft(t *testing.T) {
@@ -199,7 +249,7 @@ func TestTaskFailureKeepsAcceptedHistoryAndLaterDraft(t *testing.T) {
 			t.Errorf("StatusDetail = %q, missing %q", ct.StatusDetail, want)
 		}
 	}
-	if ct.ActiveTaskID != "" || ct.SendState != sendIdle || ct.SessionState != "failed" {
+	if ct.ActiveTaskID != "" || ct.SendState != sendIdle || ct.SessionState != "unknown" {
 		t.Fatalf("terminal state = %+v", ct)
 	}
 }
@@ -210,10 +260,99 @@ func TestProviderAuthFailureUsesKnownHTTPPrefix(t *testing.T) {
 			t.Errorf("providerAuthFailure(%q) = false", message)
 		}
 	}
-	for _, message := range []string{"proxy returned 401 text", "HTTP 500 Internal Server Error", "upstream request failed"} {
+	for _, message := range []string{"proxy returned 401 text", "HTTP 4010 Teapot", "HTTP 4030 Forbidden", "HTTP 500 Internal Server Error", "upstream request failed"} {
 		if providerAuthFailure(message) {
 			t.Errorf("providerAuthFailure(%q) guessed from arbitrary text", message)
 		}
+	}
+}
+
+func TestProviderAuthDetailDoesNotEchoBody(t *testing.T) {
+	payload := &runtimeEvent{Status: "failed", Error: &runtimeError{
+		Code: "model_error", Message: "HTTP 401 Unauthorized: Incorrect API key provided: sk-sentinel-112",
+	}}
+	detail := taskFinishedDetail(payload)
+	if !strings.Contains(detail, "Provider authentication failed") || !strings.Contains(detail, "HTTP 401") {
+		t.Fatalf("detail = %q", detail)
+	}
+	for _, leaked := range []string{"Incorrect API key", "sk-sentinel-112"} {
+		if strings.Contains(detail, leaked) {
+			t.Fatalf("auth detail echoed %q: %q", leaked, detail)
+		}
+	}
+}
+
+func TestProviderAuthFailureUIAndRecovery(t *testing.T) {
+	ct := &contact{
+		ID: "saki", Name: "Saki", Role: "Assistant", SessionID: "session-1", Loaded: true,
+		ActiveTaskID: "task-1", SendState: sendSubmitting, Draft: "later edit",
+		Messages: []*message{{Key: "live:task-1:user", Kind: msgUser, Text: "sent task"}},
+	}
+	a := &appModel{demo: false, runtimeStatus: runtimeStateReady, runtimeHandshake: true, scrollTo: -1, contacts: []*contact{ct}}
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "session-1", TaskID: "task-1",
+		Event: &runtimeEvent{Type: "task_finished", Status: "failed",
+			Error: &runtimeError{Code: "model_error", Message: "HTTP 401 Unauthorized: Incorrect API key provided: sk-sentinel-112"}},
+	})
+	if ct.SendState != sendIdle || ct.ActiveTaskID != "" || ct.Draft != "later edit" {
+		t.Fatalf("failed auth task did not return to idle with draft: %+v", ct)
+	}
+	for _, leaked := range []string{"Incorrect API key", "sk-sentinel-112"} {
+		if strings.Contains(ct.StatusDetail, leaked) {
+			t.Fatalf("UI detail echoed %q: %q", leaked, ct.StatusDetail)
+		}
+	}
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if !tr.HasText("Provider authentication failed") || tr.HasText("sk-sentinel-112") {
+		t.Fatal("provider auth UI must show the bounded classification without the provider body")
+	}
+
+	// A later task can start from the same contact; no automatic retry of the
+	// rejected task is queued.
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "session-1", TaskID: "task-2",
+		Event: &runtimeEvent{Type: "task_started"},
+	})
+	if ct.ActiveTaskID != "task-2" || ct.SendState != sendAccepted || ct.SessionState != "running" {
+		t.Fatalf("recovery task state = %+v", ct)
+	}
+	if len(ct.Messages) != 1 || ct.Messages[0].Text != "sent task" {
+		t.Fatalf("auth retry changed accepted history: %+v", ct.Messages)
+	}
+}
+
+func TestRuntimeExitKeepsProtocolAndDrain(t *testing.T) {
+	p := &appModel{
+		runtimeStatus: runtimeStateFailed,
+		runtimeStage:  "Runtime protocol",
+		runtimeErr:    "Runtime protocol error: malformed event",
+		rt:            &runtimeClient{stderr: []string{"API_KEY is not set"}},
+	}
+	p.applyRuntimeExit(errors.New("exit status 1"))
+	if p.runtimeStage != "Runtime protocol" || !strings.Contains(p.runtimeErr, "malformed event") {
+		t.Fatalf("protocol failure overwritten: stage=%q err=%q", p.runtimeStage, p.runtimeErr)
+	}
+
+	d := &appModel{runtimeStatus: runtimeStateDraining, rt: &runtimeClient{stderr: []string{"API_KEY is not set"}}}
+	d.applyRuntimeExit(nil)
+	if d.runtimeErr != "" || strings.Contains(d.runtimeStage, "configuration") {
+		t.Fatalf("normal drain got a startup error: stage=%q err=%q", d.runtimeStage, d.runtimeErr)
+	}
+}
+
+func TestRuntimeExitUnknownBeforeReadyIsStartup(t *testing.T) {
+	a := &appModel{
+		runtimeStatus: runtimeStateStarting,
+		workDir:       "/tmp/saki-112-work",
+		rt:            &runtimeClient{stderr: []string{"panic: unexpected handshake"}},
+	}
+	a.applyRuntimeExit(errors.New("exit status 2"))
+	if a.runtimeStage != "Runtime startup" {
+		t.Fatalf("stage = %q, want Runtime startup", a.runtimeStage)
+	}
+	if !strings.Contains(a.runtimeErr, "exited before ready") || strings.Contains(a.runtimeHint, "API_KEY") {
+		t.Fatalf("unknown startup classified as configuration: err=%q hint=%q", a.runtimeErr, a.runtimeHint)
 	}
 }
 
@@ -267,7 +406,7 @@ func TestRealProviderAuthFailureClassification(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
+		_, _ = w.Write([]byte(`{"error":{"message":"Incorrect API key provided: sk-sentinel-112"}}`))
 	}))
 	defer server.Close()
 	root := t.TempDir()
@@ -324,6 +463,9 @@ func TestRealProviderAuthFailureClassification(t *testing.T) {
 				detail := taskFinishedDetail(event.Event)
 				if !strings.Contains(detail, "Provider authentication failed") {
 					t.Fatalf("auth detail = %q", detail)
+				}
+				if strings.Contains(detail, "sk-sentinel-112") || strings.Contains(detail, "Incorrect API key") {
+					t.Fatalf("auth detail echoed provider body: %q", detail)
 				}
 				return
 			}
