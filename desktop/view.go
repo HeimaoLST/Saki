@@ -125,11 +125,26 @@ func (a *appModel) statusColor(t *ui.Theme, s contactStatus) ui.Color {
 func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 	ui.Column(c).Grow(1).FillHeight().Background(t.Surface).Children(func() {
 		if !a.demo {
-			if a.runtimeStatus == runtimeStateDraining {
+			switch {
+			case a.runtimeStatus == runtimeStateDraining:
 				ui.Text(c, "Draining the runtime…").FontSize(12).Padding(8, 16).TextColor(t.TextMuted)
-			} else if a.runtimeErr != "" {
-				ui.Text(c, a.runtimeErr).FontSize(12).LineHeight(1.4).Padding(8, 16).TextColor(t.Danger)
-			} else if a.runtimeStatus == runtimeStateStarting {
+			case a.runtimeErr != "":
+				label := a.runtimeStage
+				if label == "" {
+					label = "Runtime"
+				}
+				ui.Column(c).Padding(8, 16).Gap(2).Children(func() {
+					ui.Text(c, label+": "+a.runtimeErr).FontSize(12).LineHeight(1.4).TextColor(t.Danger)
+					if a.runtimeHint != "" {
+						ui.Text(c, a.runtimeHint).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+					}
+					ui.Row(c).Children(func() {
+						if ui.Button(c, "Configuration details").FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).Clicked() {
+							a.openConfiguration()
+						}
+					})
+				})
+			case a.runtimeStatus == runtimeStateStarting:
 				ui.Text(c, "Connecting to runtime…").FontSize(12).Padding(8, 16).TextColor(t.TextMuted)
 			}
 			if ct := a.selectedContact(); ct.LoadErr != "" {
@@ -523,6 +538,8 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 					switch returnAux {
 					case "sources":
 						a.sourcesPanel(c, t)
+					case "configuration":
+						a.configurationPanel(c, t)
 					default:
 						a.settingsPanel(c, t)
 					}
@@ -568,6 +585,9 @@ func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "Contact settings").FontSize(16).FontWeight(500).TextColor(t.Text)
 		ui.Spacer(c)
+		if !a.demo {
+			ui.Button(c, "Startup status").FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openConfiguration() })
+		}
 		ui.Button(c, "Close").FontSize(12).OnClick(func() { a.closeAux() })
 	})
 	switch {
@@ -593,6 +613,88 @@ func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 		ui.Button(c, "Cancel").FontSize(13).OnClick(func() { a.closeAux() })
 		ui.PrimaryButton(c, "Save changes").FontSize(13).OnClick(func() { a.saveSettings() })
 	})
+}
+
+func (a *appModel) openConfiguration() {
+	a.aux = "configuration"
+}
+
+func (a *appModel) configurationPanel(c *ui.Context, t *ui.Theme) {
+	ui.Row(c).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "Startup & configuration").FontSize(16).FontWeight(500).TextColor(t.Text)
+		ui.Spacer(c)
+		ui.Button(c, "Close").FontSize(12).OnClick(func() { a.closeAux() })
+	})
+	a.runtimePanel(c, t, a.selectedContact())
+}
+
+func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
+	localStore := a.runtimeStage == startupStageLocalStore
+	if localStore {
+		ui.Text(c, "Runtime: not started (local contact store unavailable)").FontSize(12).LineHeight(1.4).TextColor(t.Text)
+	} else {
+		status := a.runtimeStatus
+		if status == "" {
+			status = "unknown"
+		}
+		if status == runtimeStateReady {
+			status += " (connection only)"
+		}
+		ui.Text(c, "Runtime: "+status).FontSize(12).LineHeight(1.4).TextColor(t.Text)
+	}
+	if a.runtimeErr != "" {
+		label := a.runtimeStage
+		if label == "" {
+			label = "Runtime"
+		}
+		ui.Text(c, label+": "+a.runtimeErr).FontSize(12).LineHeight(1.4).TextColor(t.Danger)
+	}
+	if a.runtimeHint != "" {
+		ui.Text(c, a.runtimeHint).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	}
+	helper := a.runtimeBinary
+	if helper == "" {
+		if localStore {
+			helper = "not started; fix the local contact store first"
+		} else {
+			helper = "not found (expected next to Saki as Saki-runtime, or set SAKI_RUNTIME_BIN)"
+		}
+	}
+	ui.Text(c, "Helper: "+helper).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Store: "+valueOr(a.storePath, "not configured")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Session directory: "+valueOr(a.sessionDir, "not configured")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "GUI work directory: "+valueOr(a.workDir, "not configured")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	workspace := ct.SessionWorkingDir
+	if workspace == "" {
+		workspace = ct.Workspace
+	}
+	ui.Text(c, "Contact workspace: "+valueOr(workspace, "not configured")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	session := ct.SessionID
+	if session == "" {
+		session = "not created until the first message"
+	}
+	state := ct.SessionState
+	if state == "" {
+		state = "unknown"
+	}
+	ui.Text(c, "Session: "+session+" · state: "+state).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	switch {
+	case ct.SessionAPI != "":
+		ui.Text(c, "Session API: "+ct.SessionAPI).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	case a.runtimeAPI != "":
+		ui.Text(c, "Runtime API (connected): "+a.runtimeAPI+"; no session API loaded").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	default:
+		ui.Text(c, "Session API: unknown until the runtime session is loaded").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	}
+	ui.Text(c, "Session model: "+valueOr(ct.SessionModel, "unknown until the session is loaded")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Host configuration: API_KEY is required; SAKI_API, SAKI_BASE_URL and SAKI_MODEL have runtime defaults. Set them in the environment or in the GUI work directory's .env; values stay hidden.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+}
+
+func valueOr(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func toolTitle(m *message) string {

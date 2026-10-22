@@ -21,6 +21,8 @@ const (
 	runtimeStateFailed   = "failed"
 	runtimeStateExited   = "exited"
 	runtimeStateDraining = "draining"
+
+	startupStageLocalStore = "Local contact store"
 )
 
 func newRuntimeApp() (*appModel, error) {
@@ -65,12 +67,22 @@ func newRuntimeApp() (*appModel, error) {
 	return a, nil
 }
 
-// newUnavailableApp keeps the window usable when configuration or the store is
-// broken: it shows the error and never silently creates a replacement store.
+// newUnavailableApp keeps the window usable when the local contact store cannot
+// be read or created. It retains the actual paths, labels the local store stage,
+// keeps store=nil, and never silently creates a replacement store.
 func newUnavailableApp(err error) *appModel {
+	storePath := guiStorePath()
+	workDir := guiWorkDir()
 	a := &appModel{
 		runtimeStatus: runtimeStateFailed,
+		runtimeStage:  startupStageLocalStore,
 		runtimeErr:    err.Error(),
+		runtimeHint: "Saki left the existing file untouched and did not create a replacement store. " +
+			"Fix the file or its permissions at " + storePath + ", then restart Saki. " +
+			"Drafts cannot be persisted while the local store is unavailable.",
+		storePath:     storePath,
+		sessionDir:    guiSessionDir(storePath),
+		workDir:       workDir,
 		workspaceOpen: true,
 		scrollTo:      -1,
 		contacts: []*contact{{
@@ -117,29 +129,56 @@ func guiWorkDir() string {
 	return "."
 }
 
+func runtimeHelperCandidates() []string {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	dir := filepath.Dir(exe)
+	return []string{
+		filepath.Join(dir, "Saki-runtime"),
+		filepath.Join(dir, "saki-runtime"),
+		filepath.Join(dir, "..", "Resources", "Saki-runtime"),
+		filepath.Join(dir, "..", "Resources", "Saki"),
+	}
+}
+
 func findRuntimeBinary() string {
 	if value := os.Getenv("SAKI_RUNTIME_BIN"); value != "" {
 		return value
 	}
-	exe, err := os.Executable()
-	if err == nil {
-		dir := filepath.Dir(exe)
-		candidates := []string{
-			filepath.Join(dir, "Saki-runtime"),
-			filepath.Join(dir, "saki-runtime"),
-			filepath.Join(dir, "..", "Resources", "Saki-runtime"),
-			filepath.Join(dir, "..", "Resources", "Saki"),
-		}
-		for _, candidate := range candidates {
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-				return candidate
-			}
+	for _, candidate := range runtimeHelperCandidates() {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
 		}
 	}
 	if path, err := exec.LookPath("Saki"); err == nil {
 		return path
 	}
 	return ""
+}
+
+func (a *appModel) runtimeHelperHint() string {
+	parts := []string{"Place Saki-runtime next to the Saki executable"}
+	if candidates := runtimeHelperCandidates(); len(candidates) > 0 {
+		parts = append(parts, "(expected: "+strings.Join(candidates, ", ")+")")
+	}
+	parts = append(parts, "or set SAKI_RUNTIME_BIN, then restart Saki.")
+	return strings.Join(parts, " ")
+}
+
+var diagnosticSecret = regexp.MustCompile(`(?i)\b(api[_-]?key|token)\s*[:=]\s*[^\s,;]+|\bauthorization\s*:\s*(?:bearer\s+)?[^\s,;]+|\bbearer\s+[^\s,;]+`)
+var diagnosticJSONSecret = regexp.MustCompile(`(?i)"(?:api[_-]?key|token|secret|password|authorization)"\s*:\s*"[^"]*"`)
+var diagnosticSkKey = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}`)
+var diagnosticURLCred = regexp.MustCompile(`://[^/\s@]+@`)
+
+func safeDiagnostic(text string) string {
+	text = strings.TrimSpace(text)
+	text = diagnosticSecret.ReplaceAllString(text, "[redacted]")
+	text = diagnosticJSONSecret.ReplaceAllString(text, "[redacted]")
+	text = diagnosticSkKey.ReplaceAllString(text, "[redacted]")
+	text = diagnosticURLCred.ReplaceAllString(text, "://[redacted]@")
+	return truncate(text, 500)
 }
 
 func (a *appModel) childEnv() []string {
@@ -157,9 +196,12 @@ func (a *appModel) startRuntime() {
 	binary := findRuntimeBinary()
 	if binary == "" {
 		a.runtimeStatus = runtimeStateFailed
-		a.runtimeErr = "Runtime binary not found. Set SAKI_RUNTIME_BIN to the Saki executable."
+		a.runtimeStage = "Runtime helper"
+		a.runtimeErr = "Runtime helper not found."
+		a.runtimeHint = a.runtimeHelperHint()
 		return
 	}
+	a.runtimeBinary = binary
 	rt, err := startRuntime(runtimeOptions{
 		Binary: binary,
 		Dir:    a.workDir,
@@ -169,6 +211,10 @@ func (a *appModel) startRuntime() {
 				a.updateUI(func() {
 					a.runtimeStatus = runtimeStateReady
 					a.runtimeErr = ""
+					a.runtimeStage = ""
+					a.runtimeHint = ""
+					a.runtimeAPI = ready.API
+					a.runtimeHandshake = true
 					a.restoreContacts()
 				})
 			},
@@ -176,59 +222,108 @@ func (a *appModel) startRuntime() {
 				a.updateUI(func() { a.applyRuntimeEvent(event) })
 			},
 			OnExit: func(err error) {
-				a.updateUI(func() {
-					a.runtimeStatus = runtimeStateExited
-					if err != nil {
-						a.runtimeErr = "Runtime exited: " + err.Error()
-					} else {
-						a.runtimeErr = "Runtime exited."
-					}
-					if a.rt != nil {
-						if lines := a.rt.diagnostics(); len(lines) > 0 {
-							a.runtimeErr += " — " + truncate(lines[len(lines)-1], 300)
-						}
-					}
-					for _, ct := range a.contacts {
-						if ct.ActiveTaskID != "" {
-							if w := ct.activeWork(); w != nil {
-								w.State = workUnknown
-								w.Detail = "Connection lost before the task finished; reload to verify."
-							}
-							ct.ActiveTaskID = ""
-							ct.SendState = sendUnknown
-							ct.Status = statusAttention
-							ct.StatusDetail = "Connection lost before the task finished; reload to verify."
-							ct.SendError = "Delivery/result not confirmed. Reload before sending again."
-						}
-					}
-				})
+				a.updateUI(func() { a.applyRuntimeExit(err) })
 			},
 			OnProtocolError: func(message string) {
-				a.updateUI(func() {
-					a.runtimeStatus = runtimeStateFailed
-					a.runtimeErr = "Runtime protocol error: " + message
-					for _, ct := range a.contacts {
-						if ct.SendState == sendSubmitting || ct.ActiveTaskID != "" {
-							if w := ct.activeWork(); w != nil {
-								w.State = workUnknown
-								w.Detail = "Protocol failure; result not confirmed."
-							}
-							ct.SendState = sendUnknown
-							ct.Status = statusAttention
-							ct.SendError = "Protocol failure; delivery not confirmed. Reload before sending again."
-						}
-					}
-				})
+				a.updateUI(func() { a.protocolFailed(message) })
 			},
 			OnStderr: func(string) {},
 		},
 	})
 	if err != nil {
 		a.runtimeStatus = runtimeStateFailed
-		a.runtimeErr = "Could not start runtime: " + err.Error()
+		a.runtimeStage = "Runtime start"
+		a.runtimeErr = "Could not start runtime: " + safeDiagnostic(err.Error())
+		a.runtimeHint = "Check the helper path and permissions at " + binary + ", then restart Saki."
 		return
 	}
 	a.rt = rt
+}
+
+func (a *appModel) protocolFailed(message string) {
+	a.runtimeStatus = runtimeStateFailed
+	a.runtimeStage = "Runtime protocol"
+	a.runtimeErr = "Runtime protocol error: " + safeDiagnostic(message)
+	a.runtimeHint = "Restart Saki; delivery or result may be unconfirmed. No automatic retry."
+	for _, ct := range a.contacts {
+		if ct.SendState == sendSubmitting || ct.ActiveTaskID != "" {
+			if w := ct.activeWork(); w != nil {
+				w.State = workUnknown
+				w.Detail = "Protocol failure; result not confirmed."
+			}
+			ct.SessionState = "unknown"
+			ct.SendState = sendUnknown
+			ct.Status = statusAttention
+			ct.SendError = "Protocol failure; delivery not confirmed. Reload before sending again."
+		}
+	}
+}
+
+func (a *appModel) clearActiveTasksAfterExit() {
+	for _, ct := range a.contacts {
+		if ct.ActiveTaskID != "" {
+			if w := ct.activeWork(); w != nil {
+				w.State = workUnknown
+				w.Detail = "Connection lost before the task finished; reload to verify."
+			}
+			ct.ActiveTaskID = ""
+			ct.SessionState = "unknown"
+			ct.SendState = sendUnknown
+			ct.Status = statusAttention
+			ct.StatusDetail = "Connection lost before the task finished; reload to verify."
+			ct.SendError = "Delivery/result not confirmed. Reload before sending again."
+		}
+	}
+}
+
+func (a *appModel) applyRuntimeExit(err error) {
+	if a.runtimeStatus == runtimeStateDraining {
+		a.runtimeStatus = runtimeStateExited
+		return
+	}
+	if a.runtimeStage == "Runtime protocol" {
+		a.runtimeStatus = runtimeStateExited
+		a.clearActiveTasksAfterExit()
+		return
+	}
+	diagnostic := ""
+	if a.rt != nil {
+		if lines := a.rt.diagnostics(); len(lines) > 0 {
+			diagnostic = safeDiagnostic(lines[len(lines)-1])
+		}
+	}
+	wasReady := a.runtimeHandshake
+	a.runtimeStatus = runtimeStateExited
+	if wasReady {
+		a.runtimeStage = "Runtime connection"
+		a.runtimeErr = "Runtime connection lost"
+		if err != nil {
+			a.runtimeErr += ": " + safeDiagnostic(err.Error())
+		}
+		a.runtimeHint = "Restart Saki and reload history. Accepted work may be unconfirmed; no automatic retry."
+	} else {
+		switch {
+		case strings.Contains(diagnostic, "API_KEY is not set"):
+			a.runtimeStage = "Runtime configuration"
+			a.runtimeErr = "API_KEY is not set."
+			a.runtimeHint = "Set API_KEY in the environment or in " + a.workDir + "/.env, then restart Saki."
+		case strings.Contains(diagnostic, ".env exists but could not be parsed"):
+			a.runtimeStage = "Runtime configuration"
+			a.runtimeErr = ".env could not be parsed."
+			a.runtimeHint = "Fix or replace the .env file in " + a.workDir + ", then restart Saki."
+		default:
+			a.runtimeStage = "Runtime startup"
+			a.runtimeHint = "Check the helper path and the startup diagnostic, then restart Saki."
+			if diagnostic != "" {
+				a.runtimeErr = "Runtime exited before ready: " + diagnostic
+			} else if err != nil {
+				a.runtimeErr = "Runtime exited before ready: " + safeDiagnostic(err.Error())
+			} else {
+				a.runtimeErr = "Runtime exited before ready."
+			}
+		}
+	}
+	a.clearActiveTasksAfterExit()
 }
 
 // beginShutdown is the single quit path for the window close button and
@@ -320,6 +415,12 @@ func (a *appModel) restoreSession(contactID, sessionID string) {
 		ct.Loaded = err == nil
 		ct.LoadErr = ""
 		ct.Unavailable = ""
+		ct.SessionState = session.State
+		if session.Metadata != nil {
+			ct.SessionWorkingDir = session.Metadata.WorkingDirectory
+			ct.SessionModel = session.Metadata.Model
+			ct.SessionAPI = session.Metadata.API
+		}
 		if session.ActiveTask != nil {
 			ct.ActiveTaskID = session.ActiveTask.TaskID
 			ct.LastTaskID = session.ActiveTask.TaskID
@@ -390,6 +491,12 @@ func (a *appModel) applyReload(contactID, sessionID string, gen int, session run
 		ct.LoadErr = runtimeMessage(err)
 		ct.SendError = runtimeMessage(err)
 		return
+	}
+	ct.SessionState = session.State
+	if session.Metadata != nil {
+		ct.SessionWorkingDir = session.Metadata.WorkingDirectory
+		ct.SessionModel = session.Metadata.Model
+		ct.SessionAPI = session.Metadata.API
 	}
 	if session.ActiveTask != nil {
 		if ct.SendState == sendSubmitting {
@@ -636,9 +743,9 @@ func formatMillis(ms int64) string {
 func runtimeMessage(err error) string {
 	var runtimeErr *runtimeError
 	if errors.As(err, &runtimeErr) {
-		return runtimeErr.Code + ": " + runtimeErr.Message
+		return runtimeErr.Code + ": " + safeDiagnostic(runtimeErr.Message)
 	}
-	return err.Error()
+	return safeDiagnostic(err.Error())
 }
 
 func confirmedReject(err error) bool {
@@ -685,6 +792,7 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 		}
 		ct.LastTaskID = event.TaskID
 		ct.SendState = sendAccepted
+		ct.SessionState = "running"
 		ct.Status = statusWorking
 		ct.Work = "Starting"
 		ct.SendError = ""
@@ -749,6 +857,7 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 		ct.Work = ""
 		ct.HistoryDirty = true
 		ct.historyGen++
+		ct.SessionState = "unknown"
 		ct.Status = statusFromString(payload.Status)
 		ct.StatusDetail = taskFinishedDetail(payload)
 		if ct.Status == statusAttention && ct.StatusDetail == "" {
@@ -765,20 +874,6 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 	}
 }
 
-var diagnosticSecret = regexp.MustCompile(`(?i)\b(api[_-]?key|token)\s*[:=]\s*[^\s,;]+|\bauthorization\s*:\s*(?:bearer\s+)?[^\s,;]+|\bbearer\s+[^\s,;]+`)
-var diagnosticJSONSecret = regexp.MustCompile(`(?i)"(?:api[_-]?key|token|secret|password|authorization)"\s*:\s*"[^"]*"`)
-var diagnosticSkKey = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}`)
-var diagnosticURLCred = regexp.MustCompile(`://[^/\s@]+@`)
-
-func safeDiagnostic(text string) string {
-	text = strings.TrimSpace(text)
-	text = diagnosticSecret.ReplaceAllString(text, "[redacted]")
-	text = diagnosticJSONSecret.ReplaceAllString(text, "[redacted]")
-	text = diagnosticSkKey.ReplaceAllString(text, "[redacted]")
-	text = diagnosticURLCred.ReplaceAllString(text, "://[redacted]@")
-	return truncate(text, 500)
-}
-
 func httpAuthStatus(message string) string {
 	message = strings.TrimSpace(message)
 	for _, status := range []string{"HTTP 401", "HTTP 403"} {
@@ -792,6 +887,8 @@ func httpAuthStatus(message string) string {
 	}
 	return ""
 }
+
+func providerAuthFailure(message string) bool { return httpAuthStatus(message) != "" }
 
 func taskFailureDetail(code string, message *string) string {
 	if message == nil {
@@ -821,7 +918,7 @@ func taskFinishedDetail(payload *runtimeEvent) string {
 		}
 		return "Task failed."
 	case "interrupted":
-		return "Task interrupted."
+		return "Task interrupted; no automatic retry."
 	case "completed":
 		return ""
 	default:
@@ -910,6 +1007,12 @@ func (a *appModel) submitTask(contactID, sessionID, text, workspace, system stri
 			}
 			ct.SessionID = sessionID
 			ct.Loaded = true
+			ct.SessionState = session.State
+			if session.Metadata != nil {
+				ct.SessionWorkingDir = session.Metadata.WorkingDirectory
+				ct.SessionModel = session.Metadata.Model
+				ct.SessionAPI = session.Metadata.API
+			}
 			saved <- a.persist()
 		})
 		if err := <-saved; err != nil {

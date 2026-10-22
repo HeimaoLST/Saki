@@ -91,21 +91,25 @@ type contact struct {
 
 	// Runtime-backed state. Empty SessionID means the contact has no runtime
 	// session yet; it is created lazily before the first task.send.
-	SessionID      string
-	Loaded         bool
-	LoadErr        string
-	Unavailable    string
-	ActiveTaskID   string
-	LastTaskID     string
-	SendState      sendState
-	SendError      string
-	SubmittedDraft string
-	SubmittedRev   int
-	draftRev       int
-	HistoryDirty   bool
-	StatusDetail   string
-	historyGen     int
-	pendingEvents  []runtimeEventEnvelope
+	SessionID         string
+	Loaded            bool
+	LoadErr           string
+	Unavailable       string
+	ActiveTaskID      string
+	LastTaskID        string
+	SendState         sendState
+	SendError         string
+	SubmittedDraft    string
+	SubmittedRev      int
+	draftRev          int
+	HistoryDirty      bool
+	StatusDetail      string
+	SessionWorkingDir string
+	SessionModel      string
+	SessionAPI        string
+	SessionState      string
+	historyGen        int
+	pendingEvents     []runtimeEventEnvelope
 }
 
 type viewMode int
@@ -136,20 +140,25 @@ type appModel struct {
 
 	// Runtime mode. demo keeps the local fixture path for tests/screenshots;
 	// the shipped app is runtime-backed.
-	demo            bool
-	store           *contactStore
-	rt              *runtimeClient
-	runtimeStatus   string
-	runtimeErr      string
-	workDir         string
-	sessionDir      string
-	storePath       string
-	uiHook          func(func()) // test seam for deterministic UI-thread ordering
-	requestQuit     func()       // set by main to mygo.App.Quit
-	quitReady       bool
-	shutdownStarted bool
-	historyQuery    string
-	highlight       string
+	demo             bool
+	store            *contactStore
+	rt               *runtimeClient
+	runtimeStatus    string
+	runtimeErr       string
+	runtimeStage     string
+	runtimeHint      string
+	runtimeBinary    string
+	runtimeAPI       string
+	runtimeHandshake bool
+	workDir          string
+	sessionDir       string
+	storePath        string
+	uiHook           func(func()) // test seam for deterministic UI-thread ordering
+	requestQuit      func()       // set by main to mygo.App.Quit
+	quitReady        bool
+	shutdownStarted  bool
+	historyQuery     string
+	highlight        string
 
 	// Layout is native runtime state, not product configuration. Width is
 	// updated from the window so the same view can choose three-pane,

@@ -1,6 +1,6 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-20。状态：**实现事实（#63 运行时接入、#90 局部布局打磨）；#92 主题系统仅完成设计，功能尚未实现**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
+更新日期：2026-10-22。状态：**实现事实（#63 运行时接入、#90 局部布局打磨、#112 启动诊断；#112 原生验收部分完成）；#92 主题系统仅完成设计，功能尚未实现**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
 
 [previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。当前代码仍使用 Main/Dawn 派生色；#92 设计目标是用户确认的 Moon/Dawn，但本轮只交付设计，不代表换色功能已实现。concurrency、`search_history`／`read_history`、附件、模型切换等仍是后续独立任务，不在首轮。
 
@@ -109,6 +109,48 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 - 原生 round1（d4）：系统 Night、1040×720；Zoom 到 2048×1122，宽侧栏 200/工作 360；内建屏 Move&Resize Left 到 757×870，真实 overlay 的 Close/Tab/Esc 返回 Work focus。真实 Runtime 47 + tool-progress 验证 request1 read/request2 hold 无 Agent 气泡、tool 结果可见；Work/History 往返不停；B 草稿保留/禁发；release2 progress+read、A 未读 1、回 A 仍 running+2 tools；Stop 后真实 interrupted、无新气泡、A 草稿保留、迟到 response3 不改终态；quiet 无文本 completed、重启恢复工具/草稿；证据 `01..12` 在 `/private/tmp/saki-gui-130-native/evidence/`（旧 `.png` 文件字节实为 JPEG，按原文件名保留）。
 - 原生未验：精确 960×640（只到 757×870 overlay）、真实 IME/VoiceOver、原生剪贴板 Copy、v2 的 hero/history 视觉与 History 原生交互；不能把 757 等同 960，不能把 headless 当 native。
 - 未验：真实 MyGo 窗口的精确 960/720、原生剪贴板、用户动效/IME、PM 视觉复核；不以 headless 或 Tester 结果替代。当前工作区仍是默认单执行槽，不宣称并发或运行中 follow-up。
+## 启动诊断与配置状态（#112，实现事实）
+
+更新于 2026-10-22。修复后产品源码 `8a04d63`（#112 v2 auth-history 修复），Runtime helper 源码 `47d01ee`。本轮完成 G1-1..G1-4 的局部实现；原生验收只完成一部分，未声称 G1 全部通过。原 `032339a` 包与证据永久保留。不新增 Runtime 协议、凭据库或应用配置系统。
+
+### 实现
+- 启动阶段：`Runtime helper`（未找到 helper）、`Runtime start`（exec 启动失败）、`Runtime configuration`（仅已识别的 `API_KEY`/`.env` 配置错误）、`Runtime connection`（handshake 后连接丢失）、`Runtime protocol`（协议错误）。未 handshake 的未知退出归 `Runtime startup`，不误报配置；正常 drain 不作为故障。协议失败保留协议诊断，并继续执行 active 任务的未知结果清理，不清成配置诊断。
+- 可操作提示：缺 helper 显示期望的 `Saki-runtime` 位置和 `SAKI_RUNTIME_BIN`；启动失败显示实际 helper 路径与权限检查；配置失败提示 `API_KEY` 为必需，`SAKI_API`/`SAKI_BASE_URL`/`SAKI_MODEL` 有 runtime 默认值，并给出实际 workdir `.env` 与重启提示。Runtime ready 仅表示连接就绪，不表示模型已验证。
+- 凭据边界：只对稳定 `HTTP 401/403` 前缀（数字边界，`HTTP 4010` 不算）显示 provider 认证失败，且不展示 provider 正文；其他有界诊断集中遮蔽已知 `API_KEY`/token/Authorization/Bearer、JSON 秘密字段、`sk-` 和 URL userinfo。
+- 配置界面：独立 aux `Startup & configuration`，从错误 banner 的 `Configuration details` 或 Contact Settings 的 `Startup status` 进入；Close 在顶部。原 Contact Settings 的 Name/Purpose/Instructions/Workspace/Cancel/Save 结构保留。面板显示 Runtime 阶段、helper、store、session 目录、GUI workdir、当前 session workdir、session ID/state、API/model。
+- 事实来源：session state 只消费 `session.State`；working dir/model/API 只消费 `session.load`/`session.create` metadata。`task_finished` 的 completed/failed 只是任务结局，不冒充 session state；状态过期时由现有 reload 刷新，不用环境变量猜。恢复、reload、首次 create 三条路径现在都应用 state/metadata。
+- 本地 store 失败：保留 `store=nil`，标 `Local contact store`，显示实际 store/session/workdir 路径和原始错误；明确未覆盖文件、未创建替代 store，store 不可用期间不承诺草稿已持久化。不新增恢复/迁移/备用 store 系统。
+- 草稿边界：提交前被拒绝或本地保存失败保留原草稿；任务已接纳的输入进入消息历史，绝不自动还原为待发送；之后编辑的未发送草稿单独保留。关闭/未知结果不自动重试或重跑。
+- Finder 测试隔离：测试 bundle 用 `LSEnvironment`（Apple LaunchServices，<https://developer.apple.com/documentation/bundleresources/information-property-list/lsenvironment>）注入非秘密 store/session/workdir/API 路径，固定 `PATH`；API_KEY 只放在临时 workdir `.env` 的假值中，不进入 Info.plist。这是测试打包方式，不是新增产品配置层。
+
+### 原生证据（部分）
+已用 22ba 阶段的隔离测试包和 Finder 实测：
+- `01-finder-missing-config`：无 `.env` 冷启动，实际显示 `Runtime configuration`/`API_KEY is not set` 和准确 workdir `.env` 路径；查看详情不产生推理请求（count 0）。
+- `02-config-details`：独立配置面板可打开，Close 可见，session/model 保持 unknown，不猜。
+- `03-ready-no-inference`：复制临时假 key `.env` 后 CmdQ + Finder 重开，仅连接 ready；恢复零模型请求（count 0）。
+- `04-controlled-success`：显式发送 `draft-before-configuration`，真实 Rust `47d01ee` + 本地受控 provider 返回 `Saki 112 fixture ready`，count 1。
+- `05-restart-restored`：编辑 `later-unsent-draft` 后 CmdQ + Finder 重开，同 session 历史与 later 草稿恢复，count 仍为 1。此步同时发现 `restoreSession` 未消费已返回的 state/metadata；该缺口已由 `f213bdd` 修复，并有真实集成回归。**因此不把 G1-3 写成完整原生通过**。
+
+证据目录：`/private/tmp/saki-gui-112-native/evidence/`（上述 01..05 的 `.png` 与 `.ax.txt`）。这些是 22ba 阶段证据，不是最终 `032339a` 包的复验。
+
+原 `032339a` 包的后续原生证据（06..10、12）：启动缺配置、Configuration details、ready 零推理、受控成功与重启恢复等 startup/fault 路径实际 passed；`12` 的 401 history 路径实际 FAIL，正文含假哨兵，**不能因 v2 修复而覆盖这条失败证据**。
+
+v2 `8a04d63` 的原生修复证据（13..18）：
+- 从 Finder 打开 v2 恢复旧 401 历史，错误提示已净化；新 `auth--hold` 显式发送 `v2-accepted-auth-check` 后编辑 `v2-later-unsent-draft`，release 401 后历史/later 草稿/净化提示正确、不自动 retry；CmdQ + Finder 重启后同 session 与提示仍正确，provider count 仍为 1。
+- 切换 success fixture 启动 count 0；显式新任务 `v2-explicit-recovery-success` 得到真实 final，编辑 `v2-preserved-final-draft`，重启恢复同 session 历史/draft/idle/model/API 正确，count 仍为 1；计数路径 0→1→重启仍 1。
+- 证据见 `/private/tmp/saki-gui-112-native/evidence/` 的 13..18 图片/AX 与 counter JSON；这是受控 provider 的 native GUI 验证，不是外部计费 provider、IME 或 VoiceOver 验证。
+
+### 测试与最终包
+- 主责在最终 `032339a` 执行 `SAKI_TEST_RUNTIME_BIN=<worktree>/target/debug/Saki CGO_ENABLED=0 go test -race ./... -count=1 -v`，PASS 11.578s；5 项既有真实 runtime 测试 + `TestRealRuntimeStartupConfigurationFailure` + `TestRealProviderAuthFailureClassification` 共 7 项均 PASS 非 skip；vet/build/gofmt/diffcheck 也通过。日志：`/private/tmp/saki-gui-112/logs/main-final-032339a-race.log`。
+- `8a04d63` 修复 history/reload/restart 的失败正文回显：live、history、重启统一走 `taskFailureDetail`，`HTTP 401/403` 只显示认证分类，不经原样历史错误；`TestGUIAppProviderAuthHistoryRedaction` 用真实 Rust/fixture 覆盖 accepted history、later draft、no retry、请求次数、reload 与 restart。`8a04d63` 全量 `-race ./...` PASS 12.443s，日志 `/private/tmp/saki-gui-112/logs/main-8a04d63-auth-race.log`；5 项既有 + 2 项 startup/auth + 新增真实 GUI auth 共 8 项实际执行。`032339a` 仅删除无调用的 `runtimeConfigHint`，原冻结包保持不动。PR126 head `1b1210d` 的 CI run 39816472088 全绿；本 docs 覆盖更新后需重新跑最终 head CI。
+- 原冻结包 `/private/tmp/saki-gui-112-app/Saki.app`，bundle `dev.saki.desktop.issue112`，源码 `032339a`，GUI `b07c8f60e1805e702a5cc616ec232d50e03a5538c13d5d740ab4333f65c38aa8`；原包、变体、数据和证据保持，不回写。
+- v2 修复包 `/private/tmp/saki-gui-112-v2-app/Saki.app`，bundle `dev.saki.desktop.issue112v2`，源码 `8a04d63`，GUI sha256 `d02a82bb180201ecbbaf9e59036be9359100f514ed6141bb2467a84f3fe73470`；helper 构建源 `47d01ee`，unsigned `236e12aaa4fd6235b035fc956432de2b8988a3506531f305abc4acb6da96245d`，bundle 内 signed helper `aea5ff1142c989bf793c13ab5468e6f0c62a67d327a20868e3c4188935b2f8d8`。ad-hoc 签名通过，但不是发行包；复用原非秘密 store/session/workdir 路径。
+- Headless：`/private/tmp/saki-gui-112/previews/` 9 张（config-failure 与 configuration-details；1040×720/960×640 明暗，另 1600×900），生成自 `032339a`；v2 只修 history 文案，未重出图。`ui.Tester` 生成，命令 `SAKI_PREVIEW_DIR=... CGO_ENABLED=0 go test -run '^TestPreviewStartupDiagnostics$' -count=1 .`。这些只验证布局/可读性，不是 native 窗口、浅深色系统或 IME 证据。
+
+### 仍未验
+- `032339a` 包的 Finder 原生恢复 metadata/state 已复验正确；v2 的 401+hold、later draft、reload/restart、显式恢复成功和计数 0→1→重启仍 1 已 native 通过；原 032 的 401 FAIL 仍保留为旧包证据。
+- NoHelper/ExecFailure/CorruptStore 的 Finder 原生路径；坏 store `9a3ed742b35edc2fcf25f15822cf6412635a4995744d4766060fbbef6436fbde` 只在确定性测试中通过，原生尚未。
+- 精确 960×640、真实系统 IME/VoiceOver、外部计费 provider 仍未验；受控本地 provider 的 v2 native 结果不能扩大为这些结论。
 
 ## 验证与证据
 
@@ -118,7 +160,7 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
   SAKI_TEST_RUNTIME_BIN=/abs/path/to/Saki CGO_ENABLED=0 go test \
     -run 'TestRuntimeProcessIntegration|TestGUIAppRuntimeFlow|TestGUIFirstCreateUsesProfileSnapshot|TestGUIAppPersistsMappingBeforeSend|TestGUIAppSaveFailureStopsBeforeSend' -count=1 .
   ```
-  覆盖 read 工具、task/message 关联、GUI send/切换 B 草稿隔离、绑定设置只改名、drain/重启零 provider 调用、继续前文、首次 create 使用 profile 快照、mapping 持久化先于 task.send，以及 store 保存失败时零模型/工具调用且草稿保留。默认 CI 未设置 `SAKI_TEST_RUNTIME_BIN` 时 skip；QA 需要提供候选 binary 才能执行。
+  覆盖 read 工具、task/message 关联、GUI send/切换 B 草稿隔离、绑定设置只改名、drain/重启零 provider 调用、继续前文、首次 create 使用 profile 快照、mapping 持久化先于 task.send，以及 store 保存失败时零模型/工具调用且草稿保留。当前 `.github/workflows/ci.yml` 的 rust job 会构建真实 Rust binary 并设置 `SAKI_TEST_RUNTIME_BIN`，执行上述 5 项既有集成，且逐项检查 `--- PASS`；未设置该变量的普通本地 `go test` 才 skip。新增的 `TestRealRuntimeStartupConfigurationFailure`/`TestRealProviderAuthFailureClassification` 未写入 CI gate，不能写成 CI 已运行。
 - 线上 provider 应用层 smoke（opt-in，不使用受控 fixture）：
   ```sh
   SAKI_TEST_ONLINE=1 SAKI_TEST_ONLINE_WORKDIR=/path/to/repo \
