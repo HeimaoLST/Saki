@@ -165,11 +165,6 @@ func (a *appModel) runtimeHelperHint() string {
 	return strings.Join(parts, " ")
 }
 
-func (a *appModel) runtimeConfigHint() string {
-	return "API_KEY is required. SAKI_API, SAKI_BASE_URL and SAKI_MODEL have runtime defaults; " +
-		"set them in the environment or in " + a.workDir + "/.env, then restart Saki. Open Configuration for the current paths."
-}
-
 var diagnosticSecret = regexp.MustCompile(`(?i)\b(api[_-]?key|token)\s*[:=]\s*[^\s,;]+|\bauthorization\s*:\s*(?:bearer\s+)?[^\s,;]+|\bbearer\s+[^\s,;]+`)
 var diagnosticJSONSecret = regexp.MustCompile(`(?i)"(?:api[_-]?key|token|secret|password|authorization)"\s*:\s*"[^"]*"`)
 var diagnosticSkKey = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}`)
