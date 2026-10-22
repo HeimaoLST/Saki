@@ -115,6 +115,14 @@ fn pop_last_grapheme(text: &mut String) {
 /// One non-current session projection. `association`/`finished` keep task
 /// identity so late events cannot cross tasks and a finished task is not
 /// finalized twice.
+struct OpenedData {
+    metadata: crate::session::store::SessionMetadata,
+    replay: crate::agent::journal::Replay,
+    context: AgentEvent,
+    state: crate::session::runtime::SessionState,
+    stream: Option<Association>,
+}
+
 struct CachedSession {
     app: App,
     editor: Editor,
@@ -138,12 +146,34 @@ pub struct Sessions {
 }
 
 impl Sessions {
-    pub fn current_association(&self) -> Option<Association> {
-        self.association.clone()
+    pub fn reset_cached_editor_if(&mut self, session_id: &str, draft: &str) {
+        if let Some(cached) = self.cached.get_mut(session_id)
+            && cached.editor.text() == draft
+        {
+            cached.editor.reset();
+        }
     }
 
-    pub fn current_finished(&self) -> Option<&str> {
-        self.finished.as_deref()
+    pub fn replace_cached_text(&mut self, session_id: &str, text: &str) {
+        if let Some(cached) = self.cached.get_mut(session_id) {
+            cached.editor.replace_text(text);
+        }
+    }
+
+    pub fn notify_for(&mut self, app: &mut App, session_id: &str, message: String) {
+        if app
+            .session
+            .as_ref()
+            .is_some_and(|active| active.id == session_id)
+        {
+            app.notify(message);
+        } else if let Some(cached) = self.cached.get_mut(session_id) {
+            cached.app.notify(message);
+        }
+    }
+
+    pub fn current_association(&self) -> Option<Association> {
+        self.association.clone()
     }
 
     /// Applies a Runtime acceptance reply. The draft is only cleared when the
@@ -179,12 +209,8 @@ impl Sessions {
     /// Applies an owned service event while the packet that carried it is still
     /// alive in the caller. `association` is the packet's authoritative task
     /// envelope (authoritative over any per-event session string).
-    pub fn apply_event(
-        &mut self,
-        app: &mut App,
-        editor: &mut Editor,
-        event: SessionEvent,
-    ) {
+    #[cfg(test)]
+    pub fn apply_event(&mut self, app: &mut App, editor: &mut Editor, event: SessionEvent) {
         self.apply_event_with_association(app, editor, event, None);
     }
 
@@ -203,7 +229,17 @@ impl Sessions {
                 context,
                 state,
                 stream,
-            } => self.open(app, editor, metadata, replay, context, state, stream),
+            } => self.open(
+                app,
+                editor,
+                OpenedData {
+                    metadata,
+                    replay,
+                    context,
+                    state,
+                    stream,
+                },
+            ),
             SessionEvent::HistoryRestored {
                 metadata,
                 replay,
@@ -247,22 +283,26 @@ impl Sessions {
                 }
             }
             SessionEvent::Error { operation, error } => {
-                app.notify(format!("{operation}: {}", error.message));
+                let message = format!("{operation}: {}", error.message);
+                if let Some(association) = association {
+                    self.notify_for(app, &association.session_id, message);
+                } else {
+                    app.notify(message);
+                }
             }
         }
     }
 
-    fn open(
-        &mut self,
-        app: &mut App,
-        editor: &mut Editor,
-        metadata: crate::session::store::SessionMetadata,
-        replay: crate::agent::journal::Replay,
-        context: AgentEvent,
-        state: crate::session::runtime::SessionState,
-        stream: Option<Association>,
-    ) {
+    fn open(&mut self, app: &mut App, editor: &mut Editor, data: OpenedData) {
+        let OpenedData {
+            metadata,
+            replay,
+            context,
+            state,
+            stream,
+        } = data;
         let target = metadata.id.clone();
+        let current_theme = app.theme;
         let same_current = app
             .session
             .as_ref()
@@ -270,13 +310,21 @@ impl Sessions {
         let old_association = self.association.clone();
         let old_finished = self.finished.clone();
         let old_canonical = self.canonical.clone();
-        let live = stream
-            .as_ref()
-            .is_some_and(|stream| old_association.as_ref().is_some_and(|current| same_association(current, stream)));
+        let cached_target = self.cached.remove(&target);
+        let target_association = if same_current {
+            old_association.as_ref()
+        } else {
+            cached_target
+                .as_ref()
+                .and_then(|cached| cached.association.as_ref())
+        };
+        let live = stream.as_ref().is_some_and(|stream| {
+            target_association.is_some_and(|current| same_association(current, stream))
+        });
         let (
             mut next,
             mut next_editor,
-            selected_association,
+            _selected_association,
             selected_finished,
             selected_canonical,
         ) = if same_current {
@@ -287,11 +335,17 @@ impl Sessions {
                 merge_view(&mut next, &mut *app);
                 next
             };
-            let next_editor = std::mem::replace(editor, Editor::new());
-            (next, next_editor, None, old_finished.clone(), old_canonical.clone())
+            let next_editor = std::mem::take(editor);
+            (
+                next,
+                next_editor,
+                None,
+                old_finished.clone(),
+                old_canonical.clone(),
+            )
         } else {
-            match self.cached.remove(&target) {
-                Some(mut cached) if live => (
+            match cached_target {
+                Some(cached) if live => (
                     cached.app,
                     cached.editor,
                     cached.association,
@@ -319,7 +373,7 @@ impl Sessions {
         next.working_directory = Some(metadata.working_directory.clone());
         next.session = Some(metadata);
         next.apply_event(context);
-        next.theme = app.theme;
+        next.theme = current_theme;
         next.normalize_selection();
         next.normalize_anchor();
         // Only the active stream may resurrect a running projection. A cached
@@ -341,7 +395,6 @@ impl Sessions {
         } else {
             selected_canonical
         };
-        let _ = selected_association;
         crate::frontend::tui::transcript_search::cancel(app);
         crate::frontend::tui::path_completion::cancel(app);
         if same_current {
@@ -465,9 +518,6 @@ impl Sessions {
             }
             picker.refilter(preferred.as_deref());
         }
-        if renamed {
-            self.pending = false;
-        }
     }
 
     fn agent(
@@ -489,7 +539,9 @@ impl Sessions {
             .map_or(session_id.as_str(), |association| {
                 association.session_id.as_str()
             });
-        let task_id = association.as_ref().map(|association| association.task_id.clone());
+        let task_id = association
+            .as_ref()
+            .map(|association| association.task_id.clone());
         if app
             .session
             .as_ref()
@@ -499,11 +551,9 @@ impl Sessions {
                 if self.finished.as_deref() == Some(task_id.as_str()) {
                     return;
                 }
-                if self
-                    .association
-                    .as_ref()
-                    .is_some_and(|current| current.task_id != *task_id)
-                {
+                if self.association.as_ref().is_some_and(|current| {
+                    !same_association(current, association.as_ref().unwrap())
+                }) {
                     return;
                 }
                 self.association = association;
@@ -515,11 +565,9 @@ impl Sessions {
                 if cached.finished.as_deref() == Some(task_id.as_str()) {
                     return;
                 }
-                if cached
-                    .association
-                    .as_ref()
-                    .is_some_and(|current| current.task_id != *task_id)
-                {
+                if cached.association.as_ref().is_some_and(|current| {
+                    !same_association(current, association.as_ref().unwrap())
+                }) {
                     return;
                 }
                 cached.association = association;
@@ -539,7 +587,9 @@ impl Sessions {
             .as_ref()
             .map(|association| association.session_id.as_str())
             .unwrap_or_default();
-        let task_id = association.as_ref().map(|association| association.task_id.clone());
+        let task_id = association
+            .as_ref()
+            .map(|association| association.task_id.clone());
         if app
             .session
             .as_ref()
@@ -629,18 +679,17 @@ fn finish_app(
     task_id: Option<&str>,
     finished: &crate::session::runtime::TaskFinished,
 ) {
-    if let Some(incoming) = incoming {
-        if association_slot
-            .as_ref()
-            .is_some_and(|observed| !same_association(observed, incoming))
-        {
-            return;
-        }
+    let Some(incoming) = incoming else {
+        return;
+    };
+    match association_slot.as_ref() {
+        Some(observed) if same_association(observed, incoming) => {}
+        _ => return,
     }
-    if let Some(task_id) = task_id {
-        if finished_slot.as_deref() == Some(task_id) {
-            return;
-        }
+    if let Some(task_id) = task_id
+        && finished_slot.as_deref() == Some(task_id)
+    {
+        return;
     }
     let canonical = task_id.is_some_and(|task_id| canonical_slot.as_deref() == Some(task_id));
     if !canonical {
@@ -663,14 +712,18 @@ fn finish_app(
     }
     canonical_slot.take();
     association_slot.take();
+    let mut notes = Vec::new();
     if let Some(error) = &finished.error {
-        app.notify(format!("{}: {}", error.code, error.message));
+        notes.push(format!("{}: {}", error.code, error.message));
     }
     if let Some(persistence) = finished.persistence {
-        app.notify(format!("Task persistence: {persistence}."));
+        notes.push(format!("persistence: {persistence}"));
     }
     if finished.history_required && !canonical {
-        app.notify("History refresh required.".to_owned());
+        notes.push("history refresh required".to_owned());
+    }
+    if !notes.is_empty() {
+        app.notify(format!("Task finished ({})", notes.join("; ")));
     }
 }
 
@@ -775,12 +828,6 @@ impl Sessions {
                 }
             }
             KeyCode::Enter | KeyCode::Char('n') => {
-                if app.running {
-                    app.notify(
-                        "Wait for the current task to finish before switching sessions.".to_owned(),
-                    );
-                    return (true, None);
-                }
                 let command = if key.code == KeyCode::Char('n') {
                     SessionCommand::Create
                 } else {

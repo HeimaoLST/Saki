@@ -1108,8 +1108,7 @@ fn send_resets_undo_through_handle_key() {
     editor.insert_str("hello");
     let outcome = handle_key(&mut app, &mut editor, key(KeyCode::Enter));
     assert!(outcome.send.is_some());
-    assert!(editor.is_empty());
-    assert!(!editor.undo(), "an executed task is not undoable");
+    assert_eq!(editor.text(), "hello", "draft remains until Accepted");
 }
 
 #[test]

@@ -5,11 +5,10 @@
 
 use std::collections::HashMap;
 
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{Sender, error::TrySendError};
 
 use crate::{
     agent::message::UserMessage,
-    command::Command,
     session::{SessionCommand, SessionRequest},
 };
 
@@ -21,12 +20,21 @@ pub(crate) enum PendingRequest {
         session_id: String,
         message: UserMessage,
     },
-    Command(Command),
+    Command {
+        draft: String,
+        session_id: Option<String>,
+    },
     Control,
     Cancel {
         session_id: String,
         task_id: String,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RequestSendError {
+    Full,
+    Closed,
 }
 
 pub(crate) struct SessionRequests {
@@ -56,19 +64,21 @@ impl SessionRequests {
         &mut self,
         command: SessionCommand,
         pending: PendingRequest,
-    ) -> Result<u64, ()> {
+    ) -> Result<u64, RequestSendError> {
         let request_id = self.allocate();
         let Some(sender) = &self.sender else {
-            return Err(());
+            return Err(RequestSendError::Closed);
         };
-        if sender
-            .try_send(SessionRequest {
-                request_id,
-                command,
-            })
-            .is_err()
-        {
-            return Err(());
+        match sender.try_send(SessionRequest {
+            request_id,
+            command,
+        }) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => return Err(RequestSendError::Full),
+            Err(TrySendError::Closed(_)) => {
+                self.sender = None;
+                return Err(RequestSendError::Closed);
+            }
         }
         self.pending.insert(request_id, pending);
         Ok(request_id)
