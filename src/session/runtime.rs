@@ -485,6 +485,7 @@ pub struct Runtime {
     tools: Option<Arc<McpTools>>,
     max_active_tasks: usize,
     automatic_titles: bool,
+    output: OutputState,
     #[cfg(test)]
     panicking_sessions: HashSet<String>,
 }
@@ -509,6 +510,7 @@ impl Runtime {
             tools: None,
             max_active_tasks: 1,
             automatic_titles: false,
+            output: OutputState::default(),
             #[cfg(test)]
             panicking_sessions: HashSet::new(),
         }
@@ -530,6 +532,10 @@ impl Runtime {
     pub fn with_automatic_titles(mut self, enabled: bool) -> Self {
         self.automatic_titles = enabled;
         self
+    }
+
+    pub(super) fn output_state(&self) -> OutputState {
+        self.output.clone()
     }
 
     #[cfg(test)]
@@ -584,7 +590,7 @@ impl Runtime {
         let (ops_tx, ops_rx) = mpsc::channel(MAX_PREPARED);
         let (workers_tx, workers_rx) = mpsc::channel(self.max_active_tasks);
         let (releases_tx, releases_rx) = mpsc::channel(self.max_active_tasks);
-        let output = OutputState::default();
+        let output = self.output;
         let (drained_tx, drained_rx) = watch::channel(false);
         let (metadata_updates, _) = broadcast::channel(32);
         let (title_claims_tx, title_claims_rx) = mpsc::channel(1);

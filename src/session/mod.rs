@@ -1,3 +1,4 @@
+mod channel;
 pub mod config;
 pub mod host;
 pub mod runtime;
@@ -6,7 +7,8 @@ pub mod store;
 mod terminal;
 mod title;
 
-pub use terminal::{SessionCommand, SessionEvent, SessionManager};
+pub use channel::{SessionEventPacket, SessionEventReceiver, SessionEventSender};
+pub use terminal::{SessionCommand, SessionEvent, SessionManager, SessionRequest};
 
 #[cfg(test)]
 use crate::agent::{AgentEvent, conversation::CompactionConfig};
@@ -21,8 +23,6 @@ use std::path::PathBuf;
 use store::{LoadedSession, SessionMetadata, SessionStore};
 #[cfg(test)]
 use title::title_from_output;
-#[cfg(test)]
-use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 fn build_agent(store: &SessionStore, client: &ModelClient, loaded: LoadedSession) -> Result<Agent> {
     // The API match was checked by `SessionStore::open_for_api` before the

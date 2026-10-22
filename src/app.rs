@@ -110,8 +110,8 @@ pub async fn run() -> anyhow::Result<()> {
     let initial_session = std::env::var("SAKI_SESSION").ok().filter(|id| id != "new");
     let manager = SessionManager::from_runtime(runtime, initial_session);
 
-    let (events_tx, events_rx) = mpsc::unbounded_channel();
-    let (input_tx, input_rx) = mpsc::unbounded_channel();
+    let (events_tx, events_rx) = manager.event_channel();
+    let (input_tx, input_rx) = mpsc::channel(32);
     let worker = tokio::spawn(manager.run(input_rx, events_tx));
 
     // One choice point for the terminal front end. Both front ends connect to

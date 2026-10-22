@@ -15,6 +15,7 @@ use std::{
     },
     time::Duration,
 };
+use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::test_support::{completed, scripted_http};
 
@@ -50,28 +51,140 @@ impl Drop for Workspace {
     }
 }
 
-async fn event(rx: &mut UnboundedReceiver<SessionEvent>) -> SessionEvent {
+struct Requests {
+    tx: mpsc::Sender<SessionRequest>,
+    next_id: u64,
+}
+
+impl Requests {
+    fn new(tx: mpsc::Sender<SessionRequest>) -> Self {
+        Self { tx, next_id: 0 }
+    }
+
+    async fn send(&mut self, command: SessionCommand) -> u64 {
+        let request_id = self.next_id;
+        self.next_id += 1;
+        self.tx
+            .send(SessionRequest {
+                request_id,
+                command,
+            })
+            .await
+            .expect("send SessionRequest");
+        request_id
+    }
+}
+
+fn start_manager(
+    manager: SessionManager,
+) -> (
+    Requests,
+    SessionEventReceiver,
+    JoinHandle<anyhow::Result<()>>,
+) {
+    let (request_tx, request_rx) = mpsc::channel(32);
+    let (output, events) = manager.event_channel();
+    let worker = tokio::spawn(manager.run(request_rx, output));
+    (Requests::new(request_tx), events, worker)
+}
+
+async fn write_completion(socket: &mut tokio::net::TcpStream, text: &str) {
+    use tokio::io::AsyncWriteExt;
+
+    let body = serde_json::to_vec(&completed(text)).unwrap();
+    let _ = socket
+        .write_all(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await;
+    let _ = socket.write_all(&body).await;
+}
+
+async fn packet(rx: &mut SessionEventReceiver) -> SessionEventPacket {
     tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await
-        .unwrap()
-        .unwrap()
+        .expect("session event timed out")
+        .expect("session event channel closed")
 }
-async fn finished(rx: &mut UnboundedReceiver<SessionEvent>, expected: &str) {
+
+async fn event(rx: &mut SessionEventReceiver) -> SessionEvent {
+    packet(rx).await.event
+}
+
+async fn request_event(rx: &mut SessionEventReceiver, request_id: u64) -> SessionEventPacket {
     loop {
-        if let SessionEvent::Agent { session_id, event } = event(rx).await {
-            assert_eq!(session_id, expected);
-            match event {
-                AgentEvent::TurnCompleted => return,
-                AgentEvent::TurnFailed { message } => panic!("{message}"),
-                _ => {}
-            }
+        let packet = packet(rx).await;
+        if packet.request_id == Some(request_id) {
+            return packet;
         }
     }
 }
 
-async fn titled(rx: &mut UnboundedReceiver<SessionEvent>, expected: &str) -> SessionMetadata {
+async fn accept_task(
+    requests: &mut Requests,
+    events: &mut SessionEventReceiver,
+    session_id: &str,
+    text: &str,
+) -> (u64, crate::session::runtime::Association) {
+    let request_id = requests
+        .send(SessionCommand::Send {
+            session_id: session_id.to_owned(),
+            message: text.into(),
+        })
+        .await;
+    let packet = request_event(events, request_id).await;
+    assert!(
+        matches!(packet.event, SessionEvent::Accepted),
+        "Accepted must be the first task reply"
+    );
+    (
+        request_id,
+        packet
+            .association
+            .expect("Accepted must carry a task association"),
+    )
+}
+
+async fn finish_task(
+    events: &mut SessionEventReceiver,
+    association: &crate::session::runtime::Association,
+) -> crate::session::runtime::TaskFinished {
     loop {
-        if let SessionEvent::TitleUpdated(metadata) = event(rx).await {
+        let packet = packet(events).await;
+        if packet
+            .association
+            .as_ref()
+            .is_some_and(|value| value.task_id == association.task_id)
+            && let SessionEvent::Finished(finished) = packet.event
+        {
+            return finished;
+        }
+    }
+}
+
+async fn send_and_finish(
+    requests: &mut Requests,
+    events: &mut SessionEventReceiver,
+    session_id: &str,
+    text: &str,
+) -> (
+    u64,
+    crate::session::runtime::Association,
+    crate::session::runtime::TaskFinished,
+) {
+    let (request_id, association) = accept_task(requests, events, session_id, text).await;
+    let finished = finish_task(events, &association).await;
+    (request_id, association, finished)
+}
+
+async fn titled(rx: &mut SessionEventReceiver, expected: &str) -> SessionMetadata {
+    loop {
+        let packet = packet(rx).await;
+        if let SessionEvent::TitleUpdated(metadata) = packet.event {
             assert_eq!(metadata.id, expected);
             return metadata;
         }
@@ -238,7 +351,7 @@ async fn switching_a_b_a_keeps_context_model_and_tool_working_directories_separa
             CompactionConfig::new(131_072),
         )
         .unwrap();
-    let tool = |id: &str| json!({"id":"tool-response", "status":"completed", "output":[{"type":"function_call", "status":"completed", "id":id,"call_id":id,"name":"read","arguments":"{\"path\":\"marker.txt\"}"}]});
+    let tool = |id: &str| json!({"id":"tool-response", "status":"completed", "output":[{"type":"function_call", "status":"completed", "id":id, "call_id":id, "name":"read", "arguments":"{\"path\":\"marker.txt\"}"}]});
     let (client, server) = scripted_http(vec![
         (200, tool("call-a")),
         (200, completed("answer-A")),
@@ -259,31 +372,29 @@ async fn switching_a_b_a_keeps_context_model_and_tool_working_directories_separa
         CompactionConfig::new(262_144),
     )
     .unwrap();
-    let (tx, rx) = mpsc::unbounded_channel();
-    let (out, mut events) = mpsc::unbounded_channel();
-    let worker = tokio::spawn(manager.run(rx, out));
-    assert!(matches!(
-        event(&mut events).await,
-        SessionEvent::Opened { .. }
-    ));
-    tx.send(SessionCommand::Send {
-        session_id: a.clone(),
-        message: "secret-A".into(),
-    })
-    .unwrap();
-    finished(&mut events, &a).await;
+    let (mut requests, mut events, worker) = start_manager(manager);
+    match event(&mut events).await {
+        SessionEvent::Opened { metadata, .. } => assert_eq!(metadata.id, a),
+        _ => panic!("expected the initial A snapshot"),
+    }
+
+    let (_, _, finished) = send_and_finish(&mut requests, &mut events, &a, "secret-A").await;
+    assert_eq!(finished.status, "completed");
     let title_a = titled(&mut events, &a).await;
     assert_eq!(title_a.title, "Title A");
     assert_eq!(title_a.title_source.as_deref(), Some("auto"));
-    tx.send(SessionCommand::Open {
-        session_id: b.clone(),
-    })
-    .unwrap();
-    match event(&mut events).await {
+
+    let request_id = requests
+        .send(SessionCommand::Open {
+            session_id: b.clone(),
+        })
+        .await;
+    match request_event(&mut events, request_id).await.event {
         SessionEvent::Opened {
             metadata,
             replay,
             context: AgentEvent::ContextUpdated { context_window, .. },
+            ..
         } => {
             assert_eq!(metadata.id, b);
             assert_eq!(replay.context.len(), 1);
@@ -291,19 +402,18 @@ async fn switching_a_b_a_keeps_context_model_and_tool_working_directories_separa
         }
         _ => panic!("expected B snapshot"),
     }
-    tx.send(SessionCommand::Send {
-        session_id: b.clone(),
-        message: "secret-B".into(),
-    })
-    .unwrap();
-    finished(&mut events, &b).await;
+
+    let (_, _, finished) = send_and_finish(&mut requests, &mut events, &b, "secret-B").await;
+    assert_eq!(finished.status, "completed");
     let title_b = titled(&mut events, &b).await;
     assert_eq!(title_b.title, "Title B");
-    tx.send(SessionCommand::Open {
-        session_id: a.clone(),
-    })
-    .unwrap();
-    match event(&mut events).await {
+
+    let request_id = requests
+        .send(SessionCommand::Open {
+            session_id: a.clone(),
+        })
+        .await;
+    match request_event(&mut events, request_id).await.event {
         SessionEvent::Opened {
             metadata, replay, ..
         } => {
@@ -323,25 +433,25 @@ async fn switching_a_b_a_keeps_context_model_and_tool_working_directories_separa
         }
         _ => panic!("expected A snapshot"),
     }
-    tx.send(SessionCommand::Open {
-        session_id: "missing".into(),
-    })
-    .unwrap();
-    assert!(matches!(
-        event(&mut events).await,
-        SessionEvent::Error { .. }
-    ));
-    tx.send(SessionCommand::Send {
-        session_id: a.clone(),
-        message: "continue-A".into(),
-    })
-    .unwrap();
-    finished(&mut events, &a).await;
-    drop(tx);
+
+    let request_id = requests
+        .send(SessionCommand::Open {
+            session_id: "missing".into(),
+        })
+        .await;
+    match request_event(&mut events, request_id).await.event {
+        SessionEvent::Error { operation, .. } => {
+            assert_eq!(operation, "open");
+        }
+        _ => panic!("expected a missing-session error"),
+    }
+
+    let (_, _, finished) = send_and_finish(&mut requests, &mut events, &a, "continue-A").await;
+    assert_eq!(finished.status, "completed");
+    drop(requests);
     worker.await.unwrap().unwrap();
     let requests = server.await.unwrap();
     assert_eq!(requests.len(), 7);
-    // The title request is a tiny, tool-free call that never pollutes turns.
     assert_eq!(requests[2]["model"], "test");
     assert!(
         requests[2].get("tools").is_none(),
@@ -440,12 +550,15 @@ async fn interrupted_tool_is_closed_on_next_input_and_is_never_reexecuted() {
 }
 
 #[tokio::test]
-async fn busy_session_rejects_switch_and_second_message_but_can_be_listed() {
+async fn running_a_allows_list_open_b_and_return_to_a_without_starting_b() {
     use tokio::{io::AsyncWriteExt, net::TcpListener, sync::oneshot};
     let workspace = Workspace::new();
     let store = workspace.store();
     let a = workspace.create(&store);
     let b = workspace.create(&store);
+    // Keep this test focused on terminal navigation; automatic title work is
+    // covered separately and would add a second model request.
+    store.rename(&a, "Manual A").unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (started_tx, started_rx) = oneshot::channel();
@@ -454,11 +567,24 @@ async fn busy_session_rejects_switch_and_second_message_but_can_be_listed() {
         let (mut socket, _) = listener.accept().await.unwrap();
         let request = crate::test_support::read_request(&mut socket).await;
         started_tx.send(()).unwrap();
-        release_rx.await.unwrap();
+        tokio::select! {
+            biased;
+            _ = listener.accept() => panic!("read-only navigation opened a second model connection"),
+            result = release_rx => result.unwrap(),
+        }
         let body = serde_json::to_vec(&completed("done")).unwrap();
-        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
         socket.write_all(&body).await.unwrap();
-        request
+        vec![request]
     });
     let manager = SessionManager::new(
         store,
@@ -469,58 +595,67 @@ async fn busy_session_rejects_switch_and_second_message_but_can_be_listed() {
         CompactionConfig::new(262_144),
     )
     .unwrap();
-    let (tx, rx) = mpsc::unbounded_channel();
-    let (out, mut events) = mpsc::unbounded_channel();
-    let worker = tokio::spawn(manager.run(rx, out));
-    let _ = event(&mut events).await;
-    tx.send(SessionCommand::Send {
-        session_id: a.clone(),
-        message: "first".into(),
-    })
-    .unwrap();
-    started_rx.await.unwrap();
-    tx.send(SessionCommand::Open {
-        session_id: b.clone(),
-    })
-    .unwrap();
-    tx.send(SessionCommand::Send {
-        session_id: a.clone(),
-        message: "must-not-run".into(),
-    })
-    .unwrap();
-    tx.send(SessionCommand::List).unwrap();
-    let mut rejections = 0;
-    let mut listed = false;
-    while rejections < 2 || !listed {
-        match event(&mut events).await {
-            SessionEvent::Error { message } => {
-                assert!(message.contains("busy"));
-                rejections += 1;
-            }
-            SessionEvent::Listed(list) => {
-                assert_eq!(list.len(), 2);
-                listed = true;
-            }
-            SessionEvent::Agent {
-                event: AgentEvent::TurnCompleted,
-                ..
-            } => panic!("finished before release"),
-            _ => {}
-        }
+    let (mut requests, mut events, worker) = start_manager(manager);
+    match event(&mut events).await {
+        SessionEvent::Opened { metadata, .. } => assert_eq!(metadata.id, a),
+        _ => panic!("expected the initial A snapshot"),
     }
-    assert_eq!(rejections, 2);
+
+    let (_, association) = accept_task(&mut requests, &mut events, &a, "first").await;
+    started_rx.await.unwrap();
+
+    let request_id = requests.send(SessionCommand::List).await;
+    match request_event(&mut events, request_id).await.event {
+        SessionEvent::Listed(sessions) => {
+            assert_eq!(sessions.len(), 2);
+            assert!(
+                sessions
+                    .iter()
+                    .find(|session| session.metadata.id == a)
+                    .unwrap()
+                    .in_use
+            );
+            assert!(
+                !sessions
+                    .iter()
+                    .find(|session| session.metadata.id == b)
+                    .unwrap()
+                    .in_use
+            );
+        }
+        _ => panic!("expected a session list while A is active"),
+    }
+
+    let request_id = requests
+        .send(SessionCommand::Open {
+            session_id: b.clone(),
+        })
+        .await;
+    match request_event(&mut events, request_id).await.event {
+        SessionEvent::Opened { metadata, .. } => assert_eq!(metadata.id, b),
+        _ => panic!("expected to open B while A is active"),
+    }
+
+    let request_id = requests
+        .send(SessionCommand::Open {
+            session_id: a.clone(),
+        })
+        .await;
+    match request_event(&mut events, request_id).await.event {
+        SessionEvent::Opened { metadata, .. } => assert_eq!(metadata.id, a),
+        _ => panic!("expected to return to A while its task is active"),
+    }
+
+    // Opening/listing B must not start a second model task. The controlled
+    // server is still holding A's first request at this point.
     release_tx.send(()).unwrap();
-    finished(&mut events, &a).await;
-    tx.send(SessionCommand::Open {
-        session_id: b.clone(),
-    })
-    .unwrap();
-    assert!(
-        matches!(event(&mut events).await, SessionEvent::Opened { metadata, .. } if metadata.id == b)
-    );
-    drop(tx);
+    let finished = finish_task(&mut events, &association).await;
+    assert_eq!(finished.status, "completed");
+    drop(requests);
     worker.await.unwrap().unwrap();
-    assert!(!server.await.unwrap().to_string().contains("must-not-run"));
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 1, "B must not start a model request");
+    assert!(requests[0].to_string().contains("first"));
 }
 
 #[test]
@@ -623,31 +758,31 @@ fn title_from_output_sanitizes_lines_and_rejects_the_default() {
 }
 
 #[tokio::test]
-async fn cancel_emits_one_terminal_event_and_stale_cancels_are_harmless() {
-    use tokio::{io::AsyncWriteExt, net::TcpListener, sync::oneshot};
+async fn cancel_uses_the_accepted_task_id_and_old_ids_do_not_cancel_a_new_task() {
+    use tokio::{net::TcpListener, sync::oneshot};
     let workspace = Workspace::new();
     let store = workspace.store();
     let a = workspace.create(&store);
+    store.rename(&a, "Manual A").unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (started_tx, started_rx) = oneshot::channel();
     let (release_tx, release_rx) = oneshot::channel();
+    let (second_started_tx, second_started_rx) = oneshot::channel();
+    let (second_release_tx, second_release_rx) = oneshot::channel();
     let server = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
-        let _request = crate::test_support::read_request(&mut socket).await;
+        let first = crate::test_support::read_request(&mut socket).await;
         started_tx.send(()).unwrap();
-        let _ = release_rx.await;
-        let body = serde_json::to_vec(&completed("too late")).unwrap();
-        let _ = socket
-            .write_all(
-                format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    body.len()
-                )
-                .as_bytes(),
-            )
-            .await;
-        let _ = socket.write_all(&body).await;
+        release_rx.await.unwrap();
+        write_completion(&mut socket, "too late after cancel").await;
+
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let second = crate::test_support::read_request(&mut socket).await;
+        second_started_tx.send(()).unwrap();
+        second_release_rx.await.unwrap();
+        write_completion(&mut socket, "fresh task completed").await;
+        vec![first, second]
     });
     let manager = SessionManager::new(
         store,
@@ -658,82 +793,53 @@ async fn cancel_emits_one_terminal_event_and_stale_cancels_are_harmless() {
         CompactionConfig::new(262_144),
     )
     .unwrap();
-    let (tx, rx) = mpsc::unbounded_channel();
-    let (out, mut events) = mpsc::unbounded_channel();
-    let worker = tokio::spawn(manager.run(rx, out));
-    assert!(matches!(
-        event(&mut events).await,
-        SessionEvent::Opened { .. }
-    ));
-    tx.send(SessionCommand::Send {
-        session_id: a.clone(),
-        message: "start".into(),
-    })
-    .unwrap();
+    let (mut requests, mut events, worker) = start_manager(manager);
+    match event(&mut events).await {
+        SessionEvent::Opened { metadata, .. } => assert_eq!(metadata.id, a),
+        _ => panic!("expected the initial A snapshot"),
+    }
+
+    let (_, old_task) = accept_task(&mut requests, &mut events, &a, "first").await;
     started_rx.await.unwrap();
-    tx.send(SessionCommand::Cancel {
-        session_id: a.clone(),
-    })
-    .unwrap();
-    tx.send(SessionCommand::Cancel {
-        session_id: a.clone(),
-    })
-    .unwrap();
-    tx.send(SessionCommand::Cancel {
-        session_id: "another-session".into(),
-    })
-    .unwrap();
-    tx.send(SessionCommand::List).unwrap();
-    // Keep the server response held until the cancellation is observed, so the
-    // worker cannot win the race by completing normally.
-    let mut terminals = 0;
-    let mut interrupted = 0;
-    let mut errors = 0;
-    let mut listed = false;
-    while !listed || interrupted == 0 {
-        match event(&mut events).await {
-            SessionEvent::Agent {
-                event: AgentEvent::TurnInterrupted,
-                ..
-            } => {
-                interrupted += 1;
-                terminals += 1;
-            }
-            SessionEvent::Agent {
-                event: AgentEvent::TurnCompleted | AgentEvent::TurnFailed { .. },
-                ..
-            } => terminals += 1,
-            SessionEvent::Listed(_) => listed = true,
-            SessionEvent::Error { .. } => errors += 1,
-            _ => {}
-        }
+
+    let request_id = requests
+        .send(SessionCommand::Cancel {
+            session_id: a.clone(),
+            task_id: old_task.task_id.clone(),
+        })
+        .await;
+    match request_event(&mut events, request_id).await.event {
+        SessionEvent::Cancelled { status } => assert_eq!(status, "requested"),
+        _ => panic!("expected a requested cancellation"),
     }
-    // Release the held response only after the interrupted terminal was
-    // observed; the worker must never win this race by completing normally.
+    let interrupted = finish_task(&mut events, &old_task).await;
+    assert_eq!(interrupted.status, "interrupted");
     release_tx.send(()).unwrap();
-    assert!(
-        terminals == 1,
-        "the held response must not complete the cancelled turn: {terminals}"
-    );
-    // One stale cancel was sent while idle, after the turn was terminal.
-    tx.send(SessionCommand::Cancel {
-        session_id: a.clone(),
-    })
-    .unwrap();
-    tx.send(SessionCommand::List).unwrap();
-    loop {
-        match event(&mut events).await {
-            SessionEvent::Listed(_) => break,
-            SessionEvent::Error { .. } => errors += 1,
-            _ => {}
-        }
+
+    let (_, new_task) = accept_task(&mut requests, &mut events, &a, "second").await;
+    second_started_rx.await.unwrap();
+
+    // The runtime must resolve this by the actual task id, not by session/latest.
+    let request_id = requests
+        .send(SessionCommand::Cancel {
+            session_id: a.clone(),
+            task_id: old_task.task_id.clone(),
+        })
+        .await;
+    match request_event(&mut events, request_id).await.event {
+        SessionEvent::Cancelled { status } => assert_eq!(status, "not_running"),
+        _ => panic!("expected an old-id cancellation to be not_running"),
     }
-    drop(tx);
+
+    second_release_tx.send(()).unwrap();
+    let completed = finish_task(&mut events, &new_task).await;
+    assert_eq!(completed.status, "completed");
+    drop(requests);
     worker.await.unwrap().unwrap();
-    server.await.unwrap();
-    assert_eq!(interrupted, 1, "exactly one interrupted terminal event");
-    assert_eq!(terminals, 1, "exactly one terminal event for the turn");
-    assert_eq!(errors, 0, "cancelling is never an error: {errors}");
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].to_string().contains("first"));
+    assert!(requests[1].to_string().contains("second"));
 }
 
 #[tokio::test]
@@ -764,23 +870,28 @@ async fn a_session_created_on_another_api_is_not_opened_or_changed() {
         CompactionConfig::new(262_144),
     )
     .unwrap();
-    let (tx, rx) = mpsc::unbounded_channel();
-    let (out, mut events) = mpsc::unbounded_channel();
-    let worker = tokio::spawn(manager.run(rx, out));
+    let (mut requests, mut events, worker) = start_manager(manager);
     match event(&mut events).await {
         SessionEvent::Opened { metadata, .. } => assert_eq!(metadata.id, responses_session),
         _ => panic!("expected initial session"),
     }
-    tx.send(SessionCommand::Open {
-        session_id: chat_session.clone(),
-    })
-    .unwrap();
-    match event(&mut events).await {
-        SessionEvent::Error { message } => assert!(message.contains("api_mismatch"), "{message}"),
+
+    let request_id = requests
+        .send(SessionCommand::Open {
+            session_id: chat_session.clone(),
+        })
+        .await;
+    match request_event(&mut events, request_id).await.event {
+        SessionEvent::Error { operation, error } => {
+            assert_eq!(operation, "open");
+            assert_eq!(error.code, "api_mismatch");
+            assert_eq!(error.session_id.as_deref(), Some(chat_session.as_str()));
+        }
         _ => panic!("incompatible session was opened"),
     }
-    tx.send(SessionCommand::List).unwrap();
-    match event(&mut events).await {
+
+    let request_id = requests.send(SessionCommand::List).await;
+    match request_event(&mut events, request_id).await.event {
         SessionEvent::Listed(sessions) => {
             assert!(
                 sessions
@@ -799,7 +910,7 @@ async fn a_session_created_on_another_api_is_not_opened_or_changed() {
         }
         _ => panic!("expected unchanged session listing"),
     }
-    drop(tx);
+    drop(requests);
     worker.await.unwrap().unwrap();
     assert_eq!(
         workspace.store().metadata(&chat_session).unwrap().api,

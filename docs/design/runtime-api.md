@@ -989,8 +989,20 @@ claim 和 apply 沿用 metadata 写锁，在后台执行文件 I/O；标题只�
 
 `RuntimeHandle::subscribe_metadata()` 返回有界 32 条的 typed 通知，内容仅为 session_id 失效提示，调用方必须重新读取当前 metadata。这样迟到通知不会携带过时自动标题覆盖后来手工名称；收到 Lagged 时刷新所有正在显示的会话。当前可通过 session.list，或空闲 loaded 会话的幂等 load 获得 metadata；既有 status.metadata 可为 None 的契约保持。
 
-当前四项服务测试覆盖一次生成/历史隔离、手工名称与迟到结果、附属容量不占用户容量、空可解析标题失败后的重启不重跑；失败测试并未声称覆盖 HTTP 5xx 的客户端内部重试。终端启动/恢复、列表、发送、改名和取消均委托 typed 命令；取消按服务实际 active_task 的 task_id 定向请求，不依赖第一个显示事件先到。控制操作最多同时准备 8 项，回复可以按完成顺序返回；初始 create/load 失败仍结束入口并返回错误。EOF 等待已接收操作并由服务 shutdown 收尾；展示接收端丢失关闭服务 OutputState。
+当前四项服务测试覆盖一次生成/历史隔离、手工名称与迟到结果、附属容量不占用户容量、空可解析标题失败后的重启不重跑；失败测试并未声称覆盖 HTTP 5xx 的客户端内部重试。终端启动/恢复、列表、发送、改名和取消均委托 typed 命令。控制操作最多同时准备 8 项，回复可以按完成顺序返回；初始 create/load 失败仍结束入口并返回错误。EOF 等待已接收操作并由服务 shutdown 收尾；展示接收端丢失关闭服务 OutputState。
 
 终端历史通过服务分页 history 读取，使用 journal 文件读取器共用的唯一 reducer 构造 Replay；只读 Conversation 投影不打开、修复或独占 journal。上下文估算使用生效配置和工具声明。多连接创建使用 schema 2，不再在 app 另设单连接/schema 1 限制。旧文档承诺的直接 Agent SDK 调用保留为兼容入口，生产宿主只使用 Runtime；其窄范围 dead_code 标注不覆盖新服务接口，新标题 builder/metadata 订阅均有生产消费者。
 
-本阶段有明确剩余工作：终端仍使用旧的无界展示通道，未将服务字节 permit 和完整 task/message 关联传到 UI；history_required 重建和运行中会话投影需要 TUI 消费接线。Create/Open 暂时保留全局运行中拒绝，避免把尚未消费的运行状态误投影为 interrupted；该临时限制不满足 U03，不能作为最终交付边界。后续在唯一 TUI writer 完成投影后解除，完成有界链路、两端契约与真实 PTY 验收，再更新完成结论。
+### Typed 终端消费契约（待与 TUI 联合接线）
+
+输入为 32 条有界 mpsc，元素 `SessionRequest { request_id: u64, command: SessionCommand }`。终端宿主为请求分配递增 ID，通过 try_send 提交；容量不足保留原输入并反馈 busy，不等待而停止消费输出。命令回复 packet 保留该 request_id，启动及异步 metadata 通知为 None。Send 接纳成功先返回 Accepted 和完整 Association，再返回该流的 Agent 事件；拒绝返回原 RuntimeError 与 operation，不生成伪造的 task_id。消费者在 Accepted 后才提交暂存输入，按 request_id 固定拒绝/命令反馈的归属。
+
+`Cancel { session_id, task_id }` 使用调用方实际观察到的任务，不能在处理时查询并替换成该 session 最新任务。取消走独立控制路径，Cancelled 只确认请求状态；唯一任务终态为 `Finished(TaskFinished)`，保留 status/error/persistence/history_required，不再额外生成 TurnCompleted/TurnInterrupted/TurnFailed。全部任务事件和 Finished 的 packet 保留原 Association，包括 message_id。
+
+`SessionManager::event_channel()` 创建与 Runtime 共用 OutputState 的通道。输出按 32 条、8 MiB 总字节和 8 MiB 单事件限制，发送前计数，整个 enqueue 期限为 30 秒；持有 payload 的 packet 包含显示预算及原 EventPacket 的字节 lease。消费者必须保留 packet 剩余字段到 apply/消费完成，不能提前析构 lease 后把 payload 复制进无界队列。显示失效只关闭 OutputState，解除排队展示等待；取消、业务结果持久化和资源清理不依赖显示队列继续消费。控制回复无法无等待入队时关闭该展示通道，不能堵住控制循环。
+
+Opened 包含 metadata、稳定历史 Replay、context、服务 SessionState 及 `stream: Option<Association>`。服务 state 是业务事实；stream 是桥尚未交付 Finished 的显示流，不把两者混作执行状态。桥在 Accepted、快照和每个流事件/Finished 的入队之间协调顺序：存在 stream 时，Replay 只包含其 task_started 之前的稳定历史；消费者继续使用已经按 Accepted/关联事件缓存的实时投影，不能将其按历史 interrupted 关闭。Finished 入显示队列后解除 stream，后续 Opened 使用完整 canonical history，且位于该流已入队事件之后。该顺序不取消后台任务，Create/Open 不再全局要求空闲。
+
+history_required 时，桥在 Finished 前读取服务完整历史并发送同关联的 HistoryRestored；它只更新所属投影，不能切换选中会话。读取失败返回明确的 history 操作错误，仍保留原 Finished.history_required，不伪称补齐。metadata Lagged 刷新各会话当前 TitleUpdated，不借 Listed 弹出 picker；手工 rename 和标题刷新沿同一输出顺序协调，迟到刷新不携带旧快照。
+
+上述是 Runtime 候选接口，TUI/console 的有界消费、按任务投影、暂存输入和运行中恢复仍由唯一 TUI writer 接线。联合编译与 U02–U05/default/resume/rename/cancel/title 真实 PTY 尚未通过；不能把 ad91214 薄桥阶段的 577+70 测试与 CI 通过结果套到这个新接口候选。
