@@ -69,24 +69,25 @@ type message struct {
 }
 
 type contact struct {
-	ID            string
-	Name          string
-	Role          string
-	Purpose       string
-	Instructions  string
-	Workspace     string
-	Status        contactStatus
-	Unread        int
-	Work          string
-	WorkLabel     string
-	Messages      []*message
-	History       []historyEntry
-	Revealed      []string
-	Draft         string
-	replyIndex    int
-	list          ui.ListState
-	Works         []*workItem
-	UnlinkedTools []*workTool
+	ID                 string
+	Name               string
+	Role               string
+	Purpose            string
+	Instructions       string
+	Workspace          string
+	Status             contactStatus
+	Unread             int
+	Work               string
+	WorkLabel          string
+	Messages           []*message
+	History            []historyEntry
+	Revealed           []string
+	Draft              string
+	replyIndex         int
+	list               ui.ListState
+	Works              []*workItem
+	UnlinkedTools      []*workTool
+	StopRequestedTasks map[string]bool
 
 	// Runtime-backed state. Empty SessionID means the contact has no runtime
 	// session yet; it is created lazily before the first task.send.

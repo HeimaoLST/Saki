@@ -80,7 +80,19 @@ func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
 			line := a.snippet(ct)
 			color := t.TextMuted
 			if ct.Status != statusReady {
-				line = a.statusLabel(ct) + " · " + line
+				status := a.statusLabel(ct)
+				detail := strings.TrimSpace(line)
+				if detail == status {
+					detail = ""
+				}
+				if strings.HasPrefix(detail, "Running ") {
+					detail = strings.TrimPrefix(detail, "Running ")
+				}
+				if detail == "" {
+					line = status
+				} else {
+					line = status + " · " + detail
+				}
 				color = a.statusColor(t, ct.Status)
 			}
 			ui.Text(c, line).FontSize(12).LineHeight(1.35).MaxLines(1).TextColor(color)

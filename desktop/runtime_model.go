@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -459,7 +460,7 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 			}
 			return w
 		}
-		w := &workItem{TaskID: id, MessageID: msgID, State: workUnknown}
+		w := &workItem{TaskID: id, MessageID: msgID, State: workUnknown, StopRequested: ct.StopRequestedTasks[id]}
 		byTask[id] = w
 		works = append(works, w)
 		return w
@@ -574,11 +575,7 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 func historyWorkDetail(status string, errText *string) string {
 	switch status {
 	case "failed":
-		detail := "Task failed"
-		if errText != nil && strings.TrimSpace(*errText) != "" {
-			detail += ": " + strings.TrimSpace(*errText)
-		}
-		return detail
+		return taskFailureDetail("", errText)
 	case "interrupted":
 		return "Task interrupted"
 	default:
@@ -768,11 +765,59 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 	}
 }
 
+var diagnosticSecret = regexp.MustCompile(`(?i)\b(api[_-]?key|token)\s*[:=]\s*[^\s,;]+|\bauthorization\s*:\s*(?:bearer\s+)?[^\s,;]+|\bbearer\s+[^\s,;]+`)
+var diagnosticJSONSecret = regexp.MustCompile(`(?i)"(?:api[_-]?key|token|secret|password|authorization)"\s*:\s*"[^"]*"`)
+var diagnosticSkKey = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}`)
+var diagnosticURLCred = regexp.MustCompile(`://[^/\s@]+@`)
+
+func safeDiagnostic(text string) string {
+	text = strings.TrimSpace(text)
+	text = diagnosticSecret.ReplaceAllString(text, "[redacted]")
+	text = diagnosticJSONSecret.ReplaceAllString(text, "[redacted]")
+	text = diagnosticSkKey.ReplaceAllString(text, "[redacted]")
+	text = diagnosticURLCred.ReplaceAllString(text, "://[redacted]@")
+	return truncate(text, 500)
+}
+
+func httpAuthStatus(message string) string {
+	message = strings.TrimSpace(message)
+	for _, status := range []string{"HTTP 401", "HTTP 403"} {
+		if !strings.HasPrefix(message, status) {
+			continue
+		}
+		n := len(status)
+		if len(message) == n || message[n] < '0' || message[n] > '9' {
+			return status
+		}
+	}
+	return ""
+}
+
+func taskFailureDetail(code string, message *string) string {
+	if message == nil {
+		return "Task failed."
+	}
+	if status := httpAuthStatus(*message); status != "" {
+		return "Provider authentication failed: " + status +
+			". Check API_KEY and provider configuration; no automatic retry."
+	}
+	stage := "Task failed"
+	if code == "model_error" {
+		stage = "Model request failed"
+	}
+	prefix := stage
+	if code != "" {
+		prefix += ": " + code
+	}
+	return prefix + ": " + safeDiagnostic(*message) +
+		". Check provider configuration (API_KEY / SAKI_BASE_URL / SAKI_MODEL); no automatic retry."
+}
+
 func taskFinishedDetail(payload *runtimeEvent) string {
 	switch payload.Status {
 	case "failed":
 		if payload.Error != nil {
-			return "Task failed: " + payload.Error.Code + ": " + payload.Error.Message
+			return taskFailureDetail(payload.Error.Code, &payload.Error.Message)
 		}
 		return "Task failed."
 	case "interrupted":
@@ -942,6 +987,10 @@ func (a *appModel) cancelSelected() {
 	if w := ct.activeWork(); w != nil {
 		w.State = workStopping
 		w.StopRequested = true
+		if ct.StopRequestedTasks == nil {
+			ct.StopRequestedTasks = map[string]bool{}
+		}
+		ct.StopRequestedTasks[taskID] = true
 	}
 	ct.SendError = "Cancellation requested"
 	go func() {
@@ -974,12 +1023,20 @@ func (a *appModel) applyCancelResult(contactID, taskID, status string, err error
 		if w := ct.activeWork(); w != nil {
 			w.State = workStopping
 			w.StopRequested = true
+			if ct.StopRequestedTasks == nil {
+				ct.StopRequestedTasks = map[string]bool{}
+			}
+			ct.StopRequestedTasks[taskID] = true
 		}
 		ct.SendError = "Cancelling; waiting for the runtime to stop."
 	case "already_requested":
 		if w := ct.activeWork(); w != nil {
 			w.State = workStopping
 			w.StopRequested = true
+			if ct.StopRequestedTasks == nil {
+				ct.StopRequestedTasks = map[string]bool{}
+			}
+			ct.StopRequestedTasks[taskID] = true
 		}
 		ct.SendError = "Cancellation already requested."
 	case "not_running":

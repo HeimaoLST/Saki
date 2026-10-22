@@ -22,10 +22,16 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/egoist/mygo/ui"
 )
 
 type providerFixture struct {
 	ToolFirst bool
+	Auth401   bool
+	Hold      chan struct{}
+	Arrived   chan struct{}
+	arrived   sync.Once
 	requests  atomic.Int32
 	mu        sync.Mutex
 	bodies    []string
@@ -49,6 +55,18 @@ func (p *providerFixture) handler(t *testing.T, marker string) http.HandlerFunc 
 		p.mu.Lock()
 		p.bodies = append(p.bodies, string(body))
 		p.mu.Unlock()
+		if p.Auth401 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"Incorrect API key provided: sk-sentinel-130-auth"}}`))
+			return
+		}
+		if index == 1 && p.Arrived != nil {
+			p.arrived.Do(func() { close(p.Arrived) })
+		}
+		if p.Hold != nil && index == 1 {
+			<-p.Hold
+		}
 		var response any
 		switch {
 		case p.ToolFirst && index == 1:
@@ -569,6 +587,146 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 		t.Fatal("continuation request did not include restored context")
 	}
 	h2.shutdown(t)
+}
+
+func TestGUIAppAuthHistoryRedaction(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{Auth401: true}
+	h := startGUIHarness(t, binary, provider, "saki-130-auth")
+	h.pump.do(func() {
+		ct := h.app.contacts[0]
+		ct.Draft = "auth-queued"
+		h.app.sendCurrent()
+		ct.Draft = "later-auth-draft"
+	})
+	h.pump.wait(func() bool {
+		ct := h.app.contacts[0]
+		return ct.ActiveTaskID == "" && ct.SendState == sendIdle && ct.Loaded &&
+			!ct.HistoryDirty && strings.Contains(ct.StatusDetail, "Provider authentication failed")
+	})
+	var detail, workDetail, draft string
+	h.pump.do(func() {
+		ct := h.app.contacts[0]
+		detail, draft = ct.StatusDetail, ct.Draft
+		if w := ct.recentWork(); w != nil {
+			workDetail = w.Detail
+		}
+	})
+	for _, value := range []string{detail, workDetail} {
+		if strings.Contains(value, "sk-sentinel-130-auth") || strings.Contains(value, "Incorrect API key") {
+			t.Fatalf("auth history/work detail leaked provider body: %q", value)
+		}
+	}
+	if !strings.Contains(detail, "HTTP 401") || draft != "later-auth-draft" {
+		t.Fatalf("auth detail/draft = %q / %q", detail, draft)
+	}
+	tr := ui.NewTester(h.app.view, 1040, 720)
+	tr.Frame()
+	if strings.Contains(strings.Join(tr.Texts(), "\n"), "sk-sentinel-130-auth") {
+		t.Fatal("rendered auth failure leaked provider body")
+	}
+	if provider.count() != 1 {
+		t.Fatalf("auth requests = %d", provider.count())
+	}
+	h.shutdown(t)
+	before := provider.count()
+	h2 := restartGUIHarness(t, binary)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.wait(func() bool {
+		ct := h2.app.contacts[0]
+		return ct.Loaded && strings.Contains(ct.StatusDetail, "Provider authentication failed")
+	})
+	h2.snapshot(func() {
+		ct := h2.app.contacts[0]
+		if strings.Contains(ct.StatusDetail, "sk-sentinel-130-auth") || strings.Contains(ct.Draft, "sk-sentinel-130-auth") {
+			t.Fatalf("restart auth state leaked: %+v", ct)
+		}
+		if ct.Draft != "later-auth-draft" {
+			t.Fatalf("restart auth draft = %q", ct.Draft)
+		}
+	})
+	if provider.count() != before {
+		t.Fatalf("restart issued auth requests: %d -> %d", before, provider.count())
+	}
+}
+
+func TestGUIAppStopSurvivesHistoryReload(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	hold := make(chan struct{})
+	defer close(hold)
+	arrived := make(chan struct{})
+	provider := &providerFixture{ToolFirst: true, Hold: hold, Arrived: arrived}
+	h := startGUIHarness(t, binary, provider, "saki-130-stop")
+	h.pump.do(func() {
+		ct := h.app.contacts[0]
+		ct.Draft = "stop-input"
+		h.app.sendCurrent()
+	})
+	select {
+	case <-arrived:
+	case <-time.After(15 * time.Second):
+		t.Fatal("controlled provider did not receive the first request")
+	}
+	// The socket count is external to the UI queue; wait on the UI event that
+	// establishes the accepted task, then cancel in the same UI callback.
+	h.pump.wait(func() bool {
+		return h.app.contacts[0].ActiveTaskID != ""
+	})
+	stoppingNow := false
+	h.pump.do(func() {
+		ct := h.app.contacts[0]
+		ct.Draft = "later-stop-draft"
+		h.app.cancelSelected()
+		w := ct.activeWork()
+		stoppingNow = w != nil && w.State == workStopping
+	})
+	if !stoppingNow {
+		t.Fatal("cancelSelected did not expose the immediate stopping state on the UI queue")
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.contacts[0]
+		return ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty &&
+			ct.recentWork() != nil && ct.Draft == "later-stop-draft"
+	})
+	var label string
+	h.pump.do(func() {
+		if w := h.app.contacts[0].recentWork(); w != nil {
+			label = workStateLabel(w)
+		}
+	})
+	if !strings.Contains(label, "Stopped") {
+		t.Fatalf("stopped label after auto reload = %q", label)
+	}
+	h.shutdown(t)
+	h2 := restartGUIHarness(t, binary)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.wait(func() bool {
+		ct := h2.app.contacts[0]
+		return ct.Loaded && ct.recentWork() != nil
+	})
+	h2.snapshot(func() {
+		ct := h2.app.contacts[0]
+		w := ct.recentWork()
+		if w == nil || workStateLabel(w) != "Interrupted" {
+			t.Fatalf("restart stop reason was invented: work=%+v label=%q", w, func() string {
+				if w == nil {
+					return ""
+				}
+				return workStateLabel(w)
+			}())
+		}
+		if ct.Draft != "later-stop-draft" {
+			t.Fatalf("restart stop draft = %q", ct.Draft)
+		}
+	})
 }
 
 func TestGUIFirstCreateUsesProfileSnapshot(t *testing.T) {
