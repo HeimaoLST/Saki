@@ -478,9 +478,11 @@ async fn snapshot(
             None => break,
         }
     }
-    if let Some(stream) = &stream {
-        let boundary=records.iter().position(|(_,record)|matches!(record,journal::JournalRecord::TaskStarted{task_id,..} if task_id==&stream.task_id))
-            .context("active display stream has no persisted task boundary")?;
+    if let Some(stream) = &stream
+        && let Some(boundary) = records.iter().position(|(_, record)| {
+            matches!(record, journal::JournalRecord::TaskStarted { task_id, .. } if task_id == &stream.task_id)
+        })
+    {
         records.truncate(boundary);
     }
     let replay = journal::replay_records(records)?;

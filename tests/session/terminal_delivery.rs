@@ -523,3 +523,165 @@ async fn full_terminal_display_cannot_block_selected_task_cancellation_or_shutdo
         1
     );
 }
+
+#[tokio::test]
+async fn accepted_session_opens_before_task_started_and_keeps_one_live_stream() {
+    let workspace = Workspace::new();
+    let (client, release_response, server) = streaming_client().await;
+    let (release_start, start_gate) = oneshot::channel();
+    let manager = SessionManager::from_runtime(
+        runtime(client, &workspace).with_task_start_gate(start_gate),
+        None,
+    );
+    let (output, mut events) = manager.event_channel();
+    let (input, commands) = mpsc::channel(32);
+    let worker = tokio::spawn(manager.run(commands, output));
+    let id = match next(&mut events).await.event {
+        SessionEvent::Opened { metadata, .. } => metadata.id,
+        _ => panic!("startup must open a session"),
+    };
+    request(
+        &input,
+        1,
+        SessionCommand::Rename {
+            session_id: id.clone(),
+            title: "Manual title".into(),
+        },
+    );
+    assert!(matches!(
+        reply(&mut events, 1).await.event,
+        SessionEvent::Renamed(_)
+    ));
+    let journal_path = workspace
+        .store()
+        .directory(&id)
+        .unwrap()
+        .join("history.jsonl");
+    let before = fs::read(&journal_path).unwrap();
+    request(
+        &input,
+        2,
+        SessionCommand::Send {
+            session_id: id.clone(),
+            message: UserMessage::text("accepted-before-start"),
+        },
+    );
+    let accepted = reply(&mut events, 2).await;
+    assert!(matches!(accepted.event, SessionEvent::Accepted));
+    let association = accepted.association.unwrap();
+    assert_eq!(fs::read(&journal_path).unwrap(), before);
+    request(
+        &input,
+        3,
+        SessionCommand::Open {
+            session_id: id.clone(),
+        },
+    );
+    match reply(&mut events, 3).await.event {
+        SessionEvent::Opened {
+            replay,
+            state,
+            stream,
+            ..
+        } => {
+            let stream = stream.unwrap();
+            assert_eq!(
+                (&stream.session_id, &stream.task_id, &stream.message_id),
+                (
+                    &association.session_id,
+                    &association.task_id,
+                    &association.message_id
+                )
+            );
+            assert_eq!(state.active_task.unwrap().task_id, association.task_id);
+            assert!(
+                !replay
+                    .history
+                    .iter()
+                    .any(|r| matches!(r, JournalRecord::TaskStarted { .. }))
+            );
+            assert!(
+                !serde_json::to_string(&replay.history)
+                    .unwrap()
+                    .contains("accepted-before-start")
+            );
+        }
+        SessionEvent::Error { error, .. } => panic!("Accepted-before-Started Open failed: {error}"),
+        _ => panic!("Accepted-before-Started Open must succeed"),
+    }
+    assert_eq!(fs::read(&journal_path).unwrap(), before);
+    release_start.send(()).unwrap();
+    release_response.send(()).unwrap();
+    let mut started = 0;
+    loop {
+        let packet = next(&mut events).await;
+        let observed = packet.association.as_ref().unwrap();
+        assert_eq!(
+            (
+                &observed.session_id,
+                &observed.task_id,
+                &observed.message_id
+            ),
+            (
+                &association.session_id,
+                &association.task_id,
+                &association.message_id
+            )
+        );
+        match packet.event {
+            SessionEvent::Agent {
+                event: AgentEvent::TaskStarted { .. },
+                ..
+            } => started += 1,
+            SessionEvent::Finished(finished) => {
+                assert_eq!(finished.status, "completed");
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(started, 1);
+    request(
+        &input,
+        4,
+        SessionCommand::Open {
+            session_id: id.clone(),
+        },
+    );
+    match reply(&mut events, 4).await.event {
+        SessionEvent::Opened {
+            replay,
+            state,
+            stream,
+            ..
+        } => {
+            assert!(stream.is_none());
+            assert_eq!(state.state, "idle");
+            assert_eq!(
+                replay
+                    .history
+                    .iter()
+                    .filter(|r| matches!(r, JournalRecord::TaskStarted { .. }))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                replay
+                    .history
+                    .iter()
+                    .filter(|r| matches!(r, JournalRecord::TaskFinished { .. }))
+                    .count(),
+                1
+            );
+            assert!(
+                serde_json::to_string(&replay.history)
+                    .unwrap()
+                    .contains("accepted-before-start")
+            );
+        }
+        _ => panic!("completed Open must be canonical"),
+    }
+    drop(input);
+    worker.await.unwrap().unwrap();
+    assert_eq!(crate::test_support::requests(server).await.len(), 1);
+}

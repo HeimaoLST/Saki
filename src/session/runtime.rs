@@ -488,6 +488,8 @@ pub struct Runtime {
     output: OutputState,
     #[cfg(test)]
     panicking_sessions: HashSet<String>,
+    #[cfg(test)]
+    task_start_gate: Option<oneshot::Receiver<()>>,
 }
 
 impl Runtime {
@@ -513,6 +515,8 @@ impl Runtime {
             output: OutputState::default(),
             #[cfg(test)]
             panicking_sessions: HashSet::new(),
+            #[cfg(test)]
+            task_start_gate: None,
         }
     }
 
@@ -541,6 +545,12 @@ impl Runtime {
     #[cfg(test)]
     pub(crate) fn with_panicking_session(mut self, session_id: String) -> Self {
         self.panicking_sessions.insert(session_id);
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_task_start_gate(mut self, gate: oneshot::Receiver<()>) -> Self {
+        self.task_start_gate = Some(gate);
         self
     }
 
@@ -622,6 +632,8 @@ impl Runtime {
             metadata_updates,
             #[cfg(test)]
             panicking_sessions: self.panicking_sessions,
+            #[cfg(test)]
+            task_start_gate: self.task_start_gate,
             preparing: HashSet::new(),
             configuring: HashSet::new(),
             in_flight: 0,
@@ -786,6 +798,8 @@ struct RuntimeActor {
     metadata_updates: broadcast::Sender<SessionMetadataUpdate>,
     #[cfg(test)]
     panicking_sessions: HashSet<String>,
+    #[cfg(test)]
+    task_start_gate: Option<oneshot::Receiver<()>>,
     preparing: HashSet<String>,
     configuring: HashSet<String>,
     in_flight: usize,
@@ -2130,10 +2144,16 @@ impl RuntimeActor {
         let worker_message_id = message_id.clone();
         #[cfg(test)]
         let should_panic = self.panicking_sessions.remove(&association.session_id);
+        #[cfg(test)]
+        let start_gate = self.task_start_gate.take();
         let config_revision = configuration.config_revision;
         let worker = tokio::spawn(async move {
             let mut agent = agent;
             let execution = AssertUnwindSafe(async {
+                #[cfg(test)]
+                if let Some(gate) = start_gate {
+                    let _ = gate.await;
+                }
                 #[cfg(test)]
                 if should_panic {
                     panic!("injected task worker panic");
