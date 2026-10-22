@@ -327,6 +327,68 @@ async fn auth_error_does_not_fallback_or_spawn_a_second_source() {
 }
 
 #[tokio::test]
+async fn unsupported_protocol_is_rejected_before_tool_discovery_and_releases_the_source() {
+    for policy in ["modern", "legacy", "auto"] {
+        let root = test_root(policy);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handler = tokio::spawn(async move {
+            let mut control = accept_ready(&listener).await.unwrap();
+            let pid = control.trace[0]["pid"].as_u64().unwrap() as i32;
+            let request = control.next_request().await.unwrap();
+            let result = if policy == "legacy" {
+                assert_eq!(request["method"], "initialize");
+                let mut result = initialize_result();
+                result["protocolVersion"] = json!("2099-01-01");
+                result
+            } else {
+                assert_eq!(request["method"], "server/discover");
+                let mut result = discover_result(false);
+                result["supportedVersions"] = json!(["2099-01-01"]);
+                result
+            };
+            control.respond(&request["id"], result).await.unwrap();
+            loop {
+                match control.recv().await {
+                    Ok(message) => {
+                        assert!(
+                            message["id"].is_null(),
+                            "unsupported source accepted another request: {message}"
+                        );
+                        if message["event"] == "stdin_eof" {
+                            break;
+                        }
+                    }
+                    Err(error) if error.to_string() == "control EOF" => break,
+                    Err(error) => panic!("unexpected control failure: {error:#}"),
+                }
+            }
+            (pid, listener)
+        });
+        let slots = Arc::new(Semaphore::new(1));
+        let config = source_config(&root, port, policy, 120_000, 2_000);
+        let result = start_source(config, &root, 1, &slots).await;
+        let error = match result {
+            Ok(_) => panic!("unsupported protocol was accepted"),
+            Err(error) => error,
+        };
+        let detail = format!("{error:#}").to_lowercase();
+        assert!(
+            detail.contains("protocol") || detail.contains("version"),
+            "{detail}"
+        );
+        assert_eq!(slots.available_permits(), 1);
+        let (pid, listener) = handler.await.unwrap();
+        assert_eq!(
+            listener.into_std().unwrap().accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[tokio::test]
 async fn dropped_call_cancels_once_and_close_reaps_the_process() {
     let root = test_root("cancel");
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();

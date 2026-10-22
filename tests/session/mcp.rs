@@ -5,9 +5,9 @@ use crate::{
         connections::{Connection, ConnectionRegistry},
     },
     test_support::scripted_server,
-    tools::mcp::{config::ToolSourceDefinition, test_support::*},
+    tools::mcp::{McpTools, config::ToolSourceDefinition, test_support::*},
 };
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::{
     net::TcpListener,
     sync::{mpsc, oneshot},
@@ -25,6 +25,14 @@ struct Fixture {
 
 impl Fixture {
     async fn new(hold_calls: bool) -> Self {
+        Self::build(hold_calls, false).await
+    }
+
+    async fn with_list_changed(hold_calls: bool) -> Self {
+        Self::build(hold_calls, true).await
+    }
+
+    async fn build(hold_calls: bool, list_changed: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let definition = json!({
             "id":"controlled", "transport":"stdio", "command":python_command(),
@@ -68,7 +76,17 @@ impl Fixture {
                                 if message["event"] == "stdin_eof" { break; }
                                 let method = message["method"].as_str().unwrap_or("");
                                 let result = match method {
-                                    "server/discover" => discover_result(false),
+                                    "server/discover" => discover_result(list_changed),
+                                    "subscriptions/listen" => {
+                                        assert_eq!(
+                                            message["params"]["notifications"],
+                                            json!({"toolsListChanged": true})
+                                        );
+                                        let ack = listen_ack(&message["id"]);
+                                        control.send(ack.clone()).await.unwrap();
+                                        trace.lock().unwrap().push((pid, ack));
+                                        continue;
+                                    }
                                     "tools/list" => tools_page(catalog.read().unwrap().clone(),None,true),
                                     "tools/call" => {
                                         count += 1;
@@ -149,6 +167,202 @@ async fn create(driver: &mut Driver, cwd: &std::path::Path) -> String {
 
 fn tool_call() -> Value {
     json!({"id":"mcp-response","status":"completed","output":[{"type":"function_call","status":"completed","id":"f","call_id":"mcp-call","name":"project_alpha","arguments":"{}"}]})
+}
+
+#[derive(Clone, Copy)]
+enum Teardown {
+    Release,
+    Shutdown,
+}
+
+fn runtime_with_shared_sources(
+    directory: &Directory,
+    base: String,
+    tools: Arc<McpTools>,
+) -> Runtime {
+    let connection = Connection::new(
+        "test".into(),
+        ClientConfig::new(ModelApi::Responses, "test-key", base),
+        "test".into(),
+    )
+    .unwrap();
+    let mut runtime = Runtime::new(
+        SessionStore::new(directory.0.join("sessions")).unwrap(),
+        connection.client().clone(),
+        directory.0.clone(),
+        "test".into(),
+        CompactionConfig::new(262144),
+    )
+    .with_connections(ConnectionRegistry::new("test".into(), vec![connection]).unwrap());
+    runtime.tools = Some(tools);
+    runtime
+}
+
+fn latest_source_pid(fixture: &Fixture) -> u32 {
+    let trace = fixture.trace.lock().unwrap();
+    trace
+        .iter()
+        .rev()
+        .find(|(_, value)| value["event"] == "ready")
+        .map(|(pid, _)| *pid)
+        .expect("source did not announce a pid")
+}
+
+fn assert_live_modern_subscription(fixture: &Fixture, pid: u32) {
+    let trace = fixture.trace.lock().unwrap();
+    let position = |method: &str| {
+        trace
+            .iter()
+            .position(|(owner, value)| *owner == pid && value["method"] == method)
+            .unwrap_or_else(|| panic!("source {pid} did not send {method}"))
+    };
+    let ready = trace
+        .iter()
+        .position(|(owner, value)| *owner == pid && value["event"] == "ready")
+        .expect("source did not send ready");
+    let discover = position("server/discover");
+    let listen = position("subscriptions/listen");
+    let ack = position("notifications/subscriptions/acknowledged");
+    let list = position("tools/list");
+
+    assert!(ready < discover && discover < listen, "{trace:?}");
+    assert_eq!(
+        trace[discover].1["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"],
+        json!("2026-07-28")
+    );
+    assert_eq!(
+        trace[listen].1["params"]["notifications"],
+        json!({"toolsListChanged": true})
+    );
+    assert!(listen < ack && ack < list, "{trace:?}");
+    assert_eq!(
+        trace[ack].1["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"],
+        trace[listen].1["id"]
+    );
+    assert!(
+        !trace.iter().any(|(owner, value)| {
+            *owner == pid
+                && (value["method"] == "initialize" || value["method"] == "notifications/cancelled")
+        }),
+        "source did not stay on the modern live subscription: {trace:?}"
+    );
+    assert_eq!(
+        unsafe { libc::kill(pid as i32, 0) },
+        0,
+        "source was not live"
+    );
+}
+
+fn assert_all_sources_reaped(trace: &[(u32, Value)]) {
+    for (pid, _) in trace.iter().filter(|(_, value)| value["event"] == "ready") {
+        assert_eq!(
+            unsafe { libc::kill(*pid as i32, 0) },
+            -1,
+            "source {pid} survived teardown"
+        );
+    }
+}
+
+async fn live_subscription_teardown(teardown: Teardown) {
+    let directory = Directory::new();
+    let fixture = Fixture::with_list_changed(false).await;
+    let tools = Arc::new(fixture.sources(&directory.0, 1));
+    let mut driver = Driver::from_runtime(runtime_with_shared_sources(
+        &directory,
+        "http://127.0.0.1:9/v1".into(),
+        tools.clone(),
+    ))
+    .await;
+    let id = create(&mut driver, &directory.0).await;
+    let pid = latest_source_pid(&fixture);
+    assert_live_modern_subscription(&fixture, pid);
+
+    let seen = match teardown {
+        Teardown::Release => {
+            let released = driver
+                .call("session.release", json!({"session_id":id}))
+                .await;
+            assert!(released.get("error").is_none(), "{released}");
+            assert_eq!(released["result"]["session_id"], json!(id));
+            assert_eq!(released["result"]["loaded"], false);
+            assert_eq!(
+                unsafe { libc::kill(pid as i32, 0) },
+                -1,
+                "release reply preceded source reap"
+            );
+
+            let store = SessionStore::new(directory.0.join("sessions")).unwrap();
+            drop(
+                store
+                    .lock_config(&id)
+                    .expect("release retained the journal lock"),
+            );
+
+            let catalogs = tools
+                .list(Some("controlled"), &directory.0)
+                .await
+                .expect("release leaked a source slot");
+            assert_eq!(catalogs.len(), 1);
+            assert!(catalogs[0].available, "{:?}", catalogs[0].error);
+            assert_eq!(catalogs[0].monitoring, Some("subscribed"));
+
+            let next = create(&mut driver, &directory.0).await;
+            assert_ne!(next, id, "released slot was not reusable");
+            let released_next = driver
+                .call("session.release", json!({"session_id":next}))
+                .await;
+            assert!(released_next.get("error").is_none(), "{released_next}");
+            driver.shutdown().await
+        }
+        Teardown::Shutdown => {
+            let seen = tokio::time::timeout(WIRE_TIMEOUT, driver.shutdown())
+                .await
+                .expect("runtime shutdown did not complete");
+            assert_eq!(
+                unsafe { libc::kill(pid as i32, 0) },
+                -1,
+                "shutdown reply preceded source reap"
+            );
+
+            let store = SessionStore::new(directory.0.join("sessions")).unwrap();
+            drop(
+                store
+                    .lock_config(&id)
+                    .expect("shutdown retained the journal lock"),
+            );
+
+            let catalogs = tools
+                .list(Some("controlled"), &directory.0)
+                .await
+                .expect("shutdown leaked a source slot");
+            assert_eq!(catalogs.len(), 1);
+            assert!(catalogs[0].available, "{:?}", catalogs[0].error);
+            assert_eq!(catalogs[0].monitoring, Some("subscribed"));
+            seen
+        }
+    };
+    assert!(
+        seen.iter()
+            .any(|value| { value["type"] == "response" && value["result"]["state"] == "draining" }),
+        "runtime shutdown response was not observed: {seen:?}"
+    );
+    let trace = fixture.finish().await;
+    assert_all_sources_reaped(&trace);
+    assert!(
+        !trace
+            .iter()
+            .any(|(_, value)| value["method"] == "tools/call")
+    );
+}
+
+#[tokio::test]
+async fn release_reaps_live_modern_subscription_and_returns_source_capacity() {
+    live_subscription_teardown(Teardown::Release).await;
+}
+
+#[tokio::test]
+async fn shutdown_reaps_live_modern_subscription_and_returns_source_capacity() {
+    live_subscription_teardown(Teardown::Shutdown).await;
 }
 
 async fn send(driver: &mut Driver, id: &str) -> Value {
@@ -256,8 +470,14 @@ async fn mcp_results_match_events_and_model_input_and_sources_are_session_owned(
     }
 }
 
-#[tokio::test]
-async fn changed_selected_schema_blocks_admission_without_writes_until_explicit_confirmation() {
+#[derive(Clone, Copy)]
+enum SelectedSchemaChange {
+    Description,
+    Input,
+    Output,
+}
+
+async fn changed_selected_schema_case(change: SelectedSchemaChange) {
     let directory = Directory::new();
     let fixture = Fixture::new(false).await;
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -278,7 +498,34 @@ async fn changed_selected_schema_blocks_admission_without_writes_until_explicit_
         .call("session.config.get", json!({"session_id":id}))
         .await;
     let revision = config["result"]["config_revision"].clone();
-    fixture.catalog.write().unwrap()[0]["description"] = json!("changed selected description");
+
+    let mut changed = tool("alpha");
+    match change {
+        SelectedSchemaChange::Description => {
+            changed["description"] = json!("changed selected description");
+        }
+        SelectedSchemaChange::Input => {
+            changed["inputSchema"] = json!({
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+                "additionalProperties": false
+            });
+        }
+        SelectedSchemaChange::Output => {
+            changed["outputSchema"] = json!({
+                "type": "object",
+                "properties": {"status": {"type": "string"}},
+                "required": ["status"],
+                "additionalProperties": false
+            });
+        }
+    }
+    let expected_description = changed["description"].clone();
+    let expected_input = changed["inputSchema"].clone();
+    let expected_output = changed.get("outputSchema").cloned().unwrap_or(Value::Null);
+    fixture.catalog.write().unwrap()[0] = changed;
+
     let refused = driver
         .call(
             "task.send",
@@ -300,22 +547,67 @@ async fn changed_selected_schema_blocks_admission_without_writes_until_explicit_
     );
     let list = driver.call("session.list", json!({})).await;
     assert_eq!(list["result"]["sessions"][0]["state"], "unavailable");
+
     let confirmed=driver.call("session.config.update",json!({"session_id":id,"expected_revision":revision,"patch":{"tool_selection":selection()}})).await;
     assert!(confirmed.get("error").is_none(), "{confirmed}");
     assert_eq!(
         confirmed["result"]["config_revision"].as_u64().unwrap(),
         revision.as_u64().unwrap() + 1
     );
-    let state = driver
-        .call("session.status", json!({"session_id":id}))
-        .await;
-    assert_eq!(state["result"]["state"], "idle");
     assert_eq!(
         std::fs::read(folder.join("history.jsonl")).unwrap(),
         history
     );
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+
+    let metadata: Value =
+        serde_json::from_slice(&std::fs::read(folder.join("metadata.json")).unwrap()).unwrap();
+    let schema = &metadata["tool_schemas"]["project_alpha"];
+    assert_eq!(schema["description"], expected_description);
+    assert_eq!(schema["input_schema"], expected_input);
+    assert_eq!(schema["output_schema"], expected_output);
+    assert_eq!(
+        confirmed["result"]["effective_config"]["tool_schemas"]["project_alpha"]["description"],
+        expected_description
+    );
+    assert_eq!(
+        confirmed["result"]["effective_config"]["tool_schemas"]["project_alpha"]["input_schema"],
+        expected_input
+    );
+    assert_eq!(
+        confirmed["result"]["effective_config"]["tool_schemas"]["project_alpha"]["output_schema"],
+        expected_output
+    );
+
+    let state = driver
+        .call("session.status", json!({"session_id":id}))
+        .await;
+    assert_eq!(state["result"]["state"], "idle");
     driver.shutdown().await;
-    fixture.finish().await;
+    let trace = fixture.finish().await;
+    assert!(
+        !trace
+            .iter()
+            .any(|(_, value)| value["method"] == "tools/call")
+    );
+}
+
+#[tokio::test]
+async fn changed_selected_schema_blocks_admission_without_writes_until_explicit_confirmation() {
+    changed_selected_schema_case(SelectedSchemaChange::Description).await;
+}
+
+#[tokio::test]
+async fn changed_selected_input_schema_blocks_admission_until_explicit_confirmation() {
+    changed_selected_schema_case(SelectedSchemaChange::Input).await;
+}
+
+#[tokio::test]
+async fn changed_selected_output_schema_blocks_admission_until_explicit_confirmation() {
+    changed_selected_schema_case(SelectedSchemaChange::Output).await;
 }
 
 #[tokio::test]
