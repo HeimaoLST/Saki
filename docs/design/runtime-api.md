@@ -838,6 +838,22 @@ schema 1 仍未验证原 endpoint，effective_config 返回 connection_binding.s
 
 验收固定到本 PR SHA：实际 A→B→A 请求、重启恢复 B、接纳配置 journal 快照、两个同时提交的版本冲突、不同 session 的 busy 隔离、no-op 字节不变、未知容量/非法配置/opaque 拒绝、metadata 写入前/rename 前/rename 后故障，以及新模型 summary/generation 和失败后原上下文保留。stdio 同时覆盖 capabilities/model.list、缺省/null/未知字段、版本错误和未 loaded 的只读配置查询。测试/运行/CI 证据记录在 #105 及对应 PR；尚未通过的阶段不以本节代替联合验收。
 
+## #61 多 session 并发（候选实现事实）
+
+更新日期：2026-10-22。分类：**本 PR 候选，尚未合入 dev**。本节在 #104/#105 typed 服务之上实现并发，不代表 #109 终端迁移、#106 多连接或 #107 MCP 已完成。
+
+`Runtime::with_max_active_tasks(n)` 设置正整数容量，默认 1；stdio 宿主可注入 `SAKI_MAX_ACTIVE_TASKS`，`runtime.capabilities.max_active_tasks` 返回实际值。不同 session 可同时执行；同一 session 只允许一个 accepted task，拒绝 `busy` 并附 `reason:session_busy`。其他 session 占满总容量时返回 `busy/reason:capacity_exceeded`。拒绝不落用户输入、不分配新 task、不隐形排队，释放后调用方须再次显式提交。
+
+每个活动 task 独立持有配置快照、Agent/Conversation、事件流、取消与结果。worker 完成或 panic 只回收其自身，panic session 标记不可继续使用内存，须显式 release/load 从持久记录恢复。默认工具业务错误仍回传模型；不将业务错误误判为其他任务失败。关联以 session_id/task_id/message_id 为准，相同 item_id/call_id 不表示同一跨任务对象。
+
+新增 typed/stdio `task.status {session_id,task_id}`：接纳但尚未成功写入开始记录时为 `accepted`；真实开始信号后为 `running`；已有结果为 `finished` 阶段并返回真实 completed/failed/interrupted。开始信号不依赖展示队列。活动结果包括 cancel_requested 和接纳时 config_revision。结果释放后或进程重启，通过既有 journal reader 只读查找；缺少终态返回 status:unknown/phase:recovery/persistence:unconfirmed，不推定 completed、不重跑任务；完全未知 task 返回 phase:unknown。旧 TaskStarted 无配置快照则 revision 未知。
+
+所有任务业务与文件准备都已收尾后才发出 work_drained；stdio 的总展示排空期限适用于全部剩余任务，仍与单帧绝对写入期限独立。shutdown/EOF 不伪造取消；writer 失效唤醒所有展示等待，继续真实业务持久化与锁回收。控制回复等待消费者与控制命令执行是两件事；满输出仍能处理匹配取消。未恢复的展示可由 history_required + 原始 journal 补全，不以重新执行补显示。
+
+背压诊断 `TaskEvents::buffer_stats` 增加 waiting_producers，只有发送 future 实际 Pending 才计数，完成/取消/丢弃均归零。消息/字节统计覆盖生产者持有、队列、转发和写入期间的 permits，不能仅用队列长度代替总占用。事件与控制输出各有独立条数队列和字节预算；stdio 等待中的请求有 `32 + max_active_tasks` 上界，保留独立控制配额，不按事件数量创建任务。模型响应总字节限制及异步回调逐次等待继续生效。
+
+确定性验收覆盖双请求 gate、容量拒绝无排队、相同工具 ID 的不同 cwd、定向取消、模型失败/实际 worker panic、idle 锁释放、并发 compact、compact hook 发送等待、两个任务同时满事件链及控制回复缓冲、writer 恢复/断开/虚拟时钟期限、真实 stdio 双任务 EOF 三种输出状态。证据与具体 SHA 记录于 PR；并发能力不等同于任意模型/provider 已通过真实服务验收。
+
 ## #108 调用方输入资料（候选实现事实）
 
 更新日期：2026-10-22。分类：**本 PR 候选，尚未合入 dev**。`runtime.capabilities.caller_context:true` 表示支持 stdio `task.send` 的顶层可选 `context:[{name,text}]`；typed 调用方在同一个 UserMessage.context 提供 ContextInput。缺省为空，原 text/images 请求继续可用；可以提交仅含 context 的用户消息。未知字段明确拒绝。

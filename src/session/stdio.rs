@@ -223,6 +223,13 @@ fn decode(bytes: &[u8]) -> (Option<String>, Result<RuntimeCommand, RuntimeError>
                     },
                 }
             }
+            "task.status" => {
+                let p: Cancel = params(value)?;
+                RuntimeCommand::TaskStatus {
+                    session_id: p.session_id,
+                    task_id: p.task_id,
+                }
+            }
             "task.cancel" => {
                 let p: Cancel = params(value)?;
                 RuntimeCommand::Cancel {
@@ -276,7 +283,7 @@ impl Output {
         let permit = tokio::select! {
             biased;
             _ = self.state.closed() => return false,
-            permit = self.budget.clone().acquire_many_owned(permits as u32) => match permit {
+            permit = self.metrics.wait(self.budget.clone().acquire_many_owned(permits as u32)) => match permit {
                 Ok(permit) => permit,
                 Err(_) => { self.state.close(); return false; }
             }
@@ -295,7 +302,7 @@ impl Output {
         tokio::select! {
             biased;
             _ = self.state.closed() => false,
-            result = self.sender.send(frame) => {
+            result = self.metrics.wait(self.sender.send(frame)) => {
                 if result.is_err() { self.state.close(); }
                 result.is_ok()
             }
@@ -373,6 +380,9 @@ async fn deliver(
         }
     };
     match response {
+        RuntimeReply::TaskStatus(value) => {
+            reply(&output, &id, value).await;
+        }
         RuntimeReply::Capabilities(value) => {
             reply(&output, &id, value).await;
         }
@@ -661,6 +671,7 @@ where
             && options.output_bytes <= u32::MAX as usize,
         "invalid stdio output limits"
     );
+    let max_requests = MAX_REQUESTS + runtime.max_active_tasks();
     let api = runtime.api().as_str();
     let (handle, mut worker) = runtime.start();
     let state = handle.output_state();
@@ -723,7 +734,7 @@ where
             break;
         }
         let (id, command) = decode(&bytes);
-        if jobs.len() >= MAX_REQUESTS {
+        if jobs.len() >= max_requests {
             if let Ok(command @ (RuntimeCommand::Cancel { .. } | RuntimeCommand::Shutdown)) =
                 command
             {
