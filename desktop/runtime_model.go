@@ -650,6 +650,9 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 	}
 	switch payload.Type {
 	case "task_started":
+		if ct.ActiveTaskID == "" && ct.LastTaskID != "" && event.TaskID != ct.LastTaskID {
+			return // a late start from an older task cannot own this contact
+		}
 		if ct.ActiveTaskID == "" {
 			ct.ActiveTaskID = event.TaskID
 		}
@@ -711,6 +714,9 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 	case "task_finished":
 		if ct.ActiveTaskID != "" && event.TaskID != ct.ActiveTaskID {
 			return
+		}
+		if ct.ActiveTaskID == "" && ct.LastTaskID != "" && event.TaskID != ct.LastTaskID {
+			return // duplicate/late terminal from an older task
 		}
 		ct.LastTaskID = event.TaskID
 		ct.ActiveTaskID = ""

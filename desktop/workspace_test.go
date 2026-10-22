@@ -204,6 +204,14 @@ func TestLateAndStopEventsDoNotCrossTasks(t *testing.T) {
 	if !strings.Contains(ct.Work, "Running") && ct.Work != "" {
 		t.Fatalf("unexpected work summary: %q", ct.Work)
 	}
+	beforeMessages := len(ct.Messages)
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
+		Event: &runtimeEvent{Type: "task_finished", Status: "completed"},
+	})
+	if ct.LastTaskID != "t2" || len(ct.Messages) != beforeMessages || w2.State != workRunning {
+		t.Fatalf("late terminal polluted current work: last=%q work=%+v messages=%d", ct.LastTaskID, w2, len(ct.Messages))
+	}
 }
 
 func TestWorkPanelRendersToolDetailsWithoutInference(t *testing.T) {
