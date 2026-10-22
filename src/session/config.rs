@@ -377,9 +377,9 @@ pub(crate) fn select_connection(
             None => directory.default(),
         };
         Ok((
-            connection.client.clone(),
-            Some(connection.identity.clone()),
-            connection.default_model.clone(),
+            connection.client().clone(),
+            Some(connection.identity().clone()),
+            connection.default_model().to_owned(),
         ))
     } else if id.is_none() || id == Some("default") {
         Ok((host.client.clone(), None, host.model.clone()))
@@ -499,14 +499,14 @@ pub(crate) fn resolve_connection(
     if let Some(identity) = &metadata.connection_identity {
         let connection = connections
             .and_then(|directory| directory.get(&identity.connection_id))
-            .filter(|connection| connection.identity == *identity)
+            .filter(|connection| connection.identity() == identity)
             .ok_or_else(|| {
                 RuntimeError::new(
                     "connection_mismatch",
                     "the bound connection is missing or its endpoint/API has changed",
                 )
             })?;
-        return Ok(connection.client.clone());
+        return Ok(connection.client().clone());
     }
     if connections.is_some_and(|directory| directory.len() > 1) {
         return Err(RuntimeError::new(
@@ -514,7 +514,7 @@ pub(crate) fn resolve_connection(
             "legacy session origin is unknown; explicitly bind a connection before execution",
         ));
     }
-    let client = connections.map_or(default, |directory| &directory.default().client);
+    let client = connections.map_or(default, |directory| directory.default().client());
     if client.api().as_str() != metadata.api {
         return Err(RuntimeError::new(
             "api_mismatch",

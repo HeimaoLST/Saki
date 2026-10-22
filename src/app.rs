@@ -34,8 +34,8 @@ pub async fn run() -> anyhow::Result<()> {
             std::env::var("SAKI_MAX_ACTIVE_TASKS").map_or(Ok(1), |value| value.parse::<usize>())?;
         (connections, capacity)
     };
-    let client = connections.default().client.clone();
-    let model = connections.default().default_model.clone();
+    let client = connections.default().client().clone();
+    let model = connections.default().default_model().to_owned();
     let mut loaded_catalog = None;
     let mut config = match std::env::var("SAKI_CONTEXT_TOKENS") {
         Ok(value) => CompactionConfig::new(value.parse()?),

@@ -213,9 +213,9 @@ fn registry(default: &str, connections: Vec<Connection>) -> ConnectionRegistry {
 fn runtime(workspace: &Workspace, default: &Connection, registry: ConnectionRegistry) -> Runtime {
     Runtime::new(
         workspace.store(),
-        default.client.clone(),
+        default.client().clone(),
         workspace.0.clone(),
-        default.default_model.clone(),
+        default.default_model().to_owned(),
         compaction(),
     )
     .with_connections(registry)
@@ -490,7 +490,7 @@ async fn explicit_legacy_binding_backup_rollback_and_connection_identity_are_enf
     assert_eq!(bound.effective_config.connection_binding.state, "bound");
     assert_eq!(
         bound.effective_config.connection_identity.as_ref(),
-        Some(&a.identity)
+        Some(a.identity())
     );
     assert_eq!(
         bound.effective_config.execution_connection_id.as_deref(),
@@ -569,7 +569,7 @@ async fn explicit_legacy_binding_backup_rollback_and_connection_identity_are_enf
             .unwrap(),
     );
     let snapshot = task_configuration(&page, &task.association.task_id);
-    assert_eq!(snapshot.connection_identity.as_ref(), Some(&a.identity));
+    assert_eq!(snapshot.connection_identity.as_ref(), Some(a.identity()));
     assert_eq!(snapshot.execution_connection_id.as_deref(), Some("a"));
     let bodies = requests(server).await;
     assert_eq!(bodies.len(), 1);
@@ -611,7 +611,7 @@ async fn explicit_legacy_binding_backup_rollback_and_connection_identity_are_enf
         ClientConfig::new(
             ModelApi::Responses,
             "rotated-key",
-            a.identity.endpoint.clone(),
+            a.identity().endpoint.clone(),
         ),
         "model-a".to_owned(),
     )
@@ -632,7 +632,7 @@ async fn explicit_legacy_binding_backup_rollback_and_connection_identity_are_enf
             .as_ref()
             .unwrap()
             .connection_identity,
-        Some(a.identity.clone())
+        Some(a.identity().clone())
     );
     shutdown(handle, actor).await;
 }
@@ -750,7 +750,7 @@ async fn enhanced_sessions_route_by_connection_and_switch_same_api_without_rewri
             .as_ref()
             .unwrap()
             .connection_identity,
-        Some(a.identity.clone())
+        Some(a.identity().clone())
     );
     assert_eq!(
         b_state
@@ -758,7 +758,7 @@ async fn enhanced_sessions_route_by_connection_and_switch_same_api_without_rewri
             .as_ref()
             .unwrap()
             .connection_identity,
-        Some(b.identity.clone())
+        Some(b.identity().clone())
     );
     assert_eq!(
         a_state.effective_config.as_ref().unwrap().system_prompt,
@@ -805,7 +805,7 @@ async fn enhanced_sessions_route_by_connection_and_switch_same_api_without_rewri
             .unwrap(),
     );
     let a_before = task_configuration(&a_page, &a_task.association.task_id);
-    assert_eq!(a_before.connection_identity, Some(a.identity.clone()));
+    assert_eq!(a_before.connection_identity, Some(a.identity().clone()));
     assert_eq!(a_before.execution_connection_id.as_deref(), Some("a"));
     let a_requests = requests(server_a).await;
     assert_eq!(a_requests.len(), 2);
@@ -831,7 +831,7 @@ async fn enhanced_sessions_route_by_connection_and_switch_same_api_without_rewri
     assert_eq!(switched.config_revision, 2);
     assert_eq!(
         switched.effective_config.connection_identity,
-        Some(b.identity.clone())
+        Some(b.identity().clone())
     );
     assert_eq!(
         switched.effective_config.execution_connection_id.as_deref(),
@@ -864,7 +864,7 @@ async fn enhanced_sessions_route_by_connection_and_switch_same_api_without_rewri
     let switched_snapshot = task_configuration(&page, &switch_task.association.task_id);
     assert_eq!(
         switched_snapshot.connection_identity,
-        Some(b.identity.clone())
+        Some(b.identity().clone())
     );
     assert_eq!(
         switched_snapshot.execution_connection_id.as_deref(),

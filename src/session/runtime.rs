@@ -503,8 +503,8 @@ impl Runtime {
     }
 
     pub fn with_connections(mut self, connections: ConnectionRegistry) -> Self {
-        self.client = connections.default().client.clone();
-        self.model = connections.default().default_model.clone();
+        self.client = connections.default().client().clone();
+        self.model = connections.default().default_model().to_owned();
         self.connections = Some(Arc::new(connections));
         self
     }
@@ -750,12 +750,12 @@ impl RuntimeActor {
             self.connections
                 .as_ref()
                 .and_then(|connections| connections.get(&identity.connection_id))
-                .filter(|connection| connection.identity == *identity)
-                .map(|connection| connection.identity.connection_id.clone())
+                .filter(|connection| connection.identity() == identity)
+                .map(|connection| connection.identity().connection_id.clone())
         } else if let Some(connections) = &self.connections {
             (connections.len() == 1
-                && connections.default().identity.api == view.effective_config.api)
-                .then(|| connections.default().identity.connection_id.clone())
+                && connections.default().identity().api == view.effective_config.api)
+                .then(|| connections.default().identity().connection_id.clone())
         } else {
             (self.client.api().as_str() == view.effective_config.api).then(|| "default".to_owned())
         };
@@ -965,14 +965,14 @@ impl RuntimeActor {
                 let connection_id = if connection_id.is_empty() {
                     self.connections.as_ref().map_or_else(
                         || "default".into(),
-                        |directory| directory.default().identity.connection_id.clone(),
+                        |directory| directory.default().identity().connection_id.clone(),
                     )
                 } else {
                     connection_id
                 };
                 let configured_model = if let Some(directory) = &self.connections {
                     match directory.get(&connection_id) {
-                        Some(connection) => connection.default_model.clone(),
+                        Some(connection) => connection.default_model().to_owned(),
                         None => {
                             let _ = reply.send(Err(RuntimeError::new(
                                 "unknown_connection",

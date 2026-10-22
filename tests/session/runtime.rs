@@ -693,7 +693,7 @@ async fn stdio_connection_binding_creation_and_rollback_use_the_same_service_con
         vec![connection("primary"), connection("secondary")],
     )
     .unwrap();
-    let client = connections.default().client.clone();
+    let client = connections.default().client().clone();
     let runtime = Runtime::new(
         store,
         client,

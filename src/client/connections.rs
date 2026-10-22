@@ -23,12 +23,24 @@ pub struct ConnectionIdentity {
 
 #[derive(Clone)]
 pub struct Connection {
-    pub identity: ConnectionIdentity,
-    pub default_model: String,
-    pub client: ModelClient,
+    identity: ConnectionIdentity,
+    default_model: String,
+    client: ModelClient,
 }
 
 impl Connection {
+    pub fn identity(&self) -> &ConnectionIdentity {
+        &self.identity
+    }
+
+    pub fn default_model(&self) -> &str {
+        &self.default_model
+    }
+
+    pub fn client(&self) -> &ModelClient {
+        &self.client
+    }
+
     pub fn new(connection_id: String, config: ClientConfig, default_model: String) -> Result<Self> {
         ensure!(
             !connection_id.trim().is_empty(),

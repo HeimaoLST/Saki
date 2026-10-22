@@ -871,7 +871,7 @@ schema 1 仍未验证原 endpoint，effective_config 返回 connection_binding.s
 
 CLI 可设置 `SAKI_RUNTIME_CONFIG=/absolute/path/runtime.json`，读取本文件前文的 connections/default_connection_id/max_active_tasks JSON。每个 `api_key_env` 从宿主进程环境读取凭据；JSON 模式不依赖旧的 `API_KEY`、`SAKI_API` 或 `.env` 回退。未设置该路径时，原有 `ClientConfig::from_env`（含可选 `.env`）仍在唯一组装边界执行，建立名为 default 的单连接。SDK 调用方显式构建 ConnectionRegistry 并交给 Runtime::with_connections，无环境变量读取或配置更新时的探测推理。
 
-`connection.list` 返回 ID/API/规范化 endpoint/default_model；`model.list` 省略 ID 时使用实际配置的 default_connection_id，返回所选连接的宿主默认容量和已加载 catalog。不同连接默认模型可使用各自已加载容量，不能把默认连接 A 的容量误报为已知 B 容量；未知 provider 的实际能力仍由真实任务验证。目录在进程内不可变，凭据不进入返回值、metadata 或 journal。
+`connection.list` 返回 ID/API/规范化 endpoint/default_model；`model.list` 省略 ID 时使用实际配置的 default_connection_id，返回所选连接的宿主默认容量和已加载 catalog。不同连接默认模型可使用各自已加载容量，不能把默认连接 A 的容量误报为已知 B 容量；未知 provider 的实际能力仍由真实任务验证。Connection 构造器同时建立身份和实际客户端，只提供只读访问，不能单独替换其中一个而伪造绑定；目录在进程内不可变，凭据不进入返回值、metadata 或 journal。
 
 schema 1 单连接继续兼容执行，connection_binding.state=unknown、connection_id/connection_identity 为 null，execution_connection_id 仅说明本次执行连接。多连接时，无论 default 或 API 候选数，未绑定 legacy 的 load/send 返回 connection_binding_required，history/list/config.get 只读可用；不隐式 load、重跑或猜 endpoint。schema 2 的 API/规范化 endpoint/配置 ID 必须与目录完全匹配；同 ID 换 endpoint 明确 connection_mismatch，同身份换凭据可正常恢复。
 
