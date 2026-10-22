@@ -6,6 +6,10 @@ use crate::{
     session::{SessionCommand, SessionEvent},
 };
 
+fn session_result(result: Option<(Command, SessionCommand)>) -> Option<SessionCommand> {
+    result.map(|(_, request)| request)
+}
+
 #[test]
 fn local_input_never_submits_a_user_message_and_errors_keep_images_and_text() {
     let mut app = App::new();
@@ -62,11 +66,12 @@ fn failed_switch_keeps_the_command_but_success_does_not_cache_it_as_a_draft() {
     sessions.apply_event(&mut app, &mut editor, opened(a.clone(), ah.clone()));
     editor.set_draft("/new");
     assert!(matches!(
-        commands.dispatch(Command::New, &mut app, &mut editor, &mut sessions),
+        session_result(commands.dispatch(Command::New, &mut app, &mut editor, &mut sessions)),
         Some(SessionCommand::Create)
     ));
     let error = SessionEvent::Error {
-        message: "cannot create session".into(),
+        operation: "create",
+        error: crate::session::runtime::RuntimeError::new("busy", "cannot create session"),
     };
     commands.before_event(&mut editor, &error);
     sessions.apply_event(&mut app, &mut editor, error);
@@ -96,23 +101,23 @@ fn busy_controls_and_automatic_title_updates_do_not_finish_the_active_job_or_cle
     app.running = true;
     editor.set_draft("/new");
     assert!(
-        commands
-            .dispatch(Command::New, &mut app, &mut editor, &mut sessions)
-            .is_none()
+        session_result(commands.dispatch(Command::New, &mut app, &mut editor, &mut sessions))
+            .is_some(),
+        "U03 allows creating/viewing B while the current projection runs"
     );
     assert_eq!(editor.text(), "/new");
     assert!(app.running);
     assert!(!sessions.pending);
     editor.set_draft("/rename active");
     assert!(matches!(
-        commands.dispatch(
+        session_result(commands.dispatch(
             Command::Rename {
                 title: "active".into()
             },
             &mut app,
             &mut editor,
             &mut sessions
-        ),
+        )),
         Some(SessionCommand::Rename { .. })
     ));
     metadata.title = "active".into();

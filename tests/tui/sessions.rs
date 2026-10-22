@@ -80,7 +80,23 @@ pub(super) fn task_snapshot(title: &str) -> (SessionMetadata, Replay) {
     (metadata, replay)
 }
 
+pub(super) fn idle_state(id: &str) -> crate::session::runtime::SessionState {
+    crate::session::runtime::SessionState {
+        session_id: id.to_owned(),
+        metadata: None,
+        loaded: true,
+        state: "idle",
+        unavailable: None,
+        active_task: None,
+        status: "idle".to_owned(),
+        effective_config: None,
+        config_revision: None,
+        storage_schema: None,
+    }
+}
+
 pub(super) fn opened(metadata: SessionMetadata, replay: Replay) -> SessionEvent {
+    let state = idle_state(&metadata.id);
     SessionEvent::Opened {
         metadata,
         replay,
@@ -90,6 +106,8 @@ pub(super) fn opened(metadata: SessionMetadata, replay: Replay) -> SessionEvent 
             context_window: Some(1_000_000),
             input_limit: Some(991_808),
         },
+        state,
+        stream: None,
     }
 }
 
@@ -232,7 +250,8 @@ fn picker_is_on_demand_and_busy_switching_preserves_the_draft() {
         &mut app,
         &mut editor,
         SessionEvent::Error {
-            message: "cannot open target".into(),
+            operation: "open",
+            error: crate::session::runtime::RuntimeError::new("not_found", "cannot open target"),
         },
     );
     assert!(!sessions.pending);

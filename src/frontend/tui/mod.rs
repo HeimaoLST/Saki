@@ -23,11 +23,14 @@ use std::path::PathBuf;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::Sender;
 
 use crate::agent::message::{self, ImageAttachment, UserMessage};
 use crate::command::{self, Command, ParsedInput};
-use crate::session::{SessionCommand, SessionEvent};
+use crate::frontend::session_requests::{PendingRequest, SessionRequests};
+use crate::session::{
+    SessionCommand, SessionEvent, SessionEventReceiver, SessionRequest,
+};
 use editor::Editor;
 use state::{App, Focus};
 use terminal_input::Input;
@@ -37,8 +40,8 @@ use terminal_input::Input;
 /// It consumes session snapshots and tagged Agent events through the channels
 /// the worker provides. It never holds the agent, conversation or tools.
 pub async fn run(
-    input: UnboundedSender<SessionCommand>,
-    mut events: UnboundedReceiver<SessionEvent>,
+    input: Sender<SessionRequest>,
+    mut events: SessionEventReceiver,
 ) -> anyhow::Result<()> {
     // Theme selection happens once; App.theme is the only rendered state.
     // Manual settings never send queries or subscribe to scheme notifications.
@@ -50,6 +53,7 @@ pub async fn run(
     sessions.pending = true;
     let mut editor = Editor::new();
     let mut commands = commands::Commands::default();
+    let mut requests = SessionRequests::new(input);
 
     loop {
         commands.sync(&app, &editor);
@@ -85,9 +89,14 @@ pub async fn run(
                             path_completion::cancel(&mut app);
                         }
                         if let Some(command) = command
-                            && input.send(command).is_err()
+                            && requests
+                                .try_send(command, PendingRequest::Control)
+                                .is_err()
                         {
-                            break;
+                            sessions.pending = false;
+                            app.notify(
+                                "Session command queue is full; try again.".to_owned(),
+                            );
                         }
                         if handled {
                             // A picker key ends any local history search and
@@ -106,33 +115,55 @@ pub async fn run(
                         }
                         let outcome = handle_key(&mut app, &mut editor, key);
                         if let Some(command) = outcome.command
-                            && let Some(request) = commands.dispatch(command, &mut app, &mut editor, &mut sessions)
-                            && input.send(request).is_err()
+                            && let Some((command, request)) =
+                                commands.dispatch(command, &mut app, &mut editor, &mut sessions)
+                            && requests
+                                .try_send(request, PendingRequest::Command(command))
+                                .is_err()
                         {
-                            break;
+                            sessions.pending = false;
+                            app.notify("Command queue is full; draft kept.".to_owned());
                         }
                         if app.help_open {
                             app.history.cancel_search();
                         }
-                        if outcome.cancel
-                            && let Some(metadata) = &app.session
-                        {
-                            app.cancelling = true;
-                            app.status = None;
-                            let command = SessionCommand::Cancel {
-                                session_id: metadata.id.clone(),
-                            };
-                            if input.send(command).is_err() {
-                                break;
-
+                        if outcome.cancel {
+                            if let Some(association) = sessions.current_association() {
+                                let command = SessionCommand::Cancel {
+                                    session_id: association.session_id.clone(),
+                                    task_id: association.task_id.clone(),
+                                };
+                                let pending = PendingRequest::Cancel {
+                                    session_id: association.session_id,
+                                    task_id: association.task_id,
+                                };
+                                if requests.try_send(command, pending).is_err() {
+                                    app.notify("Cancel queue is full; task still running.".to_owned());
+                                } else {
+                                    app.cancelling = true;
+                                    app.status = None;
+                                }
+                            } else {
+                                app.notify("No running task to cancel.".to_owned());
                             }
-                        }
-                        if let Some(message) = outcome.send {
+                        } else if let Some(message) = outcome.send {
                             let Some(metadata) = &app.session else { continue; };
-                            let command = SessionCommand::Send { session_id: metadata.id.clone(), message: message.clone() };
-                            app.submit(message);
-                            if input.send(command).is_err() {
-                                break;
+                            if requests.has_pending_send(&metadata.id) {
+                                app.notify("A message is already pending for this session.".to_owned());
+                            } else {
+                                let command = SessionCommand::Send {
+                                    session_id: metadata.id.clone(),
+                                    message: message.clone(),
+                                };
+                                let pending = PendingRequest::Send {
+                                    session_id: metadata.id.clone(),
+                                    message,
+                                };
+                                if requests.try_send(command, pending).is_err() {
+                                    app.notify("Send queue is full; draft kept.".to_owned());
+                                } else {
+                                    app.status = Some("Sending…".to_owned());
+                                }
                             }
                         }
                         if outcome.paste_clipboard {
@@ -181,7 +212,13 @@ pub async fn run(
                             path_completion::cancel(&mut app);
                             app.text_selection.clear();
                             sessions.pending = true;
-                            if input.send(SessionCommand::List).is_err() { break; }
+                            if requests
+                                .try_send(SessionCommand::List, PendingRequest::Control)
+                                .is_err()
+                            {
+                                sessions.pending = false;
+                                app.notify("Session command queue is full; try again.".to_owned());
+                            }
                             continue;
                         }
                         if path_completion::active(&app) {
@@ -212,23 +249,69 @@ pub async fn run(
                     }
                 }
             }
-            maybe = events.recv() => {
-                match maybe {
-                    Some(event) => {
-                        commands.before_event(&mut editor, &event);
-                        sessions.apply_event(&mut app, &mut editor, event);
-                        // Coalesce bursts into one redraw without starving terminal input.
-                        for _ in 0..127 {
-                            match events.try_recv() {
-                                Ok(event) => {
-                                    commands.before_event(&mut editor, &event);
-                                    sessions.apply_event(&mut app, &mut editor, event);
+            packet = events.recv() => {
+                let Some(packet) = packet else { break; };
+                let request_id = packet.request_id;
+                let resolution = request_id.and_then(|id| requests.take(id));
+                let mut handled = false;
+                match resolution {
+                    Some(PendingRequest::Send { .. }) => match &packet.event {
+                        SessionEvent::Accepted => {
+                            if let Some(association) = packet.association.clone() {
+                                if let Some(PendingRequest::Send { message, .. }) = &resolution {
+                                    sessions.accept_send(&mut app, &mut editor, association, message);
                                 }
-                                Err(_) => break,
+                            } else {
+                                app.notify("Send accepted without task association.".to_owned());
                             }
+                            app.status = None;
+                            handled = true;
+                        }
+                        SessionEvent::Error { operation, error } => {
+                            app.status = None;
+                            app.notify(format!("{}: {}", operation, error.message));
+                            handled = true;
+                        }
+                        _ => {}
+                    },
+                    Some(PendingRequest::Command(_)) => {
+                        sessions.pending = false;
+                        match &packet.event {
+                            SessionEvent::Error { operation, error } => {
+                                app.notify(format!("{}: {}", operation, error.message));
+                                handled = true;
+                            }
+                            _ => editor.reset(),
                         }
                     }
-                    None => break,
+                    Some(PendingRequest::Control) => {
+                        sessions.pending = false;
+                        if let SessionEvent::Error { operation, error } = &packet.event {
+                            app.notify(format!("{}: {}", operation, error.message));
+                            handled = true;
+                        }
+                    }
+                    Some(PendingRequest::Cancel { .. }) => match &packet.event {
+                        SessionEvent::Cancelled { status } => {
+                            if *status == "not_running" {
+                                app.cancelling = false;
+                                app.notify("No running task to cancel.".to_owned());
+                            }
+                            handled = true;
+                        }
+                        SessionEvent::Error { operation, error } => {
+                            app.cancelling = false;
+                            app.notify(format!("{}: {}", operation, error.message));
+                            handled = true;
+                        }
+                        _ => {}
+                    },
+                    None => {}
+                }
+                if !handled {
+                    let association = packet.association.clone();
+                    let event = packet.event;
+                    sessions.apply_event_with_association(&mut app, &mut editor, event, association);
                 }
             }
             _ = tokio::time::sleep_until(feedback_deadline.unwrap_or_else(tokio::time::Instant::now)), if feedback_deadline.is_some() => {
@@ -537,7 +620,7 @@ fn input_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutcome {
                 match command::parse(&editor.text(), !editor.images().is_empty()) {
                     Ok(ParsedInput::Command(command)) => outcome.command = Some(command),
                     Ok(ParsedInput::Message(text)) if !app.running => {
-                        let mut message = editor.take();
+                        let mut message = editor.draft_message();
                         message.text = text;
                         outcome.send = Some(message);
                     }

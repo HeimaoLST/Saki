@@ -114,8 +114,24 @@ fn session_fixture() -> (
         .unwrap();
     (root, store, id)
 }
+fn idle_state(id: &str) -> crate::session::runtime::SessionState {
+    crate::session::runtime::SessionState {
+        session_id: id.to_owned(),
+        metadata: None,
+        loaded: true,
+        state: "idle",
+        unavailable: None,
+        active_task: None,
+        status: "idle".to_owned(),
+        effective_config: None,
+        config_revision: None,
+        storage_schema: None,
+    }
+}
+
 fn snapshot_event(store: &crate::session::store::SessionStore, id: &str) -> SessionEvent {
     let loaded = store.open(id).unwrap();
+    let state = idle_state(&loaded.metadata.id);
     SessionEvent::Opened {
         metadata: loaded.metadata,
         replay: loaded.replay,
@@ -125,6 +141,25 @@ fn snapshot_event(store: &crate::session::store::SessionStore, id: &str) -> Sess
             context_window: Some(262_144),
             input_limit: Some(253_952),
         },
+        state,
+        stream: None,
+    }
+}
+
+fn association(id: &str, task: &str) -> crate::session::runtime::Association {
+    crate::session::runtime::Association {
+        session_id: id.to_owned(),
+        task_id: task.to_owned(),
+        message_id: format!("{task}-message"),
+    }
+}
+
+fn finished(status: &'static str) -> crate::session::runtime::TaskFinished {
+    crate::session::runtime::TaskFinished {
+        status,
+        error: None,
+        persistence: None,
+        history_required: false,
     }
 }
 
@@ -134,52 +169,63 @@ async fn console_local_commands_use_session_operations_and_never_send_model_mess
     let script = format!(
         "/help\n/rename Compiler work\n/sessions\n/new\n/resume {id}\n/resume missing\n/resuem\n"
     );
-    let (tx, mut requests) = tokio::sync::mpsc::unbounded_channel();
-    let (events, rx) = tokio::sync::mpsc::unbounded_channel();
-    events.send(snapshot_event(&store, &id)).unwrap();
-    let backend = async {
-        let mut operations = Vec::new();
-        while let Some(request) = requests.recv().await {
-            let event = match request {
-                SessionCommand::Send { .. } => panic!("local command reached model message path"),
-                SessionCommand::Rename { session_id, title } => {
-                    operations.push("rename");
-                    SessionEvent::Renamed(store.rename(&session_id, &title).unwrap())
-                }
-                SessionCommand::List => {
-                    operations.push("list");
-                    SessionEvent::Listed(store.list().unwrap())
-                }
-                SessionCommand::Create => {
-                    operations.push("create");
-                    let new = store
-                        .create(
-                            &root,
-                            "test",
-                            "system",
-                            crate::agent::conversation::CompactionConfig::new(262_144),
-                        )
-                        .unwrap();
-                    snapshot_event(&store, &new)
-                }
-                SessionCommand::Open { session_id } => {
-                    operations.push("open");
-                    if session_id == "missing" {
-                        SessionEvent::Error {
-                            message: "session missing".into(),
-                        }
-                    } else {
-                        snapshot_event(&store, &session_id)
+    let (tx, mut requests) = tokio::sync::mpsc::channel(32);
+    let (events, rx) = crate::session::channel::channel(crate::agent::events::OutputState::default());
+    events.send(snapshot_event(&store, &id)).await.unwrap();
+    let backend = {
+        let events = events.clone();
+        let store = store.clone();
+        let root = root.clone();
+        async move {
+            let mut operations = Vec::new();
+            while let Some(request) = requests.recv().await {
+                let request_id = request.request_id;
+                let event = match request.command {
+                    SessionCommand::Send { .. } => panic!("local command reached model message path"),
+                    SessionCommand::Rename { session_id, title } => {
+                        operations.push("rename");
+                        SessionEvent::Renamed(store.rename(&session_id, &title).unwrap())
                     }
-                }
-                SessionCommand::Cancel { .. } => SessionEvent::Error {
-                    message: "session missing".into(),
-                },
-            };
-            events.send(event).unwrap();
+                    SessionCommand::List => {
+                        operations.push("list");
+                        SessionEvent::Listed(store.list().unwrap())
+                    }
+                    SessionCommand::Create => {
+                        operations.push("create");
+                        let new = store
+                            .create(
+                                &root,
+                                "test",
+                                "system",
+                                crate::agent::conversation::CompactionConfig::new(262_144),
+                            )
+                            .unwrap();
+                        snapshot_event(&store, &new)
+                    }
+                    SessionCommand::Open { session_id } => {
+                        operations.push("open");
+                        if session_id == "missing" {
+                            SessionEvent::Error {
+                                operation: "open",
+                                error: crate::session::runtime::RuntimeError::new(
+                                    "not_found",
+                                    "session missing",
+                                ),
+                            }
+                        } else {
+                            snapshot_event(&store, &session_id)
+                        }
+                    }
+                    SessionCommand::Cancel { .. } => SessionEvent::Error {
+                        operation: "cancel",
+                        error: crate::session::runtime::RuntimeError::new("not_running", "missing"),
+                    },
+                };
+                events.send_reply(request_id, None, event).await.unwrap();
+            }
+            drop(events);
+            operations
         }
-        drop(events);
-        operations
     };
     let mut output = Vec::new();
     let frontend = run_with_io(
@@ -213,63 +259,76 @@ async fn console_local_commands_use_session_operations_and_never_send_model_mess
 async fn console_can_handle_commands_during_a_job_and_drain_piped_messages_after_eof() {
     let (root, store, id) = session_fixture();
     let script = "first job\n/help\n/sessions\n/rename Active job\nsecond job\n";
-    let (tx, mut requests) = tokio::sync::mpsc::unbounded_channel();
-    let (events, rx) = tokio::sync::mpsc::unbounded_channel();
-    events.send(snapshot_event(&store, &id)).unwrap();
-    let backend = async {
-        let mut sent = Vec::new();
-        while let Some(request) = requests.recv().await {
-            match request {
-                SessionCommand::Send {
-                    session_id,
-                    message,
-                } => {
-                    assert_eq!(session_id, id);
-                    sent.push(message.text);
-                    if sent.len() == 1 {
+    let (tx, mut requests) = tokio::sync::mpsc::channel(32);
+    let (events, rx) = crate::session::channel::channel(crate::agent::events::OutputState::default());
+    events.send(snapshot_event(&store, &id)).await.unwrap();
+    let backend = {
+        let events = events.clone();
+        let store = store.clone();
+        let id = id.clone();
+        async move {
+            let mut sent = Vec::new();
+            while let Some(request) = requests.recv().await {
+                let request_id = request.request_id;
+                match request.command {
+                    SessionCommand::Send {
+                        session_id,
+                        message,
+                    } => {
+                        assert_eq!(session_id, id);
+                        sent.push(message.text);
+                        let assoc = association(&id, &format!("task-{sent}"));
+                        events.send_reply(request_id, Some(assoc.clone()), SessionEvent::Accepted).await.unwrap();
+                        if sent.len() == 1 {
+                            events
+                                .send_associated(
+                                    assoc,
+                                    SessionEvent::Agent {
+                                        session_id: id.clone(),
+                                        event: AgentEvent::ResponseTextDelta {
+                                            item_id: "m".into(),
+                                            delta: "Working".into(),
+                                        },
+                                    },
+                                )
+                                .await
+                                .unwrap();
+                            events
+                                .send_associated(assoc, SessionEvent::Finished(finished("completed")))
+                                .await
+                                .unwrap();
+                        } else {
+                            events
+                                .send_associated(assoc, SessionEvent::Finished(finished("completed")))
+                                .await
+                                .unwrap();
+                        }
+                    }
+                    SessionCommand::List => {
+                        assert_eq!(sent.len(), 1);
                         events
-                            .send(SessionEvent::Agent {
-                                session_id: id.clone(),
-                                event: AgentEvent::ResponseTextDelta {
-                                    item_id: "m".into(),
-                                    delta: "Working".into(),
-                                },
-                            })
-                            .unwrap();
-                    } else {
-                        events
-                            .send(SessionEvent::Agent {
-                                session_id: id.clone(),
-                                event: AgentEvent::TurnCompleted,
-                            })
+                            .send_reply(request_id, None, SessionEvent::Listed(store.list().unwrap()))
+                            .await
                             .unwrap();
                     }
+                    SessionCommand::Rename { session_id, title } => {
+                        assert_eq!(sent.len(), 1);
+                        let metadata = store.rename(&session_id, &title).unwrap();
+                        events
+                            .send_reply(request_id, None, SessionEvent::TitleUpdated(metadata.clone()))
+                            .await
+                            .unwrap();
+                        events
+                            .send_reply(request_id, None, SessionEvent::Renamed(metadata))
+                            .await
+                            .unwrap();
+                    }
+                    _ => panic!("unexpected request"),
                 }
-                SessionCommand::List => {
-                    assert_eq!(sent.len(), 1);
-                    events
-                        .send(SessionEvent::Listed(store.list().unwrap()))
-                        .unwrap();
-                }
-                SessionCommand::Rename { session_id, title } => {
-                    assert_eq!(sent.len(), 1);
-                    let metadata = store.rename(&session_id, &title).unwrap();
-                    events
-                        .send(SessionEvent::TitleUpdated(metadata.clone()))
-                        .unwrap();
-                    events.send(SessionEvent::Renamed(metadata)).unwrap();
-                    events
-                        .send(SessionEvent::Agent {
-                            session_id: id.clone(),
-                            event: AgentEvent::TurnCompleted,
-                        })
-                        .unwrap();
-                }
-                _ => panic!("unexpected request"),
             }
+            drop(events);
+            sent
         }
-        drop(events);
-        sent
     };
     let mut output = Vec::new();
     let frontend = run_with_io(

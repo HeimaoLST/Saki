@@ -4,9 +4,10 @@ use std::{
 };
 
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::Sender;
 
 use crate::agent::AgentEvent;
+use crate::frontend::session_requests::{PendingRequest, SessionRequests};
 use crate::{
     agent::{
         journal::{JournalRecord, TaskStatus},
@@ -14,7 +15,10 @@ use crate::{
     },
     command::{self, Command, ParsedInput},
     protocol::{InputItem, InputMessageContent, MessageRole},
-    session::{SessionCommand, SessionEvent},
+    session::{
+        SessionCommand, SessionEvent, SessionEventReceiver, SessionRequest,
+        runtime::Association,
+    },
 };
 
 /// Independent plain-text front end.
@@ -24,8 +28,8 @@ use crate::{
 /// consuming events until the worker ends, so a piped single message still gets
 /// its answer printed.
 pub async fn run(
-    input: UnboundedSender<SessionCommand>,
-    events: UnboundedReceiver<SessionEvent>,
+    input: Sender<SessionRequest>,
+    events: SessionEventReceiver,
 ) -> anyhow::Result<()> {
     run_with_io(
         input,
@@ -38,69 +42,134 @@ pub async fn run(
 }
 
 async fn run_with_io<R: AsyncBufRead + Unpin, W: Write>(
-    input: UnboundedSender<SessionCommand>,
-    mut events: UnboundedReceiver<SessionEvent>,
+    input: Sender<SessionRequest>,
+    mut events: SessionEventReceiver,
     reader: R,
     writer: W,
     interactive: bool,
 ) -> anyhow::Result<()> {
     let mut output = ConsoleOutput::new(writer);
-    let mut input = Some(input);
+    let mut requests = SessionRequests::new(input);
     let mut lines = reader.lines();
     let mut session_id: Option<String> = None;
+    let mut association: Option<Association> = None;
+    let mut canonical_task: Option<String> = None;
     let mut running = false;
+    let mut sending = false;
     let mut eof = false;
     let mut queue = VecDeque::<UserMessage>::new();
-    let mut pending: Option<(Command, String)> = None;
+    let mut pending: Option<(u64, Command, String)> = None;
+    let mut ctrl_c = Box::pin(tokio::signal::ctrl_c());
     loop {
         if !running
+            && !sending
             && pending.is_none()
             && let Some(message) = queue.pop_front()
         {
-            let request = SessionCommand::Send {
-                session_id: session_id.clone().unwrap(),
-                message,
+            let Some(id) = session_id.clone() else {
+                queue.push_front(message);
+                continue;
             };
-            if input.as_ref().unwrap().send(request).is_err() {
-                break;
+            let pending_request = PendingRequest::Send {
+                session_id: id.clone(),
+                message: message.clone(),
+            };
+            let command = SessionCommand::Send {
+                session_id: id,
+                message: message.clone(),
+            };
+            match requests.try_send(command, pending_request) {
+                Ok(_) => sending = true,
+                Err(()) => {
+                    queue.push_front(message);
+                    output.feedback("Send queue is full. Input kept.", None)?;
+                }
             }
-            running = true;
         }
-        if eof && queue.is_empty() && pending.is_none() {
-            input = None;
+        if eof && queue.is_empty() && pending.is_none() && !sending {
+            requests.close();
         }
         tokio::select! {
-            line = lines.next_line(), if !eof && session_id.is_some() && pending.is_none() => {
+            _ = &mut ctrl_c => {
+                if let Some(association) = &association {
+                    let command = SessionCommand::Cancel {
+                        session_id: association.session_id.clone(),
+                        task_id: association.task_id.clone(),
+                    };
+                    let pending = PendingRequest::Cancel {
+                        session_id: association.session_id.clone(),
+                        task_id: association.task_id.clone(),
+                    };
+                    if requests.try_send(command, pending).is_err() {
+                        output.feedback("Cancel queue is full; task still running.", None)?;
+                    } else {
+                        output.feedback("Cancellation requested.", None)?;
+                    }
+                } else {
+                    break;
+                }
+            }
+            line = lines.next_line(), if !eof && session_id.is_some() && pending.is_none() && !sending => {
                 let Some(line) = line? else { eof = true; continue; };
                 match command::parse(&line, false) {
                     Ok(ParsedInput::Message(text)) => {
                         if interactive && running {
                             output.feedback("Agent is busy. Wait for the current task to finish.", Some(&line))?;
-                        } else { queue.push_back(text.into()); }
+                        } else {
+                            queue.push_back(text.into());
+                        }
                     }
                     Ok(ParsedInput::Command(command)) => {
-                        if command.needs_idle() && running {
-                            output.feedback("Agent is busy. Wait for the current task to finish.", Some(&line))?;
-                        } else if command == Command::Help {
+                        if command == Command::Help {
                             output.close_block()?;
                             writeln!(output.writer, "Local commands:")?;
                             for definition in command::DEFINITIONS { writeln!(output.writer, "  {}  {}", definition.usage, definition.description)?; }
                             writeln!(output.writer, "Use // to send literal slash text. Multiline input stays a message.")?;
                             output.prompt()?;
                         } else {
-                            let request = command.request(session_id.as_deref().unwrap()).unwrap();
-                            if input.as_ref().unwrap().send(request).is_err() { break; }
-                            pending = Some((command, line));
+                            let Some(id) = session_id.as_deref() else { continue; };
+                            let Some(request) = command.request(id) else { continue; };
+                            match requests.try_send(request, PendingRequest::Command(command.clone())) {
+                                Ok(request_id) => {
+                                    pending = Some((request_id, command, line));
+                                }
+                                Err(()) => {
+                                    output.feedback("Command queue is full. Input kept.", Some(&line))?;
+                                }
+                            }
                         }
                     }
                     Err(error) => output.feedback(&error.to_string(), Some(&line))?,
                 }
             }
-            event = events.recv() => {
-                let Some(event) = event else { break; };
-                if pending.as_ref().is_some_and(|(command, _)| command.acknowledged_by(&event)) { pending = None; }
+            packet = events.recv() => {
+                let Some(packet) = packet else { break; };
+                let request_id = packet.request_id;
+                let mut resolution = request_id.and_then(|id| requests.take(id));
+                let packet_association = packet.association.clone();
+                let event = packet.event;
+                match &resolution {
+                    Some(PendingRequest::Send { message, .. }) if matches!(event, SessionEvent::Error { .. }) => {
+                        queue.push_front(message.clone());
+                        sending = false;
+                    }
+                    Some(PendingRequest::Command(_)) => {
+                        if matches!(event, SessionEvent::Error { .. }) {
+                            if let Some((_, _, line)) = pending.take() {
+                                output.feedback("Command failed. Input kept.", Some(&line))?;
+                            }
+                        } else {
+                            pending = None;
+                        }
+                    }
+                    Some(PendingRequest::Control) => { pending = None; }
+                    Some(PendingRequest::Cancel { .. }) if matches!(event, SessionEvent::Error { .. }) => {
+                        output.feedback("Cancel request failed.", None)?;
+                    }
+                    _ => {}
+                }
                 match event {
-                    SessionEvent::Opened { metadata, replay, .. } => {
+                    SessionEvent::Opened { metadata, replay, stream, state, .. } => {
                         output.close_block()?;
                         writeln!(output.writer, "Session: {} ({})", metadata.title, metadata.id)?;
                         output.restore(&replay)?;
@@ -108,7 +177,18 @@ async fn run_with_io<R: AsyncBufRead + Unpin, W: Write>(
                             writeln!(output.writer, "Previous task: {:?}. Nothing was re-executed.", replay.status)?;
                         }
                         session_id = Some(metadata.id);
+                        running = stream.is_some() || state.active_task.is_some();
+                        association = stream;
+                        canonical_task = None;
+                        sending = false;
                         output.prompt()?;
+                    }
+                    SessionEvent::HistoryRestored { metadata, .. } => {
+                        // Canonical repair is associated with the current view;
+                        // it never selects or acknowledges a command.
+                        if session_id.as_deref() == Some(metadata.id.as_str()) {
+                            canonical_task = association.as_ref().map(|item| item.task_id.clone());
+                        }
                     }
                     SessionEvent::Listed(sessions) => {
                         output.close_block()?;
@@ -122,16 +202,62 @@ async fn run_with_io<R: AsyncBufRead + Unpin, W: Write>(
                     SessionEvent::Renamed(metadata) => {
                         output.feedback(&format!("Session renamed: {}", metadata.title), None)?;
                     }
-                    SessionEvent::Agent { session_id: id, event } if session_id.as_ref() == Some(&id) => {
-                        let terminal = matches!(event, AgentEvent::TurnCompleted | AgentEvent::TurnInterrupted | AgentEvent::TurnFailed { .. });
-                        output.apply_event(event)?;
-                        if terminal { running = false; if !eof { output.prompt()?; } }
+                    SessionEvent::TitleUpdated(_) => {}
+                    SessionEvent::Accepted => {
+                        sending = false;
+                        output.reset_task();
+                        if packet_association.as_ref().is_some_and(|item| session_id.as_deref() == Some(item.session_id.as_str())) {
+                            association = packet_association.clone();
+                            running = true;
+                        }
                     }
-                    SessionEvent::Error { message } => {
-                        let kept = pending.take().map(|(_, text)| text);
-                        output.feedback(&message, kept.as_deref())?;
+                    SessionEvent::Agent { event, .. } => {
+                        if matches!(event, AgentEvent::TurnCompleted | AgentEvent::TurnInterrupted | AgentEvent::TurnFailed { .. }) {
+                            // Finished owns the single terminal.
+                        } else if packet_association.as_ref().is_none_or(|item| session_id.as_deref() == Some(item.session_id.as_str())) {
+                            output.apply_event(event)?;
+                        }
                     }
-                    _ => {}
+                    SessionEvent::Finished(finished) => {
+                        let matches_current = packet_association.as_ref().is_some_and(|item| session_id.as_deref() == Some(item.session_id.as_str()));
+                        if matches_current {
+                            running = false;
+                            sending = false;
+                            let canonical = packet_association.as_ref().is_some_and(|item| canonical_task.as_deref() == Some(item.task_id.as_str()));
+                            if !canonical {
+                                let event = match finished.status {
+                                    "completed" => AgentEvent::TurnCompleted,
+                                    "interrupted" => AgentEvent::TurnInterrupted,
+                                    _ => AgentEvent::TurnFailed { message: finished.error.as_ref().map_or_else(|| "Task failed.".to_owned(), |error| error.message.clone()) },
+                                };
+                                output.apply_event(event)?;
+                            }
+                            if let Some(error) = &finished.error {
+                                writeln!(output.writer, "Task failed: {} ({})", error.message, error.code)?;
+                            }
+                            if let Some(persistence) = finished.persistence {
+                                writeln!(output.writer, "Task persistence: {persistence}")?;
+                            }
+                            association = None;
+                            canonical_task = None;
+                            if !eof { output.prompt()?; }
+                        }
+                    }
+                    SessionEvent::Cancelled { status } => {
+                        if status == "not_running" {
+                            running = false;
+                            output.feedback("No running task to cancel.", None)?;
+                        } else {
+                            output.feedback("Cancellation requested; waiting for the task to finish.", None)?;
+                        }
+                    }
+                    SessionEvent::Error { operation, error } => {
+                        let kept = pending.take().map(|(_, _, line)| line);
+                        output.feedback(&format!("{operation}: {}", error.message), kept.as_deref())?;
+                        if let Some(PendingRequest::Send { .. }) = resolution.take() {
+                            sending = false;
+                        }
+                    }
                 }
             }
         }
@@ -248,6 +374,11 @@ impl<W: Write> ConsoleOutput<W> {
             }
         }
         Ok(())
+    }
+
+    fn reset_task(&mut self) {
+        self.active = None;
+        self.streamed.clear();
     }
 
     fn close_block(&mut self) -> std::io::Result<()> {
