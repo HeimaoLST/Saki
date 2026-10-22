@@ -758,9 +758,14 @@ fn old_task_records_without_message_id_remain_readable_with_timestamps() {
         JournalRecord::TaskStarted {
             task_id,
             message_id,
+            configuration,
         } => {
             assert_eq!(task_id, "old-task");
             assert_eq!(*message_id, None);
+            assert!(
+                configuration.is_none(),
+                "old tasks must not inherit the current model"
+            );
         }
         other => panic!("expected TaskStarted, got {other:?}"),
     }

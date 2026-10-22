@@ -566,3 +566,89 @@ async fn invalid_calls_locked_history_and_api_mismatch_have_no_replacement_side_
     assert!(!seen.iter().any(|v| v["type"] == "event"));
     requests(server).await;
 }
+
+#[tokio::test]
+async fn stdio_configuration_discovery_revision_and_readonly_queries_share_service_state() {
+    let directory = Directory::new();
+    let client = ModelClient::for_test("http://127.0.0.1:1/v1".to_owned());
+    let mut driver = Driver::new(&directory, client).await;
+    let capabilities = driver.call("runtime.capabilities", json!({})).await;
+    assert!(
+        capabilities["result"]["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method == "session.config.update")
+    );
+    assert_eq!(capabilities["result"]["multi_connection"], false);
+    let models = driver.call("model.list", json!({})).await;
+    assert!(
+        models["result"]["configured_models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|model| model["model"] == "test")
+    );
+    let id = driver.create().await;
+    let view = driver
+        .call("session.config.get", json!({"session_id":id}))
+        .await;
+    assert_eq!(view["result"]["config_revision"], 1);
+    assert_eq!(
+        view["result"]["effective_config"]["connection_binding"]["state"],
+        "unknown"
+    );
+    assert!(view["result"]["effective_config"]["connection_identity"].is_null());
+    let metadata = directory.0.join("sessions").join(&id).join("metadata.json");
+    let history = directory.0.join("sessions").join(&id).join("history.jsonl");
+    let old_history = std::fs::read(&history).unwrap();
+    for patch in [
+        json!({"model":null}),
+        json!({"compaction":null}),
+        json!({"unexpected":1}),
+    ] {
+        assert_eq!(
+            driver
+                .call(
+                    "session.config.update",
+                    json!({"session_id":id,"expected_revision":1,"patch":patch})
+                )
+                .await["error"]["code"],
+            "invalid_request"
+        );
+    }
+    assert_eq!(driver.call("session.config.update", json!({"session_id":id,"expected_revision":1,"patch":{"working_directory":directory.0}})).await["error"]["code"], "immutable_field");
+    let updated = driver.call("session.config.update", json!({"session_id":id,"expected_revision":1,"patch":{"model":"custom-b","compaction":CompactionConfig::new(32768)}})).await;
+    assert_eq!(updated["result"]["effective_config"]["model"], "custom-b");
+    assert_eq!(updated["result"]["config_revision"], 2);
+    assert_eq!(updated["result"]["effective_from"], "next_task");
+    let committed = std::fs::read(&metadata).unwrap();
+    let stale = driver
+        .call(
+            "session.config.update",
+            json!({"session_id":id,"expected_revision":1,"patch":{"model":"bad"}}),
+        )
+        .await;
+    assert_eq!(stale["error"]["code"], "config_conflict");
+    assert_eq!(stale["error"]["current_revision"], 2);
+    let noop = driver
+        .call(
+            "session.config.update",
+            json!({"session_id":id,"expected_revision":2,"patch":{}}),
+        )
+        .await;
+    assert_eq!(noop["result"]["config_revision"], 2);
+    assert_eq!(std::fs::read(&metadata).unwrap(), committed);
+    assert_eq!(std::fs::read(&history).unwrap(), old_history);
+    let released = driver
+        .call("session.release", json!({"session_id":id}))
+        .await;
+    assert_eq!(released["result"]["loaded"], false);
+    let unloaded = driver
+        .call("session.config.get", json!({"session_id":id}))
+        .await;
+    assert_eq!(unloaded["result"]["effective_config"]["model"], "custom-b");
+    assert_eq!(unloaded["result"]["config_revision"], 2);
+    assert_eq!(std::fs::read(history).unwrap(), old_history);
+    driver.shutdown().await;
+}

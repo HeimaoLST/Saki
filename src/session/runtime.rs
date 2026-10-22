@@ -19,6 +19,10 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use super::{
     SYSTEM_PROMPT, build_agent,
+    config::{
+        self, CatalogModel, ConfigPatch, ConfigView, ConfiguredModel, EffectiveConfig,
+        PreparedModelConfig,
+    },
     store::{SessionMetadata, SessionStore, SessionSummary},
 };
 use crate::{
@@ -34,6 +38,7 @@ use crate::{
         message::UserMessage,
     },
     client::{ModelApi, ModelClient},
+    model::catalog::ModelCatalog,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,6 +47,8 @@ pub struct RuntimeError {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_revision: Option<u64>,
 }
 
 impl RuntimeError {
@@ -50,7 +57,17 @@ impl RuntimeError {
             code,
             message: message.into(),
             session_id: None,
+            current_revision: None,
         }
+    }
+
+    pub(crate) fn conflict(revision: u64) -> Self {
+        let mut error = Self::new(
+            "config_conflict",
+            "configuration revision changed; read config before retrying",
+        );
+        error.current_revision = Some(revision);
+        error
     }
 
     pub(crate) fn session(mut self, id: &str) -> Self {
@@ -83,6 +100,12 @@ pub struct SessionState {
     pub state: &'static str,
     pub active_task: Option<ActiveTaskState>,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_config: Option<Box<EffectiveConfig>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage_schema: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -221,6 +244,18 @@ pub struct AcceptedTask {
 
 #[derive(Serialize)]
 pub enum RuntimeCommand {
+    Capabilities,
+    Models {
+        connection_id: String,
+    },
+    ConfigGet {
+        session_id: String,
+    },
+    ConfigUpdate {
+        session_id: String,
+        expected_revision: u64,
+        patch: ConfigPatch,
+    },
     Create {
         working_directory: Option<PathBuf>,
         system_prompt: Option<String>,
@@ -256,6 +291,17 @@ pub enum RuntimeCommand {
 }
 
 pub enum RuntimeReply {
+    Capabilities(Capabilities),
+    Models {
+        connection_id: String,
+        models: Vec<CatalogModel>,
+        configured_models: Vec<ConfiguredModel>,
+    },
+    Config(ConfigView),
+    ConfigUpdated {
+        config: ConfigView,
+        effective_from: &'static str,
+    },
     Session(SessionState),
     List {
         sessions: Vec<SessionSummaryView>,
@@ -276,6 +322,17 @@ pub enum RuntimeReply {
     Shutdown {
         state: &'static str,
     },
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Capabilities {
+    pub protocol_version: u32,
+    pub methods: Vec<&'static str>,
+    pub max_active_tasks: usize,
+    pub session_configuration: bool,
+    pub multi_connection: bool,
+    pub external_tools: bool,
+    pub caller_context: bool,
 }
 
 #[derive(Clone)]
@@ -342,6 +399,7 @@ pub struct Runtime {
     model: String,
     config: CompactionConfig,
     limits: EventLimits,
+    catalog: Option<Arc<ModelCatalog>>,
 }
 
 impl Runtime {
@@ -359,7 +417,13 @@ impl Runtime {
             model,
             config,
             limits: EventLimits::default(),
+            catalog: None,
         }
+    }
+
+    pub fn with_catalog(mut self, catalog: Option<ModelCatalog>) -> Self {
+        self.catalog = catalog.map(Arc::new);
+        self
     }
 
     pub fn api(&self) -> ModelApi {
@@ -405,11 +469,13 @@ impl Runtime {
             model: self.model,
             config: self.config,
             limits: self.limits,
+            catalog: self.catalog,
             output,
             work_drained: drained_tx,
             sessions: HashMap::new(),
             active: None,
             preparing: HashSet::new(),
+            configuring: HashSet::new(),
             in_flight: 0,
             accepting: true,
             commands: commands_rx,
@@ -438,6 +504,12 @@ struct OpDone {
 }
 
 enum Prepared {
+    Configuration(ConfigView),
+    Configured {
+        session_id: String,
+        metadata: SessionMetadata,
+        selection: PreparedModelConfig,
+    },
     Created {
         metadata: SessionMetadata,
         agent: Agent,
@@ -472,6 +544,8 @@ struct SessionEntry {
     metadata: SessionMetadata,
     agent: Option<Agent>,
     status: TaskStatus,
+    system_prompt: String,
+    commit_unknown: bool,
 }
 
 struct Active {
@@ -494,11 +568,13 @@ struct RuntimeActor {
     model: String,
     config: CompactionConfig,
     limits: EventLimits,
+    catalog: Option<Arc<ModelCatalog>>,
     output: OutputState,
     work_drained: watch::Sender<bool>,
     sessions: HashMap<String, SessionEntry>,
     active: Option<Active>,
     preparing: HashSet<String>,
+    configuring: HashSet<String>,
     in_flight: usize,
     accepting: bool,
     commands: mpsc::Receiver<Envelope>,
@@ -632,10 +708,22 @@ impl RuntimeActor {
         self.in_flight = self.in_flight.saturating_sub(1);
         if let Some(session_id) = &done.session_id {
             self.preparing.remove(session_id);
+            self.configuring.remove(session_id);
         }
         let reply = match done.result {
             Ok(prepared) => self.apply(prepared),
-            Err(error) => Err(error),
+            Err(error) => {
+                if error.code == "commit_unknown"
+                    && let Some(session) = done
+                        .session_id
+                        .as_ref()
+                        .and_then(|id| self.sessions.get_mut(id))
+                {
+                    session.agent = None;
+                    session.commit_unknown = true;
+                }
+                Err(error)
+            }
         };
         let _ = done.reply.send(reply);
     }
@@ -643,6 +731,84 @@ impl RuntimeActor {
     fn handle_command(&mut self, envelope: Envelope) {
         let Envelope { command, reply } = envelope;
         match command {
+            RuntimeCommand::Capabilities => {
+                let _ = reply.send(Ok(RuntimeReply::Capabilities(Capabilities {
+                    protocol_version: 1,
+                    methods: vec![
+                        "runtime.capabilities",
+                        "model.list",
+                        "session.config.get",
+                        "session.config.update",
+                        "session.create",
+                        "session.load",
+                        "session.list",
+                        "session.rename",
+                        "session.history",
+                        "session.status",
+                        "session.release",
+                        "task.send",
+                        "task.cancel",
+                        "runtime.shutdown",
+                    ],
+                    max_active_tasks: 1,
+                    session_configuration: true,
+                    multi_connection: false,
+                    external_tools: false,
+                    caller_context: false,
+                })));
+            }
+            RuntimeCommand::Models { connection_id } => {
+                if connection_id != "default" {
+                    let _ = reply.send(Err(RuntimeError::new(
+                        "unknown_connection",
+                        "connection is not configured",
+                    )));
+                    return;
+                }
+                let models = self.catalog.as_ref().map_or_else(Vec::new, |catalog| {
+                    catalog
+                        .entries()
+                        .into_iter()
+                        .map(|entry| CatalogModel {
+                            catalog_id: entry.id,
+                            name: entry.name,
+                            limits: entry.limits,
+                        })
+                        .collect()
+                });
+                let configured_models = vec![ConfiguredModel {
+                    model: self.model.clone(),
+                    compaction: self.config,
+                }];
+                let _ = reply.send(Ok(RuntimeReply::Models {
+                    connection_id,
+                    models,
+                    configured_models,
+                }));
+            }
+            RuntimeCommand::ConfigGet { session_id } => {
+                if !self.admit() {
+                    self.reject_busy(reply);
+                    return;
+                }
+                let store = self.store.clone();
+                let api = self.client.api().as_str().to_owned();
+                self.spawn_op(reply, None, move || {
+                    let metadata = metadata_for(&store, &api, &session_id)?;
+                    let replay = replay_for(&store, &api, &session_id)?;
+                    Ok(Prepared::Configuration(ConfigView::from_metadata(
+                        &metadata,
+                        config::system_prompt(&replay.context),
+                    )))
+                });
+            }
+            RuntimeCommand::ConfigUpdate {
+                session_id,
+                expected_revision,
+                patch,
+            } => {
+                self.configure(reply, session_id, expected_revision, patch);
+            }
             RuntimeCommand::Create {
                 working_directory,
                 system_prompt,
@@ -873,6 +1039,111 @@ impl RuntimeActor {
         }
     }
 
+    fn configure(
+        &mut self,
+        reply: oneshot::Sender<ReplyResult>,
+        session_id: String,
+        expected_revision: u64,
+        patch: ConfigPatch,
+    ) {
+        if self.configuring.contains(&session_id) {
+            let revision = self
+                .sessions
+                .get(&session_id)
+                .expect("configuration reserves a loaded session")
+                .metadata
+                .config_revision;
+            let mut error = RuntimeError::conflict(revision);
+            error.message =
+                "another configuration update is being committed; read config before retrying"
+                    .to_owned();
+            let _ = reply.send(Err(error.session(&session_id)));
+            return;
+        }
+        if self.preparing.contains(&session_id)
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.association.session_id == session_id)
+        {
+            let _ = reply.send(Err(RuntimeError::new(
+                "busy",
+                "session has accepted work or a configuration operation",
+            )
+            .session(&session_id)));
+            return;
+        }
+        let Some(session) = self.sessions.get(&session_id) else {
+            let _ = reply.send(Err(RuntimeError::new(
+                "not_found",
+                "load the session before updating configuration",
+            )
+            .session(&session_id)));
+            return;
+        };
+        let Some(agent) = session.agent.as_ref() else {
+            let _ = reply.send(Err(RuntimeError::new(
+                "commit_unknown",
+                "reload the session before changing its configuration",
+            )
+            .session(&session_id)));
+            return;
+        };
+        if session.metadata.config_revision != expected_revision {
+            let _ = reply.send(Err(RuntimeError::conflict(
+                session.metadata.config_revision,
+            )
+            .session(&session_id)));
+            return;
+        }
+        let selection = match config::prepare_model_config(
+            &session.metadata,
+            agent.context_items(),
+            patch,
+            self.catalog.as_deref(),
+            &self.model,
+            self.config,
+        ) {
+            Ok(selection) => selection,
+            Err(error) => {
+                let _ = reply.send(Err(error.session(&session_id)));
+                return;
+            }
+        };
+        if !selection.changed {
+            let view = ConfigView::from_metadata(&session.metadata, session.system_prompt.clone());
+            let _ = reply.send(Ok(RuntimeReply::ConfigUpdated {
+                config: view,
+                effective_from: "next_task",
+            }));
+            return;
+        }
+        if !self.admit() {
+            self.reject_busy(reply);
+            return;
+        }
+        self.preparing.insert(session_id.clone());
+        self.configuring.insert(session_id.clone());
+        let store = self.store.clone();
+        let id = session_id.clone();
+        self.spawn_op(reply, Some(session_id), move || {
+            let metadata = store
+                .update_model_config(
+                    &id,
+                    expected_revision,
+                    selection.model.clone(),
+                    selection.compaction.get(),
+                    selection.capacity_source.clone(),
+                )
+                .map_err(|error| error.session(&id))?;
+            Ok(Prepared::Configured {
+                session_id: id,
+                metadata,
+                selection,
+            })
+        });
+    }
+
     fn send_command(
         &mut self,
         reply: oneshot::Sender<ReplyResult>,
@@ -898,6 +1169,14 @@ impl RuntimeActor {
             let _ = reply.send(Err(
                 RuntimeError::new("busy", "session is being prepared").session(&session_id)
             ));
+            return;
+        }
+        if session.commit_unknown {
+            let _ = reply.send(Err(RuntimeError::new(
+                "commit_unknown",
+                "configuration publication is uncertain; inspect config and reload",
+            )
+            .session(&session_id)));
             return;
         }
         if session.agent.is_none() {
@@ -938,6 +1217,12 @@ impl RuntimeActor {
                 return;
             }
         };
+        let configuration = journal::TaskConfiguration {
+            model: session.metadata.model.clone(),
+            api: session.metadata.api.clone(),
+            compaction: session.metadata.compaction,
+            config_revision: session.metadata.config_revision,
+        };
         let Some(agent) = self
             .sessions
             .get_mut(&session_id)
@@ -967,7 +1252,12 @@ impl RuntimeActor {
         let worker = tokio::spawn(async move {
             let mut agent = agent;
             let result = agent
-                .handle_task(message, worker_task_id, worker_message_id)
+                .handle_configured_task(
+                    message,
+                    worker_task_id,
+                    worker_message_id,
+                    Some(configuration),
+                )
                 .await;
             (agent, result)
         });
@@ -1102,6 +1392,30 @@ impl RuntimeActor {
 
     fn apply(&mut self, prepared: Prepared) -> std::result::Result<RuntimeReply, RuntimeError> {
         match prepared {
+            Prepared::Configuration(view) => Ok(RuntimeReply::Config(view)),
+            Prepared::Configured {
+                session_id,
+                metadata,
+                selection,
+            } => {
+                let session = self
+                    .sessions
+                    .get_mut(&session_id)
+                    .expect("configuration holds session admission");
+                let agent = session
+                    .agent
+                    .as_mut()
+                    .expect("configuration preserves the session agent");
+                agent.apply_model_config(selection.model, selection.compaction);
+                session.metadata = metadata;
+                Ok(RuntimeReply::ConfigUpdated {
+                    config: ConfigView::from_metadata(
+                        &session.metadata,
+                        session.system_prompt.clone(),
+                    ),
+                    effective_from: "next_task",
+                })
+            }
             Prepared::Created {
                 metadata,
                 agent,
@@ -1113,12 +1427,15 @@ impl RuntimeActor {
                 status,
             } => {
                 let id = metadata.id.clone();
+                let system_prompt = config::system_prompt(agent.context_items());
                 self.sessions.insert(
                     id.clone(),
                     SessionEntry {
                         metadata: metadata.clone(),
                         agent: Some(agent),
                         status,
+                        system_prompt,
+                        commit_unknown: false,
                     },
                 );
                 Ok(RuntimeReply::Session(self.session_state(
@@ -1190,8 +1507,18 @@ impl RuntimeActor {
                 .unwrap_or("unknown")
                 .to_owned()
         };
+        let config = metadata.as_ref().and_then(|metadata| {
+            self.sessions
+                .get(session_id)
+                .map(|session| ConfigView::from_metadata(metadata, session.system_prompt.clone()))
+        });
         SessionState {
             session_id: session_id.to_owned(),
+            effective_config: config
+                .as_ref()
+                .map(|view| Box::new(view.effective_config.clone())),
+            config_revision: config.as_ref().map(|view| view.config_revision),
+            storage_schema: config.as_ref().map(|view| view.storage_schema),
             metadata,
             loaded: self.sessions.contains_key(session_id),
             state: if running { "running" } else { "idle" },
@@ -1389,3 +1716,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../../tests/session/service.rs"]
 mod service_tests;
+
+#[cfg(test)]
+#[path = "../../tests/session/config.rs"]
+mod config_tests;

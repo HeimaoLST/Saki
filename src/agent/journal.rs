@@ -21,6 +21,14 @@ pub enum TaskStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskConfiguration {
+    pub model: String,
+    pub api: String,
+    pub compaction: super::conversation::CompactionConfig,
+    pub config_revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum JournalRecord {
     Messages {
@@ -39,6 +47,8 @@ pub enum JournalRecord {
         /// Older journals omit it and read back as `None`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        configuration: Option<TaskConfiguration>,
     },
     TaskFinished {
         task_id: String,

@@ -1,6 +1,6 @@
 # Runtime 调用契约与实施规划
 
-更新日期：2026-10-21。状态：**调用契约已确认；首轮机器入口由 #60 交付；跨端接入与后续能力分别追踪**。
+更新日期：2026-10-22。状态：**调用契约已确认；首轮机器入口由 #60 交付；跨端接入与后续能力分别追踪**。
 
 需求依据：[Agent runtime 需求](../requirements/agent-runtime.md)、[#43](https://github.com/HeimaoLST/Saki/issues/43) 及 [GUI 首轮交接](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6235030388)。本文定义跨宿主调用契约与验收边界；实时优先级、任务状态和负责人以 GitHub 为准。
 
@@ -808,3 +808,32 @@ Unix stdio pipe 使用非阻塞 AsyncFd，输出 deadline 可以中断等待内�
 取消可跳过后续展示发送并设置可选 `history_required:true`；外层模型 future 被取消而丢弃正在等待的发送也覆盖此标记。业务 journal 继续由 Agent/Conversation 写入，显示丢帧不成为持久化来源。OutputClosed、EOF 与 Shutdown 都不隐式取消模型或工具；输出期限不等于任务总执行期限。
 
 #109 接入时使用以上 typed 命令和独立 TaskEvents，保留终端投影、草稿、命令解析及自动标题默认行为；自动标题服务化和旧 SessionManager 委托移除仍需 Runtime/TUI 对齐后交付。GUI 继续使用相同 stdio v1；本 PR 无桌面 UI 修改，也不提供 Rust library 打包或 HTTP 入口。
+
+### #105 同连接配置候选实现事实
+
+更新日期：2026-10-22。分类：**本 PR 候选实现事实，尚未合入 dev**。依赖 #104 的 typed 服务，同连接模型选择统一使用 `session.config.update`，未另建 `session.select_model` 状态机。#32/PR68 的模型容量、原子提交、opaque continuation 约束在此落实；GUI/TUI 模型选择界面仍由对应消费方负责。
+
+| 方法 | 当前候选的实际行为 |
+| --- | --- |
+| `runtime.capabilities` | 返回 methods、protocol_version、max_active_tasks 和功能标志；session_configuration=true，multi_connection/external_tools/caller_context=false |
+| `model.list` | 可选 connection_id，首版只允许 default；返回已加载容量 `models:[{catalog_id,name,limits}]` 和宿主显式 `configured_models:[{model,compaction}]`，不访问网络。catalog_id 只供容量查找，不能当作 endpoint 的实际模型 ID |
+| `session.config.get` | session_id；返回 effective_config/config_revision/storage_schema/immutable_fields；未 loaded 也能只读查询，零模型/工具调用、不修复 journal |
+| `session.config.update` | session_id、expected_revision、patch；patch 支持 model、catalog_id 或完整 compaction；working_directory 返回 immutable_field。缺省保持、显式 null 拒绝、未知字段拒绝；成功返回完整有效配置及 effective_from=next_task |
+
+~~~json
+{"version":1,"id":"config-1","method":"session.config.update","params":{"session_id":"s1","expected_revision":1,"patch":{"model":"endpoint-model-b","catalog_id":"catalog-provider/model-b"}}}
+~~~
+
+`model` 原样用于实际 endpoint 请求。`catalog_id` 和显式 `compaction` 二选一；缺少来源时只可使用宿主已配置默认模型容量或已加载 catalog 的唯一匹配，未知/歧义返回 model_limits_required，不为新模型猜 256K。显式 compaction 沿用唯一 `CompactionConfig::validate`，非法值返回 invalid_model_limits。catalog 名称、canonical ID 与 provider/model ID 的查找沿用现有规则，明确的完整 root ID 优先于其短别名；目录不证明 endpoint 已开放该模型。
+
+新建 schema 1 会话 revision=1；旧 metadata 缺失字段按 0 读取，首次真实更新变为 1。config_revision 与 capacity_source 同 model/compaction 一起原子保存。修改目标必须 loaded 且无 accepted/running task、无其他修改准备；A 正执行不阻止空闲 B。两个同 revision 的调用先提交再等待时只有一个成功，另一个 config_conflict；冲突返回当前已提交 revision，若另一提交仍准备中，该值可能仍是旧 revision，调用方重新查询而不自动重试。有效模型/预算不变是 no-op，即使容量来源表达不同，也保持原 provenance、revision 和 metadata 字节。
+
+配置候选先完成容量、上下文兼容和不可变字段校验，得到可无失败应用的参数；随后后台文件准备读取最新 metadata、再核对 revision，写临时文件并 sync、rename、sync 目录。提交前错误保持旧 Agent/metadata/usage/history；提交后无法确认返回 commit_unknown，隔离该 session，不允许用旧内存继续 Send。config.get 读取磁盘供对账，显式 Release/Load 后按完整新/旧 metadata 恢复。不用成功回包或 UI 选择推断是否已落盘。
+
+成功发布后，无 await 地切换 Agent 的模型与压缩配置、清除旧 usage baseline，再返回真实有效配置。配置更新本身不发推理、摘要或业务工具请求；降低预算后下一任务沿用既有 compact-before-generation，summary 与 generation 都使用新配置，摘要失败不丢上下文、不 fallback 到原模型。配置本身不重写 history.jsonl。
+
+TaskStarted 新增可选 `configuration:{model,api,compaction,config_revision}`，由 Runtime 在接纳时固定，后续生成/工具/压缩使用同一份 Agent 配置。旧记录没有该字段时返回缺失，不倒填当前模型或版本。模型改变且上下文含 ProviderItem/provider_data 返回 continuation_not_supported，不删除原生续接数据来迁移；可确定的协议图片不兼容返回 config_incompatible。
+
+schema 1 仍未验证原 endpoint，effective_config 返回 connection_binding.state=unknown、connection_identity=null、execution_connection_id=default。此字段仅说明本进程执行连接，不是历史绑定证明。#106 的多连接、增强 prompt/tool selection、显式 schema 2 迁移尚未在本候选开放；#61 的容量并发仍另案。默认终端入口保持既有行为，#109 将消费同一 typed 接口。
+
+验收固定到本 PR SHA：实际 A→B→A 请求、重启恢复 B、接纳配置 journal 快照、两个同时提交的版本冲突、不同 session 的 busy 隔离、no-op 字节不变、未知容量/非法配置/opaque 拒绝、metadata 写入前/rename 前/rename 后故障，以及新模型 summary/generation 和失败后原上下文保留。stdio 同时覆盖 capabilities/model.list、缺省/null/未知字段、版本错误和未 loaded 的只读配置查询。测试/运行/CI 证据记录在 #105 及对应 PR；尚未通过的阶段不以本节代替联合验收。

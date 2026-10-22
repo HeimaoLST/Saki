@@ -190,6 +190,19 @@ impl Agent {
         self
     }
 
+    pub(crate) fn context_items(&self) -> &[crate::protocol::InputItem] {
+        self.conversation.items()
+    }
+
+    pub(crate) fn apply_model_config(
+        &mut self,
+        model: String,
+        config: conversation::ValidatedCompactionConfig,
+    ) {
+        self.model = model;
+        self.conversation.apply_compaction_config(config);
+    }
+
     pub fn with_model(mut self, model: String) -> Self {
         self.model = model;
         self
@@ -252,14 +265,32 @@ impl Agent {
     /// Starts a task with caller-supplied ids. The task id is written to the
     /// journal before `TaskStarted` is emitted; terminal events still belong to
     /// the worker at the `handle_*` return boundary.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "unconfigured task compatibility entry point")
+    )]
     pub async fn handle_task(
         &mut self,
         message: UserMessage,
         task_id: String,
         message_id: String,
     ) -> anyhow::Result<()> {
-        self.conversation
-            .begin_task_with_id(task_id.clone(), Some(message_id.clone()))?;
+        self.handle_configured_task(message, task_id, message_id, None)
+            .await
+    }
+
+    pub async fn handle_configured_task(
+        &mut self,
+        message: UserMessage,
+        task_id: String,
+        message_id: String,
+        configuration: Option<journal::TaskConfiguration>,
+    ) -> anyhow::Result<()> {
+        self.conversation.begin_configured_task(
+            task_id.clone(),
+            Some(message_id.clone()),
+            configuration,
+        )?;
         self.run_started_task(message, task_id, Some(message_id))
             .await
     }
