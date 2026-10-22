@@ -688,6 +688,11 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 	}
 }
 
+func providerAuthFailure(message string) bool {
+	message = strings.TrimSpace(message)
+	return strings.HasPrefix(message, "HTTP 401") || strings.HasPrefix(message, "HTTP 403")
+}
+
 func taskFinishedDetail(payload *runtimeEvent) string {
 	switch payload.Status {
 	case "failed":
@@ -695,6 +700,9 @@ func taskFinishedDetail(payload *runtimeEvent) string {
 			stage := "Task failed"
 			if payload.Error.Code == "model_error" {
 				stage = "Model request failed"
+				if providerAuthFailure(payload.Error.Message) {
+					stage = "Provider authentication failed"
+				}
 			}
 			return stage + ": " + payload.Error.Code + ": " + safeDiagnostic(payload.Error.Message) +
 				". Check provider configuration (API_KEY / SAKI_BASE_URL / SAKI_MODEL); no automatic retry."

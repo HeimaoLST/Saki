@@ -2,9 +2,13 @@ package main
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -198,4 +202,146 @@ func TestTaskFailureKeepsAcceptedHistoryAndLaterDraft(t *testing.T) {
 	if ct.ActiveTaskID != "" || ct.SendState != sendIdle || ct.SessionState != "failed" {
 		t.Fatalf("terminal state = %+v", ct)
 	}
+}
+
+func TestProviderAuthFailureUsesKnownHTTPPrefix(t *testing.T) {
+	for _, message := range []string{"HTTP 401 Unauthorized: bad key", "HTTP 403 Forbidden: no access"} {
+		if !providerAuthFailure(message) {
+			t.Errorf("providerAuthFailure(%q) = false", message)
+		}
+	}
+	for _, message := range []string{"proxy returned 401 text", "HTTP 500 Internal Server Error", "upstream request failed"} {
+		if providerAuthFailure(message) {
+			t.Errorf("providerAuthFailure(%q) guessed from arbitrary text", message)
+		}
+	}
+}
+
+func TestRealRuntimeStartupConfigurationFailure(t *testing.T) {
+	binary := os.Getenv("SAKI_TEST_RUNTIME_BIN")
+	if binary == "" {
+		t.Skip("set SAKI_TEST_RUNTIME_BIN for the real startup failure check")
+	}
+	root := t.TempDir()
+	env := withoutEnv(os.Environ(), "API_KEY")
+	env = append(env,
+		"SAKI_API=openai-responses",
+		"SAKI_BASE_URL=http://127.0.0.1:1/v1",
+		"SAKI_MODEL=fixture",
+		"SAKI_SESSION_DIR="+filepath.Join(root, "sessions"),
+	)
+	ready := make(chan runtimeReady, 1)
+	exited := make(chan error, 1)
+	client, err := startRuntime(runtimeOptions{
+		Binary: binary, Dir: root, Env: env,
+		Handlers: runtimeHandlers{
+			OnReady: func(value runtimeReady) { ready <- value },
+			OnExit:  func(err error) { exited <- err },
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.shutdown() }()
+	select {
+	case <-ready:
+		t.Fatal("runtime without API_KEY must not report ready")
+	case <-exited:
+	case <-time.After(15 * time.Second):
+		t.Fatal("runtime did not exit after configuration failure")
+	}
+	diagnostic := strings.Join(client.diagnostics(), "\n")
+	if !strings.Contains(diagnostic, "API_KEY is not set") {
+		t.Fatalf("missing safe configuration diagnostic: %q", diagnostic)
+	}
+	if strings.Contains(diagnostic, "sk-") {
+		t.Fatalf("diagnostic leaked a secret: %q", diagnostic)
+	}
+}
+
+func TestRealProviderAuthFailureClassification(t *testing.T) {
+	binary := os.Getenv("SAKI_TEST_RUNTIME_BIN")
+	if binary == "" {
+		t.Skip("set SAKI_TEST_RUNTIME_BIN for the real provider auth check")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	env := withoutEnv(os.Environ(), "API_KEY")
+	env = append(env,
+		"API_KEY=offline-fixture",
+		"SAKI_API=openai-responses",
+		"SAKI_BASE_URL="+server.URL+"/v1",
+		"SAKI_MODEL=fixture",
+		"SAKI_CONTEXT_TOKENS=65536",
+		"SAKI_SESSION_DIR="+filepath.Join(root, "sessions"),
+	)
+	ready := make(chan runtimeReady, 1)
+	events := make(chan runtimeEventEnvelope, 8)
+	exited := make(chan error, 1)
+	client, err := startRuntime(runtimeOptions{
+		Binary: binary, Dir: root, Env: env,
+		Handlers: runtimeHandlers{
+			OnReady: func(value runtimeReady) { ready <- value },
+			OnEvent: func(event runtimeEventEnvelope) { events <- event },
+			OnExit:  func(err error) { exited <- err },
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.shutdown() }()
+	select {
+	case <-ready:
+	case err := <-exited:
+		t.Fatalf("runtime exited before ready: %v", err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("runtime did not become ready")
+	}
+	session, err := client.createSession(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := client.sendTask(session.SessionID, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(15 * time.Second)
+	for {
+		select {
+		case event := <-events:
+			if event.TaskID == task.TaskID && event.Event.Type == "task_finished" {
+				if event.Event.Status != "failed" || event.Event.Error == nil || event.Event.Error.Code != "model_error" {
+					t.Fatalf("auth task terminal = %+v", event.Event)
+				}
+				if !providerAuthFailure(event.Event.Error.Message) {
+					t.Fatalf("auth message = %q", event.Event.Error.Message)
+				}
+				detail := taskFinishedDetail(event.Event)
+				if !strings.Contains(detail, "Provider authentication failed") {
+					t.Fatalf("auth detail = %q", detail)
+				}
+				return
+			}
+		case <-exited:
+			t.Fatal("runtime exited before task terminal")
+		case <-deadline:
+			t.Fatal("auth task did not finish")
+		}
+	}
+}
+
+func withoutEnv(env []string, name string) []string {
+	out := env[:0]
+	for _, entry := range env {
+		if strings.HasPrefix(entry, name+"=") {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }
