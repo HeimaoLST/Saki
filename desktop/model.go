@@ -88,21 +88,25 @@ type contact struct {
 
 	// Runtime-backed state. Empty SessionID means the contact has no runtime
 	// session yet; it is created lazily before the first task.send.
-	SessionID      string
-	Loaded         bool
-	LoadErr        string
-	Unavailable    string
-	ActiveTaskID   string
-	LastTaskID     string
-	SendState      sendState
-	SendError      string
-	SubmittedDraft string
-	SubmittedRev   int
-	draftRev       int
-	HistoryDirty   bool
-	StatusDetail   string
-	historyGen     int
-	pendingEvents  []runtimeEventEnvelope
+	SessionID         string
+	Loaded            bool
+	LoadErr           string
+	Unavailable       string
+	ActiveTaskID      string
+	LastTaskID        string
+	SendState         sendState
+	SendError         string
+	SubmittedDraft    string
+	SubmittedRev      int
+	draftRev          int
+	HistoryDirty      bool
+	StatusDetail      string
+	SessionWorkingDir string
+	SessionModel      string
+	SessionAPI        string
+	SessionState      string
+	historyGen        int
+	pendingEvents     []runtimeEventEnvelope
 }
 
 type viewMode int
@@ -138,6 +142,10 @@ type appModel struct {
 	rt              *runtimeClient
 	runtimeStatus   string
 	runtimeErr      string
+	runtimeStage    string
+	runtimeHint     string
+	runtimeBinary   string
+	runtimeAPI      string
 	workDir         string
 	sessionDir      string
 	storePath       string

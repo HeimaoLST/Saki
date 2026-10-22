@@ -91,11 +91,26 @@ func (a *appModel) statusColor(t *ui.Theme, s contactStatus) ui.Color {
 func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 	ui.Column(c).Grow(1).FillHeight().Background(t.Surface).Children(func() {
 		if !a.demo {
-			if a.runtimeStatus == runtimeStateDraining {
+			switch {
+			case a.runtimeStatus == runtimeStateDraining:
 				ui.Text(c, "Draining the runtime…").FontSize(12).Padding(8, 16).TextColor(t.TextMuted)
-			} else if a.runtimeErr != "" {
-				ui.Text(c, a.runtimeErr).FontSize(12).LineHeight(1.4).Padding(8, 16).TextColor(t.Danger)
-			} else if a.runtimeStatus == runtimeStateStarting {
+			case a.runtimeErr != "":
+				label := a.runtimeStage
+				if label == "" {
+					label = "Runtime"
+				}
+				ui.Column(c).Padding(8, 16).Gap(2).Children(func() {
+					ui.Text(c, label+": "+a.runtimeErr).FontSize(12).LineHeight(1.4).TextColor(t.Danger)
+					if a.runtimeHint != "" {
+						ui.Text(c, a.runtimeHint).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+					}
+					ui.Row(c).Children(func() {
+						if ui.Button(c, "Configuration details").FontSize(11).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).Clicked() {
+							a.openSettings()
+						}
+					})
+				})
+			case a.runtimeStatus == runtimeStateStarting:
 				ui.Text(c, "Connecting to runtime…").FontSize(12).Padding(8, 16).TextColor(t.TextMuted)
 			}
 			if ct := a.selectedContact(); ct.LoadErr != "" {
@@ -477,6 +492,10 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	locked := a.profileLocked(ct)
+	if !a.demo {
+		a.runtimePanel(c, t, ct)
+		ui.Divider(c)
+	}
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "Contact settings").FontSize(16).FontWeight(500).TextColor(t.Text)
 		ui.Spacer(c)
@@ -505,6 +524,61 @@ func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 		ui.Button(c, "Cancel").FontSize(13).OnClick(func() { a.closeAux() })
 		ui.PrimaryButton(c, "Save changes").FontSize(13).OnClick(func() { a.saveSettings() })
 	})
+}
+
+func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
+	ui.Text(c, "Runtime & configuration").FontSize(14).FontWeight(500).TextColor(t.Text)
+	status := a.runtimeStatus
+	if status == "" {
+		status = "unknown"
+	}
+	ui.Text(c, "Runtime: "+status).FontSize(12).LineHeight(1.4).TextColor(t.Text)
+	if a.runtimeErr != "" {
+		label := a.runtimeStage
+		if label == "" {
+			label = "Runtime"
+		}
+		ui.Text(c, label+": "+a.runtimeErr).FontSize(12).LineHeight(1.4).TextColor(t.Danger)
+	}
+	if a.runtimeHint != "" {
+		ui.Text(c, a.runtimeHint).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	}
+	helper := a.runtimeBinary
+	if helper == "" {
+		helper = "not found (expected next to Saki as Saki-runtime, or set SAKI_RUNTIME_BIN)"
+	}
+	ui.Text(c, "Helper: "+helper).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Store: "+valueOr(a.storePath, "not configured")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Session directory: "+valueOr(a.sessionDir, "not configured")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "GUI work directory: "+valueOr(a.workDir, "not configured")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	workspace := ct.SessionWorkingDir
+	if workspace == "" {
+		workspace = ct.Workspace
+	}
+	ui.Text(c, "Contact workspace: "+valueOr(workspace, "not configured")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	session := ct.SessionID
+	if session == "" {
+		session = "not created until the first message"
+	}
+	state := ct.SessionState
+	if state == "" {
+		state = "unknown"
+	}
+	ui.Text(c, "Session: "+session+" · state: "+state).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	api := ct.SessionAPI
+	if api == "" {
+		api = a.runtimeAPI
+	}
+	ui.Text(c, "API: "+valueOr(api, "unknown until the runtime session is loaded")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Model: "+valueOr(ct.SessionModel, "unknown until the runtime session is loaded; selection is a later task")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Host configuration: set API_KEY, SAKI_API, SAKI_BASE_URL and SAKI_MODEL in the environment or in the GUI work directory's .env; values stay hidden.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+}
+
+func valueOr(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func toolTitle(m *message) string {
