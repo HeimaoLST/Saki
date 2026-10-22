@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use crate::{
-    agent::AgentEvent,
     client::ModelClient,
     protocol::{
         InputContentPart, InputItem, InputMessageContent, MessageRole, ModelRequest, OutputItem,
@@ -48,16 +47,6 @@ pub(super) fn title_from_output(output: &[OutputItem]) -> Option<String> {
     let title: String = collapsed.chars().take(TITLE_MAX_CHARS).collect();
     let title = title.trim_matches(['"', '\'', '`']).trim();
     (!title.is_empty() && title != store::DEFAULT_TITLE).then(|| title.to_owned())
-}
-
-pub(super) fn remember_reply(reply: &mut String, event: &AgentEvent) {
-    if let AgentEvent::ResponseText { text, .. } = event {
-        let remaining = TITLE_INPUT_CHARS.saturating_sub(reply.chars().count());
-        if remaining > 0 {
-            reply.extend(text.chars().take(remaining));
-            reply.push('\n');
-        }
-    }
 }
 
 pub(super) fn reply_excerpt(items: &[InputItem]) -> String {

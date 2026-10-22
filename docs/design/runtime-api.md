@@ -977,11 +977,11 @@ load 可恢复有效 Conversation 但工具不可用时，返回明确错误并�
 
 确定性测试位于 tests/session/mcp.rs、tests/tools/mcp*.rs 与 tests/support/mcp.rs，受控 Python 子进程只承载真实 JSONL wire；独立 SDK Rust server 继续另行构建和命名测试。覆盖声明变化/显式确认、结果一致、会话隔离、进程配额、创建前拒绝、失败配置回收、缺来源恢复/修复、取消和 panic 前置清理、大输出回读及清理等待被取消。现代 ACK 缺失、错误 ID、拒绝过滤项、订阅结束/新 ID、旧 ID 通知及业务失败后下一任务重连均有 wire 测试。另一个 SDK 级测试在消费前用同一 wire 的响应屏障证明订阅队列已满，观察 Lagged 终止及新 ID 重建；来源监听器对结束统一失效并在下次发现重建，该分支由真实来源的结束测试覆盖。两个 MCP 调用均已到达后取消 A，B 保持运行并随后成功；输出失效时另验证业务真实完成及工具/锁回收。E06 证据需保留这种 SDK/来源/服务分层边界，两端联合验收仍按 #103 逐项核对，不能以局部测试数量代替完成。
 
-## #109 自动标题服务接线（实施中）
+## #109 终端服务委托与自动标题（实施中）
 
-更新日期：2026-10-23。分类：**候选实现事实，尚未接入终端入口**。本节描述 Runtime 侧阶段实现；旧 SessionManager 仍持有执行循环，尚不满足 U02/U04，也不表示终端迁移完成。
+更新日期：2026-10-23。分类：**候选实现事实，尚未集成到 dev**。app 只组装一份 Runtime，stdio 与终端选择各自适配器；SessionManager 已成为 RuntimeHandle 委托，不再持有 Agent、store 写入者或独立执行循环。终端展示通道和投影迁移仍在实施，尚不能宣布 U02–U05 通过。
 
-标题生成统一在 `src/session/title.rs`，沿用原 2000 字符双侧输入、60 字符标题、独立 1024 输出预算、30 秒期限和失败不改标题的规则。原 SessionManager 暂时调用同一个生成函数；其既有 claim/apply/运行流程未因此变成服务委托。
+标题生成统一在 `src/session/title.rs`，沿用原 2000 字符双侧输入、60 字符标题、独立 1024 输出预算、30 秒期限和失败不改标题的规则。SessionManager 启用服务的附属标题作业并订阅 metadata 失效通知，原有独立标题 claim/apply/运行流程已移除。
 
 typed Runtime 新增 `with_automatic_titles(bool)`，默认 false。启用时 capabilities 报告 automatic_titles=true、max_auxiliary_jobs=1；关闭时为 false/0。它不改变 max_active_tasks。候选在任务接纳时固定标题所用客户端、模型与用户文本，任务成功后从本次回复取有限摘要，在唯一附属作业槽空闲且仍接纳工作时尝试 claim。作业满时跳过本次，不放隐藏队列，metadata 继续 pending；未来用户任务可再次成为首次成功派发机会。已持久 claim 为 auto 后，即使生成失败或重启也不再次派发。shutdown 停止新派发并等待已有作业收尾。
 
@@ -989,4 +989,8 @@ claim 和 apply 沿用 metadata 写锁，在后台执行文件 I/O；标题只�
 
 `RuntimeHandle::subscribe_metadata()` 返回有界 32 条的 typed 通知，内容仅为 session_id 失效提示，调用方必须重新读取当前 metadata。这样迟到通知不会携带过时自动标题覆盖后来手工名称；收到 Lagged 时刷新所有正在显示的会话。当前可通过 session.list，或空闲 loaded 会话的幂等 load 获得 metadata；既有 status.metadata 可为 None 的契约保持。
 
-当前四项服务测试覆盖一次生成/历史隔离、手工名称与迟到结果、附属容量不占用户容量、空可解析标题失败后的重启不重跑；失败测试并未声称覆盖 HTTP 5xx 的客户端内部重试。旧终端标题测试仍保留。终端适配、metadata 通知消费、统一 SessionManager 委托和真实 PTY 交互仍在后续接线；未接生产消费导致的 unused API 严格 Clippy 错误必须随接线消除，不能靠 allow/expect 放行或据此请求合并。
+当前四项服务测试覆盖一次生成/历史隔离、手工名称与迟到结果、附属容量不占用户容量、空可解析标题失败后的重启不重跑；失败测试并未声称覆盖 HTTP 5xx 的客户端内部重试。终端启动/恢复、列表、发送、改名和取消均委托 typed 命令；取消按服务实际 active_task 的 task_id 定向请求，不依赖第一个显示事件先到。控制操作最多同时准备 8 项，回复可以按完成顺序返回；初始 create/load 失败仍结束入口并返回错误。EOF 等待已接收操作并由服务 shutdown 收尾；展示接收端丢失关闭服务 OutputState。
+
+终端历史通过服务分页 history 读取，使用 journal 文件读取器共用的唯一 reducer 构造 Replay；只读 Conversation 投影不打开、修复或独占 journal。上下文估算使用生效配置和工具声明。多连接创建使用 schema 2，不再在 app 另设单连接/schema 1 限制。旧文档承诺的直接 Agent SDK 调用保留为兼容入口，生产宿主只使用 Runtime；其窄范围 dead_code 标注不覆盖新服务接口，新标题 builder/metadata 订阅均有生产消费者。
+
+本阶段有明确剩余工作：终端仍使用旧的无界展示通道，未将服务字节 permit 和完整 task/message 关联传到 UI；history_required 重建和运行中会话投影需要 TUI 消费接线。Create/Open 暂时保留全局运行中拒绝，避免把尚未消费的运行状态误投影为 interrupted；该临时限制不满足 U03，不能作为最终交付边界。后续在唯一 TUI writer 完成投影后解除，完成有界链路、两端契约与真实 PTY 验收，再更新完成结论。

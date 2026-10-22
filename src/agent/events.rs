@@ -158,6 +158,13 @@ pub struct EventSink {
 
 #[derive(Clone)]
 enum Target {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "direct SDK compatibility; production hosts use bounded events"
+        )
+    )]
     Legacy(mpsc::UnboundedSender<AgentEvent>),
     Bounded {
         sender: mpsc::Sender<EventPacket>,
@@ -169,6 +176,13 @@ enum Target {
 }
 
 impl EventSink {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "direct SDK compatibility; production hosts use Runtime"
+        )
+    )]
     pub fn legacy(sender: mpsc::UnboundedSender<AgentEvent>) -> Self {
         Self {
             target: Target::Legacy(sender),

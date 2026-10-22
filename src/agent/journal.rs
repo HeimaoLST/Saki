@@ -123,20 +123,8 @@ pub fn write(file: &mut File, record: &JournalRecord) -> Result<()> {
 /// The caller must hold the write lock before truncating to `valid_bytes`.
 pub fn read(file: &File, path: &Path) -> Result<Replay> {
     let mut reader = BufReader::new(file);
-    let mut replay = Replay {
-        context: Vec::new(),
-        history: Vec::new(),
-        history_timestamps: Vec::new(),
-        has_summary: false,
-        status: TaskStatus::Unknown,
-        updated_at: 0,
-        valid_bytes: 0,
-        needs_newline: false,
-        active_task: None,
-    };
+    let mut state = ReplayState::new();
     let mut bytes = Vec::new();
-    let mut active_task = None;
-    let mut pending = HashSet::new();
     let mut line_number = 0;
     loop {
         bytes.clear();
@@ -169,87 +157,142 @@ pub fn read(file: &File, path: &Path) -> Result<Replay> {
             path.display(),
             envelope.schema_version
         );
-        match &envelope.record {
+        state.apply(
+            envelope.record,
+            envelope.timestamp_ms,
+            &format!("{}:{line_number}", path.display()),
+        )?;
+        state.replay.valid_bytes += count as u64;
+        state.replay.needs_newline = !terminated;
+    }
+    state.finish(&path.display().to_string())
+}
+
+/// Replays decoded journal records through the same reducer as [`read`].
+///
+/// This is for projections over already-loaded typed history. It never sets
+/// file repair offsets: `valid_bytes` is 0 and `needs_newline` is false.
+pub(crate) fn replay_records(
+    records: impl IntoIterator<Item = (u64, JournalRecord)>,
+) -> Result<Replay> {
+    let mut state = ReplayState::new();
+    for (index, (timestamp_ms, record)) in records.into_iter().enumerate() {
+        state.apply(
+            record,
+            timestamp_ms,
+            &format!("journal record {}", index + 1),
+        )?;
+    }
+    state.finish("journal replay")
+}
+
+struct ReplayState {
+    replay: Replay,
+    pending: HashSet<String>,
+    active_task: Option<String>,
+}
+
+impl ReplayState {
+    fn new() -> Self {
+        Self {
+            replay: Replay {
+                context: Vec::new(),
+                history: Vec::new(),
+                history_timestamps: Vec::new(),
+                has_summary: false,
+                status: TaskStatus::Unknown,
+                updated_at: 0,
+                valid_bytes: 0,
+                needs_newline: false,
+                active_task: None,
+            },
+            pending: HashSet::new(),
+            active_task: None,
+        }
+    }
+
+    fn apply(&mut self, record: JournalRecord, timestamp_ms: u64, location: &str) -> Result<()> {
+        match &record {
             JournalRecord::Messages { items } => {
                 for item in items {
                     match item {
                         InputItem::ToolCall { call_id, .. } => {
                             ensure!(
-                                pending.insert(call_id.clone()),
-                                "{}:{line_number}: duplicate tool call",
-                                path.display()
+                                self.pending.insert(call_id.clone()),
+                                "{location}: duplicate tool call"
                             );
                         }
                         InputItem::ToolResult { call_id, .. } => {
                             ensure!(
-                                pending.remove(call_id),
-                                "{}:{line_number}: unmatched tool result",
-                                path.display()
+                                self.pending.remove(call_id),
+                                "{location}: unmatched tool result"
                             );
                         }
                         _ => {}
                     }
                 }
-                replay.context.extend_from_slice(items);
+                self.replay.context.extend_from_slice(items);
             }
             JournalRecord::Compaction {
                 summary, keep_from, ..
             } => {
                 ensure!(
-                    pending.is_empty() && *keep_from > 0 && *keep_from < replay.context.len(),
-                    "{}:{line_number}: invalid compaction checkpoint",
-                    path.display()
+                    self.pending.is_empty()
+                        && *keep_from > 0
+                        && *keep_from < self.replay.context.len(),
+                    "{location}: invalid compaction checkpoint"
                 );
-                let system = replay
+                let system = self
+                    .replay
                     .context
                     .first()
-                    .context("missing system message")?
-                    .clone();
+                    .cloned()
+                    .with_context(|| format!("{location}: missing system message"))?;
                 let mut next = vec![system, super::conversation::summary_item(summary)];
-                next.extend_from_slice(&replay.context[*keep_from..]);
-                replay.context = next;
-                replay.has_summary = true;
+                next.extend_from_slice(&self.replay.context[*keep_from..]);
+                self.replay.context = next;
+                self.replay.has_summary = true;
             }
             JournalRecord::TaskStarted { task_id, .. } => {
                 ensure!(
-                    active_task.is_none(),
-                    "{}:{line_number}: task started before previous task ended",
-                    path.display()
+                    self.active_task.is_none(),
+                    "{location}: task started before previous task ended"
                 );
-                active_task = Some(task_id.clone());
-                replay.status = TaskStatus::Interrupted;
+                self.active_task = Some(task_id.clone());
+                self.replay.status = TaskStatus::Interrupted;
             }
             JournalRecord::TaskFinished {
                 task_id, status, ..
             } => {
                 ensure!(
-                    active_task.as_ref() == Some(task_id),
-                    "{}:{line_number}: unmatched task completion",
-                    path.display()
+                    self.active_task.as_ref() == Some(task_id),
+                    "{location}: unmatched task completion"
                 );
-                active_task = None;
-                replay.status = status.clone();
+                self.active_task = None;
+                self.replay.status = status.clone();
             }
         }
-        replay.updated_at = replay.updated_at.max(envelope.timestamp_ms);
-        replay.history_timestamps.push(envelope.timestamp_ms);
-        replay.history.push(envelope.record);
-        replay.valid_bytes += count as u64;
-        replay.needs_newline = !terminated;
+        self.replay.updated_at = self.replay.updated_at.max(timestamp_ms);
+        self.replay.history_timestamps.push(timestamp_ms);
+        self.replay.history.push(record);
+        Ok(())
     }
-    match replay.context.first() {
-        Some(InputItem::Message {
-            role: MessageRole::System,
-            content: InputMessageContent::Text(_),
-            ..
-        }) => {}
-        _ => bail!("{}: journal has no initial system message", path.display()),
+
+    fn finish(mut self, location: &str) -> Result<Replay> {
+        match self.replay.context.first() {
+            Some(InputItem::Message {
+                role: MessageRole::System,
+                content: InputMessageContent::Text(_),
+                ..
+            }) => {}
+            _ => bail!("{location}: journal has no initial system message"),
+        }
+        if !self.pending.is_empty() || self.active_task.is_some() {
+            self.replay.status = TaskStatus::Interrupted;
+        }
+        self.replay.active_task = self.active_task;
+        Ok(self.replay)
     }
-    if !pending.is_empty() || active_task.is_some() {
-        replay.status = TaskStatus::Interrupted;
-    }
-    replay.active_task = active_task;
-    Ok(replay)
 }
 
 #[cfg(all(test, unix))]
@@ -326,3 +369,7 @@ pub(crate) mod fault {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/agent/journal.rs"]
+mod tests;

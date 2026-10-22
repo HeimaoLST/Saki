@@ -125,6 +125,13 @@ impl SessionStore {
         Ok(self.root.join(id))
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "direct SDK compatibility; production hosts use Runtime"
+        )
+    )]
     pub fn create(
         &self,
         cwd: &Path,

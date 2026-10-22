@@ -209,26 +209,45 @@ impl Conversation {
             use std::io::Write;
             file.write_all(b"\n")?;
         }
-        let items = replay.context.clone();
-        let conversation = Self {
-            persisted_items: items.len(),
-            items,
-            compaction: None,
-            usage_baseline: None,
-            has_summary: replay.has_summary,
-            history_file: Some(file),
-            active_task: replay.active_task.clone(),
-            model_request_hook: None,
-        };
+        let mut conversation = Self::from_replay(&replay);
+        conversation.history_file = Some(file);
         Ok((conversation, replay))
     }
 
+    /// Build an in-memory view without opening, repairing or owning a journal.
+    pub(crate) fn from_replay(replay: &Replay) -> Self {
+        Self {
+            persisted_items: replay.context.len(),
+            items: replay.context.clone(),
+            compaction: None,
+            usage_baseline: None,
+            has_summary: replay.has_summary,
+            history_file: None,
+            active_task: replay.active_task.clone(),
+            model_request_hook: None,
+        }
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "direct SDK compatibility; production hosts use Runtime"
+        )
+    )]
     pub fn begin_task(&mut self) -> Result<()> {
         self.begin_task_with_id(journal::new_id()?, None)
     }
 
     /// The id of the task currently persisted as active, if any. Used by the
     /// legacy entry point to report the journal-consistent id.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "direct SDK compatibility; production hosts use Runtime"
+        )
+    )]
     pub(crate) fn active_task_id(&self) -> Option<&str> {
         self.active_task.as_deref()
     }
@@ -236,6 +255,13 @@ impl Conversation {
     /// Starts a task with caller-supplied ids. The machine entry uses this to
     /// return the same `task_id` it writes to the journal; `message_id` is
     /// absent for the legacy entry point and for old journals.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "direct SDK compatibility; production hosts use Runtime"
+        )
+    )]
     pub fn begin_task_with_id(
         &mut self,
         task_id: String,

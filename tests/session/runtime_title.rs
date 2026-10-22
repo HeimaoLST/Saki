@@ -212,6 +212,10 @@ async fn occupied_auxiliary_slot_does_not_consume_user_capacity_or_queue_title_j
     assert_eq!(update.session_id, a);
     shutdown_actor(handle, actor).await;
     assert_eq!(
+        workspace.store().metadata(&b).unwrap().title,
+        super::super::super::store::DEFAULT_TITLE
+    );
+    assert_eq!(
         crate::test_support::requests(server).await.len(),
         3,
         "busy title should not enter a hidden queue"

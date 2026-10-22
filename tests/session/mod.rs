@@ -338,7 +338,7 @@ async fn switching_a_b_a_keeps_context_model_and_tool_working_directories_separa
     .unwrap();
     finished(&mut events, &a).await;
     drop(tx);
-    worker.await.unwrap();
+    worker.await.unwrap().unwrap();
     let requests = server.await.unwrap();
     assert_eq!(requests.len(), 7);
     // The title request is a tiny, tool-free call that never pollutes turns.
@@ -490,7 +490,8 @@ async fn busy_session_rejects_switch_and_second_message_but_can_be_listed() {
     .unwrap();
     tx.send(SessionCommand::List).unwrap();
     let mut rejections = 0;
-    loop {
+    let mut listed = false;
+    while rejections < 2 || !listed {
         match event(&mut events).await {
             SessionEvent::Error { message } => {
                 assert!(message.contains("busy"));
@@ -498,7 +499,7 @@ async fn busy_session_rejects_switch_and_second_message_but_can_be_listed() {
             }
             SessionEvent::Listed(list) => {
                 assert_eq!(list.len(), 2);
-                break;
+                listed = true;
             }
             SessionEvent::Agent {
                 event: AgentEvent::TurnCompleted,
@@ -518,7 +519,7 @@ async fn busy_session_rejects_switch_and_second_message_but_can_be_listed() {
         matches!(event(&mut events).await, SessionEvent::Opened { metadata, .. } if metadata.id == b)
     );
     drop(tx);
-    worker.await.unwrap();
+    worker.await.unwrap().unwrap();
     assert!(!server.await.unwrap().to_string().contains("must-not-run"));
 }
 
@@ -619,54 +620,6 @@ fn title_from_output_sanitizes_lines_and_rejects_the_default() {
     let long = "word ".repeat(40);
     let title = title_from_output(&[message(&long)]).unwrap();
     assert!(title.chars().count() <= 60);
-}
-
-#[test]
-fn a_title_result_for_another_session_updates_that_store_entry_only() {
-    let workspace = Workspace::new();
-    let store = workspace.store();
-    let a = workspace.create(&store);
-    let b = workspace.create(&store);
-    assert!(store.claim_auto_title(&a).unwrap());
-    let loaded_b = store.open_for_api(&b, RESPONSES_API).unwrap();
-    let (client, _server) = block_on(scripted_http(vec![]));
-    let mut manager = SessionManager::new(
-        store,
-        client,
-        loaded_b,
-        workspace.0.clone(),
-        "test".into(),
-        CompactionConfig::new(262_144),
-    )
-    .unwrap();
-    let (out, mut events) = mpsc::unbounded_channel();
-    manager.apply_title(
-        super::TitleJobResult {
-            session_id: a.clone(),
-            title: Some("Title for A".to_owned()),
-        },
-        &out,
-    );
-    let updated = match events.try_recv().unwrap() {
-        SessionEvent::TitleUpdated(metadata) => metadata,
-        _ => panic!("expected TitleUpdated"),
-    };
-    assert_eq!(updated.id, a);
-    assert_eq!(updated.title, "Title for A");
-    // The active session metadata was not touched by another session's result.
-    assert_eq!(manager.metadata.id, b);
-    assert_eq!(manager.metadata.title, store::DEFAULT_TITLE);
-    let store = workspace.store();
-    assert_eq!(store.metadata(&a).unwrap().title, "Title for A");
-    assert_eq!(store.metadata(&b).unwrap().title, store::DEFAULT_TITLE);
-}
-
-fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(future)
 }
 
 #[tokio::test]
@@ -776,7 +729,7 @@ async fn cancel_emits_one_terminal_event_and_stale_cancels_are_harmless() {
         }
     }
     drop(tx);
-    worker.await.unwrap();
+    worker.await.unwrap().unwrap();
     server.await.unwrap();
     assert_eq!(interrupted, 1, "exactly one interrupted terminal event");
     assert_eq!(terminals, 1, "exactly one terminal event for the turn");
@@ -802,7 +755,7 @@ async fn a_session_created_on_another_api_is_not_opened_or_changed() {
         .open_for_api(&responses_session, RESPONSES_API)
         .unwrap();
     let (client, _server) = scripted_http(vec![]).await;
-    let mut manager = SessionManager::new(
+    let manager = SessionManager::new(
         store,
         client,
         loaded,
@@ -811,25 +764,47 @@ async fn a_session_created_on_another_api_is_not_opened_or_changed() {
         CompactionConfig::new(262_144),
     )
     .unwrap();
-    assert_eq!(manager.metadata.id, responses_session);
-    let error = match manager.control(SessionCommand::Open {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let (out, mut events) = mpsc::unbounded_channel();
+    let worker = tokio::spawn(manager.run(rx, out));
+    match event(&mut events).await {
+        SessionEvent::Opened { metadata, .. } => assert_eq!(metadata.id, responses_session),
+        _ => panic!("expected initial session"),
+    }
+    tx.send(SessionCommand::Open {
         session_id: chat_session.clone(),
-    }) {
-        Ok(_) => panic!("opening a mismatched session must fail"),
-        Err(error) => error,
-    };
-    assert!(
-        error
-            .to_string()
-            .contains("was created for API openai-chat-completions"),
-        "{error:?}"
+    })
+    .unwrap();
+    match event(&mut events).await {
+        SessionEvent::Error { message } => assert!(message.contains("api_mismatch"), "{message}"),
+        _ => panic!("incompatible session was opened"),
+    }
+    tx.send(SessionCommand::List).unwrap();
+    match event(&mut events).await {
+        SessionEvent::Listed(sessions) => {
+            assert!(
+                sessions
+                    .iter()
+                    .find(|session| session.metadata.id == responses_session)
+                    .unwrap()
+                    .in_use
+            );
+            assert!(
+                !sessions
+                    .iter()
+                    .find(|session| session.metadata.id == chat_session)
+                    .unwrap()
+                    .in_use
+            );
+        }
+        _ => panic!("expected unchanged session listing"),
+    }
+    drop(tx);
+    worker.await.unwrap().unwrap();
+    assert_eq!(
+        workspace.store().metadata(&chat_session).unwrap().api,
+        CHAT_COMPLETIONS_API
     );
-    // The active session, its agent and the refused session's files are all
-    // exactly where they were.
-    assert_eq!(manager.metadata.id, responses_session);
-    assert!(manager.agent.is_some());
-    let untouched = manager.store.metadata(&chat_session).unwrap();
-    assert_eq!(untouched.api, CHAT_COMPLETIONS_API);
 }
 
 #[test]
