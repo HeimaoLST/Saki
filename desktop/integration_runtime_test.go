@@ -22,10 +22,13 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/egoist/mygo/ui"
 )
 
 type providerFixture struct {
 	ToolFirst bool
+	Auth401   bool
 	requests  atomic.Int32
 	mu        sync.Mutex
 	bodies    []string
@@ -49,6 +52,12 @@ func (p *providerFixture) handler(t *testing.T, marker string) http.HandlerFunc 
 		p.mu.Lock()
 		p.bodies = append(p.bodies, string(body))
 		p.mu.Unlock()
+		if p.Auth401 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"Incorrect API key provided: sk-sentinel-112-auth"}}`))
+			return
+		}
 		var response any
 		switch {
 		case p.ToolFirst && index == 1:
@@ -572,6 +581,93 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 		t.Fatal("continuation request did not include restored context")
 	}
 	h2.shutdown(t)
+}
+
+func TestGUIAppProviderAuthHistoryRedaction(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{Auth401: true}
+	h := startGUIHarness(t, binary, provider, "saki-auth-boundary-112")
+
+	h.pump.do(func() {
+		ct := h.app.contacts[0]
+		ct.Draft = "accepted-auth-boundary-check"
+		h.app.sendCurrent()
+		ct.Draft = "later-unsent-after-auth"
+	})
+	h.pump.wait(func() bool {
+		ct := h.app.contacts[0]
+		return ct.ActiveTaskID == "" && ct.SendState == sendIdle && ct.Loaded &&
+			!ct.HistoryDirty && strings.Contains(ct.StatusDetail, "Provider authentication failed")
+	})
+	var detail, draft string
+	h.pump.do(func() {
+		ct := h.app.contacts[0]
+		detail, draft = ct.StatusDetail, ct.Draft
+	})
+	if !strings.Contains(detail, "HTTP 401") || strings.Contains(detail, "sk-sentinel-112-auth") ||
+		strings.Contains(detail, "Incorrect API key") {
+		t.Fatalf("history status detail echoed provider body: %q", detail)
+	}
+	if draft != "later-unsent-after-auth" {
+		t.Fatalf("later draft = %q", draft)
+	}
+	h.pump.do(func() {
+		found := false
+		for _, m := range h.app.contacts[0].Messages {
+			if m.Kind == msgUser && m.Text == "accepted-auth-boundary-check" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("accepted auth task history was lost: %+v", h.app.contacts[0].Messages)
+		}
+	})
+	tr := ui.NewTester(h.app.view, 1040, 720)
+	tr.Frame()
+	if strings.Contains(strings.Join(tr.Texts(), "\n"), "sk-sentinel-112-auth") {
+		t.Fatal("rendered UI leaked the provider body")
+	}
+	if provider.count() != 1 {
+		t.Fatalf("initial auth requests = %d, want 1", provider.count())
+	}
+
+	h.shutdown(t)
+	beforeRestart := provider.count()
+	h2 := restartGUIHarness(t, binary)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.wait(func() bool {
+		ct := h2.app.contacts[0]
+		return ct.Loaded && strings.Contains(ct.StatusDetail, "Provider authentication failed")
+	})
+	var restoredDetail, restoredDraft string
+	h2.snapshot(func() {
+		ct := h2.app.contacts[0]
+		restoredDetail, restoredDraft = ct.StatusDetail, ct.Draft
+	})
+	if strings.Contains(restoredDetail, "sk-sentinel-112-auth") || strings.Contains(restoredDetail, "Incorrect API key") {
+		t.Fatalf("restart history leaked provider body: %q", restoredDetail)
+	}
+	if restoredDraft != "later-unsent-after-auth" {
+		t.Fatalf("restored later draft = %q", restoredDraft)
+	}
+	h2.snapshot(func() {
+		found := false
+		for _, m := range h2.app.contacts[0].Messages {
+			if m.Kind == msgUser && m.Text == "accepted-auth-boundary-check" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("restored auth history lost accepted message: %+v", h2.app.contacts[0].Messages)
+		}
+	})
+	if provider.count() != beforeRestart {
+		t.Fatalf("restart issued model requests: %d -> %d", beforeRestart, provider.count())
+	}
 }
 
 func TestGUIFirstCreateUsesProfileSnapshot(t *testing.T) {

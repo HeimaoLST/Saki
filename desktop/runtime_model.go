@@ -538,10 +538,7 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 			taskID, messageID = "", ""
 			switch rec.Record.Status {
 			case "failed":
-				detail = "Task failed"
-				if rec.Record.Error != nil && strings.TrimSpace(*rec.Record.Error) != "" {
-					detail += ": " + strings.TrimSpace(*rec.Record.Error)
-				}
+				detail = taskFailureDetail("", rec.Record.Error)
 			case "interrupted":
 				detail = "Task interrupted"
 			case "completed":
@@ -739,20 +736,31 @@ func httpAuthStatus(message string) string {
 
 func providerAuthFailure(message string) bool { return httpAuthStatus(message) != "" }
 
+func taskFailureDetail(code string, message *string) string {
+	if message == nil {
+		return "Task failed."
+	}
+	if status := httpAuthStatus(*message); status != "" {
+		return "Provider authentication failed: " + status +
+			". Check API_KEY and provider configuration; no automatic retry."
+	}
+	stage := "Task failed"
+	if code == "model_error" {
+		stage = "Model request failed"
+	}
+	prefix := stage
+	if code != "" {
+		prefix += ": " + code
+	}
+	return prefix + ": " + safeDiagnostic(*message) +
+		". Check provider configuration (API_KEY / SAKI_BASE_URL / SAKI_MODEL); no automatic retry."
+}
+
 func taskFinishedDetail(payload *runtimeEvent) string {
 	switch payload.Status {
 	case "failed":
 		if payload.Error != nil {
-			stage := "Task failed"
-			if payload.Error.Code == "model_error" {
-				if status := httpAuthStatus(payload.Error.Message); status != "" {
-					return "Provider authentication failed: " + status +
-						". Check API_KEY and provider configuration; no automatic retry."
-				}
-				stage = "Model request failed"
-			}
-			return stage + ": " + payload.Error.Code + ": " + safeDiagnostic(payload.Error.Message) +
-				". Check provider configuration (API_KEY / SAKI_BASE_URL / SAKI_MODEL); no automatic retry."
+			return taskFailureDetail(payload.Error.Code, &payload.Error.Message)
 		}
 		return "Task failed."
 	case "interrupted":
