@@ -671,8 +671,11 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 	}
 	switch payload.Type {
 	case "task_started":
-		if w := workFor(ct, event.TaskID); w != nil && terminalWorkState(w.State) {
-			return // a finished/stopping task cannot be revived by a duplicate start
+		if w := workFor(ct, event.TaskID); w != nil {
+			switch w.State {
+			case workStopping, workCompleted, workFailed, workInterrupted, workUnknown:
+				return // completed/stopping/unknown work cannot be revived by a duplicate start
+			}
 		}
 		if ct.ActiveTaskID == "" && ct.LastTaskID != "" && event.TaskID != ct.LastTaskID {
 			return // a late start from an older task cannot own this contact
@@ -938,6 +941,7 @@ func (a *appModel) cancelSelected() {
 	contactID, sessionID, taskID := ct.ID, ct.SessionID, ct.ActiveTaskID
 	if w := ct.activeWork(); w != nil {
 		w.State = workStopping
+		w.StopRequested = true
 	}
 	ct.SendError = "Cancellation requested"
 	go func() {
@@ -967,13 +971,15 @@ func (a *appModel) applyCancelResult(contactID, taskID, status string, err error
 	}
 	switch status {
 	case "requested":
-		if w := ct.activeWork(); w != nil && w.State == workRunning {
+		if w := ct.activeWork(); w != nil {
 			w.State = workStopping
+			w.StopRequested = true
 		}
 		ct.SendError = "Cancelling; waiting for the runtime to stop."
 	case "already_requested":
-		if w := ct.activeWork(); w != nil && w.State == workRunning {
+		if w := ct.activeWork(); w != nil {
 			w.State = workStopping
+			w.StopRequested = true
 		}
 		ct.SendError = "Cancellation already requested."
 	case "not_running":

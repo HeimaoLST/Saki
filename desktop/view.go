@@ -9,7 +9,8 @@ import (
 )
 
 func (a *appModel) view(c *ui.Context) {
-	t := paperMossTheme(c.Theme().Dark)
+	a.workTheme = resolveWorkbenchTheme(c.Theme().Dark)
+	t := a.workTheme.Theme
 	c.SetTheme(t)
 	ui.Box(c).Fill().Children(func() {
 		ui.Row(c).Fill().Children(func() {
@@ -26,6 +27,8 @@ func (a *appModel) view(c *ui.Context) {
 		}
 		if a.aux != "" {
 			a.auxView(c, t)
+		} else if a.screen == viewHistory {
+			a.historyView(c, t)
 		}
 	})
 }
@@ -34,7 +37,7 @@ func (a *appModel) view(c *ui.Context) {
 
 func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
 	width := a.railWidth()
-	ui.Column(c).Width(width).FillHeight().Padding(10, 10).Gap(10).Background(t.Background).Children(func() {
+	ui.Column(c).Width(width).FillHeight().Padding(10, 10).Gap(10).Background(a.workTheme.Rail).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 			ui.Text(c, "Saki").FontSize(14).FontWeight(600).TextColor(t.Text)
 			ui.Spacer(c)
@@ -122,12 +125,7 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 			}
 		}
 		a.header(c, t)
-		switch a.screen {
-		case viewHistory:
-			a.historyView(c, t)
-		default:
-			a.chat(c, t)
-		}
+		a.chat(c, t)
 	})
 }
 
@@ -227,7 +225,9 @@ func (a *appModel) chat(c *ui.Context, t *ui.Theme) {
 
 func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, highlight bool) {
 	bg := t.Surface
-	if highlight {
+	if e.From == "me" {
+		bg = a.workTheme.BubbleUser
+	} else if highlight {
 		bg = t.Selection
 	}
 	if e.From == "me" {
@@ -304,7 +304,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 				if m.Key != "" && m.Key == a.highlight {
 					ui.Text(c, "Located in history").FontSize(11).TextColor(t.TextMuted)
 				}
-				ui.Text(c, m.Text).FontSize(14).LineHeight(1.55).Padding(10, 14).Radius(14).Background(t.Selection).TextColor(t.Text)
+				ui.Text(c, m.Text).FontSize(14).LineHeight(1.55).Padding(10, 14).Radius(14).Background(a.workTheme.BubbleUser).TextColor(t.Text)
 			})
 		})
 	default:
@@ -439,35 +439,56 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 
 func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
-	ui.Scroll(c).Grow(1).Padding(16).Children(func() {
-		ui.Column(c).MaxWidth(680).Gap(10).Children(func() {
-			ui.Row(c).Children(func() {
-				ui.Button(c, "Back to conversation").FontSize(12).OnClick(func() { a.backToChat() })
-			})
-			ui.Text(c, "History · "+ct.Name).FontSize(16).FontWeight(500).TextColor(t.Text)
-			ui.Text(c, "Searching only "+ct.Name+"'s conversation history. Messages from other contacts are never included.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
-			if !a.demo && ct.SessionID != "" && !ct.Loaded {
-				ui.Text(c, "History is not loaded yet; existing records are not shown as absent.").FontSize(12).LineHeight(1.4).TextColor(t.Warning)
-				return
-			}
-			ui.TextInput(c, &a.historyQuery).FontSize(14).Placeholder("Search " + ct.Name + "'s history")
-			matches := a.historyMatches()
-			if len(matches) == 0 {
-				ui.Text(c, "No messages in "+ct.Name+"'s history match “"+a.historyQuery+"”. Try a shorter phrase.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
-				return
-			}
-			for _, e := range matches {
-				e := e
-				ui.Column(c).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
-					ui.Text(c, e.Date+" · "+speakerLabel(ct, e)).FontSize(12).LineHeight(1.4).TextColor(t.Success)
-					ui.Text(c, e.Text).FontSize(14).LineHeight(1.5).TextColor(t.Text)
-					ui.Row(c).Children(func() {
-						ui.Button(c, "View in conversation").FontSize(12).OnClick(func() { a.viewInConversation(e.ID) })
-					})
+	open := a.screen == viewHistory
+	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
+		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
+		panel.Width(560).FillHeight().Background(t.Surface).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Padding(12, 12).Children(func() {
+				ui.Text(c, "History · "+ct.Name).FontSize(16).FontWeight(600).TextColor(t.Text)
+				ui.Spacer(c)
+				close := ui.Button(c, "Close history").FontSize(12).OnClick(func() {
+					open = false
+					a.backToChat()
 				})
-			}
+				if a.focusHistoryOpen {
+					close.Focus()
+					a.focusHistoryOpen = false
+				}
+			})
+			ui.Scroll(c).Grow(1).Padding(12).Children(func() {
+				ui.Column(c).Gap(10).Children(func() {
+					ui.Text(c, "Searching only "+ct.Name+"'s conversation history. Messages from other contacts are never included.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+					if !a.demo && ct.SessionID != "" && !ct.Loaded {
+						ui.Text(c, "History is not loaded yet; existing records are not shown as absent.").FontSize(12).LineHeight(1.4).TextColor(t.Warning)
+						return
+					}
+					ui.TextInput(c, &a.historyQuery).FontSize(14).Placeholder("Search " + ct.Name + "'s history")
+					matches := a.historyMatches()
+					if len(matches) == 0 {
+						if strings.TrimSpace(a.historyQuery) == "" {
+							ui.Text(c, "No saved messages in "+ct.Name+"'s loaded history.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+						} else {
+							ui.Text(c, "No messages in "+ct.Name+"'s history match “"+a.historyQuery+"”. Try a shorter phrase.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+						}
+						return
+					}
+					for _, e := range matches {
+						e := e
+						ui.Column(c).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
+							ui.Text(c, e.Date+" · "+speakerLabel(ct, e)).FontSize(12).LineHeight(1.4).TextColor(t.Success)
+							ui.Text(c, e.Text).FontSize(14).LineHeight(1.5).TextColor(t.Text)
+							ui.Row(c).Children(func() {
+								ui.Button(c, "View in conversation").FontSize(12).OnClick(func() { a.viewInConversation(e.ID) })
+							})
+						})
+					}
+				})
+			})
 		})
 	})
+	if !open && a.screen == viewHistory {
+		a.backToChat()
+	}
 }
 
 func speakerLabel(c *contact, e historyEntry) string {

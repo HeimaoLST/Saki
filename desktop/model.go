@@ -160,7 +160,9 @@ type appModel struct {
 	focusWorkspaceOpen bool
 	focusRail          bool
 	focusHistory       bool
+	focusHistoryOpen   bool
 	focusSettings      bool
+	workTheme          workbenchTheme
 
 	seq int
 	win *mygo.Window
@@ -413,6 +415,7 @@ func (a *appModel) openHistory() {
 	a.screen = viewHistory
 	a.aux = ""
 	a.historyQuery = ""
+	a.focusHistoryOpen = true
 }
 
 func (a *appModel) backToChat() {
@@ -424,21 +427,48 @@ func (a *appModel) backToChat() {
 func (a *appModel) historyMatches() []historyEntry {
 	c := a.selectedContact()
 	query := strings.ToLower(strings.TrimSpace(a.historyQuery))
-	out := make([]historyEntry, 0, len(c.History))
+	entries := make([]historyEntry, 0, len(c.History)+len(c.Messages))
+	seen := map[string]bool{}
 	for i := len(c.History) - 1; i >= 0; i-- {
 		e := c.History[i]
-		if query == "" {
-			out = append(out, e)
+		if !seen[e.ID] {
+			entries = append(entries, e)
+			seen[e.ID] = true
+		}
+	}
+	// Live text can exist before the journal projection is reloaded. Keep it
+	// readable in History without duplicating an already-projected item.
+	for _, m := range c.Messages {
+		if m.Kind != msgUser && m.Kind != msgContact || strings.TrimSpace(m.Text) == "" {
 			continue
 		}
-		speaker := c.Name
-		if e.From == "me" {
-			speaker = "You"
+		id := m.Key
+		if id == "" {
+			id = fmt.Sprintf("message-%d", m.ID)
 		}
-		haystack := strings.ToLower(e.Text + " " + e.Date + " " + speaker)
-		if strings.Contains(haystack, query) {
-			out = append(out, e)
+		if seen[id] {
+			continue
 		}
+		from := "contact"
+		if m.Kind == msgUser {
+			from = "me"
+		}
+		entries = append(entries, historyEntry{ID: id, Date: m.Time, From: from, Text: m.Text})
+		seen[id] = true
+	}
+	out := make([]historyEntry, 0, len(entries))
+	for _, e := range entries {
+		if query != "" {
+			speaker := c.Name
+			if e.From == "me" {
+				speaker = "You"
+			}
+			haystack := strings.ToLower(e.Text + " " + e.Date + " " + speaker)
+			if !strings.Contains(haystack, query) {
+				continue
+			}
+		}
+		out = append(out, e)
 	}
 	return out
 }

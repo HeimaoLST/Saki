@@ -189,6 +189,9 @@ func TestLateAndStopEventsDoNotCrossTasks(t *testing.T) {
 	if w.State != workInterrupted || ct.ActiveTaskID != "" {
 		t.Fatalf("stop terminal = work %q active %q", w.State, ct.ActiveTaskID)
 	}
+	if got := workStateLabel(w); !strings.Contains(got, "Stopped") || !strings.Contains(got, "interrupted") {
+		t.Fatalf("stop terminal label = %q", got)
+	}
 
 	ct.ActiveTaskID = "t2"
 	ct.LastTaskID = "t2"
@@ -256,6 +259,88 @@ func TestWorkModalEscapeReturnsFocusToEntry(t *testing.T) {
 	tr.Frame()
 	if a.workspaceOpen || !tr.Focused("Work") {
 		t.Fatal("Escape did not close/focus-return the work overlay")
+	}
+}
+
+func TestHistoryModalPreservesWorkAndReturnsFocus(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.ActiveTaskID = "t1"
+	ct.LastTaskID = "t1"
+	ct.Draft = "later draft"
+	w := a.ensureWork(ct, "t1", "m1")
+	w.State = workRunning
+	ct.Messages = []*message{{Key: "hist:1", Kind: msgContact, Text: "earlier answer"}}
+	ct.History = []historyEntry{{ID: "hist:1", Date: "Yesterday", From: "contact", Text: "earlier answer"}}
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("History"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.screen != viewHistory || !tr.HasText("Close history") || !tr.Focused("Close history") {
+		t.Fatal("history modal did not open/focus")
+	}
+	if err := tr.Click("Close history"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.screen != viewChat || !tr.Focused("History") || !tr.HasText("Current work") {
+		t.Fatal("closing history did not return to three-pane chat/work")
+	}
+	if ct.ActiveTaskID != "t1" || w.State != workRunning || ct.Draft != "later draft" {
+		t.Fatal("history modal changed work or draft")
+	}
+
+	if err := tr.Click("History"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	tr.Key(0, ui.KeyEscape)
+	tr.Frame()
+	if a.screen != viewChat || !tr.Focused("History") {
+		t.Fatal("Escape did not close history/focus its entry")
+	}
+	if err := tr.Click("History"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if err := tr.Click("View in conversation"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.screen != viewChat || a.highlight != "hist:1" {
+		t.Fatal("view-in-conversation did not close/return to chat")
+	}
+}
+
+func TestHistoryModalIncludesLiveTextBeforeReload(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.Messages = []*message{
+		{Key: "live:t1:user", Kind: msgUser, Text: "live question"},
+		{Key: "live:t1:text:a1", Kind: msgContact, Text: "live answer"},
+	}
+	a.openHistory()
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if !tr.HasText("live question") || !tr.HasText("live answer") {
+		t.Fatalf("live text missing from History: %v", tr.Texts())
+	}
+	if tr.HasText("No saved messages") {
+		t.Fatal("live text was reported as no saved messages")
+	}
+}
+
+func TestHistoryEmptyQueryDoesNotClaimNoMatch(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.History = nil
+	a.openHistory()
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if tr.HasText("Try a shorter phrase") {
+		t.Fatal("empty history was reported as a failed search")
+	}
+	if !tr.HasText("No saved messages") {
+		t.Fatal("empty history did not use the saved-message empty state")
 	}
 }
 

@@ -32,12 +32,13 @@ type workTool struct {
 }
 
 type workItem struct {
-	TaskID    string
-	MessageID string
-	Prompt    string
-	State     workState
-	Detail    string
-	Tools     []*workTool
+	TaskID        string
+	MessageID     string
+	Prompt        string
+	State         workState
+	Detail        string
+	Tools         []*workTool
+	StopRequested bool
 }
 
 func (a *appModel) layoutWidth() int {
@@ -103,15 +104,6 @@ func (ct *contact) recentWork() *workItem {
 	return nil
 }
 
-func terminalWorkState(state workState) bool {
-	switch state {
-	case workCompleted, workFailed, workInterrupted, workUnknown, workStopping:
-		return true
-	default:
-		return false
-	}
-}
-
 func workStateFromTask(status string) workState {
 	switch status {
 	case "completed":
@@ -129,7 +121,14 @@ func workStateFromTask(status string) workState {
 	}
 }
 
-func workStateLabel(state workState) string {
+func workStateLabel(w *workItem) string {
+	if w.State == workInterrupted && w.StopRequested {
+		return "Stopped · interrupted"
+	}
+	return workBaseStateLabel(w.State)
+}
+
+func workBaseStateLabel(state workState) string {
 	switch state {
 	case workAccepted:
 		return "Accepted"
@@ -148,18 +147,14 @@ func workStateLabel(state workState) string {
 	}
 }
 
-func (a *appModel) workStateColor(t *ui.Theme, state workState) ui.Color {
+func (a *appModel) workStateColor(state workState) ui.Color {
 	switch state {
-	case workRunning, workAccepted:
-		return t.Accent
-	case workStopping, workFailed:
-		return t.Warning
+	case workStopping, workFailed, workInterrupted, workUnknown:
+		return a.workTheme.WorkAttention
 	case workCompleted:
-		return t.Success
-	case workInterrupted:
-		return t.TextMuted
+		return a.workTheme.WorkText
 	default:
-		return t.Warning
+		return a.workTheme.WorkText
 	}
 }
 
@@ -215,8 +210,12 @@ func (a *appModel) workspaceContent(c *ui.Context, t *ui.Theme) {
 		title = "Current work"
 		work = current
 	}
+	header := "Work"
+	if work != nil {
+		header = title
+	}
 	ui.Row(c).AlignItems(ui.Center).Padding(12, 12).Children(func() {
-		ui.Text(c, "Work").FontSize(16).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, header).FontSize(16).FontWeight(600).TextColor(t.Text)
 		ui.Spacer(c)
 		close := ui.Button(c, "Close work").FontSize(12).OnClick(func() { a.closeWorkspace() })
 		if a.focusWorkspaceOpen {
@@ -235,7 +234,6 @@ func (a *appModel) workspaceContent(c *ui.Context, t *ui.Theme) {
 	}
 	ui.Scroll(c).Grow(1).Padding(12).Children(func() {
 		ui.Column(c).Gap(10).Children(func() {
-			ui.Text(c, title).FontSize(11).FontWeight(500).TextColor(t.TextMuted)
 			a.workCard(c, t, work, current != nil)
 			a.workActivity(c, t, work)
 			a.unlinkedActivity(c, t, ct.UnlinkedTools)
@@ -262,9 +260,9 @@ func (a *appModel) workEmptyState(c *ui.Context, t *ui.Theme, ct *contact) {
 }
 
 func (a *appModel) workCard(c *ui.Context, t *ui.Theme, w *workItem, isCurrent bool) {
-	ui.Column(c).Padding(12).Radius(12).Background(t.SurfaceHover).BorderWidth(1).BorderColor(t.Border).Gap(6).Children(func() {
+	ui.Column(c).Padding(14).Radius(13).Background(a.workTheme.WorkSurface).Gap(6).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, workStateLabel(w.State)).FontSize(14).FontWeight(600).TextColor(a.workStateColor(t, w.State))
+			ui.Text(c, workStateLabel(w)).FontSize(12).FontWeight(600).TextColor(a.workStateColor(w.State))
 			ui.Spacer(c)
 			if isCurrent && (w.State == workAccepted || w.State == workRunning || w.State == workStopping) {
 				label := "Stop task"
@@ -278,10 +276,20 @@ func (a *appModel) workCard(c *ui.Context, t *ui.Theme, w *workItem, isCurrent b
 			}
 		})
 		if w.Prompt != "" {
-			ui.Text(c, w.Prompt).FontSize(13).LineHeight(1.5).MaxLines(4).TextColor(t.Text)
+			ui.Text(c, w.Prompt).FontSize(13).LineHeight(1.5).MaxLines(4).TextColor(a.workTheme.WorkText)
+		}
+		if len(w.Tools) > 0 {
+			last := w.Tools[len(w.Tools)-1]
+			action := last.Name
+			if last.Finished {
+				action = "Last action: " + action
+			} else {
+				action = "Running " + action
+			}
+			ui.Text(c, action).FontSize(11).LineHeight(1.4).TextColor(a.workTheme.WorkMuted)
 		}
 		if w.Detail != "" {
-			ui.Text(c, w.Detail).FontSize(12).LineHeight(1.45).TextColor(t.Warning)
+			ui.Text(c, w.Detail).FontSize(12).LineHeight(1.45).TextColor(a.workTheme.WorkAttention)
 		}
 	})
 }
@@ -368,10 +376,10 @@ func (a *appModel) workActivitySummary(ct *contact) string {
 			}
 			return "Last action: " + last.Name
 		}
-		return workStateLabel(w.State)
+		return workStateLabel(w)
 	}
 	if w := ct.recentWork(); w != nil {
-		return workStateLabel(w.State)
+		return workStateLabel(w)
 	}
 	return ""
 }
