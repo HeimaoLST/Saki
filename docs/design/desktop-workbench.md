@@ -8,7 +8,7 @@
 
 保留现有「联系人 → 对话 → 输入」结构，让第一次打开容易理解，长时间使用仍便于阅读和检查执行过程。参考产品的实际观察与限制见 [Grok Bot / Qoder 调研](../research/systems/desktop-interaction.md)。本原型沿用现有 mascot，不决定 GUI 新名字。用户明确授权自由配色与视觉重做，接受第 06 版作为初版基础，并要求及时移除旧设计；本文件是现行设计来源，旧方案不与它并行生效。
 
-实现事实基线为 [`dev@47d01ee`](https://github.com/HeimaoLST/Saki/tree/47d01ee83972f8459167503001656a12f9f87c6c/desktop)：220px 联系人侧栏、居中阅读列、History / Settings、工具 Details、贴底 composer、联系人的草稿及 Runtime 任务状态。实际行为以 [desktop.md](desktop.md) 为准。需求参考 [#111 的固定版本](https://github.com/HeimaoLST/Saki/blob/28eb6952cb013dbfb340789ac256e8953a6aff55/docs/requirements/desktop.md)，不假定 PR #119 已集成。
+实现事实基线为 [`dev@47d01ee`](https://github.com/HeimaoLST/Saki/tree/47d01ee83972f8459167503001656a12f9f87c6c/desktop)：220px 联系人侧栏、居中阅读列、History / Settings、工具 Details、贴底 composer、联系人的草稿及 Runtime 任务状态。实际行为以 [desktop.md](desktop.md) 为准。需求参考 [#111 的固定版本](https://github.com/HeimaoLST/Saki/blob/8ea63e04070e18a4f0350e58dfe87969fe7ed79a/docs/requirements/desktop.md)，不假定 PR #119 已集成。
 
 ## 美学规则
 
