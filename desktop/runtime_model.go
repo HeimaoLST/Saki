@@ -444,6 +444,7 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 	var messages []*message
 	var entries []historyEntry
 	var works []*workItem
+	ct.UnlinkedTools = nil
 	byTask := map[string]*workItem{}
 	taskID, messageID := "", ""
 	detail := ""
@@ -515,6 +516,10 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 					entries = append(entries, historyEntry{ID: key, Date: timeLabel, From: from, Text: text})
 				case "tool_call":
 					if w == nil {
+						call := unlinkedToolFor(ct, item.CallID)
+						call.Name = item.Name
+						call.Args = item.Arguments
+						call.Started = true
 						continue
 					}
 					call := workToolFor(w, item.CallID)
@@ -526,6 +531,9 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 					call.Started = true
 				case "tool_result":
 					if w == nil {
+						call := unlinkedToolFor(ct, item.CallID)
+						call.Output = item.Output
+						call.Finished = true
 						continue
 					}
 					call := workToolFor(w, item.CallID)
@@ -576,6 +584,19 @@ func historyWorkDetail(status string, errText *string) string {
 	default:
 		return ""
 	}
+}
+
+func unlinkedToolFor(ct *contact, callID string) *workTool {
+	if callID != "" {
+		for _, call := range ct.UnlinkedTools {
+			if call.CallID == callID {
+				return call
+			}
+		}
+	}
+	call := &workTool{CallID: callID}
+	ct.UnlinkedTools = append(ct.UnlinkedTools, call)
+	return call
 }
 
 func workToolFor(w *workItem, callID string) *workTool {
@@ -650,6 +671,9 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 	}
 	switch payload.Type {
 	case "task_started":
+		if w := workFor(ct, event.TaskID); w != nil && terminalWorkState(w.State) {
+			return // a finished/stopping task cannot be revived by a duplicate start
+		}
 		if ct.ActiveTaskID == "" && ct.LastTaskID != "" && event.TaskID != ct.LastTaskID {
 			return // a late start from an older task cannot own this contact
 		}
@@ -784,6 +808,14 @@ func (a *appModel) canSend(ct *contact) string {
 	}
 	if ct.ActiveTaskID != "" || ct.SendState != sendIdle {
 		return "This contact is busy."
+	}
+	for _, other := range a.contacts {
+		if other == ct {
+			continue
+		}
+		if other.ActiveTaskID != "" || other.SendState == sendSubmitting || other.SendState == sendAccepted || other.SendState == sendUnknown {
+			return "Another contact is working; wait for its task to finish before sending here."
+		}
 	}
 	return ""
 }

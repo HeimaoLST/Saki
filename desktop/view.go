@@ -17,14 +17,15 @@ func (a *appModel) view(c *ui.Context) {
 				a.rail(c, t)
 			}
 			a.main(c, t)
-			if a.aux != "" {
-				a.auxView(c, t)
-			} else if a.workspaceOpen && !a.workOverlay() {
-				a.workspaceFrame(c, t, a.workWidth(), false)
+			if a.workspaceOpen && !a.workOverlay() {
+				a.workspaceFrame(c, t, a.workWidth())
 			}
 		})
-		if a.workspaceOpen && a.workOverlay() {
-			a.workspaceFrame(c, t, 360, true)
+		if a.workspaceOpen && a.workOverlay() && a.aux == "" {
+			a.workspaceModal(c, t)
+		}
+		if a.aux != "" {
+			a.auxView(c, t)
 		}
 	})
 }
@@ -152,8 +153,16 @@ func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 				work.Focus()
 				a.focusWorkspace = false
 			}
-			ui.Button(c, "History").FontSize(12).Padding(4, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openHistory() })
-			ui.Button(c, "Settings").FontSize(12).Padding(4, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openSettings() })
+			history := ui.Button(c, "History").FontSize(12).Padding(4, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openHistory() })
+			if a.focusHistory {
+				history.Focus()
+				a.focusHistory = false
+			}
+			settings := ui.Button(c, "Settings").FontSize(12).Padding(4, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openSettings() })
+			if a.focusSettings {
+				settings.Focus()
+				a.focusSettings = false
+			}
 		})
 	})
 }
@@ -338,6 +347,14 @@ func (a *appModel) alert(c *ui.Context, t *ui.Theme, m *message) {
 func (a *appModel) emptyState(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Column(c).Padding(8, 0).Gap(8).Children(func() {
+		if !a.demo && ct.SessionID != "" && !ct.Loaded {
+			ui.Text(c, "Conversation history is not loaded").FontSize(15).FontWeight(500).TextColor(t.Text)
+			ui.Text(c, "This contact already has a session, but its history has not been read yet; it is not shown as empty.").FontSize(12).LineHeight(1.45).TextColor(t.TextMuted)
+			if a.runtimeStatus != runtimeStateReady {
+				ui.Text(c, "Runtime is not ready; history cannot be read yet.").FontSize(12).LineHeight(1.45).TextColor(t.Warning)
+			}
+			return
+		}
 		ui.Text(c, "No messages yet").FontSize(15).FontWeight(500).TextColor(t.Text)
 		if a.demo {
 			ui.Text(c, "Start typing below to talk with "+ct.Name+"; you can personalize name, purpose, instructions and workspace any time in Settings.").FontSize(12).LineHeight(1.45).TextColor(t.TextMuted)
@@ -385,6 +402,9 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 			}
 		})
 		if !a.demo {
+			if reason := a.canSend(ct); strings.Contains(reason, "Another contact is working") {
+				ui.Text(c, reason).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+			}
 			switch {
 			case ct.SendState == sendSubmitting:
 				ui.Text(c, "Sending…").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
@@ -426,6 +446,10 @@ func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 			})
 			ui.Text(c, "History · "+ct.Name).FontSize(16).FontWeight(500).TextColor(t.Text)
 			ui.Text(c, "Searching only "+ct.Name+"'s conversation history. Messages from other contacts are never included.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+			if !a.demo && ct.SessionID != "" && !ct.Loaded {
+				ui.Text(c, "History is not loaded yet; existing records are not shown as absent.").FontSize(12).LineHeight(1.4).TextColor(t.Warning)
+				return
+			}
 			ui.TextInput(c, &a.historyQuery).FontSize(14).Placeholder("Search " + ct.Name + "'s history")
 			matches := a.historyMatches()
 			if len(matches) == 0 {
@@ -456,17 +480,32 @@ func speakerLabel(c *contact, e historyEntry) string {
 // ---------- aux panel ----------
 
 func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
-	ui.Column(c).Width(300).FillHeight().Background(t.Surface).BorderWidth(0, 0, 0, 1).BorderColor(t.Border).Children(func() {
-		ui.Scroll(c).Grow(1).Padding(12).Children(func() {
-			ui.Column(c).Gap(10).Children(func() {
-				if a.aux == "sources" {
-					a.sourcesPanel(c, t)
-					return
-				}
-				a.settingsPanel(c, t)
+	returnAux := a.aux
+	open := true
+	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
+		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
+		panel.Width(340).FillHeight().Background(t.Surface).Children(func() {
+			ui.Scroll(c).Grow(1).Padding(12).Children(func() {
+				ui.Column(c).Gap(10).Children(func() {
+					switch returnAux {
+					case "sources":
+						a.sourcesPanel(c, t)
+					default:
+						a.settingsPanel(c, t)
+					}
+				})
 			})
 		})
 	})
+	if !open {
+		a.aux = ""
+		switch returnAux {
+		case "settings":
+			a.focusSettings = true
+		case "sources":
+			a.focusHistory = false
+		}
+	}
 }
 
 func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {

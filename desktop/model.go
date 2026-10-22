@@ -69,23 +69,24 @@ type message struct {
 }
 
 type contact struct {
-	ID           string
-	Name         string
-	Role         string
-	Purpose      string
-	Instructions string
-	Workspace    string
-	Status       contactStatus
-	Unread       int
-	Work         string
-	WorkLabel    string
-	Messages     []*message
-	History      []historyEntry
-	Revealed     []string
-	Draft        string
-	replyIndex   int
-	list         ui.ListState
-	Works        []*workItem
+	ID            string
+	Name          string
+	Role          string
+	Purpose       string
+	Instructions  string
+	Workspace     string
+	Status        contactStatus
+	Unread        int
+	Work          string
+	WorkLabel     string
+	Messages      []*message
+	History       []historyEntry
+	Revealed      []string
+	Draft         string
+	replyIndex    int
+	list          ui.ListState
+	Works         []*workItem
+	UnlinkedTools []*workTool
 
 	// Runtime-backed state. Empty SessionID means the contact has no runtime
 	// session yet; it is created lazily before the first task.send.
@@ -158,6 +159,8 @@ type appModel struct {
 	focusWorkspace     bool
 	focusWorkspaceOpen bool
 	focusRail          bool
+	focusHistory       bool
+	focusSettings      bool
 
 	seq int
 	win *mygo.Window
@@ -303,6 +306,9 @@ func (a *appModel) snippet(c *contact) string {
 	if c.Status == statusWorking && c.Work != "" {
 		return c.Work
 	}
+	if !a.demo && c.SessionID != "" && !c.Loaded {
+		return "History not loaded"
+	}
 	for i := len(c.Messages) - 1; i >= 0; i-- {
 		m := c.Messages[i]
 		if m.Kind == msgActivity {
@@ -388,7 +394,15 @@ func (a *appModel) saveSettings() bool {
 	return true
 }
 
-func (a *appModel) closeAux() { a.aux = "" }
+func (a *appModel) closeAux() {
+	switch a.aux {
+	case "settings":
+		a.focusSettings = true
+	case "sources":
+		a.focusHistory = false
+	}
+	a.aux = ""
+}
 
 func (a *appModel) openSources(messageID int) {
 	a.aux = "sources"
@@ -404,6 +418,7 @@ func (a *appModel) openHistory() {
 func (a *appModel) backToChat() {
 	a.screen = viewChat
 	a.highlight = ""
+	a.focusHistory = true
 }
 
 func (a *appModel) historyMatches() []historyEntry {

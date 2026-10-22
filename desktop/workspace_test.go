@@ -214,6 +214,191 @@ func TestLateAndStopEventsDoNotCrossTasks(t *testing.T) {
 	}
 }
 
+func TestDuplicateStartCannotReviveTerminalWork(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.ActiveTaskID = ""
+	ct.LastTaskID = "t1"
+	w := a.ensureWork(ct, "t1", "m1")
+	w.State = workCompleted
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
+		Event: &runtimeEvent{Type: "task_started"},
+	})
+	if ct.ActiveTaskID != "" || w.State != workCompleted {
+		t.Fatalf("duplicate start revived terminal task: active=%q work=%+v", ct.ActiveTaskID, w)
+	}
+
+	// A genuinely accepted next task may start, and the old task's terminal
+	// cannot claim it.
+	ct.ActiveTaskID = "t2"
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "s1", TaskID: "t2", MessageID: "m2",
+		Event: &runtimeEvent{Type: "task_started"},
+	})
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
+		Event: &runtimeEvent{Type: "task_finished", Status: "failed"},
+	})
+	if ct.ActiveTaskID != "t2" || ct.LastTaskID != "t2" || w.State != workCompleted {
+		t.Fatalf("late old terminal polluted next task: active=%q last=%q old=%q", ct.ActiveTaskID, ct.LastTaskID, w.State)
+	}
+}
+
+func TestWorkModalEscapeReturnsFocusToEntry(t *testing.T) {
+	a, _ := workspaceTestApp(t)
+	a.windowWidth = 900
+	tr := ui.NewTester(a.view, 900, 640)
+	tr.Frame()
+	if !tr.HasText("Close work") {
+		t.Fatal("narrow work overlay missing")
+	}
+	tr.Key(0, ui.KeyEscape)
+	tr.Frame()
+	if a.workspaceOpen || !tr.Focused("Work") {
+		t.Fatal("Escape did not close/focus-return the work overlay")
+	}
+}
+
+func TestSettingsModalEscapeReturnsToThreePane(t *testing.T) {
+	a, _ := workspaceTestApp(t)
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("Settings"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.aux != "settings" || !tr.HasText("Close") {
+		t.Fatal("settings modal did not open")
+	}
+	tr.Key(0, ui.KeyEscape)
+	tr.Frame()
+	if a.aux != "" || !tr.Focused("Settings") {
+		t.Fatal("Escape did not close settings and return focus")
+	}
+	if !tr.HasText("No current work") {
+		t.Fatal("closing settings did not return to the three-pane work view")
+	}
+}
+
+func TestSingleExecutionSlotBlocksOtherContact(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.ActiveTaskID = "t1"
+	ct.Loaded = true
+	other := &contact{ID: "mio", Name: "Mio", Role: "Assistant", SessionID: "s2", Loaded: true}
+	a.contacts = append(a.contacts, other)
+	a.selected = 1
+	a.rt = &runtimeClient{}
+	a.runtimeStatus = runtimeStateReady
+	reason := a.canSend(other)
+	if !strings.Contains(reason, "Another contact is working") {
+		t.Fatalf("second contact reason = %q", reason)
+	}
+	if other.Draft != "" || ct.ActiveTaskID != "t1" {
+		t.Fatal("busy guard changed drafts or active task")
+	}
+}
+
+func TestUnloadedSessionDoesNotClaimEmptyHistory(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.SessionID = "s1"
+	ct.Loaded = false
+	a.runtimeStatus = runtimeStateFailed
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if tr.HasText("No messages yet") || tr.HasText("No current work") {
+		t.Fatalf("unloaded session was presented as truly empty: %v", tr.Texts())
+	}
+	for _, want := range []string{"Conversation history is not loaded", "Session history is not loaded", "Runtime is not ready"} {
+		if !tr.HasText(want) {
+			t.Errorf("unloaded state missing %q", want)
+		}
+	}
+}
+
+func TestWorkSurvivesNavigationSwitchAndDetails(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.ActiveTaskID = "t1"
+	ct.LastTaskID = "t1"
+	ct.Draft = "later draft"
+	w := a.ensureWork(ct, "t1", "m1")
+	w.State = workRunning
+	other := &contact{ID: "mio", Name: "Mio", Role: "Assistant", Draft: "mio draft"}
+	a.contacts = append(a.contacts, other)
+
+	a.selectContact(1)
+	if ct.ActiveTaskID != "t1" || w.State != workRunning || ct.Draft != "later draft" {
+		t.Fatal("switching contacts stopped or cleared work")
+	}
+	a.toggleWorkspace()
+	if a.workspaceOpen {
+		t.Fatal("workspace did not close")
+	}
+	a.toggleWorkspace()
+	if !a.workspaceOpen {
+		t.Fatal("workspace did not reopen")
+	}
+	a.openHistory()
+	a.backToChat()
+	a.openSettings()
+	a.closeAux()
+	if ct.ActiveTaskID != "t1" || w.State != workRunning || ct.Draft != "later draft" {
+		t.Fatal("history/settings round trip changed work")
+	}
+	a.selectContact(0)
+	if ct.ActiveTaskID != "t1" || w.State != workRunning || ct.Draft != "later draft" {
+		t.Fatal("returning to the contact lost work")
+	}
+}
+
+func TestFailedWorkAddsAttentionButNotUnread(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	other := &contact{ID: "mio", Name: "Mio", Role: "Assistant"}
+	a.contacts = append(a.contacts, other)
+	a.selected = 1
+	ct.ActiveTaskID = "t1"
+	ct.LastTaskID = "t1"
+	w := a.ensureWork(ct, "t1", "m1")
+	w.State = workRunning
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
+		Event: &runtimeEvent{Type: "task_finished", Status: "failed", Error: &runtimeError{Code: "tool_error", Message: "tool failed"}},
+	})
+	if w.State != workFailed || ct.Status != statusAttention || ct.Unread != 0 {
+		t.Fatalf("failed work state=%q contact=%v unread=%d", w.State, ct.Status, ct.Unread)
+	}
+}
+
+func TestUnlinkedHistoryToolsRemainReadable(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	records := []historyRecord{
+		{Offset: 0, Record: journalRecord{Type: "messages", Items: []inputItem{
+			{Type: "tool_call", CallID: "k1", Name: "read", Arguments: `{"path":"old.txt"}`},
+		}}},
+		{Offset: 1, Record: journalRecord{Type: "messages", Items: []inputItem{
+			{Type: "tool_result", CallID: "k1", Output: `{"content":"old marker"}`},
+		}}},
+		{Offset: 2, Record: journalRecord{Type: "messages", Items: []inputItem{
+			{Type: "message", Role: "assistant", Content: []byte(`"old answer"`)},
+		}}},
+	}
+	a.applyHistory(ct, records, "completed")
+	if len(ct.Works) != 0 || len(ct.UnlinkedTools) != 1 {
+		t.Fatalf("unlinked projection = works %+v tools %+v", ct.Works, ct.UnlinkedTools)
+	}
+	if len(ct.Messages) != 1 || ct.Messages[0].Text != "old answer" {
+		t.Fatalf("text history changed: %+v", ct.Messages)
+	}
+	if ct.UnlinkedTools[0].Output != `{"content":"old marker"}` {
+		t.Fatalf("unlinked output = %+v", ct.UnlinkedTools[0])
+	}
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if !tr.HasText("Earlier activity") || !tr.HasText("old marker") {
+		t.Fatalf("unlinked tool history not readable: %v", tr.Texts())
+	}
+}
+
 func TestWorkPanelRendersToolDetailsWithoutInference(t *testing.T) {
 	a, ct := workspaceTestApp(t)
 	ct.Works = []*workItem{{
@@ -247,5 +432,11 @@ func TestWorkPanelRendersToolDetailsWithoutInference(t *testing.T) {
 	tr.Frame()
 	if !tr.HasText("content") {
 		t.Fatalf("raw tool output not visible after Details: %v", tr.Texts())
+	}
+	if err := tr.Click("Copy"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(tr.Clipboard(), "first heading") {
+		t.Fatalf("copy did not preserve raw tool output: %q", tr.Clipboard())
 	}
 }

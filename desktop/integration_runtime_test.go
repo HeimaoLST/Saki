@@ -517,7 +517,7 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 	}()
 	h2.pump.wait(func() bool {
 		ct := h2.app.contacts[0]
-		return ct.Loaded && len(ct.Messages) > 0
+		return ct.Loaded && len(ct.Messages) > 0 && len(ct.Works) > 0
 	})
 	var restoredSession, restoredName, restoredPurpose, restoredDraft, restoredBDraft string
 	h2.snapshot(func() {
@@ -530,6 +530,23 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 	}
 	if restoredBDraft != "draft for B" {
 		t.Fatalf("B draft = %q", restoredBDraft)
+	}
+	var restoredWorkTask, restoredTool string
+	h2.snapshot(func() {
+		if w := h2.app.contacts[0].recentWork(); w != nil {
+			restoredWorkTask = w.TaskID
+			for _, call := range w.Tools {
+				if strings.Contains(call.Output, marker+"-file-content") {
+					restoredTool = call.Output
+				}
+			}
+		}
+	})
+	if restoredWorkTask == "" || restoredTool == "" {
+		t.Fatalf("restored work/tool = task %q output %q", restoredWorkTask, restoredTool)
+	}
+	if h2.app.contacts[1].recentWork() != nil {
+		t.Fatal("work from contact A leaked into contact B on restore")
 	}
 	if provider.count() != beforeRestart {
 		t.Fatalf("restore issued model requests: %d -> %d", beforeRestart, provider.count())

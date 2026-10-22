@@ -646,7 +646,13 @@ func TestPreviewRuntimeStates(t *testing.T) {
 	a.windowWidth = 1600
 	tr := ui.NewTester(a.view, 1600, 900)
 	tr.Frame()
-	writePreviewPNG(t, filepath.Join(dir, "headless-light-wide-runtime-chat.png"), tr.Image())
+	writePreviewPNG(t, filepath.Join(dir, "headless-light-wide-runtime-working.png"), tr.Image())
+
+	a = runtimePreviewApp("runtime-working")
+	a.windowWidth = 900
+	tr = ui.NewTester(a.view, 900, 640)
+	tr.Frame()
+	writePreviewPNG(t, filepath.Join(dir, "headless-light-narrow-runtime-work-overlay.png"), tr.Image())
 }
 
 func TestToolFailureIsVisibleBeforeDetails(t *testing.T) {
