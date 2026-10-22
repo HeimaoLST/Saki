@@ -1,3 +1,5 @@
+mod title;
+
 pub mod config;
 pub mod host;
 pub mod runtime;
@@ -13,10 +15,12 @@ use crate::{
         Agent, AgentEvent, conversation::CompactionConfig, journal::Replay, message::UserMessage,
     },
     client::ModelClient,
-    protocol::{InputItem, InputMessageContent, MessageRole, ModelRequest, OutputItem, OutputText},
     tools::{ToolContext, register_builtins, tool_registry::ToolRegistry},
 };
 use store::{LoadedSession, SessionMetadata, SessionStore, SessionSummary};
+#[cfg(test)]
+use title::title_from_output;
+use title::{TITLE_INPUT_CHARS, generate, remember_reply, truncate_chars};
 
 fn build_agent(store: &SessionStore, client: &ModelClient, loaded: LoadedSession) -> Result<Agent> {
     // The API match was checked by `SessionStore::open_for_api` before the
@@ -92,51 +96,6 @@ pub enum SessionEvent {
 struct TitleJobResult {
     session_id: String,
     title: Option<String>,
-}
-
-/// Longest excerpt from each side of the first exchange given to the title job.
-const TITLE_INPUT_CHARS: usize = 2000;
-/// Upper bound on a stored generated title.
-const TITLE_MAX_CHARS: usize = 60;
-
-fn truncate_chars(text: &str, max: usize) -> String {
-    text.chars().take(max).collect()
-}
-
-/// Sanitizes the model's reply into a one-line title, or `None` when it is
-/// empty, unparsable, or just the default title.
-fn title_from_output(output: &[OutputItem]) -> Option<String> {
-    let text = output.iter().find_map(|item| match item {
-        OutputItem::Message { content, .. } => {
-            let joined: String = content
-                .iter()
-                .map(|OutputText { text }| text.as_str())
-                .collect();
-            (!joined.trim().is_empty()).then_some(joined)
-        }
-        _ => None,
-    })?;
-    let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
-    let collapsed = line
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .trim_matches(['"', '\'', '`', '*', '#'])
-        .trim()
-        .to_owned();
-    let title: String = collapsed.chars().take(TITLE_MAX_CHARS).collect();
-    let title = title.trim_matches(['"', '\'', '`']).trim();
-    (!title.is_empty() && title != store::DEFAULT_TITLE).then(|| title.to_owned())
-}
-
-fn remember_reply(reply: &mut String, event: &AgentEvent) {
-    if let AgentEvent::ResponseText { text, .. } = event {
-        let remaining = TITLE_INPUT_CHARS.saturating_sub(reply.chars().count());
-        if remaining > 0 {
-            reply.extend(text.chars().take(remaining));
-            reply.push('\n');
-        }
-    }
 }
 
 pub struct SessionManager {
@@ -246,42 +205,10 @@ impl SessionManager {
         let session_id = self.metadata.id.clone();
         let client = self.client.clone();
         let model = self.metadata.model.clone();
-        let prompt = format!(
-            "User: {}\n\nAssistant: {}",
-            truncate_chars(user_text, TITLE_INPUT_CHARS),
-            truncate_chars(reply_text, TITLE_INPUT_CHARS),
-        );
+        let user_text = user_text.to_owned();
+        let reply_text = reply_text.to_owned();
         self.title_jobs.spawn(async move {
-            let items = [
-                InputItem::Message {
-                    role: MessageRole::System,
-                    content: InputMessageContent::Text(
-                        "You write concise English conversation titles. Reply with only the title: \
-                         one line, at most 8 words, plain text, no quotes, no trailing punctuation."
-                            .to_owned(),
-                    ),
-                },
-                InputItem::Message {
-                    role: MessageRole::User,
-                    content: InputMessageContent::Text(prompt),
-                },
-            ];
-            // Independent output budget: reasoning models may spend tokens on
-            // reasoning before producing the short visible title.
-            let request = ModelRequest::new(model, &items, Vec::new()).with_generation(
-                Some(1024),
-                None,
-                None,
-            );
-            let title = match tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                client.respond(request),
-            )
-            .await
-            {
-                Ok(Ok(response)) => title_from_output(&response.output),
-                _ => None,
-            };
+            let title = generate(client, model, user_text, reply_text).await;
             TitleJobResult { session_id, title }
         });
     }
