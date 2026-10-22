@@ -45,7 +45,7 @@ a{color:var(--success)}
 .segmented{display:flex;padding:3px;border:1px solid var(--border);border-radius:8px}
 .segmented button{padding:3px 10px;font-size:12px}
 .segmented button[aria-pressed=true]{background:var(--surface);box-shadow:0 1px 3px #0001}
-.app{position:relative;display:grid;grid-template-columns:220px minmax(0,1fr);width:min(var(--frame,1040px),calc(100% - 48px));height:min(720px,calc(100dvh - 112px));min-height:520px;margin:0 auto;border:1px solid var(--border);border-radius:15px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)}
+.app{position:relative;display:grid;grid-template-columns:var(--rail-width,192px) minmax(0,1fr);width:min(var(--frame,1200px),calc(100% - 48px));height:min(720px,calc(100dvh - 112px));min-height:520px;margin:0 auto;border:1px solid var(--border);border-radius:15px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)}
 .rail{display:flex;flex-direction:column;background:var(--bg);padding:16px 10px 12px;min-height:0}
 .brand{height:38px;padding:0 14px;display:flex;align-items:center;gap:9px;font-size:17px;font-weight:650;letter-spacing:-.4px}
 .brand svg{color:var(--accent);width:20px;height:20px}
@@ -69,21 +69,74 @@ a{color:var(--success)}
 .header-actions{display:flex;gap:4px}
 .header-actions button{display:flex;align-items:center;gap:6px;padding:8px 9px;font-size:12px;color:var(--muted)}
 .header-actions button[aria-expanded=true]{background:var(--hover);color:var(--text)}
-.work-strip{flex:none;display:flex;align-items:center;gap:10px;padding:11px 13px;margin-bottom:12px;border:1px solid var(--border);border-radius:11px;background:var(--bg)}
-.work-strip strong{font-size:12px;font-weight:550}
-.work-strip p{font-size:12px;color:var(--muted);margin-top:3px}
-.work-strip button{font-size:12px;color:var(--success);padding:7px 8px;white-space:nowrap}
-.work-strip #stop-work{color:var(--muted);border:1px solid var(--border)}
-.work-state{font-size:11px;color:var(--muted)}
-.work-indicator{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
-.work-indicator.running{background:var(--success);box-shadow:0 0 0 4px color-mix(in srgb,var(--success) 12%,transparent)}
-.work-indicator.failed{background:var(--danger)}
-.work-indicator.completed{background:var(--success)}
-.work-steps{list-style:none;padding:0;margin:0}
-.work-steps .tool{padding:10px 0;margin:0}
-.work-steps .tool summary{flex-wrap:wrap;gap:5px;line-height:1.6}
-.work-steps .tool-output{overflow-wrap:anywhere}
-.work-steps pre{font-size:11px}
+.work-drawer{--work-width:360px;padding:0;border:0;border-left:1px solid var(--border);color:var(--text);background:var(--bg);width:var(--work-width);max-width:none;max-height:none}
+.work-drawer[open]{display:flex;flex-direction:column;animation:panel-in 160ms ease-out}
+.app.docked.work-open{grid-template-columns:var(--rail-width,192px) minmax(0,1fr) 360px}
+.app.docked .work-drawer{position:relative;grid-column:3;grid-row:1;margin:0;height:100%;min-height:0}
+.app.compact{--rail-width:160px}
+.app.compact.docked.work-open{grid-template-columns:160px minmax(0,1fr) 320px}
+.app.compact .work-drawer{--work-width:320px}
+.app.work-open .reading{width:calc(100% - 40px)}
+.app.work-open .header-actions button{padding:8px 6px}
+.app.work-open .header-actions button:not(#work-button) span{display:none}
+.app.work-open .compose-hint{flex-wrap:wrap;gap:3px}
+.app:not(.docked) .work-drawer{position:fixed;top:var(--panel-top);right:var(--panel-right);bottom:auto;left:auto;height:var(--panel-height);margin:0;border-radius:0 15px 15px 0;max-width:calc(100vw - 48px);box-shadow:-15px 0 50px #0002}
+.work-drawer::backdrop{background:#12101d55}
+.work-head{height:76px;flex:none;padding:0 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}
+.work-head h2{font-size:14px;letter-spacing:0}
+.work-head p{font-size:12px;color:var(--muted);margin-top:3px}
+.work-content{padding:20px;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.work-footer{margin-top:auto;flex:none;padding:12px 20px;border-top:1px solid var(--border);display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}
+.work-footer span{overflow-wrap:anywhere}
+.work-section-head{display:flex;align-items:center;justify-content:space-between;margin:22px 0 10px;font-size:12px;color:var(--muted)}
+.work-section-head h3{font-size:12px;font-weight:550}
+.work-section-head:first-child{margin-top:0}
+.task-card{padding:16px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+.task-card h3{font-size:16px;margin:12px 0 7px;line-height:1.5}
+.task-card p{font-size:12px;color:var(--muted);line-height:1.7}
+.task-status{display:inline-flex;align-items:center;gap:7px;color:var(--success);font-size:12px}
+.task-status::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}
+.task-status[data-status=failed]{color:var(--danger)}
+.task-status[data-status=interrupted],.task-status[data-status=stopping]{color:var(--warning)}
+.task-action{display:flex;justify-content:space-between;gap:10px;align-items:center;border-top:1px solid var(--border);margin-top:14px;padding-top:11px;font-size:12px;color:var(--muted)}
+.task-action button{padding:5px 8px;display:flex;align-items:center;gap:5px;border:1px solid var(--border);white-space:nowrap}
+.task-action svg{width:13px;height:13px}
+.workspace-files{display:flex;flex-direction:column;gap:5px}
+.workspace-file{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:10px;border:1px solid transparent;border-radius:9px;min-width:0}
+.workspace-file.output{background:color-mix(in srgb,var(--accent) 8%,var(--surface));border-color:color-mix(in srgb,var(--accent) 35%,var(--border))}
+.file-symbol{display:grid;place-items:center;width:34px;height:40px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--muted);flex:none}
+.output .file-symbol{color:var(--accent)}
+.workspace-file strong{display:block;font-size:13px;font-weight:550;line-height:1.5}
+.workspace-file small{display:block;color:var(--muted);font-size:11px;overflow-wrap:anywhere;margin-top:3px}
+.file-tag{font-size:11px;color:var(--muted);white-space:nowrap}
+.output .file-tag{color:var(--accent)}
+.file-empty{font-size:12px;color:var(--muted);padding:14px 12px;border:1px dashed var(--border);border-radius:9px;line-height:1.8}
+.work-events{list-style:none;padding:0;margin:0}
+.work-events li{position:relative;padding:0 0 17px 20px;border-left:1px solid var(--border);margin-left:4px}
+.work-events li:last-child{border-left-color:transparent;padding-bottom:0}
+.work-events li::before{content:'';position:absolute;left:-4px;top:6px;width:7px;height:7px;border-radius:50%;background:var(--muted);box-shadow:0 0 0 4px var(--bg)}
+.work-events li[data-status=running]::before,.work-events li[data-status=completed]::before{background:var(--success)}
+.work-events li[data-status=failed]::before{background:var(--danger)}
+.work-events summary{cursor:pointer;font-size:12px;line-height:1.7;list-style:none}
+.work-events summary::-webkit-details-marker{display:none}
+.work-events summary .row{align-items:flex-start;justify-content:space-between}
+.work-events summary strong{font-size:12px;font-weight:500}
+.work-events summary small{display:block;color:var(--muted);font-size:11px;margin-top:3px;overflow-wrap:anywhere}
+.work-events summary svg{width:13px;height:13px;margin-top:4px;transition:transform 120ms}
+.work-events details[open] summary svg{transform:rotate(90deg)}
+.work-events .tool-output{font-size:11px;line-height:1.8}
+.work-empty{padding:35px 4px;text-align:center}
+.work-empty>svg{width:32px;height:32px;color:var(--muted);margin-bottom:16px}
+.work-empty h3{font-size:15px;margin-bottom:8px}
+.work-empty p{font-size:12px;color:var(--muted);line-height:1.8}
+.document-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:18px}
+.document-toolbar button{display:flex;align-items:center;gap:5px;padding:6px;font-size:12px;color:var(--muted)}
+.document-toolbar .back-arrow{transform:rotate(180deg)}
+.document-sheet{padding:21px 17px;background:var(--surface);border:1px solid var(--border);border-radius:10px}
+.document-sheet h3{font-size:18px;line-height:1.5;margin:14px 0}
+.document-sheet .document-type{font-size:11px;color:var(--success)}
+.document-sheet .document-path{font-size:11px;color:var(--muted);overflow-wrap:anywhere;margin-top:20px;border-top:1px solid var(--border);padding-top:12px}
+.document-body{white-space:pre-wrap;font-size:13px;line-height:1.9;overflow-wrap:anywhere}
 .scroll{flex:1;overflow:auto;min-height:0;scrollbar-width:thin;scrollbar-color:var(--muted) transparent}
 .conversation{padding:6px 0 24px;overflow-wrap:anywhere}
 .date{text-align:center;font-size:11px;color:var(--muted);margin:0 0 20px;letter-spacing:.4px}
@@ -141,9 +194,6 @@ th,td{overflow-wrap:anywhere}
 .content-modal .chart figcaption{display:none}
 .content-modal .chart svg{min-width:0}
 .bubble:focus-visible,[data-expand-content]:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
-.spinner{width:13px;height:13px;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin 1.1s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}
-}
 .composer-wrap{flex:none;padding:10px 0 17px}
 .composer{border:1px solid var(--border);border-radius:18px;background:var(--bg);padding:13px 14px 10px;box-shadow:0 2px 8px #00000006}
 .composer:focus-within{border-color:var(--focus)}
@@ -165,9 +215,7 @@ textarea::placeholder{color:var(--muted)}
 .empty p{color:var(--muted);font-size:14px;line-height:1.8;margin-top:10px;max-width:300px}
 .panel{padding:0;border:0;color:var(--text);background:var(--bg);border-left:1px solid var(--border);width:300px;max-width:none;max-height:none}
 .panel[open]{display:flex;flex-direction:column;animation:panel-in 160ms ease-out}
-.app.wide.panel-open{grid-template-columns:220px minmax(0,1fr) 300px}
-.app.wide .panel{position:relative;margin:0;height:100%;min-height:0}
-.app:not(.wide) .panel{position:fixed;top:var(--panel-top);right:var(--panel-right);bottom:auto;left:auto;height:var(--panel-height);margin:0;border-radius:0 15px 15px 0;max-width:calc(100vw - 48px);box-shadow:-15px 0 50px #0002}
+.panel{position:fixed;top:var(--panel-top);right:var(--panel-right);bottom:auto;left:auto;height:var(--panel-height);margin:0;border-radius:0 15px 15px 0;max-width:calc(100vw - 48px);box-shadow:-15px 0 50px #0002}
 .panel::backdrop{background:#12101d55}
 .panel-head{display:flex;align-items:center;justify-content:space-between;flex:none;padding:23px 20px 15px}
 .panel-head h2{font-size:15px;letter-spacing:0}
@@ -186,7 +234,7 @@ textarea::placeholder{color:var(--muted)}
 .history-row{width:100%;text-align:left;padding:12px 8px;border-bottom:1px solid var(--border);border-radius:0;display:block}
 .history-row strong{display:block;font-size:13px;font-weight:500}
 .history-row span{display:block;font-size:12px;color:var(--muted);margin-top:4px}
-.design-note{max-width:1040px;width:calc(100% - 48px);margin:13px auto;color:var(--muted);font-size:11px;display:flex;justify-content:space-between;gap:20px}
+.design-note{max-width:1200px;width:calc(100% - 48px);margin:13px auto;color:var(--muted);font-size:11px;display:flex;justify-content:space-between;gap:20px}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);padding:9px 16px;background:var(--hover);color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:12px;z-index:5;box-shadow:0 6px 20px #0002}
 @keyframes panel-in{from{opacity:0;transform:translateX(8px)}
 to{opacity:1;transform:translateX(0)}
@@ -211,12 +259,12 @@ to{opacity:1;transform:translateX(0)}
 <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol><symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol><symbol id="i-history" viewBox="0 0 24 24"><path d="M3 11a9 9 0 1 1 2.5 7M3 5v6h6M12 7v5l3 2"/></symbol><symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></symbol><symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol><symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v12H3Z"/></symbol><symbol id="i-file" viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5ZM14 3v6h5M9 13h6m-6 4h6"/></symbol><symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
 </defs></svg>
 <div class="design-bar">
- <div class="design-brand"><strong>Saki</strong><span class="design-badge">设计原型 · 03</span><span class="muted">交流与工作</span></div>
+ <div class="design-brand"><strong>Saki</strong><span class="design-badge">设计原型 · 04</span><span class="muted">对话 × 工作区</span></div>
  <div class="design-controls">
   <div class="segmented" aria-label="预览主题"><button data-theme-choice="moon" aria-pressed="true">Moon</button><button data-theme-choice="dawn" aria-pressed="false">Dawn</button></div>
   <label>场景 <select id="scene"><option value="ready">日常对话</option><option value="rich">表格与图表</option><option value="working">安静工作</option><option value="speaking">边工作边说话</option><option value="done">完成但不发消息</option><option value="blocked">工作受阻</option><option value="error">启动异常</option><option value="empty">空对话</option></select></label>
   <button id="speak-demo" class="pill" hidden>模拟 Agent 发消息</button><button id="finish-demo" class="pill" hidden>模拟工作完成</button>
-  <label>画布 <select id="frame"><option value="1040">1040</option><option value="960">960</option><option value="1200">1200</option></select></label>
+  <label>画布 <select id="frame"><option value="1200">1200</option><option value="1040">1040</option><option value="960">960</option></select></label>
  </div>
 </div>
 <div class="app" id="app">
@@ -224,14 +272,14 @@ to{opacity:1;transform:translateX(0)}
   <div class="brand">Saki</div>
   <div class="rail-label"><span>联系人</span><button id="add-contact" class="row"><svg aria-hidden="true" style="width:13px;height:13px"><use href="#i-plus"/></svg>添加</button></div>
   <nav class="contacts" id="contacts" aria-label="选择联系人"></nav>
-  <div class="rail-footer"><span>自己的小小工作台</span><button id="appearance" class="icon" aria-label="打开外观设置"><svg aria-hidden="true"><use href="#i-settings"/></svg></button></div>
+  <div class="rail-footer"><span>自己的工作台</span><button id="appearance" class="icon" aria-label="打开外观设置"><svg aria-hidden="true"><use href="#i-settings"/></svg></button></div>
  </aside>
  <main class="main">
   <header class="header reading">
    <div class="identity"><img class="avatar" src="assets/saki-avatar-default.png" alt=""><div><h1 id="contact-name">Saki</h1><div class="status-text" id="status-text">可以继续聊</div></div></div>
-   <div class="header-actions"><button id="work-button" aria-controls="panel" aria-expanded="false"><svg aria-hidden="true"><use href="#i-folder"/></svg><span>工作</span></button><button id="history-button" aria-controls="panel" aria-expanded="false"><svg aria-hidden="true"><use href="#i-history"/></svg><span>历史</span></button><button id="settings-button" aria-controls="panel" aria-expanded="false"><svg aria-hidden="true"><use href="#i-settings"/></svg><span>设置</span></button></div>
+   <div class="header-actions"><button id="work-button" aria-label="展开 Agent 工作区" aria-controls="work-drawer" aria-expanded="false"><svg aria-hidden="true"><use href="#i-folder"/></svg><span>工作区</span></button><button id="history-button" aria-label="历史记录" aria-controls="panel" aria-expanded="false"><svg aria-hidden="true"><use href="#i-history"/></svg><span>历史</span></button><button id="settings-button" aria-label="联系人设置" aria-controls="panel" aria-expanded="false"><svg aria-hidden="true"><use href="#i-settings"/></svg><span>设置</span></button></div>
   </header>
-  <section class="work-strip reading" id="work-strip" aria-label="工作状态" hidden><span id="work-indicator" class="work-indicator" aria-hidden="true"></span><div class="grow"><div class="row"><strong id="work-title"></strong><span class="work-state" id="work-state"></span></div><p id="work-detail"></p></div><button id="view-work">查看工作</button><button id="stop-work" hidden>停止</button></section>
+
   <section class="error reading" id="error-banner" role="alert" hidden><strong>尚未启动 · 找不到运行程序</strong><p>已保留草稿。请确认应用包含 Saki-runtime，或配置其位置后重启应用。</p><button id="diagnostics">查看启动诊断</button></section>
   <div class="scroll" id="scroll"><div class="conversation reading" id="conversation">
    <div class="date" id="date-label">今天 · 10:42</div>
@@ -240,9 +288,10 @@ to{opacity:1;transform:translateX(0)}
   </div></div>
   <div class="composer-wrap reading"><div class="composer"><label for="draft" class="sr-only">给当前联系人的消息</label><textarea id="draft" placeholder="还有什么想一起想想的？" rows="2"></textarea><div class="composer-footer"><button class="workspace" id="workspace"><svg aria-hidden="true"><use href="#i-folder"/></svg><span>notes/</span></button><button class="send" id="send" aria-label="发送消息"><svg aria-hidden="true"><use href="#i-arrow"/></svg></button></div></div><div class="compose-hint"><span id="hint">Enter 发送 · Shift Enter 换行</span><span id="draft-state">草稿仅保存在此原型页面</span></div></div>
  </main>
+ <dialog class="work-drawer" id="work-drawer" aria-labelledby="work-drawer-title"><header class="work-head"><div><h2 id="work-drawer-title">Agent 工作区</h2><p id="work-owner">Saki 的工作</p></div><button class="icon" id="close-work" aria-label="收起工作区"><svg aria-hidden="true"><use href="#i-close"/></svg></button></header><div class="work-content" id="work-content"></div><footer class="work-footer"><svg aria-hidden="true"><use href="#i-folder"/></svg><span id="work-directory">notes/</span></footer></dialog>
  <dialog class="panel" id="panel" aria-labelledby="panel-title"><div class="panel-head"><h2 id="panel-title">设置</h2><button class="icon" id="close-panel" aria-label="关闭面板"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div><div class="panel-content" id="panel-content"></div></dialog>
 </div>
-<div class="design-note"><span>设计模拟 · 不发送真实请求。工作状态与聊天消息独立。可模拟安静工作、主动说话、无消息完成。</span><span>沿用现有 GUI · Rosé Pine Moon / Dawn</span></div>
+<div class="design-note"><span>设计模拟 · 不发送真实请求。左侧联系人 · 中间对话 · 右侧工作区。右栏可收起，文件可预览。</span><span>沿用现有 GUI · Rosé Pine Moon / Dawn</span></div>
 <dialog id="content-modal" class="content-modal" aria-labelledby="content-title"><div class="row between"><h2 id="content-title">内容详情</h2><button id="close-content" class="icon" aria-label="关闭内容详情"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div><div id="content-detail"></div></dialog>
 <div class="toast" id="toast" role="status" hidden></div><div class="sr-only" role="status" aria-live="polite" id="live"></div>
 <template id="trip-reply">
@@ -267,18 +316,23 @@ function sampleMessages(rich=false){return [
  {role:'assistant',kind:rich?'rich':'trip',time:'10:43'}
 ]}
 function sampleWork(status='running'){
- const work={title:'整理旅行资料',status,detail:'正在读取住宿笔记',kind:'trip',events:[{name:'read',target:'notes/trip.md',status:'completed',output:'已读取：周末看海、咖啡、散步；不赶早班车。'},{name:'read',target:'notes/stay.md',status:'running',output:''}],artifact:''};
+ const work={title:'整理旅行资料',status,detail:'正在读取住宿笔记',kind:'trip',events:[{name:'read',target:'notes/trip.md',status:'completed',output:'周末看海、咖啡、散步；不赶早班车。'},{name:'read',target:'notes/stay.md',status:'running',output:''}],files:[{path:'notes/trip.md',title:'旅行偏好',type:'source',status:'ready',content:'周末去看海\n\n周六上午出发，不赶早班车。\n想做的事：看海、喝咖啡、散步。\n住一晚，周日下午回来。\n\n记得带：防晒、充电器、薄外套。\n住宿和预算待确认。'},{path:'notes/stay.md',title:'住宿笔记',type:'source',status:'loading',content:''}]};
  if(status==='completed')completeWork(work);
- if(status==='failed'){work.detail='住宿笔记未找到，需要检查文件位置';work.events[1].status='failed';work.events[1].output='文件不存在：notes/stay.md。此前的读取结果已保留。'}
+ if(status==='failed'){work.detail='住宿笔记未找到。请检查文件位置后重新发起委托。';work.events[1].status='failed';work.events[1].output='文件不存在：notes/stay.md。此前的读取结果已保留。';work.files[1].status='failed'}
  return work;
 }
 function completeWork(work){
- work.status='completed';work.events.forEach(event=>{if(event.status==='running'){event.status='completed';event.output='处理完成（设计示例）。'}});
+ work.status='completed';work.events.forEach(event=>{if(event.status==='running'){event.status='completed';event.output=work.kind==='trip'?'已读取：靠海、安静、步行可到咖啡店；预算待确认。':'处理完成（设计示例）。'}});
  work.detail='本次工作已完成';
- if(work.kind==='trip'){work.events.push({name:'write',target:'notes/trip-plan.md',status:'completed',output:'已生成行程草稿（设计示例，不写入真实文件）。'});work.detail='已整理 2 份资料，生成了行程草稿';work.artifact='周六：上午出发，午后入住，傍晚看海。\n周日：早午餐、自由散步，下午返程。\n待确认：住宿预算和往返车次。'}
+ if(work.kind==='trip'){
+  work.files[1].status='ready';work.files[1].content='住宿偏好\n\n靠海，安静。步行可到咖啡店。\n不安排过早出发。\n预算尚未确认，先保留选项。';
+  work.events.push({name:'write',target:'notes/trip-plan.md',status:'completed',output:'行程草稿已生成。'});
+  work.detail='两份资料已整理，行程草稿可以查看。';
+  work.files.push({path:'notes/trip-plan.md',title:'轻松一点的海边周末',type:'output',status:'ready',content:'周六 · 慢慢出发\n\n上午出发，午后入住。先去喝杯咖啡，等傍晚再去海边散步。\n\n周日 · 留一点空白\n\n睡到自然醒，吃完早午餐再去走走。下午从容返程。\n\n还需要确定\n\n住宿预算、往返车次。其余时间不排满。'});
+ }
 }
 const contacts=[{name:'Saki',draft:'',scene:'ready',messages:sampleMessages(),work:null,bound:true,purpose:'日常整理与阅读',directory:'notes/'},{name:'Mio',draft:'帮我整理一下明天想读的资料',scene:'empty',messages:[],work:null,bound:false,purpose:'',directory:''}];
-let selected=0,panelKind='',panelOrigin=null,contentOrigin=null,stopTimer=null,toastTimer=null;
+let selected=0,panelKind='',panelOrigin=null,contentOrigin=null,stopTimer=null,toastTimer=null,workspaceFile=null;
 const active=()=>contacts[selected];
 const icon=name=>`<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const isBusy=c=>['running','stopping'].includes(c.work?.status);
@@ -293,7 +347,7 @@ function renderContacts(){
   const image=document.createElement('img');image.src='assets/saki-avatar-default.png';image.className='avatar';image.alt='';
   const text=document.createElement('div');text.className='grow';const name=document.createElement('div');name.className='name';name.textContent=contact.name;
   const snippet=document.createElement('div');snippet.className='snippet';snippet.textContent=isBusy(contact)?workLabel(contact.work.status)+' · '+contact.work.title:contact.work?.status==='failed'?'需要处理 · '+contact.work.title:contact.draft?'草稿 · '+contact.draft:contact.scene==='error'?'需要检查启动配置':contact.messages.at(-1)?.text||(contact.messages.length?'要先一起看看住哪里吗？':'新对话');
-  text.append(name,snippet);button.append(image,text);button.addEventListener('click',()=>{active().draft=$('draft').value;selected=i;closePanel(false);render();scrollToLatest()});$('contacts').append(button);
+  text.append(name,snippet);button.append(image,text);button.addEventListener('click',()=>{active().draft=$('draft').value;selected=i;workspaceFile=null;closePanel(false);render();scrollToLatest()});$('contacts').append(button);
  });
 }
 function renderMessages(){
@@ -314,13 +368,34 @@ function renderMessages(){
 function scrollToLatest(){$('scroll').scrollTop=$('scroll').scrollHeight}
 function sizeDraft(){$('draft').style.height='auto';$('draft').style.height=Math.min(140,$('draft').scrollHeight)+'px'}
 function renderWorkPanel(){
- const work=active().work;
- $('panel-content').innerHTML=work?'<h3 id="work-panel-title"></h3><p class="help" id="work-panel-status"></p><div class="section-title">执行记录</div><ol class="work-steps" id="work-events"></ol><div id="work-result"></div><p class="help">设计模拟 · 记录不读取或修改真实文件。</p>':'<p class="help">还没有工作记录。工作与聊天消息独立保留。</p>';
- if(!work)return;
- $('work-panel-title').textContent=work.title;$('work-panel-status').textContent=workLabel(work.status)+' · '+work.detail;
- work.events.forEach(event=>{const item=document.createElement('li');const details=document.createElement('details');details.className='tool';const summary=document.createElement('summary');summary.textContent=event.name+' · '+event.target+' · '+workLabel(event.status);const output=document.createElement('pre');output.className='tool-output';output.textContent=event.output||'正在执行，尚无结果。';details.append(summary,output);item.append(details);$('work-events').append(item)});
- if(work.artifact){$('work-result').innerHTML='<div class="section-title">产物</div><details class="tool"><summary>notes/trip-plan.md · 查看草稿</summary><pre class="tool-output"></pre></details>';$('work-result').querySelector('pre').textContent=work.artifact}
- if(isBusy(active())){const stop=document.createElement('button');stop.className='pill';stop.textContent=work.status==='stopping'?'正在停止':'停止这项工作';stop.disabled=work.status==='stopping';stop.addEventListener('click',()=>{stopWork();$('close-panel').focus()});$('panel-content').append(stop)}
+ const c=active(),work=c.work,content=$('work-content');
+ const expanded=[...content.querySelectorAll('details[open][data-event]')].map(el=>el.dataset.event);
+ $('work-owner').textContent=c.name+' 的工作';$('work-directory').textContent=c.directory||'默认工作目录';
+ const file=work?.files.find(file=>file.path===workspaceFile);
+ if(file){
+  content.innerHTML='<div class="document-toolbar"><button id="back-work">'+icon('chevron')+'工作概览</button><button id="expand-document">展开阅读</button></div><article class="document-sheet"><div class="document-type"></div><h3></h3><div class="document-body"></div><p class="document-path"></p></article>';
+  content.querySelector('#back-work svg').classList.add('back-arrow');content.querySelector('.document-type').textContent=file.type==='output'?'工作产物 · 已生成':'参考资料 · 已读取';content.querySelector('h3').textContent=file.title;content.querySelector('.document-body').textContent=file.content;content.querySelector('.document-path').textContent=file.path;
+  $('back-work').addEventListener('click',()=>{const path=workspaceFile;workspaceFile=null;renderWorkPanel();[...content.querySelectorAll('[data-file]')].find(button=>button.dataset.file===path)?.focus()});
+  $('expand-document').addEventListener('click',e=>{contentOrigin=e.currentTarget;$('content-title').textContent=file.title;$('content-detail').replaceChildren(content.querySelector('.document-sheet').cloneNode(true));$('content-modal').showModal();$('close-content').focus()});return;
+ }
+ workspaceFile=null;
+ if(!work){content.innerHTML='<div class="work-empty">'+icon('folder')+'<h3>留给工作的地方</h3><p>当 '+c.name.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')+' 开始处理事情，<br>这里会留下过程、资料和产物。</p></div>';return}
+ content.innerHTML='<div class="work-section-head"><h3>当前工作</h3><span>本次委托</span></div><section class="task-card"><span class="task-status"></span><h3></h3><p class="task-detail"></p><div class="task-action"><span></span><button id="stop-work">'+icon('stop')+'<span>停止</span></button></div></section><div class="work-section-head"><h3>产物</h3><span id="output-count"></span></div><div class="workspace-files" id="work-outputs"></div><div class="work-section-head"><h3>参考资料</h3><span id="source-count"></span></div><div class="workspace-files" id="work-sources"></div><div class="work-section-head"><h3>执行记录</h3><span>可展开查看</span></div><ol class="work-events" id="work-events"></ol>';
+ const status=content.querySelector('.task-status');status.textContent=workLabel(work.status);status.dataset.status=work.status;content.querySelector('.task-card h3').textContent=work.title;content.querySelector('.task-detail').textContent=work.detail;
+ content.querySelector('.task-action>span').textContent=work.status==='completed'?'结果已保留':work.status==='failed'?'此前内容已保留':work.status==='interrupted'?'已有记录仍可查看':work.events.filter(event=>event.status==='completed').length+' 项已完成';
+ $('stop-work').hidden=!isBusy(c);$('stop-work').disabled=work.status==='stopping';$('stop-work').querySelector('span').textContent=work.status==='stopping'?'停止中':'停止';$('stop-work').addEventListener('click',()=>{stopWork();$('close-work').focus()});
+ for(const type of ['output','source']){
+  const files=work.files.filter(file=>file.type===type),container=$(type==='output'?'work-outputs':'work-sources');$(type+'-count').textContent=files.length?files.length+' 份':'';
+  if(!files.length){const empty=document.createElement('p');empty.className='file-empty';empty.textContent=type==='output'?(isBusy(c)?'还没有产物。生成后会留在这里，无需等待一条回复。':'本次工作没有生成文件。'):'当前没有参考文件。';container.append(empty)}
+  files.forEach(file=>{const button=document.createElement('button');button.className='workspace-file '+type;button.dataset.file=file.path;button.disabled=file.status!=='ready';button.innerHTML='<span class="file-symbol">'+icon('file')+'</span><span class="grow"><strong></strong><small></small></span><span class="file-tag"></span>';button.querySelector('strong').textContent=file.title;button.querySelector('small').textContent=file.path;button.querySelector('.file-tag').textContent=file.status==='loading'?'读取中':file.status==='failed'?'未找到':file.status==='interrupted'?'已停止':type==='output'?'已生成':'已读取';button.addEventListener('click',()=>{workspaceFile=file.path;renderWorkPanel();$('work-content').scrollTop=0;$('back-work').focus()});container.append(button)});
+ }
+ work.events.forEach((event,index)=>{const item=document.createElement('li');item.dataset.status=event.status;const details=document.createElement('details');details.dataset.event=String(index);details.open=expanded.includes(String(index));const summary=document.createElement('summary');summary.innerHTML='<div class="row"><strong></strong>'+icon('chevron')+'</div><small></small>';const action=event.name==='read'?'读取资料':event.name==='write'?'生成草稿':'处理委托';summary.querySelector('strong').textContent=action+' · '+workLabel(event.status);summary.querySelector('small').textContent=event.target;const output=document.createElement('pre');output.className='tool-output';output.textContent=event.name+'\n'+(event.output||'正在执行，尚无结果。');details.append(summary,output);item.append(details);$('work-events').append(item)});
+}
+function closeWork(restore=true){if(!$('work-drawer').open)return;$('work-drawer').close();$('app').classList.remove('work-open');$('work-button').setAttribute('aria-expanded','false');$('work-button').setAttribute('aria-label','展开 Agent 工作区');if(restore)$('work-button').focus()}
+function openWork(focus=true){
+ if($('work-drawer').open)return;$('app').classList.add('work-open');renderWorkPanel();
+ if($('app').classList.contains('docked'))$('work-drawer').show();else $('work-drawer').showModal();
+ $('work-button').setAttribute('aria-expanded','true');$('work-button').setAttribute('aria-label','收起 Agent 工作区');if(focus)$('close-work').focus();
 }
 function updateSend(){const c=active();$('send').disabled=isBusy(c)||c.scene==='error'||contacts.some((x,i)=>i!==selected&&isBusy(x))||!c.draft.trim()}
 function render(){
@@ -331,47 +406,42 @@ function render(){
  $('draft').value=c.draft;$('draft').placeholder='给 '+c.name+' 发消息…';sizeDraft();
  $('error-banner').hidden=c.scene!=='error';$('empty').hidden=!!c.messages.length;$('date-label').hidden=!c.messages.length;
  $('scene').value=c.scene;$('finish-demo').hidden=work?.status!=='running';$('speak-demo').hidden=work?.status!=='running';
- $('work-strip').hidden=!work;
- if(work){$('work-title').textContent=work.title;$('work-state').textContent=workLabel(work.status);$('work-detail').textContent=work.detail;$('work-indicator').className='work-indicator '+work.status}
- $('stop-work').hidden=!busy;$('stop-work').disabled=work?.status==='stopping';$('stop-work').textContent=work?.status==='stopping'?'停止中':'停止';
  updateSend();
  $('hint').textContent=c.scene==='error'?'启动恢复后才可发送；草稿仍可编辑':otherBusy?'另一个联系人正在工作，暂不可发送':busy?'正在工作，可先写下要说的话':'Enter 发送 · Shift Enter 换行';
- renderMessages();renderContacts();if(panelKind==='work'&&$('panel').open)renderWorkPanel();
+ renderMessages();renderContacts();if($('work-drawer').open)renderWorkPanel();
 }
 function changeScene(scene){
- clearTimeout(stopTimer);contacts.forEach(c=>{if(isBusy(c)){c.work.status='interrupted';c.work.detail='设计场景已切换';c.work.events.forEach(event=>{if(event.status==='running')event.status='interrupted'})}});
- const c=active();c.scene=scene;c.messages=scene==='empty'?[]:sampleMessages(scene==='rich');c.bound=scene!=='empty';c.work=null;
+ clearTimeout(stopTimer);contacts.forEach(c=>{if(isBusy(c)){c.work.status='interrupted';c.work.detail='设计场景已切换';c.work.events.forEach(event=>{if(event.status==='running')event.status='interrupted'});c.work.files.forEach(file=>{if(file.status==='loading')file.status='interrupted'})}});
+ const c=active();workspaceFile=null;c.scene=scene;c.messages=scene==='empty'?[]:sampleMessages(scene==='rich');c.bound=scene!=='empty';c.work=null;
  if(['working','speaking','done','blocked'].includes(scene)){
   c.messages=sampleMessages().slice(0,3);c.messages[2].text='帮我把旅行资料整理成草稿，你先处理，不用每一步都回复我。';
   c.work=sampleWork(scene==='done'?'completed':scene==='blocked'?'failed':'running');
   if(scene==='speaking')c.messages.push({role:'assistant',text:'我已经理好交通资料了，住宿部分还在核对，我会继续整理。',time:'10:44'});
  }
- closePanel(false);render();if(scene==='rich')$('message-3').closest('.message').scrollIntoView({block:'start'});else scrollToLatest();announce('设计场景：'+$('scene').selectedOptions[0].textContent);
+ closePanel(false);render();if($('app').classList.contains('docked')&&['working','speaking','done','blocked'].includes(scene))openWork(false);if(scene==='rich')$('message-3').closest('.message').scrollIntoView({block:'start'});else scrollToLatest();announce('设计场景：'+$('scene').selectedOptions[0].textContent);
 }
 $('scene').addEventListener('change',e=>changeScene(e.target.value));
 $('draft').addEventListener('input',()=>{active().draft=$('draft').value;renderContacts();updateSend();sizeDraft()});
 function send(){
  if($('send').disabled)return;const c=active();
- c.messages.push({role:'user',text:c.draft,time:'刚刚'});c.work={title:'处理这次委托',status:'running',detail:'正在处理你的消息',kind:'user',events:[{name:'处理委托',target:'模拟运行',status:'running',output:''}],artifact:''};c.draft='';c.scene='working';c.bound=true;render();scrollToLatest();$('draft').focus();announce('工作已开始，尚未收到 Agent 消息');
+ workspaceFile=null;c.messages.push({role:'user',text:c.draft,time:'刚刚'});c.work={title:'处理这次委托',status:'running',detail:'正在处理你的消息',kind:'user',events:[{name:'处理委托',target:'模拟运行',status:'running',output:''}],files:[]};c.draft='';c.scene='working';c.bound=true;render();scrollToLatest();$('draft').focus();announce('工作已开始，尚未收到 Agent 消息');
 }
 function stopWork(){
  const c=active();if(c.work?.status!=='running')return;c.work.status='stopping';c.work.detail='已请求停止，等待执行结束';render();announce('已请求停止工作');
- stopTimer=setTimeout(()=>{c.work.status='interrupted';c.work.detail='工作已停止，已完成的步骤和消息仍保留';c.work.events.forEach(event=>{if(event.status==='running'){event.status='interrupted';event.output='执行已停止，结果待检查。'}});render();announce('模拟工作已停止')},650);
+ stopTimer=setTimeout(()=>{c.work.status='interrupted';c.work.detail='工作已停止，已完成的步骤和消息仍保留';c.work.events.forEach(event=>{if(event.status==='running'){event.status='interrupted';event.output='执行已停止，结果待检查。'}});c.work.files.forEach(file=>{if(file.status==='loading')file.status='interrupted'});render();announce('模拟工作已停止')},650);
 }
-$('stop-work').addEventListener('click',stopWork);
+$('close-work').addEventListener('click',()=>closeWork());$('work-drawer').addEventListener('cancel',e=>{e.preventDefault();closeWork()});
 $('finish-demo').addEventListener('click',()=>{const c=active();if(c.work?.status!=='running')return;completeWork(c.work);c.scene='done';render();announce('模拟工作已完成，没有新增聊天消息')});
 $('speak-demo').addEventListener('click',()=>{const c=active();if(c.work?.status!=='running')return;c.messages.push({role:'assistant',text:'我已经整理好一部分资料，还在继续处理。这里是一条模拟发送的消息。',time:'刚刚'});c.scene='speaking';render();scrollToLatest();announce('收到 Agent 消息，工作仍在继续')});
 $('send').addEventListener('click',send);$('draft').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();send()}});
-$('add-contact').addEventListener('click',()=>{active().draft=$('draft').value;contacts.push({name:'新联系人 '+contacts.length,draft:'',scene:'empty',messages:[],work:null,bound:false,purpose:'',directory:''});selected=contacts.length-1;closePanel(false);render();$('draft').focus();announce('已添加联系人')});
+$('add-contact').addEventListener('click',()=>{active().draft=$('draft').value;contacts.push({name:'新联系人 '+contacts.length,draft:'',scene:'empty',messages:[],work:null,bound:false,purpose:'',directory:''});selected=contacts.length-1;workspaceFile=null;closePanel(false);render();$('draft').focus();announce('已添加联系人')});
 function closeContent(){$('content-modal').close();contentOrigin?.focus()}
 $('close-content').addEventListener('click',closeContent);$('content-modal').addEventListener('cancel',e=>{e.preventDefault();closeContent()});
-function closePanel(restore=true){if(!$('panel').open)return;$('panel').close();$('app').classList.remove('panel-open');['work-button','history-button','settings-button'].forEach(id=>$(id).setAttribute('aria-expanded','false'));if(restore&&panelOrigin)panelOrigin.focus();panelKind=''}
+function closePanel(restore=true){if(!$('panel').open)return;$('panel').close();['history-button','settings-button'].forEach(id=>$(id).setAttribute('aria-expanded','false'));if(restore&&panelOrigin)panelOrigin.focus();panelKind='';if($('work-drawer').open)renderWorkPanel()}
 function openPanel(kind,origin){
- if(panelKind===kind&&$('panel').open){closePanel();return}closePanel(false);panelKind=kind;panelOrigin=origin;$('app').classList.add('panel-open');
- $('panel-title').textContent={work:'工作',settings:'联系人设置',history:'历史记录',diagnostics:'启动诊断'}[kind];
- if(kind==='work'){
-  $('work-button').setAttribute('aria-expanded','true');renderWorkPanel();
- }else if(kind==='settings'){
+ if(panelKind===kind&&$('panel').open){closePanel();return}closePanel(false);panelKind=kind;panelOrigin=origin;
+ $('panel-title').textContent={settings:'联系人设置',history:'历史记录',diagnostics:'启动诊断'}[kind];
+ if(kind==='settings'){
   $('settings-button').setAttribute('aria-expanded','true');
   $('panel-content').innerHTML='<label for="profile-name">名称</label><input class="field" id="profile-name"><label for="purpose">用途</label><input class="field" id="purpose"><label for="directory">工作目录</label><input class="field" id="directory"><p class="help">'+(active().bound?'此联系人已绑定会话。用途与工作目录在首次发送时确定，名称可单独修改。':'这些设置是可选的，将在首次发送时使用。')+'</p><div class="section-title">应用外观</div><div class="theme-options"><button data-theme-choice="moon"><span class="swatch"></span>Moon</button><button data-theme-choice="dawn"><span class="swatch dawn"></span>Dawn</button></div><p class="help">应用级预览，同时应用到所有联系人。</p><div class="section-title">模型配置</div><p class="help">模型由应用启动时的配置决定。</p>';
   $('purpose').value=active().purpose;$('directory').value=active().directory;for(const [id,key] of [['purpose','purpose'],['directory','directory']]){$(id).disabled=active().bound;$(id).addEventListener('input',()=>{active()[key]=$(id).value;if(key==='directory')$('workspace').querySelector('span').textContent=active().directory||'默认工作目录'})}$('profile-name').value=active().name;$('profile-name').addEventListener('input',()=>{active().name=$('profile-name').value||'未命名联系人';$('contact-name').textContent=active().name;renderContacts();document.querySelectorAll('.sender').forEach(sender=>sender.textContent=active().name)});setTheme(document.documentElement.dataset.theme);
@@ -384,13 +454,19 @@ function openPanel(kind,origin){
  }else{
   $('panel-content').innerHTML='<p class="help">以下为设计示例，不读取本机配置。</p><div class="section-title">失败阶段</div><h3>定位运行程序</h3><p class="help">应用尚未建立运行连接，任务未发送。</p><div class="section-title">可执行的下一步</div><ol class="help"><li>确认应用安装包内包含 Saki-runtime。</li><li>自行构建时，核对运行程序位置。</li><li>修正配置后重新启动应用。</li></ol><div class="section-title">已保留</div><p class="help">本页草稿可以继续编辑。真实应用的草稿与历史恢复以存储和 Runtime 已确认的数据为准。</p>';
  }
- if($('app').classList.contains('wide'))$('panel').show();else $('panel').showModal();
+ $('panel').showModal();
  $('close-panel').focus();
 }
-$('work-button').addEventListener('click',e=>openPanel('work',e.currentTarget));$('view-work').addEventListener('click',e=>openPanel('work',e.currentTarget));$('history-button').addEventListener('click',e=>openPanel('history',e.currentTarget));$('settings-button').addEventListener('click',e=>openPanel('settings',e.currentTarget));$('appearance').addEventListener('click',e=>openPanel('settings',e.currentTarget));$('workspace').addEventListener('click',e=>openPanel('settings',e.currentTarget));$('diagnostics').addEventListener('click',e=>openPanel('diagnostics',e.currentTarget));$('close-panel').addEventListener('click',()=>closePanel());$('panel').addEventListener('cancel',e=>{e.preventDefault();closePanel()});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('panel').open){e.preventDefault();closePanel()}});
-function layout(){const rect=$('app').getBoundingClientRect();$('app').style.setProperty('--panel-top',rect.top+'px');$('app').style.setProperty('--panel-right',(innerWidth-rect.right)+'px');$('app').style.setProperty('--panel-height',rect.height+'px');const wide=rect.width>=1120;if(wide!==$('app').classList.contains('wide')){closePanel(false);$('app').classList.toggle('wide',wide)}}
-$('frame').addEventListener('change',e=>{closePanel(false);document.documentElement.style.setProperty('--frame',e.target.value+'px');layout()});new ResizeObserver(layout).observe($('app'));window.addEventListener('resize',layout);
-render();layout();scrollToLatest();
+$('work-button').addEventListener('click',()=>$('work-drawer').open?closeWork():openWork());$('history-button').addEventListener('click',e=>openPanel('history',e.currentTarget));$('settings-button').addEventListener('click',e=>openPanel('settings',e.currentTarget));$('appearance').addEventListener('click',e=>openPanel('settings',e.currentTarget));$('workspace').addEventListener('click',e=>openPanel('settings',e.currentTarget));$('diagnostics').addEventListener('click',e=>openPanel('diagnostics',e.currentTarget));$('close-panel').addEventListener('click',()=>closePanel());$('panel').addEventListener('cancel',e=>{e.preventDefault();closePanel()});document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if($('content-modal').open){e.preventDefault();closeContent()}else if($('panel').open){e.preventDefault();closePanel()}else if($('work-drawer').open){e.preventDefault();closeWork()}});
+function layout(){
+ const rect=$('app').getBoundingClientRect();$('app').style.setProperty('--panel-top',rect.top+'px');$('app').style.setProperty('--panel-right',(innerWidth-rect.right)+'px');$('app').style.setProperty('--panel-height',rect.height+'px');
+ const docked=rect.width>=960,wasDocked=$('app').classList.contains('docked'),opened=$('work-drawer').open;
+ $('app').classList.toggle('compact',rect.width<1120);
+ if(docked!==wasDocked){if(opened)closeWork(false);$('app').classList.toggle('docked',docked);if(opened)openWork(!docked)}
+}
+$('frame').addEventListener('change',e=>{document.documentElement.style.setProperty('--frame',e.target.value+'px');layout()});new ResizeObserver(layout).observe($('app'));window.addEventListener('resize',layout);
+layout();changeScene('working');
+
 </script>
 </body>
 </html>
