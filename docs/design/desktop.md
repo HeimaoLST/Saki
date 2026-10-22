@@ -95,14 +95,15 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 
 G1-1..G1-4 的局部实现，不新增 Runtime 协议、凭据库或应用配置系统：
 
-- 启动阶段：`Runtime helper`（未找到 helper）、`Runtime start`（exec 启动失败）、`Runtime configuration`（ready 前退出/配置错误）、`Runtime connection`（ready 后连接丢失）、`Runtime protocol`（协议错误）；任务失败另在联系人状态中显示 `Model request failed`/`Task failed`。未知原因保留有界诊断，不猜认证或模型是否有效。
+- 启动阶段：`Runtime helper`（未找到 helper）、`Runtime start`（exec 启动失败）、`Runtime configuration`（ready 前退出/配置错误）、`Runtime connection`（ready 后连接丢失）、`Runtime protocol`（协议错误）；任务失败另在联系人状态中显示 `Provider authentication failed`（仅对 `HTTP 401/403` 前缀）/`Model request failed`/`Task failed`。未知原因保留有界诊断，不猜认证或模型是否有效。
 - 可操作提示：缺 helper 显示期望的 `Saki-runtime` 位置和 `SAKI_RUNTIME_BIN`；启动失败显示实际 helper 路径与权限检查；配置/连接失败提示环境变量或 workdir `.env`（`API_KEY`、`SAKI_API`、`SAKI_BASE_URL`、`SAKI_MODEL`）及重启。配置缺失优先使用 Rust 已稳定的安全消息；GUI 只透出最后一条有界 stderr，并对 `API_KEY=`、`Authorization`、`Bearer`、token、URL userinfo 做本地 redaction。Runtime ready 仅表示连接就绪，不表示模型已验证。
 - 配置状态：Settings 顶部新增只读 `Runtime & configuration`，显示 Runtime 状态/阶段、helper 实际路径或未找到、contact store、session 目录、GUI workdir、当前联系人实际 session workdir、session ID/state、API 和只读 model（优先来自 `session.load`/`session.create` metadata；未加载时显示 unknown，不读取环境变量猜 session 事实）。模型选择与完整展示仍归 G6。
 - 零推理/恢复：启动与恢复只调用 `session.load`/`session.history`，不调用 `task.send`；打开 Settings/查看状态不发模型请求。损坏 store 仍报错且不覆盖、不创建替代 store。状态与诊断不改变现有 drain/关闭逻辑。
 - 草稿边界：提交前被拒绝或本地保存失败保留原草稿；任务已接纳的输入进入消息历史，绝不自动还原为待发送；用户之后编辑的未发送草稿单独保留。关闭/未知结果不自动重试或重跑。
-- Finder：当前仍使用默认 `UserConfigDir` store、bundle 内 helper 和 workdir `.env`；Finder 不继承 shell env。独立临时配置目录属于测试打包/launcher 注入，尚未验证，不是新增产品配置层。
-- 测试：`desktop/startup_test.go` 覆盖 helper 缺失、exec 失败、配置退出分类/redaction、Settings 状态、启动 banner 不抢焦点、任务失败时历史/后编辑草稿边界。现有五项真实进程测试复跑通过（使用已有 0828c5 helper，仅回归；当前 dev 47d01ee 的最终 helper 与原生 Finder 证据由主责另行准备）。
-- 未验：真实 Finder 冷启动、独立 temp config 注入、原生错误展示/焦点、真实 provider 认证失败、当前 dev helper 的最终包；不把 headless/旧 helper 当这些结论。
+- Finder：当前仍使用默认 `UserConfigDir` store、bundle 内 helper 和 workdir `.env`；Finder 不继承 shell env。独立临时配置目录使用测试 bundle 的 `LSEnvironment`（Apple LaunchServices）注入非秘密路径/API 变量，API_KEY 仅放在临时 workdir `.env`（假哨兵），不进入 plist；这是测试隔离，不是新增产品配置层。该注入方式仍待 Finder 实机验证。
+- 测试：`desktop/startup_test.go` 覆盖 helper 缺失、exec 失败、配置退出分类/redaction、Settings 状态、启动 banner 不抢焦点、任务失败时历史/后编辑草稿边界，以及真实 Rust 的缺 API_KEY 启动失败与受控 401 响应（仅 `HTTP 401/403` 前缀识别）。当前 47d01ee helper 已从本 worktree 构建；`CGO_ENABLED=0 go test ./...`、vet/build、五项真实 GUI runtime 测试和两项 G1 真实失败测试均通过。
+- 独立 #112 候选包：`/private/tmp/saki-gui-112-app/Saki.app`，bundle `dev.saki.desktop.issue112`，GUI sha256 `26a30d2cc25b97b5aa6dcdf56d995922b2a689e27f9e148b52a7bbf406a99f0b`，helper sha256 `aea5ff1142c989bf793c13ab5468e6f0c62a67d327a20868e3c4188935b2f8d8`；源码 `c34d650`，`go version -m` 记录 `vcs.modified=false`，ad-hoc 签名 deep/strict 通过。Info.plist 仅含 `LSEnvironment` 的非秘密路径/API 变量；临时 workdir `.env` 为假哨兵 key。
+- 未验：真实 Finder 冷启动（`LSEnvironment` 注入、独立 temp store/workdir）、原生错误展示/焦点、真实 provider（401 使用本地受控 fixture）、Finder 打开后 960×640/浅深色截图；这些不能由 headless/旧 helper/Go 测试替代，等待主责 CUA。
 
 ## 验证与证据
 
