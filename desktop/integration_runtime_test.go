@@ -419,6 +419,9 @@ func (h *guiHarness) shutdown(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("runtime did not drain before quit")
 	}
+	if h.app.rt != nil {
+		h.pump.waitTimeout(func() bool { return h.app.runtimeStatus == runtimeStateExited }, 5*time.Second)
+	}
 	h.pump.close()
 	h.closed = true
 }
