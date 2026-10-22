@@ -1,13 +1,12 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="moon">
+<html lang="zh-CN" data-theme="paper">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Saki · 联系人对话设计原型</title>
 <style>
-:root{color-scheme:dark;--bg:#232136;--surface:#2a273f;--hover:#393552;--border:#44415a;--text:#e0def4;--muted:#b8b4cc;--accent:#ea9a97;--accent-hover:#f2b0ad;--accent-text:#232136;--danger:#f79bb2;--warning:#f6c177;--success:#9ccfd8;--focus:#c4a7e7;--canvas:#1c1a2b;--shadow:0 24px 80px #0003}
-
-[data-theme=dawn]{color-scheme:light;--bg:#faf4ed;--surface:#fffaf3;--hover:#f2e9e1;--border:#dfdad9;--text:#464261;--muted:#64607b;--accent:#d7827e;--accent-hover:#e09a96;--accent-text:#232136;--danger:#9c4a62;--warning:#985900;--success:#286983;--focus:#907aa9;--canvas:#eee7e0;--shadow:0 24px 80px #50466118}
+:root{color-scheme:light;--bg:#fbfaf6;--surface:#f4f2eb;--hover:#e9e8df;--border:#deded3;--text:#263c34;--muted:#606b62;--accent:#31594a;--accent-hover:#26493c;--accent-text:#fffdf5;--danger:#a13f39;--warning:#965331;--success:#38674f;--focus:#a55939;--canvas:#e8e7df;--rail:#eeeee5;--user-bubble:#e5ebdf;--hero:#294a3d;--hero-text:#fbf9e9;--hero-muted:#c9d5bd;--hero-alert:#f2c2a0;--clay:#985034;--clay-soft:#f5e9dd;--paper:#fffdf6;--shadow:0 24px 80px #263c3414;--serif:Georgia,"Songti SC","STSong",serif}
+[data-theme=night]{color-scheme:dark;--bg:#1d2823;--surface:#222f28;--hover:#344238;--border:#3b493d;--text:#e9ebdc;--muted:#aab5a5;--accent:#c7d7ac;--accent-hover:#dce8c5;--accent-text:#1d3025;--danger:#f0a89a;--warning:#e2b48c;--success:#b3cea5;--focus:#e3b18b;--canvas:#141e19;--rail:#18221c;--user-bubble:#344236;--hero:#354e3b;--hero-text:#f4f4df;--hero-muted:#ced9bd;--hero-alert:#f2c2a0;--clay:#dfae86;--clay-soft:#3b3026;--paper:#29352a;--shadow:0 24px 80px #0003}
 
 *{box-sizing:border-box}
 body{margin:0;background:var(--canvas);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
@@ -36,34 +35,34 @@ a{color:var(--success)}
 .grow{flex:1;min-width:0}
 .pill{border:1px solid var(--border);padding:5px 10px;border-radius:99px}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-.design-bar{max-width:1200px;margin:20px auto 14px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;font-size:12px}
+.design-bar{max-width:1380px;margin:18px auto 16px;padding:0 28px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;font-size:12px}
 .design-brand{display:flex;gap:10px;align-items:center}
-.design-brand strong{font-size:14px}
+.design-brand strong{font:italic 22px var(--serif);letter-spacing:-1px}
 .design-badge{border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--muted)}
 .design-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}
 .design-controls select{border:0;background:var(--surface);border-radius:6px;padding:5px 8px;font-size:12px}
 .segmented{display:flex;padding:3px;border:1px solid var(--border);border-radius:8px}
 .segmented button{padding:3px 10px;font-size:12px}
 .segmented button[aria-pressed=true]{background:var(--surface);box-shadow:0 1px 3px #0001}
-.app{position:relative;display:grid;grid-template-columns:var(--rail-width,192px) minmax(0,1fr);width:min(var(--frame,1200px),calc(100% - 48px));height:min(720px,calc(100dvh - 112px));min-height:520px;margin:0 auto;border:1px solid var(--border);border-radius:15px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)}
-.rail{display:flex;flex-direction:column;background:var(--bg);padding:16px 10px 12px;min-height:0}
-.brand{height:38px;padding:0 14px;display:flex;align-items:center;gap:9px;font-size:17px;font-weight:650;letter-spacing:-.4px}
+.app{position:relative;display:grid;grid-template-columns:var(--rail-width,200px) minmax(0,1fr);width:min(var(--frame,1380px),calc(100% - 56px));height:min(850px,calc(100dvh - 114px));min-height:560px;margin:0 auto;border:1px solid var(--border);border-radius:18px;overflow:hidden;background:var(--bg);box-shadow:var(--shadow)}
+.rail{display:flex;flex-direction:column;background:var(--rail);padding:24px 12px 14px;min-height:0;border-right:1px solid var(--border)}
+.brand{height:44px;padding:0 12px;display:flex;align-items:center;gap:10px;font:italic 31px var(--serif);letter-spacing:-1.5px}.brand svg{width:25px;height:25px}.brand-caption{padding:8px 12px 25px;font-size:12px;color:var(--muted);letter-spacing:.3px}
 .brand svg{color:var(--accent);width:20px;height:20px}
 .rail-label{display:flex;align-items:center;justify-content:space-between;padding:18px 10px 9px;font-size:12px;color:var(--muted)}
 .rail-label button{font-size:12px;padding:5px 7px}
 .contacts{display:flex;flex-direction:column;gap:4px;flex:1;overflow:auto}
 .contact{display:flex;align-items:center;gap:10px;width:100%;padding:12px 10px;border-radius:11px;text-align:left;min-height:68px}
-.contact[aria-current=true]{background:var(--hover)}
-.avatar{width:32px;height:32px;border-radius:11px;object-fit:cover;background:var(--hover);flex:none}
+.contact[aria-current=true]{background:var(--bg);box-shadow:0 2px 6px #263c3405}.contact[aria-current=true] .name{color:var(--success)}
+.avatar{width:36px;height:36px;border-radius:50%;object-fit:cover;background:var(--hover);flex:none}.avatar.monogram{display:grid;place-items:center;font:italic 21px var(--serif);color:var(--clay);background:var(--clay-soft)}
 .contact .name{font-weight:550;line-height:22px}
 .snippet{font-size:12px;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:146px}
 .contact .dot{width:6px;height:6px;border-radius:50%;background:var(--success)}
 .rail-footer{border-top:1px solid var(--border);padding:12px 10px 0;display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:12px}
 .rail-footer button{padding:5px 8px}
 .main{display:flex;flex-direction:column;min-width:0;min-height:0}
-.reading{width:86%;max-width:760px;margin-inline:auto}
-.header{flex:none;height:76px;display:flex;align-items:center;justify-content:space-between;gap:10px}
-.header .avatar{width:28px;height:28px;border-radius:9px}
+.reading{width:calc(100% - 72px);max-width:760px;margin-inline:auto}
+.header{flex:none;height:86px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--border)}
+.header .avatar{width:38px;height:38px;border-radius:50%}.header h1{font-size:17px}.status-text{display:flex;align-items:center;gap:5px}.status-text::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor}
 .identity{display:flex;align-items:center;gap:9px;min-width:0}
 .status-text{font-size:12px;color:var(--muted)}
 .header-actions{display:flex;gap:4px}
@@ -71,22 +70,22 @@ a{color:var(--success)}
 .header-actions button[aria-expanded=true]{background:var(--hover);color:var(--text)}
 .work-drawer{--work-width:360px;padding:0;border:0;border-left:1px solid var(--border);color:var(--text);background:var(--bg);width:var(--work-width);max-width:none;max-height:none}
 .work-drawer[open]{display:flex;flex-direction:column;animation:panel-in 160ms ease-out}
-.app.docked.work-open{grid-template-columns:var(--rail-width,192px) minmax(0,1fr) 360px}
+.app.docked.work-open{grid-template-columns:var(--rail-width,200px) minmax(0,1fr) 360px}
 .app.docked .work-drawer{position:relative;grid-column:3;grid-row:1;margin:0;height:100%;min-height:0}
 .app.compact{--rail-width:160px}
 .app.compact.docked.work-open{grid-template-columns:160px minmax(0,1fr) 320px}
 .app.compact .work-drawer{--work-width:320px}
-.app.work-open .reading{width:calc(100% - 40px)}
+.app.work-open .reading{width:calc(100% - 64px)}
 .app.work-open .header-actions button{padding:8px 6px}
 .app.work-open .header-actions button:not(#work-button) span{display:none}
 .app.work-open .compose-hint{flex-wrap:wrap;gap:3px}
 .app:not(.docked) .work-drawer{position:fixed;top:var(--panel-top);right:var(--panel-right);bottom:auto;left:auto;height:var(--panel-height);margin:0;border-radius:0 15px 15px 0;max-width:calc(100vw - 48px);box-shadow:-15px 0 50px #0002}
 .work-drawer::backdrop{background:#12101d55}
-.work-head{height:76px;flex:none;padding:0 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}
+.work-head{height:86px;flex:none;padding:0 24px;display:flex;align-items:center;justify-content:space-between}.work-head h2{font-size:16px;font-weight:600}
 .work-head h2{font-size:14px;letter-spacing:0}
 .work-head p{font-size:12px;color:var(--muted);margin-top:3px}
-.work-content{padding:20px;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
-.work-footer{margin-top:auto;flex:none;padding:12px 20px;border-top:1px solid var(--border);display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}
+.work-content{padding:20px 24px 24px;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.work-footer{margin-top:auto;flex:none;padding:12px 24px;border-top:1px solid var(--border);display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}
 .work-footer span{overflow-wrap:anywhere}
 .work-section-head{display:flex;align-items:center;justify-content:space-between;margin:22px 0 10px;font-size:12px;color:var(--muted)}
 .work-section-head h3{font-size:12px;font-weight:550}
@@ -138,15 +137,11 @@ a{color:var(--success)}
 .document-sheet .document-path{font-size:11px;color:var(--muted);overflow-wrap:anywhere;margin-top:20px;border-top:1px solid var(--border);padding-top:12px}
 .document-body{white-space:pre-wrap;font-size:13px;line-height:1.9;overflow-wrap:anywhere}
 
-.workspace-nav{display:flex;gap:4px;padding:10px 16px;border-bottom:1px solid var(--border);flex:none}
-.workspace-nav button{flex:1;font-size:12px;padding:8px 6px;color:var(--muted)}
-.workspace-nav button[aria-pressed=true]{background:var(--hover);color:var(--text)}
+.workspace-nav{display:flex;gap:22px;padding:0 24px;border-bottom:1px solid var(--border);flex:none}
+.workspace-nav button{font-size:12px;padding:8px 0 12px;color:var(--muted);border-radius:0;border-bottom:2px solid transparent}
+.workspace-nav button[aria-pressed=true]{border-bottom-color:var(--accent);color:var(--text)}
 .agenda-intro{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:12px}
 .agenda-intro h3{font-size:14px}
-.agenda-intro button{display:flex;align-items:center;gap:5px;color:var(--success);font-size:12px;padding:6px 8px;border:1px solid var(--border);white-space:nowrap}
-.agenda-summary{font-size:12px;color:var(--muted);margin-bottom:18px;line-height:1.8}
-.agenda-group-title{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin:20px 0 10px}
-.agenda-group-title:after{content:'';height:1px;background:var(--border);flex:1}
 .agenda-card{display:block;width:100%;text-align:left;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:11px;margin-bottom:10px}
 .agenda-card .card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px}
 .agenda-card strong{font-size:13px;font-weight:550;line-height:1.6}
@@ -190,7 +185,7 @@ a{color:var(--success)}
 .board-columns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}
 .board-lane{background:var(--surface);border-radius:11px;padding:12px;min-width:0}
 .board-lane h3{display:flex;justify-content:space-between;gap:10px;font-size:13px;margin:2px 2px 15px}
-.board-lane h3 span{color:var(--muted);font-weight:400}
+.board-lane h3 span{color:var(--muted);font-weight:400}.board-lane h3:before{content:"";height:7px;width:7px;border-radius:50%;background:var(--muted);margin-top:7px}.board-lane:nth-child(2) h3:before{background:var(--clay)}.board-lane:nth-child(3) h3:before{background:var(--success)}.board-lane h3 span{margin-left:auto}
 .board-lane .agenda-card{background:var(--bg)}
 .board-lane .agenda-card:hover{background:var(--hover)}
 .board-lane .card-top{flex-wrap:wrap;gap:4px}
@@ -200,17 +195,17 @@ a{color:var(--success)}
 @media(max-width:720px){.board-columns{grid-template-columns:1fr}.board-lane{min-height:0}.schedule-day{grid-template-columns:1fr;gap:5px}.content-modal{width:calc(100vw - 32px);padding:16px}}
 
 .scroll{flex:1;overflow:auto;min-height:0;scrollbar-width:thin;scrollbar-color:var(--muted) transparent}
-.conversation{padding:6px 0 24px;overflow-wrap:anywhere}
+.conversation{padding:26px 0 30px;overflow-wrap:anywhere}
 .date{text-align:center;font-size:11px;color:var(--muted);margin:0 0 20px;letter-spacing:.4px}
-#thread{display:flex;flex-direction:column;gap:18px}
+#thread{display:flex;flex-direction:column;gap:25px}
 .message{display:flex;align-items:flex-start;gap:9px;min-width:0}
 .message.user{justify-content:flex-end}
-.message>.avatar{width:28px;height:28px;border-radius:9px;margin-top:3px}
+.message>.avatar{width:30px;height:30px;border-radius:50%;margin-top:4px}
 .message-body{min-width:0;max-width:calc(100% - 37px)}
 .user .message-body{max-width:78%}
 .sender{font-size:12px;line-height:1.5;color:var(--muted);margin:0 0 5px 3px}
-.bubble{width:fit-content;max-width:100%;padding:12px 16px;font-size:14px;line-height:1.7;border-radius:4px 18px 18px 18px;background:var(--bg);border:1px solid color-mix(in srgb,var(--border) 55%,transparent)}
-.user .bubble{background:color-mix(in srgb,var(--accent) 18%,var(--surface));border-color:transparent;border-radius:18px 4px 18px 18px;white-space:pre-wrap}
+.bubble{width:fit-content;max-width:100%;padding:15px 19px;font-size:14px;line-height:1.85;border-radius:5px 18px 18px 18px;background:var(--surface);border:1px solid transparent}
+.user .bubble{background:var(--user-bubble);border-color:transparent;border-radius:18px 4px 18px 18px;white-space:pre-wrap}
 .bubble p+p{margin-top:10px}
 .bubble h3{font-size:14px;margin:18px 0 8px}
 .bubble ul{padding-left:18px;margin:8px 0 0}
@@ -256,8 +251,8 @@ th,td{overflow-wrap:anywhere}
 .content-modal .chart figcaption{display:none}
 .content-modal .chart svg{min-width:0}
 .bubble:focus-visible,[data-expand-content]:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
-.composer-wrap{flex:none;padding:10px 0 17px}
-.composer{border:1px solid var(--border);border-radius:18px;background:var(--bg);padding:13px 14px 10px;box-shadow:0 2px 8px #00000006}
+.composer-wrap{flex:none;padding:18px 0 22px}
+.composer{border:1px solid var(--border);border-radius:16px;background:var(--paper);padding:16px 16px 12px;box-shadow:0 4px 16px #263c3405}
 .composer:focus-within{border-color:var(--focus)}
 textarea{display:block;width:100%;min-height:52px;max-height:140px;resize:none;border:0;outline:0;background:transparent;font-size:14px;line-height:1.65;padding:0 3px;margin-bottom:8px}
 textarea:focus-visible{outline:0}
@@ -291,12 +286,12 @@ textarea::placeholder{color:var(--muted)}
 .theme-options{display:flex;gap:8px}
 .theme-options button{flex:1;padding:10px;border:1px solid var(--border);font-size:12px;display:flex;gap:7px;align-items:center}
 .theme-options button[aria-pressed=true]{border-color:var(--focus)}
-.swatch{width:17px;height:17px;border:1px solid #8885;border-radius:50%;background:#232136}
-.swatch.dawn{background:#faf4ed}
+.swatch{width:17px;height:17px;border:1px solid #8885;border-radius:50%;background:#fbfaf6}
+.swatch.night{background:#1d2823}
 .history-row{width:100%;text-align:left;padding:12px 8px;border-bottom:1px solid var(--border);border-radius:0;display:block}
 .history-row strong{display:block;font-size:13px;font-weight:500}
 .history-row span{display:block;font-size:12px;color:var(--muted);margin-top:4px}
-.design-note{max-width:1200px;width:calc(100% - 48px);margin:13px auto;color:var(--muted);font-size:11px;display:flex;justify-content:space-between;gap:20px}
+.design-note{max-width:1380px;width:calc(100% - 48px);margin:13px auto;color:var(--muted);font-size:11px;display:flex;justify-content:space-between;gap:20px}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);padding:9px 16px;background:var(--hover);color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:12px;z-index:5;box-shadow:0 6px 20px #0002}
 @keyframes panel-in{from{opacity:0;transform:translateX(8px)}
 to{opacity:1;transform:translateX(0)}
@@ -314,6 +309,40 @@ to{opacity:1;transform:translateX(0)}
 .bubble{padding:11px 13px}
 }
 
+.overview-eyebrow{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--muted);letter-spacing:.8px;margin-bottom:12px}
+.focus-card{position:relative;isolation:isolate;display:block;width:100%;text-align:left;background:var(--hero);color:var(--hero-text);padding:20px;border-radius:13px;overflow:hidden}
+.focus-card:hover{background:var(--hero);box-shadow:inset 0 0 0 2px var(--hero-muted)}
+.focus-card .focus-state{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--hero-muted);letter-spacing:.3px}
+.focus-card[data-status=failed] .focus-state,.focus-card[data-status=interrupted] .focus-state{color:var(--hero-alert)}
+.focus-state:before{content:"";width:6px;height:6px;background:currentColor;border-radius:50%}
+.focus-card h3{font:400 25px/1.5 var(--serif);letter-spacing:.5px;margin:12px 0 7px;white-space:pre-line}
+.focus-card p{font-size:12px;color:var(--hero-muted);max-width:88%;line-height:1.8}
+.focus-card .focus-bottom{display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid #ffffff25;font-size:11px;color:var(--hero-muted)}
+.focus-bottom svg{width:16px;height:16px}
+.focus-art{position:absolute;right:-24px;top:5px;width:135px;height:135px;stroke:var(--hero-muted);stroke-width:.65;opacity:.2;z-index:-1;pointer-events:none}
+.overview-section{margin-top:20px}
+.overview-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.overview-heading h3{font-size:12px;font-weight:600;letter-spacing:.3px}.overview-heading h3 span{font-size:11px;color:var(--muted);font-weight:400;margin-left:6px}
+.text-link{font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:5px;padding:5px 0}.text-link svg{width:13px;height:13px}
+.attention-row{display:flex;align-items:center;gap:10px;background:var(--clay-soft);color:var(--text);width:100%;text-align:left;padding:13px 12px;border-radius:9px}
+.attention-row:hover{background:color-mix(in srgb,var(--clay) 17%,var(--bg))}
+.attention-mark{display:grid;place-items:center;width:25px;height:25px;border-radius:50%;border:1px solid var(--clay);color:var(--clay);flex:none;font:italic 18px var(--serif)}
+.attention-row strong{display:block;font-size:12px;font-weight:500}.attention-row small{display:block;font-size:11px;color:var(--muted);margin-top:3px}.attention-row>svg{margin-left:auto;width:13px}
+.memory-row{display:flex;align-items:flex-start;gap:10px;width:100%;padding:11px 1px;border-bottom:1px solid var(--border);text-align:left;border-radius:0}
+.memory-symbol{width:15px;height:15px;border:1px solid var(--muted);border-radius:50%;margin-top:2px;flex:none}.memory-symbol.doing{border-color:var(--success);border-width:2px;border-style:dashed}
+.memory-row strong{font-size:12px;font-weight:500;display:block;line-height:1.6}.memory-row small{display:block;font-size:11px;color:var(--muted);margin-top:4px}.memory-row time{margin-left:auto;font-size:11px;color:var(--muted);padding-top:3px;white-space:nowrap}
+.keepsake{width:100%;display:flex;gap:15px;align-items:center;text-align:left;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--paper)}
+.keepsake:hover{background:var(--surface)}.keepsake strong{font-size:13px;font-weight:500;display:block}.keepsake small{display:block;white-space:pre-line;font-size:11px;color:var(--muted);margin-top:6px;line-height:1.7}.keepsake>svg{margin-left:auto;width:14px}
+.book-cover{height:72px;width:54px;flex:none;background:var(--clay-soft);border:1px solid color-mix(in srgb,var(--clay) 35%,var(--border));border-left:4px solid var(--clay);border-radius:2px 5px 5px 2px;color:var(--clay);display:flex;flex-direction:column;justify-content:space-between;padding:8px;box-shadow:2px 3px 0 var(--surface);transform:rotate(-4deg)}
+.book-cover b{font:21px var(--serif)}.book-cover i{font:8px ui-monospace,monospace;letter-spacing:1px}.book-cover.trip{background:var(--user-bubble);color:var(--success);border-left-color:var(--success)}
+.journey-peek{margin-top:22px;width:100%;display:flex;gap:10px;align-items:center;text-align:left;color:var(--muted);font-size:11px;padding:10px 0;border-top:1px solid var(--border)}.journey-peek>svg{width:14px;height:14px}.journey-peek span{flex:1}.journey-peek b{color:var(--text);font-weight:400}
+.back-overview{display:flex;align-items:center;gap:5px;padding:5px 0;margin-bottom:17px;font-size:12px;color:var(--muted)}.back-overview svg{transform:rotate(180deg);width:14px}
+.quiet-empty{padding:25px 4px 15px;font:22px/1.7 var(--serif)}.quiet-empty p{font:12px/1.9 -apple-system,BlinkMacSystemFont,sans-serif;color:var(--muted);margin-top:14px}
+.rail-season{margin:auto 12px 28px;padding-top:30px;color:var(--muted)}.rail-season svg{height:50px;width:70px;stroke-width:.8;color:var(--success)}.rail-season p{font:15px/1.9 var(--serif);margin-top:10px}
+.contacts{flex:0 1 auto;min-height:100px}.contact .dot{display:block;margin-left:auto;flex:none}.work-content{flex:1}.header-actions button{min-height:34px}.icon{width:34px;height:34px}
+@media(min-width:1200px){.bubble{font-size:15px}.app.work-open .reading{width:calc(100% - 80px)}}
+@media(max-width:720px){.app{width:calc(100% - 24px);min-height:500px}.app{--rail-width:68px;grid-template-columns:68px minmax(0,1fr)}.rail{padding:18px 8px}.brand{padding:0;justify-content:center}.brand span,.brand-caption,.rail-label>span,.rail-label button span,.contact .grow,.contact .dot,.rail-footer>span,.rail-season{display:none}.rail-label{padding:18px 0 8px;justify-content:center}.rail-label button{padding:8px}.contact{justify-content:center;padding:9px 0}.rail-footer{padding:12px 0 0;justify-content:center}.reading,.app.work-open .reading{width:calc(100% - 32px)}.header-actions{gap:0}.design-bar{padding:0 12px;margin-top:12px}.design-brand>.muted{display:none}.design-controls{justify-content:flex-start}.design-note{width:calc(100% - 24px)}.content-modal{width:calc(100vw - 24px);padding:16px}.work-drawer{--work-width:360px}.app:not(.docked) .work-drawer{max-width:calc(100vw - 40px)}}
+
 </style>
 </head>
 <body>
@@ -321,20 +350,20 @@ to{opacity:1;transform:translateX(0)}
 <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol><symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol><symbol id="i-history" viewBox="0 0 24 24"><path d="M3 11a9 9 0 1 1 2.5 7M3 5v6h6M12 7v5l3 2"/></symbol><symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></symbol><symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol><symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v12H3Z"/></symbol><symbol id="i-file" viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5ZM14 3v6h5M9 13h6m-6 4h6"/></symbol><symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
 </defs></svg>
 <div class="design-bar">
- <div class="design-brand"><strong>Saki</strong><span class="design-badge">设计原型 · 05</span><span class="muted">事项 · 看板 · 轨迹</span></div>
+ <div class="design-brand"><strong>Saki</strong><span class="design-badge">设计原型 · 06</span><span class="muted">纸与苔 / Paper & Moss</span></div>
  <div class="design-controls">
-  <div class="segmented" aria-label="预览主题"><button data-theme-choice="moon" aria-pressed="true">Moon</button><button data-theme-choice="dawn" aria-pressed="false">Dawn</button></div>
+  <div class="segmented" aria-label="预览主题"><button data-theme-choice="paper" aria-pressed="true">纸白</button><button data-theme-choice="night" aria-pressed="false">夜林</button></div>
   <label>场景 <select id="scene"><option value="ready">日常对话</option><option value="rich">表格与图表</option><option value="working">安静工作</option><option value="speaking">边工作边说话</option><option value="done">完成但不发消息</option><option value="blocked">工作受阻</option><option value="error">启动异常</option><option value="empty">空对话</option></select></label>
   <button id="speak-demo" class="pill" hidden>模拟 Agent 发消息</button><button id="finish-demo" class="pill" hidden>模拟工作完成</button>
-  <label>画布 <select id="frame"><option value="1200">1200</option><option value="1040">1040</option><option value="960">960</option></select></label>
+  <label>画布 <select id="frame"><option value="1380">1380</option><option value="1200">1200</option><option value="1040">1040</option><option value="960">960</option></select></label>
  </div>
 </div>
 <div class="app" id="app">
  <aside class="rail" aria-label="联系人">
-  <div class="brand">Saki</div>
-  <div class="rail-label"><span>联系人</span><button id="add-contact" class="row"><svg aria-hidden="true" style="width:13px;height:13px"><use href="#i-plus"/></svg>添加</button></div>
+  <div class="brand"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 20V9M12 13C3 14 3 5 3 5s9-1 9 8ZM12 9c0-7 8-7 8-7s1 8-8 9"/></svg><span>Saki</span></div><p class="brand-caption">留一点空间，给想做的事。</p>
+  <div class="rail-label"><span>联系人</span><button id="add-contact" class="row"><svg aria-hidden="true" style="width:13px;height:13px"><use href="#i-plus"/></svg><span>添加</span></button></div>
   <nav class="contacts" id="contacts" aria-label="选择联系人"></nav>
-  <div class="rail-footer"><span>自己的工作台</span><button id="appearance" class="icon" aria-label="打开外观设置"><svg aria-hidden="true"><use href="#i-settings"/></svg></button></div>
+  <div class="rail-season" aria-hidden="true"><svg viewBox="0 0 70 50"><path d="M7 40c17-6 34-5 54-1M28 37c-4-17 5-27 5-27s12 15 1 28M40 37c1-14 15-17 15-17s2 14-15 17M31 23l2 13"/></svg><p>把琐碎交给我，<br>把时间留给你。</p></div><div class="rail-footer"><span>自己的工作台</span><button id="appearance" class="icon" aria-label="打开外观设置"><svg aria-hidden="true"><use href="#i-settings"/></svg></button></div>
  </aside>
  <main class="main">
   <header class="header reading">
@@ -350,10 +379,10 @@ to{opacity:1;transform:translateX(0)}
   </div></div>
   <div class="composer-wrap reading"><div class="composer"><label for="draft" class="sr-only">给当前联系人的消息</label><textarea id="draft" placeholder="还有什么想一起想想的？" rows="2"></textarea><div class="composer-footer"><button class="workspace" id="workspace"><svg aria-hidden="true"><use href="#i-folder"/></svg><span>notes/</span></button><button class="send" id="send" aria-label="发送消息"><svg aria-hidden="true"><use href="#i-arrow"/></svg></button></div></div><div class="compose-hint"><span id="hint">Enter 发送 · Shift Enter 换行</span><span id="draft-state">草稿仅保存在此原型页面</span></div></div>
  </main>
- <dialog class="work-drawer" id="work-drawer" aria-labelledby="work-drawer-title"><header class="work-head"><div><h2 id="work-drawer-title">Agent 工作区</h2><p id="work-owner">Saki 的工作</p></div><button class="icon" id="close-work" aria-label="收起工作区"><svg aria-hidden="true"><use href="#i-close"/></svg></button></header><nav class="workspace-nav" aria-label="工作区视图"><button data-workspace-view="agenda" aria-pressed="true">事项</button><button data-workspace-view="journey" aria-pressed="false">轨迹</button><button data-workspace-view="work" aria-pressed="false">当前工作</button></nav><div class="work-content" id="work-content"></div><footer class="work-footer"><svg aria-hidden="true"><use href="#i-folder"/></svg><span id="work-directory">notes/</span></footer></dialog>
+ <dialog class="work-drawer" id="work-drawer" aria-labelledby="work-drawer-title"><header class="work-head"><div><h2 id="work-drawer-title">Saki 的近况</h2><p id="work-owner">Saki 的工作</p></div><button class="icon" id="close-work" aria-label="收起工作区"><svg aria-hidden="true"><use href="#i-close"/></svg></button></header><nav class="workspace-nav" aria-label="工作区视图"><button data-workspace-view="home" aria-pressed="true">此刻</button><button data-workspace-view="journey" aria-pressed="false">一路以来</button></nav><div class="work-content" id="work-content"></div><footer class="work-footer"><svg aria-hidden="true"><use href="#i-folder"/></svg><span id="work-directory">notes/</span></footer></dialog>
  <dialog class="panel" id="panel" aria-labelledby="panel-title"><div class="panel-head"><h2 id="panel-title">设置</h2><button class="icon" id="close-panel" aria-label="关闭面板"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div><div class="panel-content" id="panel-content"></div></dialog>
 </div>
-<div class="design-note"><span>设计模拟 · 右侧事项可展开看板与日程；不发送真实请求，刷新后重置。</span><span>沿用现有 GUI · Rosé Pine Moon / Dawn</span></div>
+<div class="design-note"><span>设计模拟 · 右侧事项可展开看板与日程；不发送真实请求，刷新后重置。</span><span>Paper & Moss · 自由配色探索</span></div>
 <dialog id="content-modal" class="content-modal" aria-labelledby="content-title"><div class="row between"><h2 id="content-title">内容详情</h2><button id="close-content" class="icon" aria-label="关闭内容详情"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div><div id="content-detail"></div></dialog>
 <div class="toast" id="toast" role="status" hidden></div><div class="sr-only" role="status" aria-live="polite" id="live"></div>
 <template id="trip-reply">
@@ -408,7 +437,7 @@ function sampleJourney(){return [
  {date:'10 月 2 日',title:'你创建并命名了这个 Agent',detail:'职责：日常整理与阅读。'}
 ]}
 const contacts=[{requirements:sampleRequirements(),journey:sampleJourney(),name:'Saki',draft:'',scene:'ready',messages:sampleMessages(),work:null,bound:true,purpose:'日常整理与阅读',directory:'notes/'},{requirements:[],journey:[],name:'Mio',draft:'帮我整理一下明天想读的资料',scene:'empty',messages:[],work:null,bound:false,purpose:'',directory:''}];
-let selected=0,panelKind='',panelOrigin=null,contentOrigin=null,boardOpen=false,stopTimer=null,toastTimer=null,workspaceFile=null,workspaceView='agenda',selectedRequirement=null,boardMode='board';
+let selected=0,panelKind='',panelOrigin=null,contentOrigin=null,boardOpen=false,stopTimer=null,toastTimer=null,workspaceFile=null,workspaceView='home',selectedRequirement=null,boardMode='board';
 const active=()=>contacts[selected];
 const icon=name=>`<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const isBusy=c=>['running','stopping'].includes(c.work?.status);
@@ -420,10 +449,10 @@ document.addEventListener('click',e=>{const button=e.target.closest('[data-theme
 function renderContacts(){
  $('contacts').replaceChildren();contacts.forEach((contact,i)=>{
   const button=document.createElement('button');button.className='contact';button.setAttribute('aria-current',String(i===selected));
-  const image=document.createElement('img');image.src='assets/saki-avatar-default.png';image.className='avatar';image.alt='';
+  const image=document.createElement(i===0?'img':'span');image.className='avatar'+(i===0?'':' monogram');if(i===0){image.src='assets/saki-avatar-default.png';image.alt=''}else{image.textContent=contact.name.slice(0,1);image.setAttribute('aria-hidden','true')}
   const text=document.createElement('div');text.className='grow';const name=document.createElement('div');name.className='name';name.textContent=contact.name;
   const snippet=document.createElement('div');snippet.className='snippet';snippet.textContent=isBusy(contact)?workLabel(contact.work.status)+' · '+contact.work.title:contact.work?.status==='failed'?'需要处理 · '+contact.work.title:contact.draft?'草稿 · '+contact.draft:contact.scene==='error'?'需要检查启动配置':contact.messages.at(-1)?.text||(contact.messages.length?'要先一起看看住哪里吗？':'新对话');
-  text.append(name,snippet);button.append(image,text);button.addEventListener('click',()=>{active().draft=$('draft').value;selected=i;workspaceFile=null;selectedRequirement=null;closePanel(false);render();scrollToLatest()});$('contacts').append(button);
+  text.append(name,snippet);button.append(image,text);if(isBusy(contact)){const dot=document.createElement('span');dot.className='dot';dot.setAttribute('aria-hidden','true');button.append(dot)}button.addEventListener('click',()=>{active().draft=$('draft').value;selected=i;workspaceFile=null;selectedRequirement=null;closePanel(false);render();scrollToLatest()});$('contacts').append(button);
  });
 }
 function renderMessages(){
@@ -451,21 +480,35 @@ function requirementCard(item,onOpen){
 function showRequirement(id){selectedRequirement=id;renderWorkPanel();$('work-content').scrollTop=0;$('requirement-back').focus()}
 function setWorkspaceView(view){workspaceView=view;selectedRequirement=null;renderWorkPanel();$('work-content').scrollTop=0}
 function renderWorkPanel(){
- $('work-owner').textContent=active().name+' · '+(active().purpose||'新联系人');$('work-directory').textContent=active().directory||'默认工作目录';
- document.querySelectorAll('[data-workspace-view]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.workspaceView===workspaceView)));
+ $('work-drawer-title').textContent=active().name+' 的近况';$('work-owner').textContent=active().purpose||'从一件小事开始';$('work-directory').textContent=active().directory||'默认工作目录';
+ document.querySelectorAll('[data-workspace-view]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.workspaceView===(workspaceView==='work'?'home':workspaceView))));
  const content=$('work-content'),item=active().requirements.find(item=>item.id===selectedRequirement);
- if(workspaceView==='work'){renderCurrentWork();return}
+ if(workspaceView==='work'){renderCurrentWork();if(!workspaceFile){const back=document.createElement('button');back.id='back-overview';back.className='back-overview';back.innerHTML=icon('chevron')+'返回近况';back.addEventListener('click',()=>{setWorkspaceView('home');$('view-current-work')?.focus()});content.prepend(back)}return}
  if(item){renderRequirement(content,item,()=>{selectedRequirement=null;renderWorkPanel();[...content.querySelectorAll('[data-requirement]')].find(button=>button.dataset.requirement===item.id)?.focus()},false);return}
  if(workspaceView==='journey'){renderJourney(content);return}
- content.innerHTML='<div class="agenda-intro"><h3>交代给 '+ '<span id="agenda-owner"></span>'+' 的事</h3><button id="open-board">'+icon('folder')+'看板与日程</button></div><p class="agenda-summary" id="agenda-summary"></p><div id="agenda-items"></div>';
- $('agenda-owner').textContent=active().name;$('open-board').addEventListener('click',e=>openBoard(e.currentTarget));
- const pending=active().requirements.filter(item=>item.state!=='done'),done=active().requirements.filter(item=>item.state==='done');
- $('agenda-summary').textContent=pending.length?pending.length+' 件未结束 · 完整要求和后续补充都在这里。':'还没有未结束的事项。';
- for(const [title,items] of [['还没结束',pending],['最近完成',done]]){
-  if(!items.length)continue;const heading=document.createElement('div');heading.className='agenda-group-title';heading.textContent=title;$('agenda-items').append(heading);items.forEach(item=>$('agenda-items').append(requirementCard(item,showRequirement)));
- }
- if(!active().requirements.length)$('agenda-items').innerHTML='<div class="work-empty">'+icon('file')+'<h3>还没有留下事项</h3><p>这里用于回看交代过的要求和结果。</p></div>';
+ renderOverview(content);
 }
+function renderOverview(content){
+ const c=active(),work=c.work,pending=c.requirements.filter(item=>item.state!=='done'),waiting=pending.filter(item=>item.waiting),remembered=pending.filter(item=>!item.waiting);
+ content.innerHTML='<div class="overview-eyebrow"><span>今天，慢慢来</span><span>10 月 22 日 · 周四</span></div>';
+ if(work){
+  const card=document.createElement('button');card.className='focus-card';card.id='view-current-work';card.dataset.status=work.status;
+  card.innerHTML='<svg class="focus-art" aria-hidden="true" viewBox="0 0 140 140"><circle cx="80" cy="70" r="55"/><circle cx="80" cy="70" r="42"/><path d="M8 105C32 55 70 135 125 45M18 115C45 65 80 140 138 55M54 29l26 41 35-18M80 70l-8 39"/><circle cx="80" cy="70" r="4"/></svg><span class="focus-state"></span><h3></h3><p></p><span class="focus-bottom"><span></span>'+icon('chevron')+'</span>';
+  card.querySelector('.focus-state').textContent=work.status==='completed'?'本次工作结束':workLabel(work.status);
+  card.querySelector('h3').textContent=work.kind==='trip'?({completed:'行程草稿已就绪。',failed:'住宿笔记没找到。',interrupted:'旅行整理已停止。'}[work.status]||'一个海边周末。'):work.title;
+  card.querySelector('p').textContent=work.kind==='trip'&&work.status==='completed'?'住宿与往返车次尚未确定，整项安排还在继续。':work.detail;
+  card.querySelector('.focus-bottom span').textContent=work.status==='completed'?(work.kind==='trip'?'查看草稿与本次工作':'查看本次工作'):'查看这次工作';
+  card.addEventListener('click',()=>{workspaceFile=null;setWorkspaceView('work');$('back-overview').focus()});content.append(card);
+ }else{const empty=document.createElement('div');empty.className='quiet-empty';empty.textContent='有空，听你说。';const p=document.createElement('p');p.textContent='交代过的事和留下的成果，都会在这里。';empty.append(p);content.append(empty)}
+ if(waiting.length){const section=document.createElement('section');section.className='overview-section';section.innerHTML='<div class="overview-heading"><h3>等你一下<span>'+waiting.length+'</span></h3></div>';waiting.forEach(item=>{const button=document.createElement('button');button.className='attention-row';button.dataset.requirement=item.id;button.innerHTML='<span class="attention-mark" aria-hidden="true">i</span><span><strong></strong><small></small></span>'+icon('chevron');button.querySelector('strong').textContent=item.title;button.querySelector('small').textContent=item.summary;button.addEventListener('click',()=>showRequirement(item.id));section.append(button)});content.append(section)}
+ const tasks=document.createElement('section');tasks.className='overview-section';tasks.innerHTML='<div class="overview-heading"><h3>记着的事<span>'+pending.length+'</span></h3><button class="text-link" id="open-board">看板与日程'+icon('chevron')+'</button></div>';content.append(tasks);$('open-board').addEventListener('click',e=>openBoard(e.currentTarget));
+ if(!remembered.length){const empty=document.createElement('p');empty.className='help';empty.textContent=pending.length?'等待中的事项就在上方。':'暂时没有未结束的事项。';tasks.append(empty)}
+ remembered.slice(0,3).forEach(item=>{const button=document.createElement('button');button.className='memory-row';button.dataset.requirement=item.id;button.innerHTML='<span class="memory-symbol '+item.state+'" aria-hidden="true"></span><span class="grow"><strong></strong><small></small></span><time></time>';button.querySelector('strong').textContent=item.title;button.querySelector('small').textContent=requirementLabel(item)+' · '+item.checks.filter(check=>check.done).length+' / '+item.checks.length+' 项要求已满足';button.querySelector('time').textContent=item.planned?item.planned.slice(5).replace('-',' / '):'未安排';button.addEventListener('click',()=>showRequirement(item.id));tasks.append(button)});
+ const artifact=c.requirements.find(item=>item.id==='trip'&&item.artifact)||c.requirements.find(item=>item.artifact&&item.state==='done');
+ if(artifact){const section=document.createElement('section');section.className='overview-section';section.innerHTML='<div class="overview-heading"><h3>最近留下</h3><span class="small muted">'+(artifact.state==='done'?'已完成':'草稿')+'</span></div>';const card=document.createElement('button');card.className='keepsake';card.dataset.requirement=artifact.id;card.innerHTML='<span class="book-cover '+(artifact.id==='trip'?'trip':'')+'" aria-hidden="true"><b>'+(artifact.id==='trip'?'海':'读')+'</b><i>SAKI / 01</i></span><span><strong></strong><small></small></span>'+icon('chevron');card.querySelector('strong').textContent=artifact.title;card.querySelector('small').textContent=artifact.id==='trip'?'一份轻松的两日行程\n住宿与车次尚待确定':'5 篇资料 · 3 个主题\n附每篇的推荐理由';card.addEventListener('click',()=>showRequirement(artifact.id));section.append(card);content.append(section)}
+ if(c.journey.length){const peek=document.createElement('button');peek.className='journey-peek';peek.innerHTML=icon('history')+'<span><b>一路以来</b> · <span id="journey-preview"></span></span>'+icon('chevron');content.append(peek);$('journey-preview').textContent=c.journey[0].title;peek.addEventListener('click',()=>{setWorkspaceView('journey');document.querySelector('[data-workspace-view="journey"]').focus()})}
+}
+
 function renderJourney(content){
  content.innerHTML='<div class="agenda-intro"><h3>一路以来</h3><span class="small muted">经历与变化</span></div><ol class="journey" id="journey-events"></ol>';
  if(!active().journey.length){content.innerHTML+='<p class="file-empty">这个联系人的轨迹刚刚开始。</p>';return}
@@ -474,7 +517,7 @@ function renderJourney(content){
  });
 }
 function renderRequirement(container,item,onBack,inModal){
- container.innerHTML='<div class="document-toolbar"><button id="requirement-back">'+icon('chevron')+'返回'+(inModal?(boardMode==='board'?'看板':'日程'):workspaceView==='journey'?'轨迹':'事项')+'</button></div><section class="requirement-heading"><span class="agenda-status"></span><h3></h3><p></p></section><div class="requirement-label">你最初交代的要求</div><blockquote class="requirement-quote"></blockquote><p class="help requirement-created"></p><div class="requirement-label">后来的补充</div><div class="requirement-updates"></div><div class="requirement-label">要求与结果对照</div><ul class="requirement-checks"></ul><div class="requirement-evidence"></div><label class="requirement-date">计划日期<input type="date" aria-label="事项计划日期"></label><p class="help">日期用于安排，不代表已设置定时执行。</p><div class="requirement-action"></div>';
+ container.innerHTML='<div class="document-toolbar"><button id="requirement-back">'+icon('chevron')+'返回'+(inModal?(boardMode==='board'?'看板':'日程'):workspaceView==='journey'?'轨迹':'近况')+'</button></div><section class="requirement-heading"><span class="agenda-status"></span><h3></h3><p></p></section><div class="requirement-label">你最初交代的要求</div><blockquote class="requirement-quote"></blockquote><p class="help requirement-created"></p><div class="requirement-label">后来的补充</div><div class="requirement-updates"></div><div class="requirement-label">要求与结果对照</div><ul class="requirement-checks"></ul><div class="requirement-evidence"></div><label class="requirement-date">计划日期<input type="date" aria-label="事项计划日期"></label><p class="help">日期用于安排，不代表已设置定时执行。</p><div class="requirement-action"></div>';
  const back=container.querySelector('#requirement-back');back.querySelector('svg').classList.add('back-arrow');back.addEventListener('click',onBack);
  const status=container.querySelector('.agenda-status');status.textContent=requirementLabel(item);status.dataset.status=item.state;status.dataset.wait=String(item.waiting);container.querySelector('.requirement-heading h3').textContent=item.title;container.querySelector('.requirement-heading p').textContent=item.summary;container.querySelector('blockquote').textContent=item.request;container.querySelector('.requirement-created').textContent=item.created+' 交代';
  const updates=container.querySelector('.requirement-updates');if(!item.updates.length)updates.innerHTML='<p class="help">还没有补充要求。</p>';
@@ -483,7 +526,7 @@ function renderRequirement(container,item,onBack,inModal){
  if(item.artifact){const details=document.createElement('details');details.className='requirement-artifact';const summary=document.createElement('summary');summary.textContent=item.artifact.title;const text=document.createElement('div');text.className='document-body';text.textContent=item.artifact.text;details.append(summary,text);container.querySelector('.requirement-evidence').append(details)}
  const date=container.querySelector('input');date.value=item.planned;date.addEventListener('change',()=>{item.planned=date.value;active().journey.unshift({date:'刚刚',title:'你调整了计划日期',detail:date.value?'计划在 '+date.value+' 处理。':'已取消日期安排，事项仍保留。',requirement:item.id});announce('事项计划已更新，没有启动定时执行')});
  if(item.state==='todo'){const start=document.createElement('button');start.textContent='移至 Doing';start.addEventListener('click',()=>{item.state='doing';item.summary='已移入进行中，尚未留下工作结果。';active().journey.unshift({date:'刚刚',title:'事项移入进行中',detail:'状态已调整，尚无执行结果。',requirement:item.id});renderRequirement(container,item,onBack,inModal);container.querySelector('#requirement-back').focus();announce('示例事项已移入 Doing')});container.querySelector('.requirement-action').append(start)}
- if(item.id==='trip'&&active().work?.kind==='trip'){const work=document.createElement('button');work.textContent='查看这次工作';work.addEventListener('click',()=>{if(inModal)closeContent();setWorkspaceView('work');$('work-content').scrollTop=0;document.querySelector('[data-workspace-view="work"]').focus()});container.querySelector('.requirement-action').append(work)}
+ if(item.id==='trip'&&active().work?.kind==='trip'){const work=document.createElement('button');work.textContent='查看这次工作';work.addEventListener('click',()=>{if(inModal)closeContent();workspaceFile=null;setWorkspaceView('work');$('work-content').scrollTop=0;$('back-overview')?.focus()});container.querySelector('.requirement-action').append(work)}
 }
 function openBoard(origin){boardOpen=true;contentOrigin=origin;renderBoard();$('content-modal').showModal();$('close-content').focus()}
 function renderBoard(focusId){
@@ -507,7 +550,7 @@ function syncTripRequirement(contact){
 function renderCurrentWork(){
  const c=active(),work=c.work,content=$('work-content');
  const expanded=[...content.querySelectorAll('details[open][data-event]')].map(el=>el.dataset.event);
- $('work-owner').textContent=c.name+' · 当前工作';$('work-directory').textContent=c.directory||'默认工作目录';
+ $('work-owner').textContent=c.purpose||'当前工作';$('work-directory').textContent=c.directory||'默认工作目录';
  const file=work?.files.find(file=>file.path===workspaceFile);
  if(file){
   content.innerHTML='<div class="document-toolbar"><button id="back-work">'+icon('chevron')+'工作概览</button><button id="expand-document">展开阅读</button></div><article class="document-sheet"><div class="document-type"></div><h3></h3><div class="document-body"></div><p class="document-path"></p></article>';
@@ -540,7 +583,7 @@ function render(){
  $('workspace').querySelector('span').textContent=c.directory||'默认工作目录';$('contact-name').textContent=c.name;
  $('status-text').textContent=c.scene==='error'?'需要检查启动配置':busy?workLabel(work.status):work?.status==='failed'?'需要处理':'空闲';
  $('status-text').style.color=busy?'var(--success)':c.scene==='error'||work?.status==='failed'?'var(--danger)':'var(--muted)';
- $('draft').value=c.draft;$('draft').placeholder='给 '+c.name+' 发消息…';sizeDraft();
+ $('draft').value=c.draft;$('draft').placeholder='有什么想交代给 '+c.name+' 的？';sizeDraft();
  $('error-banner').hidden=c.scene!=='error';$('empty').hidden=!!c.messages.length;$('date-label').hidden=!c.messages.length;
  $('scene').value=c.scene;$('finish-demo').hidden=work?.status!=='running';$('speak-demo').hidden=work?.status!=='running';
  updateSend();
@@ -553,7 +596,7 @@ function changeScene(scene){
  if(['working','speaking','done','blocked'].includes(scene)){
   c.messages=sampleMessages().slice(0,3);c.messages[2].text='帮我把旅行资料整理成草稿，你先处理，不用每一步都回复我。';
   c.work=sampleWork(scene==='done'?'completed':scene==='blocked'?'failed':'running');
-  if(scene==='speaking')c.messages.push({role:'assistant',text:'我已经理好交通资料了，住宿部分还在核对，我会继续整理。',time:'10:44'});
+  if(scene==='speaking')c.messages.push({role:'assistant',text:'好，我先把资料理成一份草稿。\n不赶早班车，也给咖啡和散步留点时间。\n\n你先忙，我会继续整理。',time:'10:44'});
  }
  syncTripRequirement(c);closePanel(false);render();if($('app').classList.contains('docked')&&['working','speaking','done','blocked'].includes(scene))openWork(false);if(scene==='rich')$('message-3').closest('.message').scrollIntoView({block:'start'});else scrollToLatest();announce('设计场景：'+$('scene').selectedOptions[0].textContent);
 }
@@ -580,7 +623,7 @@ function openPanel(kind,origin){
  $('panel-title').textContent={settings:'联系人设置',history:'历史记录',diagnostics:'启动诊断'}[kind];
  if(kind==='settings'){
   $('settings-button').setAttribute('aria-expanded','true');
-  $('panel-content').innerHTML='<label for="profile-name">名称</label><input class="field" id="profile-name"><label for="purpose">用途</label><input class="field" id="purpose"><label for="directory">工作目录</label><input class="field" id="directory"><p class="help">'+(active().bound?'此联系人已绑定会话。用途与工作目录在首次发送时确定，名称可单独修改。':'这些设置是可选的，将在首次发送时使用。')+'</p><div class="section-title">应用外观</div><div class="theme-options"><button data-theme-choice="moon"><span class="swatch"></span>Moon</button><button data-theme-choice="dawn"><span class="swatch dawn"></span>Dawn</button></div><p class="help">应用级预览，同时应用到所有联系人。</p><div class="section-title">模型配置</div><p class="help">模型由应用启动时的配置决定。</p>';
+  $('panel-content').innerHTML='<label for="profile-name">名称</label><input class="field" id="profile-name"><label for="purpose">用途</label><input class="field" id="purpose"><label for="directory">工作目录</label><input class="field" id="directory"><p class="help">'+(active().bound?'此联系人已绑定会话。用途与工作目录在首次发送时确定，名称可单独修改。':'这些设置是可选的，将在首次发送时使用。')+'</p><div class="section-title">应用外观</div><div class="theme-options"><button data-theme-choice="paper"><span class="swatch"></span>纸白</button><button data-theme-choice="night"><span class="swatch night"></span>夜林</button></div><p class="help">应用级预览，同时应用到所有联系人。</p><div class="section-title">模型配置</div><p class="help">模型由应用启动时的配置决定。</p>';
   $('purpose').value=active().purpose;$('directory').value=active().directory;for(const [id,key] of [['purpose','purpose'],['directory','directory']]){$(id).disabled=active().bound;$(id).addEventListener('input',()=>{active()[key]=$(id).value;if(key==='directory')$('workspace').querySelector('span').textContent=active().directory||'默认工作目录'})}$('profile-name').value=active().name;$('profile-name').addEventListener('input',()=>{active().name=$('profile-name').value||'未命名联系人';$('contact-name').textContent=active().name;renderContacts();document.querySelectorAll('.sender').forEach(sender=>sender.textContent=active().name)});setTheme(document.documentElement.dataset.theme);
  }else if(kind==='history'){
   $('history-button').setAttribute('aria-expanded','true');
@@ -603,7 +646,7 @@ function layout(){
  if(docked!==wasDocked){if(opened)closeWork(false);$('app').classList.toggle('docked',docked);if(opened)openWork(!docked)}
 }
 $('frame').addEventListener('change',e=>{document.documentElement.style.setProperty('--frame',e.target.value+'px');layout()});new ResizeObserver(layout).observe($('app'));window.addEventListener('resize',layout);
-layout();changeScene('working');
+layout();changeScene('speaking');
 
 </script>
 </body>
