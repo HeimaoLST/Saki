@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="moon">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saki · 联系人对话设计原型</title>
+<style>
+:root{color-scheme:dark;--bg:#232136;--surface:#2a273f;--hover:#393552;--border:#44415a;--text:#e0def4;--muted:#b8b4cc;--accent:#ea9a97;--accent-hover:#f2b0ad;--accent-text:#232136;--danger:#f79bb2;--warning:#f6c177;--success:#9ccfd8;--focus:#c4a7e7;--canvas:#1c1a2b;--shadow:0 24px 80px #0003}
+
+[data-theme=dawn]{color-scheme:light;--bg:#faf4ed;--surface:#fffaf3;--hover:#f2e9e1;--border:#dfdad9;--text:#464261;--muted:#64607b;--accent:#d7827e;--accent-hover:#e09a96;--accent-text:#232136;--danger:#9c4a62;--warning:#985900;--success:#286983;--focus:#907aa9;--canvas:#eee7e0;--shadow:0 24px 80px #50466118}
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer;border:0;background:transparent;border-radius:8px;transition:background-color 120ms,color 120ms}
+button:hover{background:var(--hover)}
+button:active{filter:brightness(.95)}
+button:disabled{cursor:default;opacity:.55}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
+button svg{pointer-events:none}
+svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
+[hidden]{display:none!important}
+h1,h2,h3,p{margin:0}
+h1{font-size:15px;font-weight:600}
+h2{font-size:21px;line-height:1.4;font-weight:600;letter-spacing:-.4px}
+h3{font-size:15px;font-weight:600}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+code{padding:2px 5px;background:var(--hover);border-radius:4px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7;margin:0}
+a{color:var(--success)}
+.muted{color:var(--muted)}
+.small{font-size:12px}
+.icon{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px}
+.row{display:flex;align-items:center;gap:8px}
+.between{justify-content:space-between}
+.grow{flex:1;min-width:0}
+.pill{border:1px solid var(--border);padding:5px 10px;border-radius:99px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.design-bar{max-width:1200px;margin:20px auto 14px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;font-size:12px}
+.design-brand{display:flex;gap:10px;align-items:center}
+.design-brand strong{font-size:14px}
+.design-badge{border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--muted)}
+.design-controls{display:flex;align-items:center;gap:16px}
+.design-controls select{border:0;background:var(--surface);border-radius:6px;padding:5px 8px;font-size:12px}
+.segmented{display:flex;padding:3px;border:1px solid var(--border);border-radius:8px}
+.segmented button{padding:3px 10px;font-size:12px}
+.segmented button[aria-pressed=true]{background:var(--surface);box-shadow:0 1px 3px #0001}
+.app{position:relative;display:grid;grid-template-columns:220px minmax(0,1fr);width:min(var(--frame,1040px),calc(100% - 48px));height:min(720px,calc(100dvh - 112px));min-height:520px;margin:0 auto;border:1px solid var(--border);border-radius:15px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)}
+.rail{display:flex;flex-direction:column;background:var(--bg);padding:16px 10px 12px;min-height:0}
+.brand{height:38px;padding:0 14px;display:flex;align-items:center;gap:9px;font-size:17px;font-weight:650;letter-spacing:-.4px}
+.brand svg{color:var(--accent);width:20px;height:20px}
+.rail-label{display:flex;align-items:center;justify-content:space-between;padding:18px 10px 9px;font-size:12px;color:var(--muted)}
+.rail-label button{font-size:12px;padding:5px 7px}
+.contacts{display:flex;flex-direction:column;gap:4px;flex:1;overflow:auto}
+.contact{display:flex;align-items:center;gap:10px;width:100%;padding:12px 10px;border-radius:11px;text-align:left;min-height:68px}
+.contact[aria-current=true]{background:var(--hover)}
+.avatar{width:32px;height:32px;border-radius:11px;object-fit:cover;background:var(--hover);flex:none}
+.contact .name{font-weight:550;line-height:22px}
+.snippet{font-size:12px;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:146px}
+.contact .dot{width:6px;height:6px;border-radius:50%;background:var(--success)}
+.rail-footer{border-top:1px solid var(--border);padding:12px 10px 0;display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:12px}
+.rail-footer button{padding:5px 8px}
+.main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.reading{width:86%;max-width:760px;margin-inline:auto}
+.header{flex:none;height:76px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.header .avatar{width:28px;height:28px;border-radius:9px}
+.identity{display:flex;align-items:center;gap:9px;min-width:0}
+.status-text{font-size:12px;color:var(--muted)}
+.header-actions{display:flex;gap:4px}
+.header-actions button{display:flex;align-items:center;gap:6px;padding:8px 9px;font-size:12px;color:var(--muted)}
+.header-actions button[aria-expanded=true]{background:var(--hover);color:var(--text)}
+.scroll{flex:1;overflow:auto;min-height:0;scrollbar-width:thin;scrollbar-color:var(--muted) transparent}
+.conversation{padding:9px 0 24px;overflow-wrap:anywhere}
+.date{text-align:center;font-size:11px;color:var(--muted);margin:0 0 21px;letter-spacing:.4px}
+.user-bubble{margin-left:auto;background:var(--hover);border-radius:16px 16px 4px 16px;padding:13px 17px;max-width:80%;font-size:14px;line-height:1.75}
+.assistant{margin-top:25px;font-size:15px;line-height:1.75}
+.assistant p{margin-top:12px}
+.assistant ul{padding-left:20px;margin:10px 0}
+.assistant li{padding:3px 0}
+.assistant li::marker{color:var(--muted)}
+.tool{margin:0 0 20px;font-size:12px;line-height:1.5;color:var(--muted)}
+.tool summary{display:flex;align-items:center;gap:8px;cursor:pointer;padding:7px 0;list-style:none}
+.tool summary::-webkit-details-marker{display:none}
+.tool summary .chevron{width:14px;height:14px;transition:transform 120ms}
+.tool[open] .chevron{transform:rotate(90deg)}
+.tool .ok{color:var(--success);width:15px;height:15px}
+.tool-output{margin-top:5px;padding:13px 15px;background:var(--bg);border:1px solid var(--border);border-radius:10px}
+.tool-output .row{margin-bottom:10px}
+.answer-card{padding:13px 16px;background:var(--bg);border:1px solid var(--border);border-radius:10px;margin-top:17px;font-size:13px}
+.answer-card .row{color:var(--success);margin-bottom:6px}
+.answer-actions{display:flex;align-items:center;justify-content:space-between;margin-top:17px;font-size:11px;color:var(--muted)}
+.answer-actions button{font-size:12px;padding:6px 8px;display:flex;align-items:center;gap:6px}
+.activity{display:flex;align-items:center;gap:9px;color:var(--success);font-size:13px;margin:0 0 14px}
+.spinner{width:13px;height:13px;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin 1.1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}
+}
+.working-copy{color:var(--muted);font-size:14px}
+.interrupted{font-size:12px;color:var(--warning);margin-top:18px;display:flex;gap:7px;align-items:center}
+.composer-wrap{flex:none;padding:10px 0 17px}
+.composer{border:1px solid var(--border);border-radius:18px;background:var(--bg);padding:13px 14px 10px;box-shadow:0 2px 8px #00000006}
+.composer:focus-within{border-color:var(--focus)}
+textarea{display:block;width:100%;min-height:52px;max-height:140px;resize:none;border:0;outline:0;background:transparent;font-size:14px;line-height:1.65;padding:0 3px;margin-bottom:8px}
+textarea:focus-visible{outline:0}
+textarea::placeholder{color:var(--muted)}
+.composer-footer{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.workspace{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);padding:6px 4px;max-width:70%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.send{display:flex;align-items:center;justify-content:center;gap:6px;min-width:36px;height:36px;padding:0 10px;background:var(--accent);color:var(--accent-text);border-radius:11px;font-size:12px;font-weight:600}
+.send:hover{background:var(--accent-hover)}
+.send.stop{background:var(--hover);color:var(--text);border:1px solid var(--border)}
+.compose-hint{font-size:11px;color:var(--muted);padding:8px 4px 0;display:flex;justify-content:space-between;gap:10px}
+.error{margin:0 auto 4px;padding:13px 15px;background:var(--bg);border:1px solid var(--border);border-radius:10px;font-size:12px}
+.error strong{color:var(--danger);font-weight:600;font-size:13px}
+.error p{margin-top:6px;color:var(--muted);line-height:1.6}
+.error button{padding:5px 0;color:var(--success);font-size:12px;text-decoration:underline;text-underline-offset:3px}
+.empty{min-height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:32px 0 48px}
+.empty .avatar{width:64px;height:64px;border-radius:22px;margin-bottom:22px}
+.empty h2{font-size:23px}
+.empty p{color:var(--muted);font-size:14px;line-height:1.8;margin-top:10px;max-width:300px}
+.panel{padding:0;border:0;color:var(--text);background:var(--bg);border-left:1px solid var(--border);width:300px;max-width:none;max-height:none}
+.panel[open]{display:flex;flex-direction:column;animation:panel-in 160ms ease-out}
+.app.wide.panel-open{grid-template-columns:220px minmax(0,1fr) 300px}
+.app.wide .panel{position:relative;margin:0;height:100%;min-height:0}
+.app:not(.wide) .panel{position:fixed;top:var(--panel-top);right:var(--panel-right);bottom:auto;left:auto;height:var(--panel-height);margin:0;border-radius:0 15px 15px 0;max-width:calc(100vw - 48px);box-shadow:-15px 0 50px #0002}
+.panel::backdrop{background:#12101d55}
+.panel-head{display:flex;align-items:center;justify-content:space-between;flex:none;padding:23px 20px 15px}
+.panel-head h2{font-size:15px;letter-spacing:0}
+.panel-content{padding:6px 20px 22px;overflow:auto;min-height:0;font-size:13px}
+.panel-content label{display:block;font-size:12px;font-weight:550;margin:18px 0 7px}
+.panel-content label:first-child{margin-top:0}
+.field{width:100%;border:1px solid var(--border);background:var(--surface);padding:9px 10px;border-radius:8px;font-size:13px}
+.field:disabled{color:var(--muted);background:var(--bg)}
+.help{font-size:12px;line-height:1.65;color:var(--muted);margin:8px 0 0}
+.section-title{font-size:12px;font-weight:600;margin:26px 0 12px;padding-top:20px;border-top:1px solid var(--border)}
+.theme-options{display:flex;gap:8px}
+.theme-options button{flex:1;padding:10px;border:1px solid var(--border);font-size:12px;display:flex;gap:7px;align-items:center}
+.theme-options button[aria-pressed=true]{border-color:var(--focus)}
+.swatch{width:17px;height:17px;border:1px solid #8885;border-radius:50%;background:#232136}
+.swatch.dawn{background:#faf4ed}
+.history-row{width:100%;text-align:left;padding:12px 8px;border-bottom:1px solid var(--border);border-radius:0;display:block}
+.history-row strong{display:block;font-size:13px;font-weight:500}
+.history-row span{display:block;font-size:12px;color:var(--muted);margin-top:4px}
+.design-note{max-width:1040px;width:calc(100% - 48px);margin:13px auto;color:var(--muted);font-size:11px;display:flex;justify-content:space-between;gap:20px}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);padding:9px 16px;background:var(--hover);color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:12px;z-index:5;box-shadow:0 6px 20px #0002}
+@keyframes panel-in{from{opacity:0;transform:translateX(8px)}
+to{opacity:1;transform:translateX(0)}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}
+}
+@media(max-width:800px){.design-bar{align-items:flex-start;flex-wrap:wrap}
+.design-controls{gap:8px;flex-wrap:wrap}
+.app{grid-template-columns:180px minmax(0,1fr)}
+.snippet{max-width:110px}
+.reading{width:90%}
+.header-actions button span{display:none}
+.design-note{flex-wrap:wrap;gap:4px}
+.user-bubble{max-width:94%}
+}
+
+</style>
+</head>
+<body>
+<svg style="position:absolute;width:0;height:0" aria-hidden="true"><defs>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol><symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol><symbol id="i-history" viewBox="0 0 24 24"><path d="M3 11a9 9 0 1 1 2.5 7M3 5v6h6M12 7v5l3 2"/></symbol><symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></symbol><symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol><symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v12H3Z"/></symbol><symbol id="i-file" viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5ZM14 3v6h5M9 13h6m-6 4h6"/></symbol><symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+</defs></svg>
+<div class="design-bar">
+ <div class="design-brand"><strong>Saki</strong><span class="design-badge">设计原型 · 01</span><span class="muted">联系人 / 对话</span></div>
+ <div class="design-controls">
+  <div class="segmented" aria-label="预览主题"><button data-theme-choice="moon" aria-pressed="true">Moon</button><button data-theme-choice="dawn" aria-pressed="false">Dawn</button></div>
+  <label>场景 <select id="scene"><option value="ready">阅读结果</option><option value="working">工作中</option><option value="error">启动异常</option><option value="empty">空对话</option></select></label>
+  <label>画布 <select id="frame"><option value="1040">1040</option><option value="960">960</option><option value="1200">1200</option></select></label>
+ </div>
+</div>
+<div class="app" id="app">
+ <aside class="rail" aria-label="联系人">
+  <div class="brand">Saki</div>
+  <div class="rail-label"><span>联系人</span><button id="add-contact" class="row"><svg aria-hidden="true" style="width:13px;height:13px"><use href="#i-plus"/></svg>添加</button></div>
+  <nav class="contacts" id="contacts" aria-label="选择联系人"></nav>
+  <div class="rail-footer"><span>自己的小小工作台</span><button id="appearance" class="icon" aria-label="打开外观设置"><svg aria-hidden="true"><use href="#i-settings"/></svg></button></div>
+ </aside>
+ <main class="main">
+  <header class="header reading">
+   <div class="identity"><img class="avatar" src="assets/saki-avatar-default.png" alt=""><div><h1 id="contact-name">Saki</h1><div class="status-text" id="status-text">可以继续聊</div></div></div>
+   <div class="header-actions"><button id="history-button" aria-controls="panel" aria-expanded="false"><svg aria-hidden="true"><use href="#i-history"/></svg><span>历史</span></button><button id="settings-button" aria-controls="panel" aria-expanded="false"><svg aria-hidden="true"><use href="#i-settings"/></svg><span>设置</span></button></div>
+  </header>
+  <section class="error reading" id="error-banner" role="alert" hidden><strong>尚未启动 · 找不到运行程序</strong><p>已保留草稿。请确认应用包含 Saki-runtime，或配置其位置后重启应用。</p><button id="diagnostics">查看启动诊断</button></section>
+  <div class="scroll" id="scroll"><div class="conversation reading" id="conversation">
+   <div id="thread"><div class="date">今天</div><div class="user-bubble" id="user-message" tabindex="-1">帮我把周末去海边的小旅行，整理成一份轻松的安排。先看 notes/trip.md，不要改文件。</div>
+    <article class="assistant">
+     <details class="tool" id="tool"><summary><svg aria-hidden="true" class="chevron"><use href="#i-chevron"/></svg><svg aria-hidden="true" class="ok"><use href="#i-check"/></svg><span id="tool-label">已读取 notes/trip.md</span><span class="grow"></span><span>read</span></summary><div class="tool-output"><div class="row between"><span>notes/trip.md · 读取成功</span><span>6 行</span></div><pre>出发：周六上午，不赶早班车
+想做：看海、喝咖啡、散步
+住一晚；周日下午回来
+记得：防晒、充电器、薄外套
+预算和住宿待确认
+不改动任何文件</pre></div></details>
+     <div id="working-content" hidden><div class="activity"><span class="spinner"></span><span id="activity-text">正在整理行程</span></div><p class="working-copy">已读完你的笔记。我会把周末留得宽松一些，先整理路线和需要确认的事情。</p></div>
+     <div id="answer"><h2 id="answer-heading" tabindex="-1">周末去看海，慢一点也很好。</h2><p>按你的笔记，不排满景点。把这两天留给散步、咖啡和海边的风。</p><ul><li><strong>周六 · 轻松出发</strong><br>上午出发，午后入住。找一家海边咖啡店，傍晚沿海岸散步。</li><li><strong>周日 · 不赶时间</strong><br>睡到自然醒，吃完早午餐再走一段海边，下午返程。</li></ul><div class="answer-card"><div class="row"><svg aria-hidden="true"><use href="#i-file"/></svg><strong>出发前，确认这三件事</strong></div><span>住宿与预算、往返车次、天气。记得带上防晒、充电器和薄外套。</span></div><div class="answer-actions"><span>已完成 · 未修改文件</span><button id="copy-answer"><svg aria-hidden="true"><use href="#i-copy"/></svg>复制回复</button></div></div>
+     <div class="interrupted" id="interrupted" hidden><svg aria-hidden="true"><use href="#i-stop"/></svg>已停止 · 已有内容仍保留</div>
+    </article>
+   </div>
+   <section class="empty" id="empty" hidden><img class="avatar" src="assets/saki-avatar-default.png" alt=""><h2>从一件小事开始。</h2><p>整理一个想法，读一份资料，<br>或把想做的事，慢慢说清楚。</p></section>
+  </div></div>
+  <div class="composer-wrap reading"><div class="composer"><label for="draft" class="sr-only">给当前联系人的消息</label><textarea id="draft" placeholder="还有什么想一起想想的？" rows="2"></textarea><div class="composer-footer"><button class="workspace" id="workspace"><svg aria-hidden="true"><use href="#i-folder"/></svg><span>notes/</span></button><button class="send" id="send" aria-label="发送消息"><svg aria-hidden="true"><use href="#i-arrow"/></svg></button></div></div><div class="compose-hint"><span id="hint">Enter 发送 · Shift Enter 换行</span><span id="draft-state">草稿仅保存在此原型页面</span></div></div>
+ </main>
+ <dialog class="panel" id="panel" aria-labelledby="panel-title"><div class="panel-head"><h2 id="panel-title">设置</h2><button class="icon" id="close-panel" aria-label="关闭面板"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div><div class="panel-content" id="panel-content"></div></dialog>
+</div>
+<div class="design-note"><span>设计模拟 · 不发送真实请求。可试：主题、场景、工具详情、历史、设置与草稿切换。</span><span>沿用现有 GUI · Rosé Pine Moon / Dawn</span></div>
+<div class="toast" id="toast" role="status" hidden></div><div class="sr-only" role="status" aria-live="polite" id="live"></div>
+<script>
+const $=id=>document.getElementById(id);
+const contacts=[{name:'Saki',draft:'',state:'ready',message:'帮我把周末去海边的小旅行，整理成一份轻松的安排。先看 notes/trip.md，不要改文件。',bound:true,purpose:'日常整理与阅读',directory:'notes/'},{name:'Mio',draft:'帮我整理一下明天想读的资料',state:'empty',message:'',bound:false,purpose:'',directory:''}];
+let selected=0,panelKind='',panelOrigin=null,stopTimer=null,toastTimer=null;
+const active=()=>contacts[selected];
+const icon=name=>`<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
+function announce(text){$('live').textContent=text}
+function toast(text){clearTimeout(toastTimer);$('toast').textContent=text;$('toast').hidden=false;toastTimer=setTimeout(()=>$('toast').hidden=true,2200)}
+function setTheme(theme){document.documentElement.dataset.theme=theme;document.querySelectorAll('[data-theme-choice]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.themeChoice===theme)))}
+document.addEventListener('click',e=>{const button=e.target.closest('[data-theme-choice]');if(button)setTheme(button.dataset.themeChoice)});
+function renderContacts(){
+ $('contacts').replaceChildren();contacts.forEach((contact,i)=>{
+  const button=document.createElement('button');button.className='contact';button.setAttribute('aria-current',String(i===selected));
+  const image=document.createElement('img');image.src='assets/saki-avatar-default.png';image.className='avatar';image.alt='';
+  const text=document.createElement('div');text.className='grow';const name=document.createElement('div');name.className='name';name.textContent=contact.name;
+  const snippet=document.createElement('div');snippet.className='snippet';snippet.textContent=contact.state==='working'?'工作中 · 正在整理':contact.state==='stopping'?'正在停止':contact.state==='interrupted'?'已停止':contact.draft?'草稿 · '+contact.draft:contact.state==='empty'?'新对话':contact.state==='error'?'需要检查启动配置':'周末去看海，慢一点';
+  text.append(name,snippet);button.append(image,text);button.addEventListener('click',()=>{active().draft=$('draft').value;selected=i;closePanel(false);render()});$('contacts').append(button);
+ });
+}
+function render(){
+ const c=active(),busy=['working','stopping'].includes(c.state),otherBusy=contacts.some((x,i)=>i!==selected&&['working','stopping'].includes(x.state));
+ $('workspace').querySelector('span').textContent=c.directory||'默认工作目录';$('contact-name').textContent=c.name;$('status-text').textContent={ready:'可以继续聊',working:'工作中',stopping:'正在停止',interrupted:'已停止',error:'需要检查启动配置',empty:'新的开始'}[c.state];
+ $('status-text').style.color=busy?'var(--success)':c.state==='error'?'var(--danger)':'var(--muted)';
+ $('draft').value=c.draft;$('draft').placeholder=c.state==='empty'?'想让 '+c.name+' 帮你做什么？':'还有什么想一起想想的？';
+ $('error-banner').hidden=c.state!=='error';$('empty').hidden=c.state!=='empty';$('thread').hidden=c.state==='empty';$('user-message').textContent=c.message;
+ $('answer').hidden=busy||c.state==='interrupted';$('working-content').hidden=!busy&&c.state!=='interrupted';$('activity-text').textContent=c.state==='stopping'?'正在停止，请稍候':c.state==='interrupted'?'本次整理已停止':'正在整理行程';
+ document.querySelector('.spinner').hidden=c.state==='interrupted';$('interrupted').hidden=c.state!=='interrupted';
+ $('scene').value=['interrupted','stopping'].includes(c.state)?'working':c.state;
+ $('send').classList.toggle('stop',busy);$('send').innerHTML=busy?icon('stop')+(c.state==='stopping'?'停止中':'停止'):icon('arrow');
+ $('send').setAttribute('aria-label',busy?'停止当前任务':'发送消息');$('send').disabled=c.state==='stopping'||c.state==='error'||otherBusy||(!busy&&!c.draft.trim());
+ $('hint').textContent=c.state==='error'?'启动恢复后才可发送；草稿仍可编辑':otherBusy?'另一个联系人正在工作，暂不可发送':busy?'可以先写下一条，草稿会保留':'Enter 发送 · Shift Enter 换行';
+ renderContacts();
+}
+function changeScene(scene){clearTimeout(stopTimer);contacts.forEach(c=>{if(['working','stopping'].includes(c.state))c.state='ready'});active().state=scene;active().message=contacts[0].message||'请帮我整理周末的安排。';closePanel(false);render();$('scroll').scrollTop=0;announce('设计场景：'+$('scene').selectedOptions[0].textContent)}
+$('scene').addEventListener('change',e=>changeScene(e.target.value));
+$('draft').addEventListener('input',()=>{active().draft=$('draft').value;renderContacts();const busy=['working','stopping'].includes(active().state);$('send').disabled=active().state==='stopping'||active().state==='error'||contacts.some((c,i)=>i!==selected&&['working','stopping'].includes(c.state))||(!busy&&!active().draft.trim());$('draft').style.height='auto';$('draft').style.height=Math.min(140,$('draft').scrollHeight)+'px'});
+function send(){
+ if($('send').disabled)return;const c=active();
+ if(c.state==='working'){c.state='stopping';render();announce('停止请求已发送，等待结束');stopTimer=setTimeout(()=>{c.state='interrupted';render();announce('模拟任务已停止')},650);return}
+ c.message=c.draft;c.draft='';c.state='working';c.bound=true;render();$('scroll').scrollTop=0;announce('模拟任务开始；可以点击停止或切换阅读场景')
+}
+$('send').addEventListener('click',send);$('draft').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();send()}});
+$('add-contact').addEventListener('click',()=>{active().draft=$('draft').value;contacts.push({name:'新联系人 '+contacts.length,draft:'',state:'empty',message:'',bound:false,purpose:'',directory:''});selected=contacts.length-1;closePanel(false);render();$('draft').focus();announce('已添加联系人')});
+function closePanel(restore=true){if(!$('panel').open)return;$('panel').close();$('app').classList.remove('panel-open');['history-button','settings-button'].forEach(id=>$(id).setAttribute('aria-expanded','false'));if(restore&&panelOrigin)panelOrigin.focus();panelKind=''}
+function openPanel(kind,origin){
+ if(panelKind===kind&&$('panel').open){closePanel();return}closePanel(false);panelKind=kind;panelOrigin=origin;$('app').classList.add('panel-open');
+ $('panel-title').textContent={settings:'联系人设置',history:'历史记录',diagnostics:'启动诊断'}[kind];
+ if(kind==='settings'){
+  $('settings-button').setAttribute('aria-expanded','true');
+  $('panel-content').innerHTML='<label for="profile-name">名称</label><input class="field" id="profile-name"><label for="purpose">用途</label><input class="field" id="purpose"><label for="directory">工作目录</label><input class="field" id="directory"><p class="help">'+(active().bound?'此联系人已绑定会话。用途与工作目录在首次发送时确定，名称可单独修改。':'这些设置是可选的，将在首次发送时使用。')+'</p><div class="section-title">应用外观</div><div class="theme-options"><button data-theme-choice="moon"><span class="swatch"></span>Moon</button><button data-theme-choice="dawn"><span class="swatch dawn"></span>Dawn</button></div><p class="help">应用级预览，同时应用到所有联系人。</p><div class="section-title">模型配置</div><p class="help">模型由应用启动时的配置决定。</p>';
+  $('purpose').value=active().purpose;$('directory').value=active().directory;for(const [id,key] of [['purpose','purpose'],['directory','directory']]){$(id).disabled=active().bound;$(id).addEventListener('input',()=>{active()[key]=$(id).value;if(key==='directory')$('workspace').querySelector('span').textContent=active().directory||'默认工作目录'})}$('profile-name').value=active().name;$('profile-name').addEventListener('input',()=>{active().name=$('profile-name').value||'未命名联系人';$('contact-name').textContent=active().name;renderContacts()});setTheme(document.documentElement.dataset.theme);
+ }else if(kind==='history'){
+  $('history-button').setAttribute('aria-expanded','true');
+  $('panel-content').innerHTML='<label for="history-search">查找这段对话</label><input class="field" id="history-search" type="search" placeholder="输入关键词"><p class="help">本原型只有一条示例记录。</p><button class="history-row" id="history-result"><strong>周末去看海</strong><span>今天 · 一份轻松的两日安排</span></button><p class="help" id="no-results" hidden>没有匹配的记录。</p>';
+  const hasHistory=active().bound&&active().state!=='empty';$('history-result').hidden=!hasHistory;if(!hasHistory){$('no-results').hidden=false;$('no-results').textContent='此联系人还没有历史记录。'}$('history-search').addEventListener('input',()=>{const found=hasHistory&&'周末去看海轻松旅行行程安排'.includes($('history-search').value.trim());$('history-result').hidden=!found;$('no-results').hidden=found});
+  $('history-result').addEventListener('click',()=>{closePanel(false);const target=$('answer').hidden?$('user-message'):$('answer-heading');target.scrollIntoView({block:'center'});target.focus();announce('已定位到示例对话')});
+ }else{
+  $('panel-content').innerHTML='<p class="help">以下为设计示例，不读取本机配置。</p><div class="section-title">失败阶段</div><h3>定位运行程序</h3><p class="help">应用尚未建立运行连接，任务未发送。</p><div class="section-title">可执行的下一步</div><ol class="help"><li>确认应用安装包内包含 Saki-runtime。</li><li>自行构建时，核对运行程序位置。</li><li>修正配置后重新启动应用。</li></ol><div class="section-title">已保留</div><p class="help">本页草稿可以继续编辑。真实应用的草稿与历史恢复以存储和 Runtime 已确认的数据为准。</p>';
+ }
+ if($('app').classList.contains('wide'))$('panel').show();else $('panel').showModal();
+ $('close-panel').focus();
+}
+$('history-button').addEventListener('click',e=>openPanel('history',e.currentTarget));$('settings-button').addEventListener('click',e=>openPanel('settings',e.currentTarget));$('appearance').addEventListener('click',e=>openPanel('settings',e.currentTarget));$('workspace').addEventListener('click',e=>openPanel('settings',e.currentTarget));$('diagnostics').addEventListener('click',e=>openPanel('diagnostics',e.currentTarget));$('close-panel').addEventListener('click',()=>closePanel());$('panel').addEventListener('cancel',e=>{e.preventDefault();closePanel()});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('panel').open){e.preventDefault();closePanel()}});
+function layout(){const rect=$('app').getBoundingClientRect();$('app').style.setProperty('--panel-top',rect.top+'px');$('app').style.setProperty('--panel-right',(innerWidth-rect.right)+'px');$('app').style.setProperty('--panel-height',rect.height+'px');const wide=rect.width>=1120;if(wide!==$('app').classList.contains('wide')){closePanel(false);$('app').classList.toggle('wide',wide)}}
+$('frame').addEventListener('change',e=>{closePanel(false);document.documentElement.style.setProperty('--frame',e.target.value+'px');layout()});new ResizeObserver(layout).observe($('app'));window.addEventListener('resize',layout);
+$('copy-answer').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('answer-heading').textContent+'\n\n'+$('answer').querySelector('p').textContent+'\n'+[...$('answer').querySelectorAll('li')].map(li=>li.textContent).join('\n')+'\n'+$('answer').querySelector('.answer-card').textContent);toast('已复制回复')}catch{toast('未能访问剪贴板，请直接选择回复文字复制')}});
+render();layout();
+</script>
+</body>
+</html>
