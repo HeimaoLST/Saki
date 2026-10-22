@@ -18,7 +18,7 @@ struct Fixture {
     definition: Value,
     catalog: Arc<RwLock<Vec<Value>>>,
     trace: Arc<Mutex<Vec<(u32, Value)>>>,
-    calls: mpsc::Receiver<(u32, Value)>,
+    calls: mpsc::Receiver<(u32, Value, ControlSender)>,
     stop: oneshot::Sender<()>,
     worker: JoinHandle<()>,
 }
@@ -72,7 +72,7 @@ impl Fixture {
                                     "tools/list" => tools_page(catalog.read().unwrap().clone(),None,true),
                                     "tools/call" => {
                                         count += 1;
-                                        called.send((pid,message.clone())).await.unwrap();
+                                        called.send((pid,message.clone(),control.sender.clone())).await.unwrap();
                                         if hold_calls { continue; }
                                         json!({"resultType":"complete","content":[{"type":"text","text":"wire result"}],"structuredContent":{"cwd":cwd,"count":count},"isError":false})
                                     }
@@ -374,7 +374,7 @@ async fn cancellation_reaps_inflight_source_before_terminal_and_does_not_replay_
             json!({"session_id":id,"message":{"text":"call and wait"}}),
         )
         .await;
-    let (pid, call) = tokio::time::timeout(WIRE_TIMEOUT, fixture.calls.recv())
+    let (pid, call, _) = tokio::time::timeout(WIRE_TIMEOUT, fixture.calls.recv())
         .await
         .unwrap()
         .unwrap();
@@ -628,7 +628,7 @@ async fn crashed_business_call_is_not_replayed_and_only_next_task_reconnects() {
             json!({"session_id":id,"message":{"text":"first call"}}),
         )
         .await;
-    let (pid, _) = tokio::time::timeout(WIRE_TIMEOUT, fixture.calls.recv())
+    let (pid, _, _) = tokio::time::timeout(WIRE_TIMEOUT, fixture.calls.recv())
         .await
         .unwrap()
         .unwrap();
@@ -751,4 +751,225 @@ async fn global_discovery_is_ephemeral_and_noop_confirmation_preserves_revision(
         2
     );
     assert!(!trace.iter().any(|(_, v)| v["method"] == "tools/call"));
+}
+
+#[tokio::test]
+async fn cancelling_one_session_with_an_inflight_mcp_call_preserves_the_other_call() {
+    let directory = Directory::new();
+    let mut a = Fixture::new(true).await;
+    let mut b = Fixture::new(true).await;
+    let (base, server) = scripted_server(vec![
+        (
+            200,
+            "application/json",
+            serde_json::to_vec(&tool_call()).unwrap(),
+        ),
+        (
+            200,
+            "application/json",
+            serde_json::to_vec(&tool_call()).unwrap(),
+        ),
+        (
+            200,
+            "application/json",
+            serde_json::to_vec(&completed("B survived A cancellation")).unwrap(),
+        ),
+    ])
+    .await;
+    let def_a: ToolSourceDefinition = serde_json::from_value(a.definition.clone()).unwrap();
+    let mut definition_b = b.definition.clone();
+    definition_b["id"] = json!("continuing");
+    let def_b: ToolSourceDefinition = serde_json::from_value(definition_b).unwrap();
+    let sources = McpTools::new(vec![def_a, def_b], 2, &directory.0, |name| {
+        (name == "MCP_TEST_TOKEN").then(|| "fixture-token".into())
+    })
+    .unwrap();
+    let mut driver = Driver::from_runtime(
+        runtime(&directory, base, &a, 2)
+            .with_tool_sources(Some(sources))
+            .with_max_active_tasks(2)
+            .unwrap(),
+    )
+    .await;
+    let id_a = create(&mut driver, &directory.0).await;
+    let mut selection_b = selection();
+    selection_b["external"][0]["source_id"] = json!("continuing");
+    let created_b = driver
+        .call(
+            "session.create",
+            json!({"storage_schema":2,"config":{"tool_selection":selection_b}}),
+        )
+        .await;
+    let id_b = created_b["result"]["session_id"].as_str().unwrap();
+    let task_a = driver
+        .call(
+            "task.send",
+            json!({"session_id":id_a,"message":{"text":"A held call"}}),
+        )
+        .await;
+    let task_b = driver
+        .call(
+            "task.send",
+            json!({"session_id":id_b,"message":{"text":"B held call"}}),
+        )
+        .await;
+    let (pid_a, _, _) = tokio::time::timeout(WIRE_TIMEOUT, a.calls.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let (pid_b, call_b, respond_b) = tokio::time::timeout(WIRE_TIMEOUT, b.calls.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(pid_a, pid_b);
+    driver
+        .call(
+            "task.cancel",
+            json!({"session_id":id_a,"task_id":task_a["result"]["task_id"]}),
+        )
+        .await;
+    assert_eq!(
+        driver.finish(&task_a["result"]).await["event"]["status"],
+        "interrupted"
+    );
+    assert_eq!(unsafe { libc::kill(pid_a as i32, 0) }, -1);
+    assert_eq!(
+        unsafe { libc::kill(pid_b as i32, 0) },
+        0,
+        "A cancellation killed B source"
+    );
+    let state_b = driver
+        .call("session.status", json!({"session_id":id_b}))
+        .await;
+    assert_eq!(state_b["result"]["state"], "running");
+    respond_b.send(json!({"send":{"jsonrpc":"2.0","id":call_b["id"],"result":{"resultType":"complete","content":[{"type":"text","text":"B-result"}],"isError":false}}})).await.unwrap();
+    assert_eq!(
+        driver.finish(&task_b["result"]).await["event"]["status"],
+        "completed"
+    );
+    assert_eq!(requests(server).await.len(), 3);
+    driver.shutdown().await;
+    let trace_a = a.finish().await;
+    let trace_b = b.finish().await;
+    assert_eq!(
+        trace_a
+            .iter()
+            .filter(|(_, v)| v["method"] == "tools/call")
+            .count(),
+        1
+    );
+    assert_eq!(
+        trace_b
+            .iter()
+            .filter(|(_, v)| v["method"] == "tools/call")
+            .count(),
+        1
+    );
+    assert!(
+        !trace_b
+            .iter()
+            .any(|(_, v)| v["method"] == "notifications/cancelled"
+                && v["params"]["requestId"] == call_b["id"])
+    );
+}
+
+#[tokio::test]
+async fn output_loss_during_mcp_call_keeps_real_result_and_drains_sources_without_cancellation() {
+    let directory = Directory::new();
+    let mut fixture = Fixture::new(true).await;
+    let (base, server) = scripted_server(vec![
+        (
+            200,
+            "application/json",
+            serde_json::to_vec(&tool_call()).unwrap(),
+        ),
+        (
+            200,
+            "application/json",
+            serde_json::to_vec(&completed("completed after output loss")).unwrap(),
+        ),
+    ])
+    .await;
+    let (handle, actor) = runtime(&directory, base, &fixture, 1).start();
+    let state = match handle
+        .call(RuntimeCommand::CreateConfigured {
+            storage_schema: 2,
+            config: serde_json::from_value(json!({"tool_selection":selection()})).unwrap(),
+        })
+        .await
+        .unwrap()
+    {
+        RuntimeReply::Session(state) => state,
+        _ => panic!("expected session"),
+    };
+    let task = match handle
+        .call(RuntimeCommand::Send {
+            session_id: state.session_id.clone(),
+            message: UserMessage::text("held tool before output loss"),
+        })
+        .await
+        .unwrap()
+    {
+        RuntimeReply::Accepted(task) => task,
+        _ => panic!("expected acceptance"),
+    };
+    let (pid, call, respond) = tokio::time::timeout(WIRE_TIMEOUT, fixture.calls.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    handle.output_state().close();
+    assert_eq!(
+        unsafe { libc::kill(pid as i32, 0) },
+        0,
+        "display loss cancelled ongoing business work"
+    );
+    respond.send(json!({"send":{"jsonrpc":"2.0","id":call["id"],"result":{"resultType":"complete","content":[{"type":"text","text":"real-output-loss-result"}],"isError":false}}})).await.unwrap();
+    let mut events = task.events;
+    let mut terminal = None;
+    while let Some(event) = events.next().await {
+        if let TaskEvent::Finished(finished) = event {
+            assert!(terminal.is_none());
+            terminal = Some(finished);
+        }
+    }
+    assert_eq!(terminal.unwrap().status, "completed");
+    tokio::time::timeout(WIRE_TIMEOUT, actor)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        unsafe { libc::kill(pid as i32, 0) },
+        -1,
+        "drained actor left tool process running"
+    );
+    let wire = requests(server).await;
+    assert_eq!(wire.len(), 2);
+    assert!(
+        wire[1]["input"]
+            .to_string()
+            .contains("real-output-loss-result")
+    );
+    let store = SessionStore::new(directory.0.join("sessions")).unwrap();
+    let restored = store.open(&state.session_id).unwrap();
+    assert!(matches!(restored.replay.status, TaskStatus::Completed));
+    let text = std::fs::read_to_string(
+        directory
+            .0
+            .join("sessions")
+            .join(&state.session_id)
+            .join("history.jsonl"),
+    )
+    .unwrap();
+    assert!(text.contains("real-output-loss-result"));
+    assert!(!text.contains("\"status\":\"interrupted\""));
+    drop(restored);
+    drop(handle);
+    let trace = fixture.finish().await;
+    assert!(
+        !trace
+            .iter()
+            .any(|(_, v)| v["method"] == "notifications/cancelled"
+                && v["params"]["requestId"] == call["id"])
+    );
 }

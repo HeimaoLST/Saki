@@ -34,7 +34,10 @@ async fn write(writer: &mut tokio::io::WriteHalf<DuplexStream>, value: Value) {
     writer.write_all(&bytes).await.unwrap();
 }
 
-fn fixture(modern: bool) -> (DuplexStream, Arc<Mutex<Vec<Value>>>, JoinHandle<()>) {
+fn fixture(
+    modern: bool,
+    burst: Option<usize>,
+) -> (DuplexStream, Arc<Mutex<Vec<Value>>>, JoinHandle<()>) {
     let (client, server) = tokio::io::duplex(16 * 1024);
     let trace = Arc::new(Mutex::new(Vec::new()));
     let captured = trace.clone();
@@ -42,6 +45,7 @@ fn fixture(modern: bool) -> (DuplexStream, Arc<Mutex<Vec<Value>>>, JoinHandle<()
         let (read, mut writer) = tokio::io::split(server);
         let mut lines = BufReader::new(read).lines();
         let mut lists = 0;
+        let mut listen_id = Value::Null;
         while let Some(line) = lines.next_line().await.unwrap() {
             let request: Value = serde_json::from_str(&line).unwrap();
             captured.lock().await.push(request.clone());
@@ -77,6 +81,14 @@ fn fixture(modern: bool) -> (DuplexStream, Arc<Mutex<Vec<Value>>>, JoinHandle<()
                 "notifications/initialized" | "notifications/cancelled" => {}
                 "tools/list" => {
                     lists += 1;
+                    if modern
+                        && lists == 2
+                        && let Some(count) = burst
+                    {
+                        for _ in 0..count {
+                            write(&mut writer,json!({"jsonrpc":"2.0","method":"notifications/tools/list_changed","params":{"_meta":{"io.modelcontextprotocol/subscriptionId":listen_id}}})).await;
+                        }
+                    }
                     let mut result = json!({"tools":[{"name":"read_marker","description":format!("revision-{lists}"),"inputSchema":{"type":"object"}}],"ttlMs":600000,"cacheScope":"private"});
                     if modern {
                         result["resultType"] = json!("complete");
@@ -100,9 +112,12 @@ fn fixture(modern: bool) -> (DuplexStream, Arc<Mutex<Vec<Value>>>, JoinHandle<()
                         request["params"]["notifications"],
                         json!({"toolsListChanged":true})
                     );
+                    listen_id = id.clone();
                     let metadata = json!({"io.modelcontextprotocol/subscriptionId":id});
                     write(&mut writer, json!({"jsonrpc":"2.0","method":"notifications/subscriptions/acknowledged","params":{"_meta":metadata,"notifications":{"toolsListChanged":true}}})).await;
-                    write(&mut writer, json!({"jsonrpc":"2.0","method":"notifications/tools/list_changed","params":{"_meta":metadata}})).await;
+                    if burst.is_none() {
+                        write(&mut writer, json!({"jsonrpc":"2.0","method":"notifications/tools/list_changed","params":{"_meta":metadata}})).await;
+                    }
                 }
                 other => panic!("unexpected fixture request {other}"),
             }
@@ -114,7 +129,7 @@ fn fixture(modern: bool) -> (DuplexStream, Arc<Mutex<Vec<Value>>>, JoinHandle<()
 #[tokio::test]
 async fn pinned_sdk_modern_discovery_acknowledges_only_tools_and_lists_fresh() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let (wire, trace, job) = fixture(true);
+        let (wire, trace, job) = fixture(true, None);
         let changed = Arc::new(Notify::new());
         let (read, writer) = tokio::io::split(wire);
         let client = Client { changed }
@@ -176,7 +191,7 @@ async fn pinned_sdk_modern_discovery_acknowledges_only_tools_and_lists_fresh() {
 #[tokio::test]
 async fn pinned_sdk_legacy_uses_notifications_without_listen_and_lists_fresh() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let (wire, trace, job) = fixture(false);
+        let (wire, trace, job) = fixture(false, None);
         let changed = Arc::new(Notify::new());
         let (read, writer) = tokio::io::split(wire);
         let client = Client {
@@ -321,4 +336,69 @@ async fn standalone_rust_server_negotiates_both_versions_reads_files_and_keeps_p
     }
     std::fs::remove_file(root.join("probe.txt")).unwrap();
     std::fs::remove_dir(root).unwrap();
+}
+
+#[tokio::test]
+async fn pinned_sdk_lag_ends_bounded_subscription_and_replacement_uses_new_id() {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let (wire, trace, job) = fixture(true, Some(4));
+        let (read, writer) = tokio::io::split(wire);
+        let client = Client {
+            changed: Arc::new(Notify::new()),
+        }
+        .serve_with_lifecycle(
+            AsyncRwTransport::new(read, writer),
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            },
+        )
+        .await
+        .unwrap();
+        client
+            .set_response_cache_config(ClientCacheConfig::disabled())
+            .await;
+        client.list_tools(None).await.unwrap();
+        let filter = SubscriptionFilter::builder().tools_list_changed().build();
+        let mut subscription = client
+            .listen_with_capacity(filter.clone(), NonZeroUsize::new(2).unwrap())
+            .await
+            .unwrap();
+        let old = subscription.id().clone();
+        // The response follows the burst on the same wire, proving SDK delivery
+        // reached the full subscription queue before this test consumes it.
+        client.list_tools(None).await.unwrap();
+        let mut received = 0;
+        while subscription.next().await.unwrap().is_some() {
+            received += 1;
+        }
+        assert!(received <= 2);
+        assert!(matches!(
+            subscription.end(),
+            Some(rmcp::service::SubscriptionEnd::Lagged { capacity: 2 })
+        ));
+        let mut replacement = client
+            .listen_with_capacity(filter, NonZeroUsize::new(2).unwrap())
+            .await
+            .unwrap();
+        assert_ne!(replacement.id(), &old);
+        let tools = client.list_tools(None).await.unwrap();
+        assert_eq!(tools.tools[0].description.as_deref(), Some("revision-3"));
+        replacement.cancel().await.unwrap();
+        client.cancel().await.unwrap();
+        job.await.unwrap();
+        let trace = trace.lock().await;
+        assert_eq!(
+            trace.iter().filter(|r| r["method"] == "tools/list").count(),
+            3
+        );
+        assert_eq!(
+            trace
+                .iter()
+                .filter(|r| r["method"] == "subscriptions/listen")
+                .count(),
+            2
+        );
+    })
+    .await
+    .unwrap();
 }
