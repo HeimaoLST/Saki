@@ -21,6 +21,8 @@ const (
 	runtimeStateFailed   = "failed"
 	runtimeStateExited   = "exited"
 	runtimeStateDraining = "draining"
+
+	startupStageLocalStore = "Local contact store"
 )
 
 func newRuntimeApp() (*appModel, error) {
@@ -64,13 +66,23 @@ func newRuntimeApp() (*appModel, error) {
 	return a, nil
 }
 
-// newUnavailableApp keeps the window usable when configuration or the store is
-// broken: it shows the error and never silently creates a replacement store.
+// newUnavailableApp keeps the window usable when the local contact store cannot
+// be read or created. It retains the actual paths, labels the local store stage,
+// keeps store=nil, and never silently creates a replacement store.
 func newUnavailableApp(err error) *appModel {
+	storePath := guiStorePath()
+	workDir := guiWorkDir()
 	a := &appModel{
 		runtimeStatus: runtimeStateFailed,
+		runtimeStage:  startupStageLocalStore,
 		runtimeErr:    err.Error(),
-		scrollTo:      -1,
+		runtimeHint: "Saki left the existing file untouched and did not create a replacement store. " +
+			"Fix the file or its permissions at " + storePath + ", then restart Saki. " +
+			"Drafts cannot be persisted while the local store is unavailable.",
+		storePath:  storePath,
+		sessionDir: guiSessionDir(storePath),
+		workDir:    workDir,
+		scrollTo:   -1,
 		contacts: []*contact{{
 			ID:        newContactID(),
 			Name:      "Saki",

@@ -116,6 +116,75 @@ func TestSafeDiagnosticRedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestUnavailableStoreFallbackKeepsPathsAndFile(t *testing.T) {
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "contacts.json")
+	sessionDir := filepath.Join(dir, "sessions")
+	workDir := filepath.Join(dir, "work")
+	original := []byte("{not json")
+	if err := os.WriteFile(storePath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SAKI_GUI_STORE", storePath)
+	t.Setenv("SAKI_SESSION_DIR", sessionDir)
+	t.Setenv("SAKI_GUI_WORKDIR", workDir)
+
+	_, err := newRuntimeApp()
+	if err == nil || !strings.Contains(err.Error(), storePath) {
+		t.Fatalf("newRuntimeApp error = %v", err)
+	}
+	a := newUnavailableApp(err)
+	if a.store != nil {
+		t.Fatal("unavailable fallback must keep store=nil")
+	}
+	if a.runtimeStage != startupStageLocalStore {
+		t.Fatalf("stage = %q", a.runtimeStage)
+	}
+	if a.storePath != storePath || a.sessionDir != sessionDir || a.workDir != workDir {
+		t.Fatalf("fallback paths = store %q, session %q, work %q", a.storePath, a.sessionDir, a.workDir)
+	}
+	if !strings.Contains(a.runtimeErr, storePath) || a.contacts[0].Unavailable != err.Error() {
+		t.Fatalf("original store error was not preserved: runtimeErr=%q unavailable=%q", a.runtimeErr, a.contacts[0].Unavailable)
+	}
+	for _, want := range []string{storePath, "untouched", "did not create a replacement store", "Drafts cannot be persisted"} {
+		if !strings.Contains(a.runtimeHint, want) {
+			t.Errorf("hint = %q, missing %q", a.runtimeHint, want)
+		}
+	}
+
+	a.openConfiguration()
+	tr := ui.NewTester(a.view, 960, 640)
+	tr.Frame()
+	for _, want := range []string{
+		"Startup & configuration",
+		"Local contact store:",
+		"Runtime: not started (local contact store unavailable)",
+		"Store: " + storePath,
+		"Session directory: " + sessionDir,
+		"GUI work directory: " + workDir,
+		"Helper: not started; fix the local contact store first",
+	} {
+		if !tr.HasText(want) {
+			t.Errorf("fallback panel missing %q", want)
+		}
+	}
+
+	after, err := os.ReadFile(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(original) {
+		t.Fatal("fallback must not overwrite the corrupt store")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "contacts.json" {
+		t.Fatalf("fallback created extra store/session/work files: %v", entries)
+	}
+}
+
 func TestRuntimePanelShowsPathsAndMetadata(t *testing.T) {
 	ct := &contact{
 		ID: "saki", Name: "Saki", Role: "Assistant",
@@ -133,7 +202,7 @@ func TestRuntimePanelShowsPathsAndMetadata(t *testing.T) {
 	tr := ui.NewTester(a.view, 960, 640)
 	tr.Frame()
 	for _, want := range []string{
-		"Runtime & configuration",
+		"Startup & configuration",
 		"Helper: /tmp/Saki-runtime",
 		"Store: /tmp/contacts.json",
 		"Session directory: /tmp/sessions",
@@ -164,19 +233,19 @@ func TestConfigurationEntryKeepsContactSettingsUsable(t *testing.T) {
 	a.openSettings()
 	tr := ui.NewTester(a.view, 960, 640)
 	tr.Frame()
-	for _, want := range []string{"Contact settings", "Contact name", "Save changes", "Close", "Runtime status"} {
+	for _, want := range []string{"Contact settings", "Contact name", "Save changes", "Close", "Startup status"} {
 		if !tr.HasText(want) {
 			t.Fatalf("contact settings missing %q", want)
 		}
 	}
-	if err := tr.Click("Runtime status"); err != nil {
+	if err := tr.Click("Startup status"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
 	if a.aux != "configuration" {
 		t.Fatalf("aux = %q, want configuration", a.aux)
 	}
-	for _, want := range []string{"Runtime & configuration", "Helper: /tmp/Saki-runtime", "Close"} {
+	for _, want := range []string{"Startup & configuration", "Helper: /tmp/Saki-runtime", "Close"} {
 		if !tr.HasText(want) {
 			t.Fatalf("configuration panel missing %q", want)
 		}

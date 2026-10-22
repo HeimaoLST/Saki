@@ -499,7 +499,7 @@ func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 		ui.Text(c, "Contact settings").FontSize(16).FontWeight(500).TextColor(t.Text)
 		ui.Spacer(c)
 		if !a.demo {
-			ui.Button(c, "Runtime status").FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openConfiguration() })
+			ui.Button(c, "Startup status").FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openConfiguration() })
 		}
 		ui.Button(c, "Close").FontSize(12).OnClick(func() { a.closeAux() })
 	})
@@ -534,7 +534,7 @@ func (a *appModel) openConfiguration() {
 
 func (a *appModel) configurationPanel(c *ui.Context, t *ui.Theme) {
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "Runtime & configuration").FontSize(16).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Startup & configuration").FontSize(16).FontWeight(500).TextColor(t.Text)
 		ui.Spacer(c)
 		ui.Button(c, "Close").FontSize(12).OnClick(func() { a.closeAux() })
 	})
@@ -542,14 +542,19 @@ func (a *appModel) configurationPanel(c *ui.Context, t *ui.Theme) {
 }
 
 func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
-	status := a.runtimeStatus
-	if status == "" {
-		status = "unknown"
+	localStore := a.runtimeStage == startupStageLocalStore
+	if localStore {
+		ui.Text(c, "Runtime: not started (local contact store unavailable)").FontSize(12).LineHeight(1.4).TextColor(t.Text)
+	} else {
+		status := a.runtimeStatus
+		if status == "" {
+			status = "unknown"
+		}
+		if status == runtimeStateReady {
+			status += " (connection only)"
+		}
+		ui.Text(c, "Runtime: "+status).FontSize(12).LineHeight(1.4).TextColor(t.Text)
 	}
-	if status == runtimeStateReady {
-		status += " (connection only)"
-	}
-	ui.Text(c, "Runtime: "+status).FontSize(12).LineHeight(1.4).TextColor(t.Text)
 	if a.runtimeErr != "" {
 		label := a.runtimeStage
 		if label == "" {
@@ -562,7 +567,11 @@ func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 	}
 	helper := a.runtimeBinary
 	if helper == "" {
-		helper = "not found (expected next to Saki as Saki-runtime, or set SAKI_RUNTIME_BIN)"
+		if localStore {
+			helper = "not started; fix the local contact store first"
+		} else {
+			helper = "not found (expected next to Saki as Saki-runtime, or set SAKI_RUNTIME_BIN)"
+		}
 	}
 	ui.Text(c, "Helper: "+helper).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 	ui.Text(c, "Store: "+valueOr(a.storePath, "not configured")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
