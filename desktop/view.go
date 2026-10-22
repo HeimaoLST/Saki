@@ -599,7 +599,7 @@ func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 	default:
 		ui.Text(c, "Session API: unknown until the runtime session is loaded").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 	}
-	ui.Text(c, "Session model: "+valueOr(ct.SessionModel, "unknown until the runtime session is loaded; selection is a later task")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Session model: "+valueOr(ct.SessionModel, "unknown until the session is loaded")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 	ui.Text(c, "Host configuration: API_KEY is required; SAKI_API, SAKI_BASE_URL and SAKI_MODEL have runtime defaults. Set them in the environment or in the GUI work directory's .env; values stay hidden.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 }
 
