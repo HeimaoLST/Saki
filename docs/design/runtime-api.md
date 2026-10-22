@@ -879,7 +879,7 @@ schema 1 单连接继续兼容执行，connection_binding.state=unknown、connec
 
 新会话使用 `session.create {storage_schema:2,config:{connection_id,model?,compaction?,system_prompt?,working_directory?,tool_selection?}}`；旧顶层 working_directory/system_prompt 保留，重复提供同含义字段返回 invalid_request。多连接目录下旧的空 create 明确要求增强创建，不生成一个无法执行的 legacy 会话。capabilities.storage_schemas 返回宿主实际可创建的版本。
 
-`tool_selection` 使用已批准对象 `{"builtin":["read"],"external":[]}`；省略使用四内置工具，显式空对象/空两组开放零工具。MCP 接入前 external 非空明确拒绝；本候选不宣告外部工具支持。不接受临时原型的名字数组作为另一套配置格式。该更正发生在未合入候选之间，schema 1 metadata 不新增工具字段，现有生产调用者未使用这一新增配置入口。
+`tool_selection` 使用已批准对象 `{"builtin":["read"],"external":[]}`；省略使用四内置工具，显式空对象/空两组开放零工具。MCP 接入前 external 非空明确拒绝；本候选不宣告外部工具支持。 读取持久 metadata 时也校验所选工具；未知内置工具或本版本不支持的外部工具在打开/修复 journal 前拒绝，不能静默只装载可识别的子集。不接受临时原型的名字数组作为另一套配置格式。该更正发生在未合入候选之间，schema 1 metadata 不新增工具字段，现有生产调用者未使用这一新增配置入口。
 
 普通 config.update 对已 loaded、idle session 执行。目标连接 API 不变时可切 provider，模型、prompt、工具集合和容量在同一次 CAS/metadata 提交后无 await 地替换 Agent；工作目录不可改。已接纳任务返回 busy，之后请求使用新配置，旧 journal 不重写。含原生 ProviderItem/provider_data 的模型/连接/prompt/工具重解释明确拒绝，不能通过丢原生数据实现迁移。有效值未改变不增加 revision、不写磁盘。 配置提交、手动改名和自动标题共用非阻塞 metadata 写锁，并在锁内重读最新值；锁冲突返回 locked。配置 CAS 只替换配置字段，保留最新标题及其来源，避免并发标题任务用旧副本覆盖已生效配置。
 

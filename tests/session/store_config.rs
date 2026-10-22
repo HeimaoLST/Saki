@@ -533,3 +533,36 @@ fn every_metadata_mutation_honors_one_lock_and_retains_other_configuration_field
     );
     drop(lock);
 }
+
+#[test]
+fn unsupported_persisted_tool_selection_is_rejected_before_history_repair() {
+    let workspace = Workspace::new();
+    let store = workspace.store();
+    let id = legacy(&store, &workspace);
+    let old = store.metadata(&id).unwrap();
+    store
+        .update_config(&id, old.config_revision, schema2_candidate(&old))
+        .unwrap();
+    let metadata_path = metadata_path(&store, &id);
+    let metadata: Value = serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+    let history_path = store.directory(&id).unwrap().join("history.jsonl");
+    let mut history = fs::read(&history_path).unwrap();
+    history.extend_from_slice(b"{\"torn\":");
+    fs::write(&history_path, &history).unwrap();
+    for selection in [
+        serde_json::json!({"builtin":["unknown_builtin"],"external":[]}),
+        serde_json::json!({"builtin":["read"],"external":[{"source_id":"project","tool_name":"lookup","exposed_name":"project_lookup"}]}),
+    ] {
+        let mut candidate = metadata.clone();
+        candidate["tool_selection"] = selection;
+        let bytes = serde_json::to_vec_pretty(&candidate).unwrap();
+        fs::write(&metadata_path, &bytes).unwrap();
+        let error = store
+            .open_for_api(&id, RESPONSES_API)
+            .err()
+            .expect("unsupported tools must reject load");
+        assert!(format!("{error:#}").contains("unsupported session tools"));
+        assert_eq!(fs::read(&metadata_path).unwrap(), bytes);
+        assert_eq!(fs::read(&history_path).unwrap(), history);
+    }
+}
