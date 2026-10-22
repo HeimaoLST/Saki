@@ -1107,61 +1107,62 @@ async fn reconnect_negotiates_legacy_after_modern_probe_method_not_found() {
         "completed"
     );
 
-    let trace = fixture.trace.lock().unwrap();
-    let ready: Vec<_> = trace
-        .iter()
-        .filter(|(_, value)| value["event"] == "ready")
-        .map(|(pid, _)| *pid)
-        .collect();
-    assert_eq!(
-        ready.len(),
-        3,
-        "expected modern, rejected probe and legacy sources: {trace:?}"
-    );
-    assert_eq!(ready[0], first_pid);
-    assert_eq!(unsafe { libc::kill(ready[0] as i32, 0) }, -1);
-    assert_eq!(unsafe { libc::kill(ready[1] as i32, 0) }, -1);
-    assert_eq!(unsafe { libc::kill(ready[2] as i32, 0) }, 0);
+    {
+        let trace = fixture.trace.lock().unwrap();
+        let ready: Vec<_> = trace
+            .iter()
+            .filter(|(_, value)| value["event"] == "ready")
+            .map(|(pid, _)| *pid)
+            .collect();
+        assert_eq!(
+            ready.len(),
+            3,
+            "expected modern, rejected probe and legacy sources: {trace:?}"
+        );
+        assert_eq!(ready[0], first_pid);
+        assert_eq!(unsafe { libc::kill(ready[0] as i32, 0) }, -1);
+        assert_eq!(unsafe { libc::kill(ready[1] as i32, 0) }, -1);
+        assert_eq!(unsafe { libc::kill(ready[2] as i32, 0) }, 0);
 
-    let rejected = trace
-        .iter()
-        .find(|(pid, value)| *pid == ready[1] && value["event"] == "modern_probe_rejected")
-        .expect("modern probe did not receive METHOD_NOT_FOUND");
-    assert_eq!(rejected.1["code"], -32601);
-    assert!(
-        !trace
+        let rejected = trace
             .iter()
-            .any(|(pid, value)| *pid == ready[1] && value["method"] == "subscriptions/listen")
-    );
-    assert!(
-        !trace
-            .iter()
-            .any(|(pid, value)| *pid == ready[1] && value["method"] == "tools/list")
-    );
+            .find(|(pid, value)| *pid == ready[1] && value["event"] == "modern_probe_rejected")
+            .expect("modern probe did not receive METHOD_NOT_FOUND");
+        assert_eq!(rejected.1["code"], -32601);
+        assert!(
+            !trace
+                .iter()
+                .any(|(pid, value)| *pid == ready[1] && value["method"] == "subscriptions/listen")
+        );
+        assert!(
+            !trace
+                .iter()
+                .any(|(pid, value)| *pid == ready[1] && value["method"] == "tools/list")
+        );
 
-    let initialize = trace
-        .iter()
-        .find(|(pid, value)| *pid == ready[2] && value["method"] == "initialize")
-        .expect("legacy generation did not initialize");
-    assert_eq!(initialize.1["params"]["protocolVersion"], "2025-11-25");
-    assert!(
-        !trace
+        let initialize = trace
             .iter()
-            .any(|(pid, value)| *pid == ready[2] && value["method"] == "subscriptions/listen")
-    );
-    assert!(
-        trace
-            .iter()
-            .any(|(pid, value)| *pid == ready[2] && value["method"] == "tools/list")
-    );
-    assert_eq!(
-        trace
-            .iter()
-            .filter(|(_, value)| value["method"] == "tools/call")
-            .count(),
-        1
-    );
-    drop(trace);
+            .find(|(pid, value)| *pid == ready[2] && value["method"] == "initialize")
+            .expect("legacy generation did not initialize");
+        assert_eq!(initialize.1["params"]["protocolVersion"], "2025-11-25");
+        assert!(
+            !trace
+                .iter()
+                .any(|(pid, value)| *pid == ready[2] && value["method"] == "subscriptions/listen")
+        );
+        assert!(
+            trace
+                .iter()
+                .any(|(pid, value)| *pid == ready[2] && value["method"] == "tools/list")
+        );
+        assert_eq!(
+            trace
+                .iter()
+                .filter(|(_, value)| value["method"] == "tools/call")
+                .count(),
+            1
+        );
+    }
 
     let config_after = driver
         .call("session.config.get", json!({"session_id":id}))
