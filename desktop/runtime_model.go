@@ -228,20 +228,7 @@ func (a *appModel) startRuntime() {
 				a.updateUI(func() { a.applyRuntimeExit(err) })
 			},
 			OnProtocolError: func(message string) {
-				a.updateUI(func() {
-					a.runtimeStatus = runtimeStateFailed
-					a.runtimeStage = "Runtime protocol"
-					a.runtimeErr = "Runtime protocol error: " + safeDiagnostic(message)
-					a.runtimeHint = "Restart Saki; delivery or result may be unconfirmed. No automatic retry."
-					for _, ct := range a.contacts {
-						if ct.SendState == sendSubmitting || ct.ActiveTaskID != "" {
-							ct.SessionState = "unknown"
-							ct.SendState = sendUnknown
-							ct.Status = statusAttention
-							ct.SendError = "Protocol failure; delivery not confirmed. Reload before sending again."
-						}
-					}
-				})
+				a.updateUI(func() { a.protocolFailed(message) })
 			},
 			OnStderr: func(string) {},
 		},
@@ -256,6 +243,34 @@ func (a *appModel) startRuntime() {
 	a.rt = rt
 }
 
+func (a *appModel) protocolFailed(message string) {
+	a.runtimeStatus = runtimeStateFailed
+	a.runtimeStage = "Runtime protocol"
+	a.runtimeErr = "Runtime protocol error: " + safeDiagnostic(message)
+	a.runtimeHint = "Restart Saki; delivery or result may be unconfirmed. No automatic retry."
+	for _, ct := range a.contacts {
+		if ct.SendState == sendSubmitting || ct.ActiveTaskID != "" {
+			ct.SessionState = "unknown"
+			ct.SendState = sendUnknown
+			ct.Status = statusAttention
+			ct.SendError = "Protocol failure; delivery not confirmed. Reload before sending again."
+		}
+	}
+}
+
+func (a *appModel) clearActiveTasksAfterExit() {
+	for _, ct := range a.contacts {
+		if ct.ActiveTaskID != "" {
+			ct.ActiveTaskID = ""
+			ct.SessionState = "unknown"
+			ct.SendState = sendUnknown
+			ct.Status = statusAttention
+			ct.StatusDetail = "Connection lost before the task finished; reload to verify."
+			ct.SendError = "Delivery/result not confirmed. Reload before sending again."
+		}
+	}
+}
+
 func (a *appModel) applyRuntimeExit(err error) {
 	if a.runtimeStatus == runtimeStateDraining {
 		a.runtimeStatus = runtimeStateExited
@@ -263,6 +278,7 @@ func (a *appModel) applyRuntimeExit(err error) {
 	}
 	if a.runtimeStage == "Runtime protocol" {
 		a.runtimeStatus = runtimeStateExited
+		a.clearActiveTasksAfterExit()
 		return
 	}
 	diagnostic := ""
@@ -302,16 +318,7 @@ func (a *appModel) applyRuntimeExit(err error) {
 			}
 		}
 	}
-	for _, ct := range a.contacts {
-		if ct.ActiveTaskID != "" {
-			ct.ActiveTaskID = ""
-			ct.SessionState = "unknown"
-			ct.SendState = sendUnknown
-			ct.Status = statusAttention
-			ct.StatusDetail = "Connection lost before the task finished; reload to verify."
-			ct.SendError = "Delivery/result not confirmed. Reload before sending again."
-		}
-	}
+	a.clearActiveTasksAfterExit()
 }
 
 // beginShutdown is the single quit path for the window close button and

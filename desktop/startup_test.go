@@ -391,6 +391,40 @@ func TestProviderAuthFailureUIAndRecovery(t *testing.T) {
 	}
 }
 
+func TestProtocolFailureExitClearsActiveTaskAndKeepsDraft(t *testing.T) {
+	ct := &contact{
+		ID: "saki", Name: "Saki", Role: "Assistant", SessionID: "session-1", Loaded: true,
+		ActiveTaskID: "task-1", SendState: sendSubmitting, Status: statusWorking,
+		SessionState: "running", Draft: "later edit",
+		Messages: []*message{{Key: "live:task-1:user", Kind: msgUser, Text: "sent task"}},
+	}
+	a := &appModel{
+		runtimeStatus: runtimeStateReady, runtimeHandshake: true, scrollTo: -1,
+		contacts: []*contact{ct}, rt: &runtimeClient{stderr: []string{"API_KEY is not set"}},
+	}
+	a.protocolFailed("unsupported runtime protocol version 2")
+	a.applyRuntimeExit(errors.New("exit status 1"))
+
+	if a.runtimeStage != "Runtime protocol" || !strings.Contains(a.runtimeErr, "unsupported runtime protocol version 2") {
+		t.Fatalf("protocol diagnosis overwritten: stage=%q err=%q", a.runtimeStage, a.runtimeErr)
+	}
+	if a.runtimeStatus != runtimeStateExited || ct.ActiveTaskID != "" {
+		t.Fatalf("protocol exit did not clear active task: status=%q contact=%+v", a.runtimeStatus, ct)
+	}
+	if ct.SendState != sendUnknown || ct.SessionState != "unknown" || ct.Status != statusAttention {
+		t.Fatalf("protocol exit did not preserve unknown delivery: %+v", ct)
+	}
+	if ct.Draft != "later edit" || len(ct.Messages) != 1 || ct.Messages[0].Text != "sent task" {
+		t.Fatalf("protocol exit changed history/draft: %+v", ct)
+	}
+	if !strings.Contains(ct.SendError, "Delivery/result not confirmed") || !strings.Contains(ct.StatusDetail, "reload to verify") {
+		t.Fatalf("protocol exit lost unknown-result cleanup: %+v", ct)
+	}
+	if strings.Contains(a.runtimeHint, "API_KEY") {
+		t.Fatalf("protocol exit fell back to configuration hint: %q", a.runtimeHint)
+	}
+}
+
 func TestRuntimeExitKeepsProtocolAndDrain(t *testing.T) {
 	p := &appModel{
 		runtimeStatus: runtimeStateFailed,
