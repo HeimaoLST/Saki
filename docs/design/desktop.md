@@ -116,8 +116,8 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 证据目录：`/private/tmp/saki-gui-112-native/evidence/`（上述 01..05 的 `.png` 与 `.ax.txt`）。这些是 22ba 阶段证据，不是最终 `032339a` 包的复验。
 
 ### 测试与最终包
-- 主责在 `f213bdd` 执行 `SAKI_TEST_RUNTIME_BIN=<worktree>/target/debug/Saki CGO_ENABLED=0 go test -race ./... -count=1 -v`，PASS 11.509s；5 项既有真实 runtime 测试 + `TestRealRuntimeStartupConfigurationFailure` + `TestRealProviderAuthFailureClassification` 共 7 项均 PASS 非 skip。日志：`/private/tmp/saki-gui-112/logs/main-final-f213bdd-race.log`。
-- `032339a` 只删除无调用的 `runtimeConfigHint`；删除后 `go test ./...`、vet/build、上述 7 项真实测试均通过，未重跑 -race，最终仓库门禁由后续 CI 复核。
+- 主责在最终 `032339a` 执行 `SAKI_TEST_RUNTIME_BIN=<worktree>/target/debug/Saki CGO_ENABLED=0 go test -race ./... -count=1 -v`，PASS 11.578s；5 项既有真实 runtime 测试 + `TestRealRuntimeStartupConfigurationFailure` + `TestRealProviderAuthFailureClassification` 共 7 项均 PASS 非 skip；vet/build/gofmt/diffcheck 也通过。日志：`/private/tmp/saki-gui-112/logs/main-final-032339a-race.log`。
+- `032339a` 只删除无调用的 `runtimeConfigHint`；最终包按该 SHA 冻结，不再重编。
 - 最终冻结包 `/private/tmp/saki-gui-112-app/Saki.app`，bundle `dev.saki.desktop.issue112`，源码 `032339a`，GUI sha256 `b07c8f60e1805e702a5cc616ec232d50e03a5538c13d5d740ab4333f65c38aa8`；helper 构建源 `47d01ee`，unsigned sha256 `236e12aaa4fd6235b035fc956432de2b8988a3506531f305abc4acb6da96245d`，bundle 内 signed helper `aea5ff1142c989bf793c13ab5468e6f0c62a67d327a20868e3c4188935b2f8d8`。ad-hoc 签名通过，但不是发行包。变体 GUI：NoHelper `bbcc2072ff7caabaadc08cf59d29ddae4d30565465fb8f6a1a530415db91dab2`、ExecFailure `35364d7d1a14d42abc1e5e9be14f22acff2c5d1278191bf1c5915a4a14d22566`、CorruptStore `4e145eb0b45bc28c6d0c7e9fa4f0f3ec6233398f83475a72cbaa27ac959f77a7`。
 - Headless：`/private/tmp/saki-gui-112/previews/` 9 张（config-failure 与 configuration-details；1040×720/960×640 明暗，另 1600×900），最终源码 `032339a`，`ui.Tester` 生成，命令 `SAKI_PREVIEW_DIR=... CGO_ENABLED=0 go test -run '^TestPreviewStartupDiagnostics$' -count=1 .`。这些只验证布局/可读性，不是 native 窗口、浅深色系统或 IME 证据。
 
@@ -135,7 +135,7 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
   SAKI_TEST_RUNTIME_BIN=/abs/path/to/Saki CGO_ENABLED=0 go test \
     -run 'TestRuntimeProcessIntegration|TestGUIAppRuntimeFlow|TestGUIFirstCreateUsesProfileSnapshot|TestGUIAppPersistsMappingBeforeSend|TestGUIAppSaveFailureStopsBeforeSend' -count=1 .
   ```
-  覆盖 read 工具、task/message 关联、GUI send/切换 B 草稿隔离、绑定设置只改名、drain/重启零 provider 调用、继续前文、首次 create 使用 profile 快照、mapping 持久化先于 task.send，以及 store 保存失败时零模型/工具调用且草稿保留。默认 CI 未设置 `SAKI_TEST_RUNTIME_BIN` 时 skip；QA 需要提供候选 binary 才能执行。
+  覆盖 read 工具、task/message 关联、GUI send/切换 B 草稿隔离、绑定设置只改名、drain/重启零 provider 调用、继续前文、首次 create 使用 profile 快照、mapping 持久化先于 task.send，以及 store 保存失败时零模型/工具调用且草稿保留。当前 `.github/workflows/ci.yml` 的 rust job 会构建真实 Rust binary 并设置 `SAKI_TEST_RUNTIME_BIN`，执行上述 5 项既有集成，且逐项检查 `--- PASS`；未设置该变量的普通本地 `go test` 才 skip。新增的 `TestRealRuntimeStartupConfigurationFailure`/`TestRealProviderAuthFailureClassification` 未写入 CI gate，不能写成 CI 已运行。
 - 线上 provider 应用层 smoke（opt-in，不使用受控 fixture）：
   ```sh
   SAKI_TEST_ONLINE=1 SAKI_TEST_ONLINE_WORKDIR=/path/to/repo \
