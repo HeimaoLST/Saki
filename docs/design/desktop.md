@@ -1,6 +1,6 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-20。状态：**实现事实（#63 运行时接入、#90 局部布局打磨）；#92 主题系统仅完成设计，功能尚未实现**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
+更新日期：2026-10-22。状态：**实现事实（#63 运行时接入、#90 局部布局打磨、#112 启动诊断）；#92 主题系统仅完成设计，功能尚未实现**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
 
 [previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。当前代码仍使用 Main/Dawn 派生色；#92 设计目标是用户确认的 Moon/Dawn，但本轮只交付设计，不代表换色功能已实现。concurrency、`search_history`／`read_history`、附件、模型切换等仍是后续独立任务，不在首轮。
 
@@ -90,6 +90,19 @@ SAKI_GUI_WORKDIR=/abs/working-directory \
   "/private/tmp/saki-gui-63-app/Saki.app/Contents/MacOS/Saki"
 ```
 Finder 启动使用默认 store／session／home workdir，且不继承 shell 环境；把 `.env` 放在该 workdir，或从终端带 env 启动。不要把 key 放进 Info.plist 或仓库。
+
+## 启动诊断与配置状态（#112，实现事实）
+
+G1-1..G1-4 的局部实现，不新增 Runtime 协议、凭据库或应用配置系统：
+
+- 启动阶段：`Runtime helper`（未找到 helper）、`Runtime start`（exec 启动失败）、`Runtime configuration`（ready 前退出/配置错误）、`Runtime connection`（ready 后连接丢失）、`Runtime protocol`（协议错误）；任务失败另在联系人状态中显示 `Model request failed`/`Task failed`。未知原因保留有界诊断，不猜认证或模型是否有效。
+- 可操作提示：缺 helper 显示期望的 `Saki-runtime` 位置和 `SAKI_RUNTIME_BIN`；启动失败显示实际 helper 路径与权限检查；配置/连接失败提示环境变量或 workdir `.env`（`API_KEY`、`SAKI_API`、`SAKI_BASE_URL`、`SAKI_MODEL`）及重启。配置缺失优先使用 Rust 已稳定的安全消息；GUI 只透出最后一条有界 stderr，并对 `API_KEY=`、`Authorization`、`Bearer`、token、URL userinfo 做本地 redaction。Runtime ready 仅表示连接就绪，不表示模型已验证。
+- 配置状态：Settings 顶部新增只读 `Runtime & configuration`，显示 Runtime 状态/阶段、helper 实际路径或未找到、contact store、session 目录、GUI workdir、当前联系人实际 session workdir、session ID/state、API 和只读 model（优先来自 `session.load`/`session.create` metadata；未加载时显示 unknown，不读取环境变量猜 session 事实）。模型选择与完整展示仍归 G6。
+- 零推理/恢复：启动与恢复只调用 `session.load`/`session.history`，不调用 `task.send`；打开 Settings/查看状态不发模型请求。损坏 store 仍报错且不覆盖、不创建替代 store。状态与诊断不改变现有 drain/关闭逻辑。
+- 草稿边界：提交前被拒绝或本地保存失败保留原草稿；任务已接纳的输入进入消息历史，绝不自动还原为待发送；用户之后编辑的未发送草稿单独保留。关闭/未知结果不自动重试或重跑。
+- Finder：当前仍使用默认 `UserConfigDir` store、bundle 内 helper 和 workdir `.env`；Finder 不继承 shell env。独立临时配置目录属于测试打包/launcher 注入，尚未验证，不是新增产品配置层。
+- 测试：`desktop/startup_test.go` 覆盖 helper 缺失、exec 失败、配置退出分类/redaction、Settings 状态、启动 banner 不抢焦点、任务失败时历史/后编辑草稿边界。现有五项真实进程测试复跑通过（使用已有 0828c5 helper，仅回归；当前 dev 47d01ee 的最终 helper 与原生 Finder 证据由主责另行准备）。
+- 未验：真实 Finder 冷启动、独立 temp config 注入、原生错误展示/焦点、真实 provider 认证失败、当前 dev helper 的最终包；不把 headless/旧 helper 当这些结论。
 
 ## 验证与证据
 
