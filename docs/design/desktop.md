@@ -112,7 +112,7 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 - 未验：真实 MyGo 窗口的精确 960/720、原生剪贴板、用户动效/IME、PM 视觉复核；不以 headless 或 Tester 结果替代。当前工作区仍是默认单执行槽，不宣称并发或运行中 follow-up。
 ## 启动诊断与配置状态（#112，实现事实）
 
-更新于 2026-10-22。修复后产品源码 `8a04d63`（#112 v2 auth-history 修复），Runtime helper 源码 `47d01ee`。本轮完成 G1-1..G1-4 的局部实现；原生验收只完成一部分，未声称 G1 全部通过。原 `032339a` 包与证据永久保留。不新增 Runtime 协议、凭据库或应用配置系统。
+更新于 2026-10-23。修复后产品源码 `8a04d63`（#112 v2 auth-history 修复），Runtime helper 源码 `47d01ee`。本轮完成 G1-1..G1-4 的局部实现；原生验收只完成一部分，未声称 G1 全部通过。原 `032339a` 包与证据永久保留。不新增 Runtime 协议、凭据库或应用配置系统。
 
 ### 实现
 - 启动阶段：`Runtime helper`（未找到 helper）、`Runtime start`（exec 启动失败）、`Runtime configuration`（仅已识别的 `API_KEY`/`.env` 配置错误）、`Runtime connection`（handshake 后连接丢失）、`Runtime protocol`（协议错误）。未 handshake 的未知退出归 `Runtime startup`，不误报配置；正常 drain 不作为故障。协议失败保留协议诊断，并继续执行 active 任务的未知结果清理，不清成配置诊断。
@@ -134,7 +134,11 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 
 证据目录：`/private/tmp/saki-gui-112-native/evidence/`（上述 01..05 的 `.png` 与 `.ax.txt`）。这些是 22ba 阶段证据，不是最终 `032339a` 包的复验。
 
-原 `032339a` 包的后续原生证据（06..10、12）：启动缺配置、Configuration details、ready 零推理、受控成功与重启恢复等 startup/fault 路径实际 passed；`12` 的 401 history 路径实际 FAIL，正文含假哨兵，**不能因 v2 修复而覆盖这条失败证据**。
+原 `032339a` 包的后续原生证据（06..12）：
+- `06-final-restored-metadata`：恢复 metadata/state 实际 passed。
+- `07-final-finder-missing-config`：Finder 缺配置实际 passed。
+- `08-final-nohelper`、`09-final-execfailure`、`10-final-corruptstore`：NoHelper/ExecFailure/CorruptStore 三条 fault 路径实际 passed；坏 store hash 保持 `9a3ed7…`。
+- `11-final-auth-held-laterdraft` / `12-final-auth-failed-keeps-laterdraft`：auth hold/later-draft 现场；`12` 的 401 history 仍实际 FAIL，正文含假哨兵，**不能因 v2 修复而覆盖这条失败证据**。
 
 v2 `8a04d63` 的原生修复证据（13..18）：
 - 从 Finder 打开 v2 恢复旧 401 历史，错误提示已净化；新 `auth--hold` 显式发送 `v2-accepted-auth-check` 后编辑 `v2-later-unsent-draft`，release 401 后历史/later 草稿/净化提示正确、不自动 retry；CmdQ + Finder 重启后同 session 与提示仍正确，provider count 仍为 1。
@@ -150,7 +154,7 @@ v2 `8a04d63` 的原生修复证据（13..18）：
 
 ### 仍未验
 - `032339a` 包的 Finder 原生恢复 metadata/state 已复验正确；v2 的 401+hold、later draft、reload/restart、显式恢复成功和计数 0→1→重启仍 1 已 native 通过；原 032 的 401 FAIL 仍保留为旧包证据。
-- NoHelper/ExecFailure/CorruptStore 的 Finder 原生路径；坏 store `9a3ed742b35edc2fcf25f15822cf6412635a4995744d4766060fbbef6436fbde` 只在确定性测试中通过，原生尚未。
+- NoHelper/ExecFailure/CorruptStore 的原生 fault 路径已由 08/09/10 通过；坏 store `9a3ed742b35edc2fcf25f15822cf6412635a4995744d4766060fbbef6436fbde` 在原生检查中保持不变。
 - 精确 960×640、真实系统 IME/VoiceOver、外部计费 provider 仍未验；受控本地 provider 的 v2 native 结果不能扩大为这些结论。
 
 ## 验证与证据
