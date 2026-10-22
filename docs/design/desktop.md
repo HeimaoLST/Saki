@@ -91,6 +91,19 @@ SAKI_GUI_WORKDIR=/abs/working-directory \
 ```
 Finder 启动使用默认 store／session／home workdir，且不继承 shell 环境；把 `.env` 放在该 workdir，或从终端带 env 启动。不要把 key 放进 Info.plist 或仓库。
 
+## 原生工作台（#130，实现事实）
+
+更新于 2026-10-22。产品源码 `5b51262`；本条只记录 GUI 实现事实，不修改 [desktop-workbench.md](desktop-workbench.md) 的 PM 设计权威内容。
+
+- 三栏布局：宽度 ≥1120 时联系人栏 200px、工作区 360px；960–1119 使用 160px／320px 紧凑列；低于 960 时工作区通过带遮罩的模态覆盖打开，Close 始终可见。联系人栏可收起并由页头 Contacts 重开；工作区可收起并由 Work 重开；收起、覆盖、关闭和 Escape 后恢复入口焦点，侧栏/工作区状态不停止任务。
+- 颜色：使用既有单一 `ui.Theme` 语义映射实现 Paper & Moss（light Paper／dark Night Forest），不新增主题加载、保存或主题框架；完整 Appearance 模式与持久化仍归 #96，联系人设置不承载应用外观。
+- 消息与工作分开：用户/助手真实文本留在左右气泡，按 task/item 稳定 key 聚合增量、最终和历史，不因工具或完成追加占位回复。工具活动进入按 task/call 归属的 Work 投影，显示状态、摘要、详情和原文 Copy；工具失败只影响工具/工作呈现，不直接把任务判为失败。没有 Task ID 的旧工具记录保留为 “Earlier activity”，不伪造 task 归属。
+- 执行事实：`task_started`、`tool_started/finished`、`task_finished` 与 cancel 回复驱动 accepted/running/stopping/completed/failed/interrupted/unknown；Stop 针对当前 `ActiveTaskID`，取消结果不直接生成“已停止”，等待 `task_finished`。旧任务迟到 start/terminal 不会复活或污染新任务。单执行槽下其他联系人明确显示 busy/disabled，草稿不丢、不停止当前任务。
+- 聊天未读只由新 Agent 文本消息增加；工具、普通完成、reload 和 restart 不重复计数；失败/未知仍通过 contact attention 与工作详情持续可见。未加载 session 的聊天/工作/History 显示未加载或不可用，不声称“没有历史”。Store 失败仍走既有本地 store fallback。
+- 恢复：`applyHistory` 从现有 Runtime 记录重建最近 task/call，保留文本、草稿和可查看工具输出；缺 task ID 的旧记录只保留可读活动，不新造关联。关闭/切换/History/Settings 往返不停止执行。
+- 测试：`go test ./...`、vet/build/gofmt/diffcheck 通过；`SAKI_TEST_RUNTIME_BIN=<dev helper> CGO_ENABLED=0 go test -race ./... -count=1` PASS 13.252s（日志 `/private/tmp/saki-gui-130/race.log`）；5 项真实 Go→Rust 集成 PASS。Headless 证据在 `/private/tmp/saki-gui-130/previews/`：960×640、1040×720、1600 宽、窄覆盖，明暗和工具详情。它们只验证 ui.Tester 布局，不是 native 窗口、IME 或显式 copy 验收。
+- 未验：真实 MyGo 窗口的 960/覆盖/Esc/焦点/原生剪贴板、用户动效/IME、PM 视觉复核；不以 headless 或 Tester 结果替代。当前工作区仍是默认单执行槽，不宣称并发或运行中 follow-up。
+
 ## 验证与证据
 
 - Go：`CGO_ENABLED=0 go test ./... -count=1`、`go vet ./...`、`go build ./...`、`go test -race ./...` 均通过（本分支候选）。
