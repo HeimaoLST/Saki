@@ -12,9 +12,12 @@ use crate::{
     agent::{
         conversation::CompactionConfig,
         journal::{JournalRecord, TaskConfiguration},
-        message::UserMessage,
+        message::{ImageAttachment, UserMessage},
     },
-    client::{ModelClient, config::RESPONSES_API},
+    client::{
+        ClientConfig, ModelApi, ModelClient,
+        config::{CHAT_COMPLETIONS_API, RESPONSES_API},
+    },
     model::catalog::ModelCatalog,
     session::{
         SYSTEM_PROMPT,
@@ -647,6 +650,100 @@ async fn unknown_invalid_and_opaque_config_changes_leave_disk_and_history_untouc
     assert_eq!(workspace.history_bytes(&session_id), history_before);
     assert_eq!(config_get(&handle, &session_id).await.config_revision, 1);
     let _ = request_one(server).await;
+    handle.call(RuntimeCommand::Shutdown).await.unwrap();
+    drop(handle);
+    actor.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn config_incompatible_rejects_chat_image_history_without_writes() {
+    let workspace = Workspace::new();
+    let store = workspace.store();
+    let id = store
+        .create_with_api(
+            &workspace.0,
+            "model-a",
+            SYSTEM_PROMPT,
+            CHAT_COMPLETIONS_API,
+            large_compaction(),
+        )
+        .unwrap();
+    {
+        let mut loaded = store.open_for_api(&id, CHAT_COMPLETIONS_API).unwrap();
+        loaded.conversation.add_user_message(UserMessage {
+            text: "stored image turn".to_owned(),
+            images: vec![ImageAttachment::new(
+                "image.png",
+                "data:image/png;base64,AAAA",
+            )],
+            context: Vec::new(),
+        });
+        loaded
+            .conversation
+            .add_assistant_message("stored image acknowledged".to_owned());
+        loaded.conversation.save_history().unwrap();
+    }
+
+    let metadata_before = workspace.metadata_bytes(&id);
+    let history_before = workspace.history_bytes(&id);
+    let history_text = String::from_utf8_lossy(&history_before);
+    assert!(history_text.contains("data:image/png;base64,AAAA"));
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let client = ModelClient::new(&ClientConfig::new(
+        ModelApi::ChatCompletions,
+        "offline-key",
+        format!("http://{}/v1", listener.local_addr().unwrap()),
+    ))
+    .unwrap();
+    let (handle, actor) = runtime(client, &workspace, "model-a", Some(catalog())).start();
+
+    let loaded = session(
+        handle
+            .call(RuntimeCommand::Load {
+                session_id: id.clone(),
+            })
+            .await
+            .unwrap(),
+    );
+    assert!(loaded.loaded);
+    assert_eq!(loaded.config_revision, Some(1));
+    let before = config_get(&handle, &id).await;
+    assert_eq!(before.effective_config.api, CHAT_COMPLETIONS_API);
+    assert_eq!(before.effective_config.model, "model-a");
+    assert_eq!(before.config_revision, 1);
+    let records_before = serde_json::to_value(history_for(&handle, &id).await.records).unwrap();
+
+    let failed = config_update(
+        &handle,
+        &id,
+        1,
+        patch_model_compaction("model-b", small_compaction()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(failed.code, "config_incompatible");
+
+    let after = config_get(&handle, &id).await;
+    assert_eq!(after.effective_config.api, CHAT_COMPLETIONS_API);
+    assert_eq!(after.effective_config.model, "model-a");
+    assert_eq!(after.config_revision, 1);
+    assert_eq!(
+        after.effective_config.compaction,
+        before.effective_config.compaction
+    );
+    assert_eq!(
+        serde_json::to_value(history_for(&handle, &id).await.records).unwrap(),
+        records_before
+    );
+    assert_eq!(workspace.metadata_bytes(&id), metadata_before);
+    assert_eq!(workspace.history_bytes(&id), history_before);
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+
     handle.call(RuntimeCommand::Shutdown).await.unwrap();
     drop(handle);
     actor.await.unwrap().unwrap();
