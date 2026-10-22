@@ -671,3 +671,24 @@ async fn closed_command_mailbox_ends_console_without_retry_loop() {
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn native_line_source_forwards_lines_end_and_error() {
+    let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<Option<String>>>(4);
+    tx.send(Ok(Some("one".into()))).await.unwrap();
+    tx.send(Ok(Some("two".into()))).await.unwrap();
+    tx.send(Ok(None)).await.unwrap();
+    drop(tx);
+    let mut source = LineSource::<tokio::io::Empty>::Native(rx, std::marker::PhantomData);
+    assert_eq!(source.next_line().await.unwrap(), Some("one".into()));
+    assert_eq!(source.next_line().await.unwrap(), Some("two".into()));
+    assert_eq!(source.next_line().await.unwrap(), None);
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<Option<String>>>(1);
+    tx.send(Err(std::io::Error::other("read failed")))
+        .await
+        .unwrap();
+    drop(tx);
+    let mut source = LineSource::<tokio::io::Empty>::Native(rx, std::marker::PhantomData);
+    assert!(source.next_line().await.is_err());
+}
