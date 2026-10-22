@@ -17,6 +17,7 @@ fn local_input_never_submits_a_user_message_and_errors_keep_images_and_text() {
     assert!(!app.running);
     assert!(app.records.is_empty());
     editor.set_draft(crate::agent::message::UserMessage {
+        context: Vec::new(),
         text: "/new".into(),
         images: vec![crate::agent::message::ImageAttachment::new(
             "a.png",
@@ -221,6 +222,7 @@ fn multiline_paste_and_escaped_slashes_use_the_existing_message_submission_path(
     assert!(outcome.command.is_none());
     assert_eq!(outcome.send.unwrap().text, "/new\nexplain this text");
     editor.set_draft(crate::agent::message::UserMessage {
+        context: Vec::new(),
         text: "//help".into(),
         images: vec![crate::agent::message::ImageAttachment::new(
             "a.png",

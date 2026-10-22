@@ -754,7 +754,7 @@ impl RuntimeActor {
                     session_configuration: true,
                     multi_connection: false,
                     external_tools: false,
-                    caller_context: false,
+                    caller_context: true,
                 })));
             }
             RuntimeCommand::Models { connection_id } => {
@@ -1187,12 +1187,10 @@ impl RuntimeActor {
             .session(&session_id)));
             return;
         }
-        if message.text.is_empty() && message.images.is_empty() {
-            let _ = reply.send(Err(RuntimeError::new(
-                "invalid_request",
-                "message is empty",
-            )
-            .session(&session_id)));
+        if let Err(error) = message.validate() {
+            let _ = reply.send(Err(
+                RuntimeError::new("invalid_request", error).session(&session_id)
+            ));
             return;
         }
         if self.client.api() == ModelApi::ChatCompletions && !message.images.is_empty() {
@@ -1720,3 +1718,7 @@ mod service_tests;
 #[cfg(test)]
 #[path = "../../tests/session/config.rs"]
 mod config_tests;
+
+#[cfg(test)]
+#[path = "../../tests/session/context.rs"]
+mod context_tests;

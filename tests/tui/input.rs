@@ -515,6 +515,7 @@ fn ctrl_r_opens_history_search_and_leaves_the_draft_untouched() {
     app.history.push("newer prompt".to_owned());
     let mut editor = Editor::new();
     editor.set_draft(crate::agent::message::UserMessage {
+        context: Vec::new(),
         text: "keep me".into(),
         images: vec![image("a.png")],
     });
@@ -548,6 +549,7 @@ fn history_search_cancel_restores_the_exact_editor_state() {
     app.history.push("history one".to_owned());
     let mut editor = Editor::new();
     editor.set_draft(crate::agent::message::UserMessage {
+        context: Vec::new(),
         text: "keep\ndraft".into(),
         images: vec![image("a.png")],
     });
@@ -649,6 +651,7 @@ fn history_search_f1_closes_search_and_opens_help() {
     app.history.push("saved".to_owned());
     let mut editor = Editor::new();
     editor.set_draft(crate::agent::message::UserMessage {
+        context: Vec::new(),
         text: "draft".into(),
         images: vec![image("a.png")],
     });
@@ -711,6 +714,7 @@ fn history_search_overlay_keeps_the_hint_with_a_tall_composer() {
     app.history
         .push("first line\nsecond line\nthird line".to_owned());
     app.history.push(crate::agent::message::UserMessage {
+        context: Vec::new(),
         text: "target one is a long prompt that does not fit one row\nsecond line of that prompt"
             .into(),
         images: vec![image("a.png"), image("b.png")],

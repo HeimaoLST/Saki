@@ -511,6 +511,7 @@ fn large_base64_is_not_counted_as_text_tokens() {
     conversation.add_user_message(UserMessage {
         text: "hi".to_owned(),
         images: vec![image],
+        context: Vec::new(),
     });
     let tokens = estimated_tokens(&conversation.items[1..2]).unwrap();
     assert!(tokens >= IMAGE_TOKEN_ESTIMATE);
@@ -528,6 +529,7 @@ async fn compaction_attaches_prefix_images_as_input_image_parts() {
             "old.png",
             "data:image/png;base64,OLDPAYLOAD",
         )],
+        context: Vec::new(),
     });
     conversation.add_assistant_message("saw it".to_owned());
     conversation.add_user_message("recent goal ".repeat(200));
@@ -561,6 +563,7 @@ async fn compaction_keeps_the_latest_turn_image() {
     conversation.add_user_message(UserMessage {
         text: "latest".to_owned(),
         images: vec![ImageAttachment::new("new.png", "data:image/png;base64,NEW")],
+        context: Vec::new(),
     });
 
     let (client, _request) = mock_response(200, completed("summary")).await;
@@ -598,6 +601,7 @@ fn journal_roundtrip_preserves_images_tools_and_native_reasoning() {
             "fixture.png",
             "data:image/png;base64,SNAPSHOT",
         )],
+        context: Vec::new(),
     });
     conversation.add_reasoning(vec![ReasoningText::new("inspect first")], Some(ProviderData {
         api: "openai-responses".to_owned(),

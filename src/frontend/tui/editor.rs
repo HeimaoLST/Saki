@@ -257,6 +257,7 @@ impl Editor {
         let text = self.text();
         if self.is_empty() {
             return UserMessage {
+                context: Vec::new(),
                 text,
                 images: Vec::new(),
             };
@@ -264,7 +265,11 @@ impl Editor {
         self.checkpoint(false);
         let images = self.take_images();
         self.clear_state();
-        UserMessage { text, images }
+        UserMessage {
+            context: Vec::new(),
+            text,
+            images,
+        }
     }
 
     /// Removes and returns the draft, e.g. when submitting a message. The
@@ -275,7 +280,11 @@ impl Editor {
         self.reset_history();
         let images = self.take_images();
         self.clear_state();
-        UserMessage { text, images }
+        UserMessage {
+            context: Vec::new(),
+            text,
+            images,
+        }
     }
 
     /// Replaces the whole draft (history recall) with the cursor at the end.

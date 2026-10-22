@@ -952,6 +952,7 @@ async fn mixed_text_and_image_message_serializes_as_input_parts() {
             crate::agent::message::ImageAttachment::new("a.png", "data:image/png;base64,AAAA"),
             crate::agent::message::ImageAttachment::new("b.jpg", "data:image/jpeg;base64,BBBB"),
         ],
+        context: Vec::new(),
     };
     agent.handle_user_message(message).await.unwrap();
     let sent = requests(server).await;
@@ -979,6 +980,7 @@ async fn image_only_message_has_no_text_part_and_text_stays_a_string() {
                 "a.png",
                 "data:image/png;base64,AAAA",
             )],
+            context: Vec::new(),
         })
         .await
         .unwrap();

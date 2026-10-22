@@ -837,3 +837,13 @@ TaskStarted 新增可选 `configuration:{model,api,compaction,config_revision}`�
 schema 1 仍未验证原 endpoint，effective_config 返回 connection_binding.state=unknown、connection_identity=null、execution_connection_id=default。此字段仅说明本进程执行连接，不是历史绑定证明。#106 的多连接、增强 prompt/tool selection、显式 schema 2 迁移尚未在本候选开放；#61 的容量并发仍另案。默认终端入口保持既有行为，#109 将消费同一 typed 接口。
 
 验收固定到本 PR SHA：实际 A→B→A 请求、重启恢复 B、接纳配置 journal 快照、两个同时提交的版本冲突、不同 session 的 busy 隔离、no-op 字节不变、未知容量/非法配置/opaque 拒绝、metadata 写入前/rename 前/rename 后故障，以及新模型 summary/generation 和失败后原上下文保留。stdio 同时覆盖 capabilities/model.list、缺省/null/未知字段、版本错误和未 loaded 的只读配置查询。测试/运行/CI 证据记录在 #105 及对应 PR；尚未通过的阶段不以本节代替联合验收。
+
+## #108 调用方输入资料（候选实现事实）
+
+更新日期：2026-10-22。分类：**本 PR 候选，尚未合入 dev**。`runtime.capabilities.caller_context:true` 表示支持 stdio `task.send` 的顶层可选 `context:[{name,text}]`；typed 调用方在同一个 UserMessage.context 提供 ContextInput。缺省为空，原 text/images 请求继续可用；可以提交仅含 context 的用户消息。未知字段明确拒绝。
+
+唯一 Conversation 输入拼装按原始 text、按顺序的 context、images 组成一条 user 消息。每条资料为带 `caller_context` 类型、`Caller-provided context (user data)` 标签、name/text 的 JSON 文本部分；特殊换行/引号仍是字段数据，不变成 system 指令。它进入既有 token 估算、compact、journal 和恢复路径，不在工具后或下一轮额外注入；原始 journal 保留资料，compact 可将活动上下文变为摘要，不保证摘要逐字保存每个来源内容。
+
+资料部分实际编码后的 UTF-8 字节总和上限为 1 MiB（包含上述每条 JSON 包装）。typed 和 stdio 复用 UserMessage.validate，在任务接纳/分配 ID/写入用户历史之前返回 invalid_request；不静默截断。既有 8 MiB 整请求限制同时适用。通过资料入口限制仍须满足所选模型的上下文预算；预算不足时沿用原有 compact/明确失败规则，不绕过容量校验。
+
+资料随历史保留，不宣称一次使用后删除。TUI 构造 UserMessage 的既有位置仅补空 context 以保持编译，不提供资料编辑 UI；#109 消费方服务化仍另行交付。确定性证据覆盖两端实际模型输入、图片旧表示、特殊字符串、超限拒绝、合法边界不截断、compact 来源与历史原字节前缀、跨进程恢复及继续时不重复注入；验收 SHA 与真实模型结果见 PR。
