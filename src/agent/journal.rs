@@ -34,6 +34,8 @@ pub struct TaskConfiguration {
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_selection: Option<crate::protocol::ToolSelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_schemas: Option<std::collections::BTreeMap<String, crate::protocol::ToolSchema>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

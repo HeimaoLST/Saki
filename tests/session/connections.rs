@@ -1478,7 +1478,7 @@ async fn updated_agent_system_prefix_survives_compaction_and_restart_without_rew
 }
 
 #[tokio::test]
-async fn external_tool_selection_is_rejected_as_unsupported_before_creating_a_session() {
+async fn missing_external_tool_source_is_rejected_before_creating_a_session() {
     let workspace = Workspace::new();
     let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
     let a = no_http_connection("a", "model-a", &listener);
@@ -1504,7 +1504,7 @@ async fn external_tool_selection_is_rejected_as_unsupported_before_creating_a_se
         Err(error) => error,
         Ok(_) => panic!("external tool selection was accepted"),
     };
-    assert_eq!(error.code, "unsupported_feature");
+    assert_eq!(error.code, "tool_source_unavailable");
     assert!(workspace.store().list().unwrap().is_empty());
     assert_eq!(
         listener.accept().unwrap_err().kind(),

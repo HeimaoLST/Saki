@@ -1,4 +1,5 @@
 pub mod config;
+pub mod host;
 pub mod runtime;
 pub mod stdio;
 pub mod store;
@@ -33,18 +34,19 @@ fn build_agent(store: &SessionStore, client: &ModelClient, loaded: LoadedSession
 
 fn build_tool_registry(store: &SessionStore, metadata: &SessionMetadata) -> Result<ToolRegistry> {
     let mut registry = ToolRegistry::new();
-    register_builtins(
-        &mut registry,
-        ToolContext {
-            cwd: metadata.working_directory.clone(),
-            output_dir: store.directory(&metadata.id)?.join("tool-output"),
-        },
-    );
+    register_builtins(&mut registry, tool_context(store, metadata)?);
     if let Some(selection) = &metadata.tool_selection {
         let selection = config::validate_tool_selection(selection)?;
         registry.retain_names(&selection.builtin);
     }
     Ok(registry)
+}
+
+fn tool_context(store: &SessionStore, metadata: &SessionMetadata) -> Result<ToolContext> {
+    Ok(ToolContext {
+        cwd: metadata.working_directory.clone(),
+        output_dir: store.directory(&metadata.id)?.join("tool-output"),
+    })
 }
 
 pub const SYSTEM_PROMPT: &str = "You are Saki, an agent that can use tools. Respond in English unless the user requests another language.";

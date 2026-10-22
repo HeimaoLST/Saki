@@ -895,9 +895,9 @@ system_prompt 保存在 schema 2 metadata；load 时替换有效上下文的原 
 
 默认终端旧 SessionManager 在 #109 迁移前仅接收 schema 1/单连接，增强配置通过 Runtime 服务入口；拒绝在恢复修复 journal 前完成。此边界不是最终“两端统一”交付，后续由 #109 使用同一服务实现解除，不放入第二套连接/执行循环。
 
-## #107 MCP 技术验证（候选，尚未开放服务能力）
+## #107 MCP 首个技术验证（07d092b 历史阶段）
 
-更新日期：2026-10-22。分类：**候选技术验证事实**。首个提交仅固定 SDK 并验证协议/独立工具进程，`runtime.capabilities.external_tools` 仍为 false，不能据此认定 E01–E06/E08 已交付。服务准入、会话绑定指纹、失败后的重确认、进程配额、取消/回收及大输出适配仍须后续实现与完整验收。
+更新日期：2026-10-22。分类：**候选技术验证事实**。首个提交 07d092b 仅固定 SDK 并验证协议/独立工具进程；该阶段 `runtime.capabilities.external_tools` 仍为 false，不能据此认定 E01–E06/E08 已交付。后续服务候选见下一节。服务准入、会话绑定指纹、失败后的重确认、进程配额、取消/回收及大输出适配仍须后续实现与完整验收。
 
 生产直接依赖 `rmcp = "=3.6.0"`，`default-features=false`，仅 `client` 和 `transport-async-rw`；Cargo.lock 的 registry checksum 为 `ceb42e9e47443cd83a834dea57b5816d35481417bae72ade5dc5615c59122e26`。本机以 rustc 1.99.0/Tokio 当前 lock 编译验证。独立 `examples/mcp_tool/` 使用单独 manifest/lock 的 server+transport-io，不导入 Saki。没有将 server、macros、HTTP、sampling 或 elicitation 加入生产依赖。
 
@@ -906,3 +906,73 @@ system_prompt 保存在 schema 2 metadata；load 时替换有效上下文的原 
 `tests/tools/mcp_sdk.rs` 的两个确定性 JSONL wire fixture 验证：2026-07-28 使用 server/discover，listen 仅请求 toolsListChanged，核对 acknowledged 和 subscription ID；2025-11-25 使用 initialize 与旧 list_changed 通知，不发送现代 listen。两端关闭 SDK response cache 后，即使响应携带长 TTL，第二次 tools/list 仍实际到达来源并取得新声明。SDK 的 Auto 还会对不属于明确版本不支持的错误降级，后续适配器须显式分类，而不是直接沿用 Auto。
 
 独立 Rust 示例提供真实 read_marker 与每进程 increment。显式环境变量 `SAKI_TEST_MCP_BIN` 指向已单独编译的示例时，可运行命名 ignored 测试 `tools::mcp_sdk_tests::standalone_rust_server_negotiates_both_versions_reads_files_and_keeps_process_state`，分别验证两版本的真实文件字节、各自计数 1/2 和进程正常退出；该测试不会自行构建或链接示例。示例静态目录不宣告 listChanged，订阅变更由上述受控 fixture 验证。真实模型接外部工具及 Saki 二进制 hash 不变的最终 E01 验收仍待完整服务接线。
+
+
+## #107 MCP 服务候选实现
+
+更新日期：2026-10-22。分类：**候选实现事实，尚未集成**。本节对应 PR #129 中的服务接线；最终验收、独立评审和集成状态以该 PR 与 #103 为准。该候选使用同一个 RuntimeActor、Agent 循环、ToolRegistry 和 journal，不增加第二个执行引擎。当前进程组实现适用于项目验证的 macOS/Linux；不据此声明 Windows 支持。
+
+### 宿主配置与发现
+
+`src/session/host.rs` 统一解析宿主连接及工具目录；客户端连接模块保持只负责模型连接。宿主配置在启动时读取，工具进程不继承宿主环境，只注入 `env_from` 列出的环境变量值；会话请求不能提交命令、参数或凭据。相对 command 相对于配置文件所在目录解析，不经 shell 展开；工具进程 cwd 是创建时固定的会话工作目录。
+
+```json
+{
+  "default_connection_id": "primary",
+  "connections": [{
+    "id": "primary",
+    "api": "openai-chat-completions",
+    "base_url": "http://127.0.0.1:3425/v1",
+    "api_key_env": "SAKI_PROVIDER_KEY",
+    "default_model": "deepseek/deepseek-flash"
+  }],
+  "max_active_tasks": 2,
+  "max_tool_processes": 8,
+  "tool_sources": [{
+    "id": "project",
+    "transport": "stdio",
+    "command": "./bin/saki-mcp-tool-example",
+    "args": [],
+    "env_from": [],
+    "protocol": "auto",
+    "startup_timeout_ms": 10000,
+    "call_timeout_ms": 120000,
+    "cancel_grace_ms": 2000
+  }]
+}
+```
+
+`max_tool_processes` 默认 8，容量为正；每个已绑定来源在每个 loaded session 内拥有自己的进程和配额，普通任务间保留该进程的状态。启动、协商、订阅确认及完整分页发现共享启动期限。`protocol` 可选 modern（2026-07-28）、legacy（2025-11-25）或 auto；auto 只在明确 METHOD_NOT_FOUND 或支持版本证据表明仅旧协商可用时，回收第一次探测进程，再以同一配额启动一个新的 legacy 进程。认证、超时或业务错误不触发自动降级或工具调用重放。
+
+注入工具目录后 `runtime.capabilities.external_tools=true`。`tool.list {source_id?}` 返回内置声明和 `sources`，每行含 source_id、available、protocol_version、generation、monitoring、tools、error；工具含原始 name 和 schema（description、input_schema、output_schema、fingerprint）。发现使用临时进程，回复前回收；容量满时对应来源标不可用及原因，不挪用别的会话进程，也不调用业务工具。未知 source_id 明确报错。
+
+### 选择、声明快照与准入
+
+增强会话通过 storage_schema:2 和既有 config.tool_selection 显式选择工具：
+
+```json
+{
+  "builtin": ["read"],
+  "external": [{"source_id":"project","tool_name":"read_marker","exposed_name":"project_read"}]
+}
+```
+
+`exposed_name` 为 1–64 个 ASCII 字母、数字、下划线或连字符，所有选择中唯一，不能占用内置工具名。未知来源/工具、非法声明、名称冲突或进程配额不足均在创建会话文件、提交新配置或接纳任务之前失败。错误分别为 invalid_tool_selection、tool_source_unavailable、tool_capacity_exceeded；分页连续变化返回 tool_source_unavailable/reason:catalog_unstable。失败的配置准备回收新进程，保持已生效配置和历史；没有后台等待队列。
+
+每次外部工具任务准入都重新完整发现，关闭 SDK cache/stale fallback；最多 64 页、1024 个工具及 4 MiB 声明，重复名字/循环 cursor 明确拒绝。现代订阅只请求 toolsListChanged，核对 ACK/filter/ID；通知在交给 SDK 前同步失效目录。订阅结束、lagged 或没有确认时使用准入重新发现，并在下次发现尝试重新订阅。旧版只处理无 subscription ID 的旧通知，不发送 listen。每次进程重建使用独立 generation 和订阅状态。发现中若目录变化，重新完整发现一次；第二次仍变化则拒绝本次准入。
+
+仅编译选中工具的输入/输出 JSON Schema，固定 jsonschema=0.59.0/default-features=false，支持本地引用与其支持的显式 draft，远程引用不可用。SHA256 指纹覆盖 description、input_schema、output_schema，规范化对象键顺序，保留数组顺序；工具映射单独比较，不把 title/annotations 当执行声明。该规则不声称实现 RFC8785 数值规范化。metadata.tool_schemas 保存声明与指纹，任务 configuration 保存同一快照，旧记录不倒填。现代原生结构化成功结果按 output_schema 校验；isError 业务错误保留错误内容。
+
+选中声明不同则 task.send 返回 tool_schema_changed，零任务 ID/用户输入/journal/模型调用；显式 session.config.update 再次提供 tool_selection 才能确认新声明。相同映射和声明不增加 revision。活动任务固定开始时工具定义，普通配置 CAS/busy/续接兼容规则继续生效。
+
+load 可恢复有效 Conversation 但工具不可用时，返回明确错误并保留 loaded/unavailable 状态；status 与 list 显示不可用原因。history 和 config.get 不启动来源。调用方可在 loaded 且无活动任务时移除工具或显式重确认，修复后恢复 idle。未 loaded 配置更新仍只有 #106 明确绑定 legacy 会话的窄例外。
+
+### 执行、输出与清理
+
+每次工具调用使用 SDK call_tool_once，不驱动交互重试或 MCP tasks。输入校验失败不发送 tools/call；业务 isError、协议错误和超时给出可诊断工具结果，沿已有单一路径写入历史、发送 tool_finished 并进入下一次模型输入。仅支持 text/structuredContent；图片、音频或资源内容明确报错，不静默丢弃或下载。
+
+编码结果超过既有 50 KiB/2000 行输出限制时，将完整 MCP JSON 写入 tool-output 并返回有限预览、output_path 和 readback_available/readback_tool。仅当已选择 read 且各行可读时提示 offset/next_offset 回读；超长行需已选择 bash 才提示按字节回读；两者均不可用则明确说明模型只有截断预览、宿主可读完整文件，不伪造可用回读。tool_finished 与模型收到同一个规范化结果。
+
+取消已发出的调用会发送取消通知，执行槽和任务终态等待该来源清理；超时或协议失败同样先完成清理再返回工具错误。清理任务的 JoinHandle 保留在来源中，即使等待清理的调用 future 再次被取消，最终收尾仍能继续等待同一个作业。关闭 SDK、等待子进程共享宽限期限；到期终止自有进程组并等待回收，之后才释放工具进程配额。worker panic/IO 失败保留资源所有权直到清理结束；release 和 shutdown 也等待自有来源退出。输出断开仍沿 #104 的独立结果回收路径持久化/清理，不依赖展示消费者。不能将这些有界行为解释为历史 #58 所有未知 OS 失败已根治。
+
+确定性测试位于 tests/session/mcp.rs、tests/tools/mcp*.rs 与 tests/support/mcp.rs，受控 Python 子进程只承载真实 JSONL wire；独立 SDK Rust server 继续另行构建和命名测试。覆盖声明变化/显式确认、结果一致、会话隔离、进程配额、创建前拒绝、失败配置回收、缺来源恢复/修复、取消和 panic 前置清理、大输出回读及清理等待被取消。现代 ACK 拒绝/失效/重连等全部 E06 子场景与两端联合验收仍按 #103 逐项核对，不能以局部测试数量代替完成。

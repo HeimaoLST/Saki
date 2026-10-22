@@ -118,6 +118,12 @@ fn default_connection() -> String {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Tools {
+    source_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UpdateConfig {
     session_id: String,
     expected_revision: u64,
@@ -187,6 +193,9 @@ fn decode(bytes: &[u8]) -> (Option<String>, Result<RuntimeCommand, RuntimeError>
                     acknowledge_unknown_origin: p.acknowledge_unknown_origin,
                 }
             }
+            "tool.list" => RuntimeCommand::Tools {
+                source_id: params::<Tools>(value)?.source_id,
+            },
             "connection.list" => {
                 let _: Empty = params(value)?;
                 RuntimeCommand::Connections
@@ -424,6 +433,9 @@ async fn deliver(
         }
     };
     match response {
+        RuntimeReply::Tools { builtin, sources } => {
+            reply(&output, &id, json!({"builtin":builtin,"sources":sources})).await;
+        }
         RuntimeReply::Connections(connections) => {
             reply(&output, &id, json!({"connections":connections})).await;
         }

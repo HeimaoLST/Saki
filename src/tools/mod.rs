@@ -10,6 +10,7 @@ macro_rules! registry_tool {
 pub mod bash;
 pub mod caculator;
 pub mod edit;
+pub mod mcp;
 mod output;
 pub mod read;
 pub mod tool_registry;
@@ -37,6 +38,10 @@ pub fn register_builtins(registry: &mut ToolRegistry, context: ToolContext) {
     registry.registry(bash::init(context.clone()));
     registry.registry(edit::init(context.clone()));
     registry.registry(write::init(context));
+}
+
+pub fn builtin_names() -> &'static [&'static str] {
+    &["bash", "edit", "read", "write"]
 }
 
 fn parse_args<T: DeserializeOwned>(args: Value) -> Result<T, ToolError> {
