@@ -515,16 +515,38 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 	}()
 	h2.pump.wait(func() bool {
 		ct := h2.app.contacts[0]
-		return ct.Loaded && len(ct.Messages) > 0
+		return ct.Loaded && len(ct.Messages) > 0 && ct.SessionModel != ""
 	})
+	// Compare the restored GUI facts with the current Runtime load response,
+	// not just a hand-built mock. Loading facts must not issue a model request.
+	runtimeTruth, err := h2.app.rt.loadSession(aSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedRoot, err := filepath.EvalSymlinks(h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtimeTruth.Metadata == nil || runtimeTruth.State != "idle" ||
+		runtimeTruth.Metadata.Model != "fixture" || runtimeTruth.Metadata.API != "openai-responses" ||
+		runtimeTruth.Metadata.WorkingDirectory != expectedRoot {
+		t.Fatalf("unexpected runtime session truth: state=%q metadata=%+v root=%q", runtimeTruth.State, runtimeTruth.Metadata, expectedRoot)
+	}
 	var restoredSession, restoredName, restoredPurpose, restoredDraft, restoredBDraft string
+	var restoredState, restoredModel, restoredAPI, restoredWorkingDir string
 	h2.snapshot(func() {
 		ct := h2.app.contacts[0]
 		restoredSession, restoredName, restoredPurpose, restoredDraft = ct.SessionID, ct.Name, ct.Purpose, ct.Draft
+		restoredState, restoredModel, restoredAPI, restoredWorkingDir = ct.SessionState, ct.SessionModel, ct.SessionAPI, ct.SessionWorkingDir
 		restoredBDraft = h2.app.contacts[1].Draft
 	})
 	if restoredSession != aSession || restoredName != "Renamed" || restoredPurpose != "" || restoredDraft != "keep after restart" {
 		t.Fatalf("restored contact: session=%q name=%q purpose=%q draft=%q", restoredSession, restoredName, restoredPurpose, restoredDraft)
+	}
+	if restoredState != runtimeTruth.State || restoredModel != runtimeTruth.Metadata.Model ||
+		restoredAPI != runtimeTruth.Metadata.API || restoredWorkingDir != runtimeTruth.Metadata.WorkingDirectory {
+		t.Fatalf("restored metadata/state = state %q model %q api %q cwd %q; runtime = %+v",
+			restoredState, restoredModel, restoredAPI, restoredWorkingDir, runtimeTruth)
 	}
 	if restoredBDraft != "draft for B" {
 		t.Fatalf("B draft = %q", restoredBDraft)

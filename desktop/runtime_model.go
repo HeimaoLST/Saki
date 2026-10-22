@@ -410,6 +410,12 @@ func (a *appModel) restoreSession(contactID, sessionID string) {
 		ct.Loaded = err == nil
 		ct.LoadErr = ""
 		ct.Unavailable = ""
+		ct.SessionState = session.State
+		if session.Metadata != nil {
+			ct.SessionWorkingDir = session.Metadata.WorkingDirectory
+			ct.SessionModel = session.Metadata.Model
+			ct.SessionAPI = session.Metadata.API
+		}
 		if session.ActiveTask != nil {
 			ct.ActiveTaskID = session.ActiveTask.TaskID
 			ct.SendState = sendAccepted
