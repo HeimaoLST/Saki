@@ -1,4 +1,4 @@
-mod channel;
+pub mod channel;
 pub mod config;
 pub mod host;
 pub mod runtime;

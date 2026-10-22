@@ -1,7 +1,7 @@
 #[cfg(test)]
 use super::store::{LoadedSession, SessionStore};
 use super::{
-    channel::{self, SessionEventReceiver, SessionEventSender},
+    SessionEventReceiver, SessionEventSender, channel,
     config::{ConfigPatch, ConfigView},
     runtime::{
         self, Association, Runtime, RuntimeCommand, RuntimeError, RuntimeHandle, RuntimeReply,

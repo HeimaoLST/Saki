@@ -23,7 +23,7 @@ const MAX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_EVENT_BYTES: usize = 8 * 1024 * 1024;
 const ENQUEUE_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub(super) fn channel(state: OutputState) -> (SessionEventSender, SessionEventReceiver) {
+pub fn channel(state: OutputState) -> (SessionEventSender, SessionEventReceiver) {
     let (sender, receiver) = mpsc::channel(MAX_MESSAGES);
     (
         SessionEventSender {
