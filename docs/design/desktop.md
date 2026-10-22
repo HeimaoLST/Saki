@@ -115,18 +115,24 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 
 证据目录：`/private/tmp/saki-gui-112-native/evidence/`（上述 01..05 的 `.png` 与 `.ax.txt`）。这些是 22ba 阶段证据，不是最终 `032339a` 包的复验。
 
+原 `032339a` 包的后续原生证据（06..10、12）：启动缺配置、Configuration details、ready 零推理、受控成功与重启恢复等 startup/fault 路径实际 passed；`12` 的 401 history 路径实际 FAIL，正文含假哨兵，**不能因 v2 修复而覆盖这条失败证据**。
+
+v2 `8a04d63` 的原生修复证据（13..18）：
+- 从 Finder 打开 v2 恢复旧 401 历史，错误提示已净化；新 `auth--hold` 显式发送 `v2-accepted-auth-check` 后编辑 `v2-later-unsent-draft`，release 401 后历史/later 草稿/净化提示正确、不自动 retry；CmdQ + Finder 重启后同 session 与提示仍正确，provider count 仍为 1。
+- 切换 success fixture 启动 count 0；显式新任务 `v2-explicit-recovery-success` 得到真实 final，编辑 `v2-preserved-final-draft`，重启恢复同 session 历史/draft/idle/model/API 正确，count 仍为 1；计数路径 0→1→重启仍 1。
+- 证据见 `/private/tmp/saki-gui-112-native/evidence/` 的 13..18 图片/AX 与 counter JSON；这是受控 provider 的 native GUI 验证，不是外部计费 provider、IME 或 VoiceOver 验证。
+
 ### 测试与最终包
 - 主责在最终 `032339a` 执行 `SAKI_TEST_RUNTIME_BIN=<worktree>/target/debug/Saki CGO_ENABLED=0 go test -race ./... -count=1 -v`，PASS 11.578s；5 项既有真实 runtime 测试 + `TestRealRuntimeStartupConfigurationFailure` + `TestRealProviderAuthFailureClassification` 共 7 项均 PASS 非 skip；vet/build/gofmt/diffcheck 也通过。日志：`/private/tmp/saki-gui-112/logs/main-final-032339a-race.log`。
-- `8a04d63` 修复 history/reload/restart 的失败正文回显：live、history、重启统一走 `taskFailureDetail`，`HTTP 401/403` 只显示认证分类，不经原样历史错误；`TestGUIAppProviderAuthHistoryRedaction` 用真实 Rust/fixture 覆盖 accepted history、later draft、no retry、请求次数、reload 与 restart。`go test -race ./...` PASS 11.238s，日志 `/private/tmp/saki-gui-112/logs/fix-auth-history-race.log`；`032339a` 仅删除无调用的 `runtimeConfigHint`，原冻结包保持不动。
+- `8a04d63` 修复 history/reload/restart 的失败正文回显：live、history、重启统一走 `taskFailureDetail`，`HTTP 401/403` 只显示认证分类，不经原样历史错误；`TestGUIAppProviderAuthHistoryRedaction` 用真实 Rust/fixture 覆盖 accepted history、later draft、no retry、请求次数、reload 与 restart。`8a04d63` 全量 `-race ./...` PASS 12.443s，日志 `/private/tmp/saki-gui-112/logs/main-8a04d63-auth-race.log`；5 项既有 + 2 项 startup/auth + 新增真实 GUI auth 共 8 项实际执行。`032339a` 仅删除无调用的 `runtimeConfigHint`，原冻结包保持不动。PR126 head `1b1210d` 的 CI run 39816472088 全绿；本 docs 覆盖更新后需重新跑最终 head CI。
 - 原冻结包 `/private/tmp/saki-gui-112-app/Saki.app`，bundle `dev.saki.desktop.issue112`，源码 `032339a`，GUI `b07c8f60e1805e702a5cc616ec232d50e03a5538c13d5d740ab4333f65c38aa8`；原包、变体、数据和证据保持，不回写。
 - v2 修复包 `/private/tmp/saki-gui-112-v2-app/Saki.app`，bundle `dev.saki.desktop.issue112v2`，源码 `8a04d63`，GUI sha256 `d02a82bb180201ecbbaf9e59036be9359100f514ed6141bb2467a84f3fe73470`；helper 构建源 `47d01ee`，unsigned `236e12aaa4fd6235b035fc956432de2b8988a3506531f305abc4acb6da96245d`，bundle 内 signed helper `aea5ff1142c989bf793c13ab5468e6f0c62a67d327a20868e3c4188935b2f8d8`。ad-hoc 签名通过，但不是发行包；复用原非秘密 store/session/workdir 路径。
 - Headless：`/private/tmp/saki-gui-112/previews/` 9 张（config-failure 与 configuration-details；1040×720/960×640 明暗，另 1600×900），生成自 `032339a`；v2 只修 history 文案，未重出图。`ui.Tester` 生成，命令 `SAKI_PREVIEW_DIR=... CGO_ENABLED=0 go test -run '^TestPreviewStartupDiagnostics$' -count=1 .`。这些只验证布局/可读性，不是 native 窗口、浅深色系统或 IME 证据。
 
 ### 仍未验
-- `032339a` 包的 Finder 原生恢复 metadata/state 已复验正确；v2 仍需复验 401 后 reload/restart 的用户可见错误文案。
+- `032339a` 包的 Finder 原生恢复 metadata/state 已复验正确；v2 的 401+hold、later draft、reload/restart、显式恢复成功和计数 0→1→重启仍 1 已 native 通过；原 032 的 401 FAIL 仍保留为旧包证据。
 - NoHelper/ExecFailure/CorruptStore 的 Finder 原生路径；坏 store `9a3ed742b35edc2fcf25f15822cf6412635a4995744d4766060fbbef6436fbde` 只在确定性测试中通过，原生尚未。
-- v2 原生 401、hold 后编辑草稿、不自动重试；已有新增真实 GUI/Rust 回归，但 032 原生 FAIL 已记录，v2 尚待主责复验。
-- 原生 960×640、深色模式、真实系统 IME、外部付费 provider。当前 CUA 报 `cgWindowNotFound`，Finder 恢复前不能补这些结果。
+- 精确 960×640、真实系统 IME/VoiceOver、外部计费 provider 仍未验；受控本地 provider 的 v2 native 结果不能扩大为这些结论。
 
 ## 验证与证据
 
