@@ -989,6 +989,8 @@ typed Runtime 新增 `with_automatic_titles(bool)`，默认 false。启用时 ca
 
 claim 和 apply 沿用 metadata 写锁，在后台执行文件 I/O；标题只更新 title/title_source，不改配置 revision、其他配置或历史。手工改名优先，迟到结果不能覆盖已确认的手工名称。标题不是用户任务，没有伪造 task_started/task_finished、工具或对话 journal 记录；使用固定快照发出的附属模型请求不暴露业务工具。
 
+metadata 写锁在持有作用域退出时显式解锁，生命周期不再依赖复制/继承文件描述符全部关闭。真实持锁期间的 rename、claim、apply 和配置提交仍返回既有 locked 错误；释放后，即使复制描述符尚未关闭，后续操作也能重新取得锁。受控复制描述符回归覆盖该边界及手工名称优先，不通过延迟重试掩盖锁冲突。
+
 `RuntimeHandle::subscribe_metadata()` 返回有界 32 条的 typed 通知，内容仅为 session_id 失效提示，调用方必须重新读取当前 metadata。这样迟到通知不会携带过时自动标题覆盖后来手工名称；收到 Lagged 时刷新所有正在显示的会话。当前可通过 session.list，或空闲 loaded 会话的幂等 load 获得 metadata；既有 status.metadata 可为 None 的契约保持。
 
 当前四项服务测试覆盖一次生成/历史隔离、手工名称与迟到结果、附属容量不占用户容量、空可解析标题失败后的重启不重跑；失败测试并未声称覆盖 HTTP 5xx 的客户端内部重试。终端启动/恢复、列表、发送、改名和取消均委托 typed 命令。控制操作最多同时准备 8 项，回复可以按完成顺序返回；初始 create/load 失败仍结束入口并返回错误。EOF 等待已接收操作并由服务 shutdown 收尾；展示接收端丢失关闭服务 OutputState。

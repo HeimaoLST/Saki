@@ -476,6 +476,31 @@ fn changing_an_enhanced_schema_tag_does_not_enable_legacy_execution_or_repair_hi
 }
 
 #[test]
+fn releasing_metadata_guard_unlocks_while_a_duplicated_descriptor_remains_open() {
+    let workspace = Workspace::new();
+    let store = workspace.store();
+    let id = legacy(&store, &workspace);
+    let lock = store.lock_metadata(&id).unwrap();
+    let duplicate = lock.0.try_clone().unwrap();
+    assert!(
+        store
+            .claim_auto_title(&id)
+            .unwrap_err()
+            .downcast_ref::<MetadataBusy>()
+            .is_some()
+    );
+    drop(lock);
+
+    assert!(store.claim_auto_title(&id).unwrap());
+    assert!(!store.claim_auto_title(&id).unwrap());
+    let renamed = store.rename(&id, "Manual title").unwrap();
+    assert_eq!(renamed.title_source.as_deref(), Some("manual"));
+    assert!(store.apply_auto_title(&id, "Late title").unwrap().is_none());
+    assert_eq!(store.metadata(&id).unwrap().title, "Manual title");
+    drop(duplicate);
+}
+
+#[test]
 fn every_metadata_mutation_honors_one_lock_and_retains_other_configuration_fields() {
     let workspace = Workspace::new();
     let store = workspace.store();

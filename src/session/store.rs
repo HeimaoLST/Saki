@@ -88,6 +88,16 @@ pub(crate) struct ConfigurationLock {
     _file: File,
 }
 
+struct MetadataLock(File);
+
+impl Drop for MetadataLock {
+    fn drop(&mut self) {
+        // A subprocess between fork and exec can retain the descriptor after
+        // this scope ends. Unlock explicitly rather than waiting for its close.
+        let _ = self.0.unlock();
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionSummary {
     pub metadata: SessionMetadata,
@@ -510,7 +520,7 @@ impl SessionStore {
         Ok(())
     }
 
-    fn lock_metadata(&self, id: &str) -> Result<File> {
+    fn lock_metadata(&self, id: &str) -> Result<MetadataLock> {
         let file = File::options()
             .read(true)
             .write(true)
@@ -518,7 +528,7 @@ impl SessionStore {
             .truncate(false)
             .open(self.directory(id)?.join("metadata.lock"))?;
         match file.try_lock() {
-            Ok(()) => Ok(file),
+            Ok(()) => Ok(MetadataLock(file)),
             Err(std::fs::TryLockError::WouldBlock) => Err(MetadataBusy.into()),
             Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
         }
