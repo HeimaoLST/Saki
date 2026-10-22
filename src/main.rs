@@ -8,6 +8,10 @@ mod protocol;
 mod session;
 pub mod tools;
 
+#[cfg(all(test, unix))]
+#[path = "../tests/session/process.rs"]
+mod process_tests;
+
 // Single root inclusion of the shared test fixtures. Every module test refers to
 // `crate::test_support` instead of re-loading `tests/support/mod.rs` by `#[path]`,
 // which used to trigger `clippy::duplicate_mod` and per-copy dead_code.
@@ -20,10 +24,8 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     let result = runtime.block_on(app::run());
-    if std::env::args().skip(1).any(|arg| arg == "--stdio") {
-        // The machine host has drained accepted work and released its locks.
-        // Tokio's blocking stdin read cannot be cancelled when stdout is lost.
-        runtime.shutdown_background();
-    }
+    // app::run has drained the service and released its locks. Tokio's pending
+    // stdin read cannot be cancelled and must not hold either host open.
+    runtime.shutdown_background();
     result
 }

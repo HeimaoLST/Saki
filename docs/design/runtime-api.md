@@ -981,7 +981,7 @@ load 可恢复有效 Conversation 但工具不可用时，返回明确错误并�
 
 ## #109 终端服务委托与自动标题（实施中）
 
-更新日期：2026-10-23。分类：**候选实现事实，尚未集成到 dev**。app 只组装一份 Runtime，stdio 与终端选择各自适配器；SessionManager 已成为 RuntimeHandle 委托，不再持有 Agent、store 写入者或独立执行循环。终端展示通道和投影迁移仍在实施，尚不能宣布 U02–U05 通过。
+更新日期：2026-10-23。分类：**候选实现事实，尚未集成到 dev**。app 只组装一份 Runtime，stdio 与终端选择各自适配器；SessionManager 已成为 RuntimeHandle 委托，不再持有 Agent、store 写入者或独立执行循环。终端展示通道和投影已接入候选，跨端真实运行及最终评审仍按 #103 核对，尚不能宣布 U02–U05 全部通过。
 
 标题生成统一在 `src/session/title.rs`，沿用原 2000 字符双侧输入、60 字符标题、独立 1024 输出预算、30 秒期限和失败不改标题的规则。SessionManager 启用服务的附属标题作业并订阅 metadata 失效通知，原有独立标题 claim/apply/运行流程已移除。
 
@@ -994,6 +994,8 @@ metadata 写锁在持有作用域退出时显式解锁，生命周期不再依�
 `RuntimeHandle::subscribe_metadata()` 返回有界 32 条的 typed 通知，内容仅为 session_id 失效提示，调用方必须重新读取当前 metadata。这样迟到通知不会携带过时自动标题覆盖后来手工名称；收到 Lagged 时刷新所有正在显示的会话。当前可通过 session.list，或空闲 loaded 会话的幂等 load 获得 metadata；既有 status.metadata 可为 None 的契约保持。
 
 当前四项服务测试覆盖一次生成/历史隔离、手工名称与迟到结果、附属容量不占用户容量、空可解析标题失败后的重启不重跑；失败测试并未声称覆盖 HTTP 5xx 的客户端内部重试。终端启动/恢复、列表、发送、改名和取消均委托 typed 命令。控制操作最多同时准备 8 项，回复可以按完成顺序返回；初始 create/load 失败仍结束入口并返回错误。EOF 等待已接收操作并由服务 shutdown 收尾；展示接收端丢失关闭服务 OutputState。
+
+CLI 的 main 在 app::run 返回后结束宿主执行器。app 会等待 SessionManager worker，后者等待 Actor、操作和事件转发收尾；该边界之后不再等待 Tokio 不可取消的 stdin 阻塞读，因此 console 空闲 Ctrl-C 无需先关闭 stdin 才退出。运行中 Ctrl-C 仍只请求所观察任务取消，等待真实 Finished 后可继续输入；随后空闲退出才结束宿主。tests/session/process.rs 以子进程调用实际 main，验证保持 stdin 打开的退出、真实阻塞工具在终态前回收、唯一 interrupted 持久记录及退出后会话锁可重新取得。
 
 终端历史通过服务分页 history 读取，使用 journal 文件读取器共用的唯一 reducer 构造 Replay；只读 Conversation 投影不打开、修复或独占 journal。上下文估算使用生效配置和工具声明。多连接创建使用 schema 2，不再在 app 另设单连接/schema 1 限制。旧文档承诺的直接 Agent SDK 调用保留为兼容入口，生产宿主只使用 Runtime；其窄范围 dead_code 标注不覆盖新服务接口，新标题 builder/metadata 订阅均有生产消费者。
 
@@ -1009,4 +1011,4 @@ Opened 包含 metadata、稳定历史 Replay、context、服务 SessionState 及
 
 history_required 时，桥在 Finished 前读取服务完整历史并发送同关联的 HistoryRestored；它只更新所属投影，不能切换选中会话。读取失败返回明确的 history 操作错误，仍保留原 Finished.history_required，不伪称补齐。metadata Lagged 刷新各会话当前 TitleUpdated，不借 Listed 弹出 picker；手工 rename 和标题刷新沿同一输出顺序协调，迟到刷新不携带旧快照。
 
-上述是 Runtime 候选接口，TUI/console 的有界消费、按任务投影、暂存输入和运行中恢复由唯一 TUI writer 接线。6b302499 阶段消费者已按明确许可原样纳入联合分支，独立 check/build 通过；GUI 9e4144b 使用该固定阶段 binary 的九项真实进程测试和完整 Go race 通过。它们只证明对应阶段的构建和受控 stdio 组合，不代表完整仓库门禁或终端行为验收：fixture 迁移、格式/strict 检查、运行中投影恢复及 U02–U05/default/resume/rename/cancel/title 真实 PTY 仍待最终候选验证。不能把 ad91214 薄桥阶段或 GUI 阶段结果套作联合最终通过，也不能推导 GUI 自有展示队列已经有界。
+上述 Runtime 候选接口已由 TUI/console 共同消费，有界消费、按任务投影、暂存输入和运行中恢复由唯一 TUI writer 实施。6b302499 与追加 7f87e44 已按明确许可原样纳入联合分支；联合候选及后续宿主收尾修正执行了完整 fmt、strict Clippy、all-targets 和 build，原标题失败与受控锁释放回归也在全量中通过。GUI 9e4144b 使用较早固定 6b302499 binary 的九项真实进程测试和完整 Go race 已通过；包含 metadata 锁修正的新 binary 仍须复验 GUI 组合及 default/resume/rename/cancel/title 真实 PTY。最终跨端验收不能沿用较早阶段结果，也不能由此推导 GUI 自有展示队列已经有界。
