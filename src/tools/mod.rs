@@ -46,3 +46,7 @@ fn parse_args<T: DeserializeOwned>(args: Value) -> Result<T, ToolError> {
 #[cfg(test)]
 #[path = "../../tests/tools/mod.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/tools/mcp_sdk.rs"]
+mod mcp_sdk_tests;

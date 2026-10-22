@@ -894,3 +894,15 @@ system_prompt 保存在 schema 2 metadata；load 时替换有效上下文的原 
 增加明确的维护操作 `session.config.rollback {session_id,expected_revision}`：须先 release，仅对有一致 schema 1 备份、revision 匹配且 journal 指纹完全未变的增强会话恢复原 metadata 字节。新增任务、其他 journal 变更、缺少/不一致备份均返回 rollback_unsafe，不删除历史来回退。新建 schema 2 没有 schema 1 备份。旧二进制须在读取 schema 2 时明确拒绝。更改 schema 标签不能使增强字段被当成 legacy 执行。
 
 默认终端旧 SessionManager 在 #109 迁移前仅接收 schema 1/单连接，增强配置通过 Runtime 服务入口；拒绝在恢复修复 journal 前完成。此边界不是最终“两端统一”交付，后续由 #109 使用同一服务实现解除，不放入第二套连接/执行循环。
+
+## #107 MCP 技术验证（候选，尚未开放服务能力）
+
+更新日期：2026-10-22。分类：**候选技术验证事实**。首个提交仅固定 SDK 并验证协议/独立工具进程，`runtime.capabilities.external_tools` 仍为 false，不能据此认定 E01–E06/E08 已交付。服务准入、会话绑定指纹、失败后的重确认、进程配额、取消/回收及大输出适配仍须后续实现与完整验收。
+
+生产直接依赖 `rmcp = "=3.6.0"`，`default-features=false`，仅 `client` 和 `transport-async-rw`；Cargo.lock 的 registry checksum 为 `ceb42e9e47443cd83a834dea57b5816d35481417bae72ade5dc5615c59122e26`。本机以 rustc 1.99.0/Tokio 当前 lock 编译验证。独立 `examples/mcp_tool/` 使用单独 manifest/lock 的 server+transport-io，不导入 Saki。没有将 server、macros、HTTP、sampling 或 elicitation 加入生产依赖。
+
+与原建议的 child-process feature 有意不同：SDK 自带子进程 wrapper 不能同时交出可用 transport 与 owned child，也未提供本方案要求的进程组/宽限控制；后续由 Runtime 保留进程所有权，复用 SDK AsyncRwTransport 及既有进程组清理。此选择不等于资源回收已经实现。
+
+`tests/tools/mcp_sdk.rs` 的两个确定性 JSONL wire fixture 验证：2026-07-28 使用 server/discover，listen 仅请求 toolsListChanged，核对 acknowledged 和 subscription ID；2025-11-25 使用 initialize 与旧 list_changed 通知，不发送现代 listen。两端关闭 SDK response cache 后，即使响应携带长 TTL，第二次 tools/list 仍实际到达来源并取得新声明。SDK 的 Auto 还会对不属于明确版本不支持的错误降级，后续适配器须显式分类，而不是直接沿用 Auto。
+
+独立 Rust 示例提供真实 read_marker 与每进程 increment。显式环境变量 `SAKI_TEST_MCP_BIN` 指向已单独编译的示例时，可运行命名 ignored 测试 `tools::mcp_sdk_tests::standalone_rust_server_negotiates_both_versions_reads_files_and_keeps_process_state`，分别验证两版本的真实文件字节、各自计数 1/2 和进程正常退出；该测试不会自行构建或链接示例。示例静态目录不宣告 listChanged，订阅变更由上述受控 fixture 验证。真实模型接外部工具及 Saki 二进制 hash 不变的最终 E01 验收仍待完整服务接线。
