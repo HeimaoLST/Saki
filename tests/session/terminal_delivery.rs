@@ -430,3 +430,96 @@ async fn cancelled_blocked_display_restores_canonical_history_before_one_finishe
     handle.call(RuntimeCommand::Shutdown).await.unwrap();
     actor.await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn full_terminal_display_cannot_block_selected_task_cancellation_or_shutdown() {
+    let workspace = Workspace::new();
+    let body = (0..1000)
+        .map(|_| {
+            sse(json!({"type":"response.output_text.delta","item_id":"same","delta":"payload"}))
+        })
+        .collect::<String>()
+        + &sse(
+            json!({"type":"response.completed","response":completed("must not win cancellation")}),
+        );
+    let (client, server) = crate::test_support::scripted_stream(vec![body]).await;
+    let manager = SessionManager::from_runtime(runtime(client, &workspace), None);
+    let (output, mut events) = manager.event_channel();
+    let observation = output.clone();
+    let (input, commands) = mpsc::channel(32);
+    let worker = tokio::spawn(manager.run(commands, output));
+    let id = match next(&mut events).await.event {
+        SessionEvent::Opened { metadata, .. } => metadata.id,
+        _ => panic!("startup must open a session"),
+    };
+    request(
+        &input,
+        1,
+        SessionCommand::Rename {
+            session_id: id.clone(),
+            title: "Manual".into(),
+        },
+    );
+    assert!(matches!(
+        reply(&mut events, 1).await.event,
+        SessionEvent::Renamed(_)
+    ));
+    request(
+        &input,
+        2,
+        SessionCommand::Send {
+            session_id: id.clone(),
+            message: UserMessage::text("cancel blocked display"),
+        },
+    );
+    let association = {
+        let packet = reply(&mut events, 2).await;
+        assert!(matches!(packet.event, SessionEvent::Accepted));
+        packet.association.unwrap()
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while observation.buffer_stats().waiting_producers == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("terminal forwarder did not actually block on display capacity");
+    let blocked = observation.buffer_stats();
+    assert!(blocked.messages >= 32);
+    assert!(blocked.bytes <= 8 * 1024 * 1024);
+    request(
+        &input,
+        3,
+        SessionCommand::Cancel {
+            session_id: id.clone(),
+            task_id: association.task_id,
+        },
+    );
+    // The reply cannot enter the full display queue. Closing observation must
+    // still occur without a receiver first making room for it.
+    tokio::time::timeout(Duration::from_secs(5), observation.closed())
+        .await
+        .unwrap();
+    assert!(events.recv().await.is_none());
+    drop(input);
+    tokio::time::timeout(Duration::from_secs(5), worker)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(observation.buffer_stats().bytes, 0);
+    assert_eq!(observation.buffer_stats().messages, 0);
+    assert_eq!(observation.buffer_stats().waiting_producers, 0);
+    assert_eq!(crate::test_support::requests(server).await.len(), 1);
+    let loaded = workspace.store().open(&id).unwrap();
+    assert_eq!(loaded.replay.status, journal::TaskStatus::Interrupted);
+    assert_eq!(
+        loaded
+            .replay
+            .history
+            .iter()
+            .filter(|record| matches!(record, JournalRecord::TaskFinished { .. }))
+            .count(),
+        1
+    );
+}
