@@ -47,6 +47,14 @@ func main() {
 			Content:   ui.View(a.view),
 		})
 		a.win = win
+		if w, _ := win.ContentSize(); w > 0 {
+			a.windowWidth = w
+		}
+		win.OnResize(func() {
+			if w, _ := win.ContentSize(); w > 0 {
+				a.windowWidth = w
+			}
+		})
 		win.OnClose(func(e *mygo.CloseEvent) {
 			if a.quitReady {
 				return

@@ -9,13 +9,22 @@ import (
 )
 
 func (a *appModel) view(c *ui.Context) {
-	t := roseTheme(c.Theme().Dark)
+	t := paperMossTheme(c.Theme().Dark)
 	c.SetTheme(t)
-	ui.Row(c).Fill().Children(func() {
-		a.rail(c, t)
-		a.main(c, t)
-		if a.aux != "" {
-			a.auxView(c, t)
+	ui.Box(c).Fill().Children(func() {
+		ui.Row(c).Fill().Children(func() {
+			if !a.railCollapsed {
+				a.rail(c, t)
+			}
+			a.main(c, t)
+			if a.aux != "" {
+				a.auxView(c, t)
+			} else if a.workspaceOpen && !a.workOverlay() {
+				a.workspaceFrame(c, t, a.workWidth(), false)
+			}
+		})
+		if a.workspaceOpen && a.workOverlay() {
+			a.workspaceFrame(c, t, 360, true)
 		}
 	})
 }
@@ -23,12 +32,21 @@ func (a *appModel) view(c *ui.Context) {
 // ---------- rail ----------
 
 func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
-	ui.Column(c).Width(220).FillHeight().Padding(12, 10).Gap(10).Background(t.Background).Children(func() {
-		ui.Text(c, "Saki").FontSize(14).FontWeight(600).TextColor(t.Text)
+	width := a.railWidth()
+	ui.Column(c).Width(width).FillHeight().Padding(10, 10).Gap(10).Background(t.Background).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+			ui.Text(c, "Saki").FontSize(14).FontWeight(600).TextColor(t.Text)
+			ui.Spacer(c)
+			hide := ui.Button(c, "Hide").FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.toggleRail() })
+			if a.focusRail {
+				hide.Focus()
+				a.focusRail = false
+			}
+		})
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 			ui.Text(c, "Contacts").FontSize(11).TextColor(t.TextMuted)
 			ui.Spacer(c)
-			ui.Button(c, "Add contact").FontSize(12).Padding(4, 10).Radius(999).Background(t.SurfaceHover).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.addDefaultContact() })
+			ui.Button(c, "Add contact").FontSize(12).Padding(4, 8).Radius(999).Background(t.SurfaceHover).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.addDefaultContact() })
 		})
 		ui.Scroll(c).Grow(1).Children(func() {
 			for i := range a.contacts {
@@ -122,8 +140,20 @@ func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 				ui.Text(c, a.statusLabel(ct)+" · "+ct.Role).FontSize(11).LineHeight(1.35).TextColor(a.statusColor(t, ct.Status))
 			})
 			ui.Spacer(c)
-			ui.Button(c, "History").FontSize(12).Padding(4, 10).Radius(999).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openHistory() })
-			ui.Button(c, "Settings").FontSize(12).Padding(4, 10).Radius(999).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openSettings() })
+			if a.railCollapsed {
+				contacts := ui.Button(c, "Contacts").FontSize(12).Padding(4, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.toggleRail() })
+				if a.focusRail {
+					contacts.Focus()
+					a.focusRail = false
+				}
+			}
+			work := ui.Button(c, "Work").FontSize(12).Padding(4, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.toggleWorkspace() })
+			if a.focusWorkspace {
+				work.Focus()
+				a.focusWorkspace = false
+			}
+			ui.Button(c, "History").FontSize(12).Padding(4, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openHistory() })
+			ui.Button(c, "Settings").FontSize(12).Padding(4, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openSettings() })
 		})
 	})
 }
@@ -152,9 +182,6 @@ func (a *appModel) chat(c *ui.Context, t *ui.Theme) {
 		}
 		items = append(items, chatItem{id: key, msg: m})
 	}
-	if ct.Status == statusWorking {
-		items = append(items, chatItem{id: "working", working: true})
-	}
 	ct.list.Key = func(i int) any { return items[i].id }
 	ct.list.FollowEnd = true
 	if a.scrollTo >= 0 {
@@ -175,8 +202,6 @@ func (a *appModel) chat(c *ui.Context, t *ui.Theme) {
 					switch {
 					case it.entry != nil:
 						a.historyMessage(c, t, *it.entry, it.entry.ID == a.highlight)
-					case it.working:
-						a.workingRow(c, t, ct)
 					default:
 						a.message(c, t, ct, it.msg)
 					}
@@ -204,8 +229,8 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 	}
 	ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
 		a.avatarTile(c, t, 28)
-		ui.Column(c).MaxWidth(680).Padding(4).Radius(10).Background(bg).Gap(4).Children(func() {
-			ui.Text(c, a.selectedContact().Name+"  "+e.Date).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Column(c).MaxWidth(680).Padding(10, 14).Radius(14).Background(bg).Gap(4).Children(func() {
+			ui.Text(c, a.selectedContact().Name+"  "+e.Date).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 			ui.Text(c, e.Text).FontSize(14).LineHeight(1.5).TextColor(t.Text)
 		})
 	})
@@ -274,19 +299,22 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 			})
 		})
 	default:
-		ui.Column(c).Gap(4).Children(func() {
-			if m.Key != "" && m.Key == a.highlight {
-				ui.Text(c, "Located in history").FontSize(11).TextColor(t.TextMuted)
-			}
-			ui.Text(c, m.Text).FontSize(14).LineHeight(1.6).TextColor(t.Text)
-			if m.AlertTitle != "" {
-				a.alert(c, t, m)
-			}
-			if len(m.Sources) > 0 {
-				ui.Row(c).Children(func() {
-					ui.Button(c, fmt.Sprintf("%d earlier messages", len(m.Sources))).FontSize(12).OnClick(func() { a.openSources(m.ID) })
-				})
-			}
+		ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
+			a.avatarTile(c, t, 28)
+			ui.Column(c).MaxWidthPercent(80).Padding(10, 14).Radius(14).Background(t.SurfaceHover).Gap(4).Children(func() {
+				if m.Key != "" && m.Key == a.highlight {
+					ui.Text(c, "Located in history").FontSize(11).TextColor(t.TextMuted)
+				}
+				ui.Text(c, m.Text).FontSize(14).LineHeight(1.55).TextColor(t.Text)
+				if m.AlertTitle != "" {
+					a.alert(c, t, m)
+				}
+				if len(m.Sources) > 0 {
+					ui.Row(c).Children(func() {
+						ui.Button(c, fmt.Sprintf("%d earlier messages", len(m.Sources))).FontSize(12).OnClick(func() { a.openSources(m.ID) })
+					})
+				}
+			})
 		})
 	}
 }
@@ -304,13 +332,6 @@ func (a *appModel) alert(c *ui.Context, t *ui.Theme, m *message) {
 		} else if m.RetryDone {
 			ui.Text(c, "Retried").FontSize(12).TextColor(t.TextMuted)
 		}
-	})
-}
-
-func (a *appModel) workingRow(c *ui.Context, t *ui.Theme, ct *contact) {
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Padding(0, 2).Children(func() {
-		ui.Text(c, "•").FontSize(14).TextColor(t.Accent)
-		ui.Text(c, ct.Name+" · "+ct.Work+"…").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 	})
 }
 
@@ -361,11 +382,6 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 			send := ui.PrimaryButton(c, "Send").FontSize(12).Padding(3, 10).Disabled(sendDisabled)
 			if send.Clicked() {
 				a.sendCurrent()
-			}
-			if !a.demo && ct.ActiveTaskID != "" {
-				if ui.Button(c, "Stop").FontSize(12).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).Clicked() {
-					a.cancelSelected()
-				}
 			}
 		})
 		if !a.demo {

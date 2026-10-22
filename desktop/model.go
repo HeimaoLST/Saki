@@ -85,6 +85,7 @@ type contact struct {
 	Draft        string
 	replyIndex   int
 	list         ui.ListState
+	Works        []*workItem
 
 	// Runtime-backed state. Empty SessionID means the contact has no runtime
 	// session yet; it is created lazily before the first task.send.
@@ -147,6 +148,16 @@ type appModel struct {
 	shutdownStarted bool
 	historyQuery    string
 	highlight       string
+
+	// Layout is native runtime state, not product configuration. Width is
+	// updated from the window so the same view can choose three-pane,
+	// compact, or overlay presentation.
+	windowWidth        int
+	workspaceOpen      bool
+	railCollapsed      bool
+	focusWorkspace     bool
+	focusWorkspaceOpen bool
+	focusRail          bool
 
 	seq int
 	win *mygo.Window
@@ -241,10 +252,11 @@ func seededApp() *appModel {
 				},
 			},
 		},
-		selected: 0,
-		screen:   viewChat,
-		seq:      100,
-		scrollTo: -1,
+		selected:      0,
+		screen:        viewChat,
+		workspaceOpen: true,
+		seq:           100,
+		scrollTo:      -1,
 	}
 }
 

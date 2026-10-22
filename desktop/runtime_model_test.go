@@ -232,8 +232,8 @@ func TestHistoryUsesStableOffsetKeysAndTaskContext(t *testing.T) {
 		}}},
 	}
 	a.applyHistory(bound, records, "completed")
-	if len(bound.Messages) != 4 {
-		t.Fatalf("messages = %d: %+v", len(bound.Messages), bound.Messages)
+	if len(bound.Messages) != 2 {
+		t.Fatalf("text messages = %d: %+v", len(bound.Messages), bound.Messages)
 	}
 	if bound.Messages[0].Key != "hist:s1:1:2" || bound.Messages[0].TaskID != "t1" || bound.Messages[0].MessageID != "m1" {
 		t.Fatalf("first = %+v", bound.Messages[0])
@@ -241,8 +241,14 @@ func TestHistoryUsesStableOffsetKeysAndTaskContext(t *testing.T) {
 	if bound.Messages[0].Time != "" {
 		t.Fatalf("zero timestamp must not fabricate a date: %q", bound.Messages[0].Time)
 	}
-	if bound.Messages[3].Text != "done" || bound.Messages[1].ToolName != "read" {
+	if bound.Messages[1].Text != "done" {
 		t.Fatalf("converted = %+v", bound.Messages)
+	}
+	if len(bound.Works) != 1 || len(bound.Works[0].Tools) != 1 {
+		t.Fatalf("work projection = %+v", bound.Works)
+	}
+	if call := bound.Works[0].Tools[0]; call.Name != "read" || call.CallID != "k1" || call.Output != `{"content":"marker"}` || !call.Finished {
+		t.Fatalf("tool projection = %+v", call)
 	}
 }
 

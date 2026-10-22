@@ -2,10 +2,11 @@ package main
 
 import "github.com/egoist/mygo/ui"
 
-// roseTheme maps the accepted Rose Pine (dark) / Rosé Pine Dawn (light)
-// palette onto the native widget theme. It starts from the framework theme
-// for the detected OS appearance so unset roles stay coherent.
-func roseTheme(dark bool) *ui.Theme {
+// paperMossTheme maps the approved Paper & Moss reference onto the existing
+// semantic widget theme: Paper in light appearance and Night Forest in dark.
+// It is one theme mapping, not a new appearance/theme framework; #96 still
+// owns mode selection and persistence.
+func paperMossTheme(dark bool) *ui.Theme {
 	t := ui.LightTheme()
 	t.FontSize = 14
 	t.Spacing = 4
@@ -15,39 +16,39 @@ func roseTheme(dark bool) *ui.Theme {
 		t.FontSize = 14
 		t.Spacing = 4
 		t.Radius = 10
-		t.Background = ui.Hex("#191724")
-		t.Surface = ui.Hex("#1f1d2e")
-		t.SurfaceHover = ui.Hex("#26233a")
-		t.SurfacePressed = ui.Hex("#26233a")
-		t.Border = ui.Hex("#403d52")
-		t.Text = ui.Hex("#e0def4")
-		t.TextMuted = ui.Hex("#908caa")
-		t.Accent = ui.Hex("#ebbcba")
-		t.AccentHover = ui.Hex("#f0d0ce")
-		t.AccentPressed = ui.Hex("#d9a9a7")
-		t.AccentText = ui.Hex("#191724")
-		t.Selection = ui.Hex("#26233a")
-		t.Focus = ui.Hex("#c4a7e7")
-		t.Danger = ui.Hex("#eb6f92")
-		t.Warning = ui.Hex("#f6c177")
-		t.Success = ui.Hex("#9ccfd8")
+		t.Background = ui.Hex("#1d2823")
+		t.Surface = ui.Hex("#24322b")
+		t.SurfaceHover = ui.Hex("#2e3f35")
+		t.SurfacePressed = ui.Hex("#354e3b")
+		t.Border = ui.Hex("#405346")
+		t.Text = ui.Hex("#e9ebdc")
+		t.TextMuted = ui.Hex("#aab5a5")
+		t.Accent = ui.Hex("#c7d7ac")
+		t.AccentHover = ui.Hex("#d7e5c0")
+		t.AccentPressed = ui.Hex("#aebf93")
+		t.AccentText = ui.Hex("#1d2823")
+		t.Selection = ui.Hex("#354e3b")
+		t.Focus = ui.Hex("#dfae86")
+		t.Danger = ui.Hex("#dfae86")
+		t.Warning = ui.Hex("#dfae86")
+		t.Success = ui.Hex("#c7d7ac")
 		return t
 	}
-	t.Background = ui.Hex("#faf4ed")
-	t.Surface = ui.Hex("#fffaf3")
-	t.SurfaceHover = ui.Hex("#f2e9e1")
-	t.SurfacePressed = ui.Hex("#f2e9e1")
-	t.Border = ui.Hex("#dfdad9")
-	t.Text = ui.Hex("#575279")
-	t.TextMuted = ui.Hex("#64607b")
-	t.Accent = ui.Hex("#d7827e")
-	t.AccentHover = ui.Hex("#e09a96")
-	t.AccentPressed = ui.Hex("#c56f6b")
-	t.AccentText = ui.Hex("#191724")
-	t.Selection = ui.Hex("#f2e9e1")
-	t.Focus = ui.Hex("#907aa9")
-	t.Danger = ui.Hex("#9c4a62")
-	t.Warning = ui.Hex("#985900")
-	t.Success = ui.Hex("#286983") // Dawn pine: readable links and Working
+	t.Background = ui.Hex("#fbfaf6")
+	t.Surface = ui.Hex("#fffdf8")
+	t.SurfaceHover = ui.Hex("#f1eee4")
+	t.SurfacePressed = ui.Hex("#e8e4d8")
+	t.Border = ui.Hex("#ded8c9")
+	t.Text = ui.Hex("#263c34")
+	t.TextMuted = ui.Hex("#606b62")
+	t.Accent = ui.Hex("#31594a")
+	t.AccentHover = ui.Hex("#3c6a58")
+	t.AccentPressed = ui.Hex("#26483c")
+	t.AccentText = ui.Hex("#fbfaf6")
+	t.Selection = ui.Hex("#e8efe6")
+	t.Focus = ui.Hex("#985034")
+	t.Danger = ui.Hex("#985034")
+	t.Warning = ui.Hex("#985034")
+	t.Success = ui.Hex("#31594a")
 	return t
 }

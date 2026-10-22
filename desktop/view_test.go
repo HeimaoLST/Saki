@@ -466,6 +466,7 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 	}
 	a := &appModel{
 		demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1,
+		workspaceOpen: true, windowWidth: 1040,
 		contacts: []*contact{ct},
 	}
 	tr := ui.NewTester(a.view, 1040, 720)
@@ -482,8 +483,8 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 	if tr.HasText("Accepted; waiting for the runtime to start.") {
 		t.Fatal("started task must not keep the pre-start waiting text")
 	}
-	if !tr.HasText("Starting") {
-		t.Fatal("started task should show the working row")
+	if !tr.HasText("Current work") || !tr.HasText("Working") {
+		t.Fatal("started task should show the current work state")
 	}
 
 	a.applyEvent(ct, runtimeEventEnvelope{
@@ -491,8 +492,11 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 		Event: &runtimeEvent{Type: "response_text_delta", ItemID: "a1", Delta: "Hel"},
 	})
 	tr.Frame()
-	if !tr.HasText("Hel") || !tr.HasText("Writing") {
-		t.Fatal("streaming delta should render with the writing state")
+	if !tr.HasText("Hel") {
+		t.Fatal("streaming delta should render in the conversation")
+	}
+	if !tr.HasText("Current work") || !tr.HasText("Working") {
+		t.Fatal("streaming a message must not end the work state")
 	}
 	a.applyEvent(ct, runtimeEventEnvelope{
 		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
@@ -508,8 +512,8 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 		Event: &runtimeEvent{Type: "tool_started", CallID: "k1", Name: "read", Arguments: `{"path":"probe.txt"}`},
 	})
 	tr.Frame()
-	if !tr.HasText("read") || !tr.HasText("Running read") {
-		t.Fatal("tool activity should render with its running state")
+	if !tr.HasText("read") || !tr.HasText("Running") {
+		t.Fatal("tool activity should render in the work panel with its running state")
 	}
 	a.applyEvent(ct, runtimeEventEnvelope{
 		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
@@ -517,7 +521,7 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 	})
 	tr.Frame()
 	if !tr.HasText("marker") {
-		t.Fatal("tool output should render")
+		t.Fatal("tool output should render in the work panel")
 	}
 
 	a.applyEvent(ct, runtimeEventEnvelope{
@@ -527,6 +531,9 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 	tr.Frame()
 	if ct.SendState != sendIdle || ct.ActiveTaskID != "" {
 		t.Fatalf("finished state = %+v", ct)
+	}
+	if !tr.HasText("Completed") || len(ct.Messages) != 1 {
+		t.Fatalf("completed work/messages = %+v / %+v", ct.Works, ct.Messages)
 	}
 	if tr.HasText("Accepted; waiting for the runtime to start.") || tr.HasText("Working") {
 		t.Fatal("completed task must not keep waiting/working text")
@@ -564,15 +571,22 @@ func runtimePreviewApp(scene string) *appModel {
 		Workspace: "/Users/you/Workspace/saki",
 		Messages: []*message{
 			{Key: "u1", Kind: msgUser, Text: "Use read to inspect README.md and report its first heading. Do not write files."},
-			{Key: "k1", Kind: msgActivity, ToolName: "read", ToolArgs: `{"path":"README.md"}`,
-				ToolOutput: `{"content":"# Saki\n\nA small agent runtime with a shared core.","start_line":1,"end_line":2}`},
 			{Key: "a1", Kind: msgContact, Text: "The first heading is # Saki."},
 		},
+		Works: []*workItem{{
+			TaskID: "task-preview", MessageID: "message-preview", Prompt: "Use read to inspect README.md and report its first heading.",
+			State: workCompleted,
+			Tools: []*workTool{{
+				CallID: "read-1", Name: "read", Args: `{"path":"README.md"}`,
+				Output:  `{"content":"# Saki\n\nA small agent runtime with a shared core.","start_line":1,"end_line":2}`,
+				Started: true, Finished: true,
+			}},
+		}},
 	}
 	unbound := &contact{ID: "mio", Name: "Mio", Role: "Assistant", Draft: "draft for Mio"}
 	a := &appModel{
-		demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1,
-		contacts: []*contact{bound, unbound}, selected: 0,
+		demo: false, runtimeStatus: runtimeStateReady, workspaceOpen: true, windowWidth: 1040,
+		scrollTo: -1, contacts: []*contact{bound, unbound}, selected: 0,
 	}
 	switch scene {
 	case "runtime-working":
@@ -582,16 +596,16 @@ func runtimePreviewApp(scene string) *appModel {
 		bound.SendState = sendAccepted
 		bound.Messages = []*message{
 			{Key: "u2", Kind: msgUser, Text: "Inspect README.md and summarize the project."},
-			{Key: "k2", Kind: msgActivity, ToolName: "read", ToolArgs: `{"path":"README.md"}`},
-			{Key: "a2", Kind: msgContact, Text: "Checking the README", Streaming: true},
 		}
+		bound.Works[0].State = workRunning
+		bound.Works[0].Prompt = "Inspect README.md and summarize the project."
+		bound.Works[0].Tools[0].Finished = false
+		bound.Works[0].Tools[0].Output = ""
 	case "runtime-error":
 		bound.Status = statusAttention
 		bound.StatusDetail = "Task failed: model_error: upstream request failed"
-		bound.Messages = []*message{
-			{Key: "u3", Kind: msgUser, Text: "Inspect README.md and summarize the project."},
-			{Key: "a3", Kind: msgContact, Text: "Checking the README"},
-		}
+		bound.Works[0].State = workFailed
+		bound.Works[0].Detail = bound.StatusDetail
 	case "runtime-settings":
 		a.openSettings()
 	}
@@ -614,19 +628,22 @@ func TestPreviewRuntimeStates(t *testing.T) {
 		}
 		for _, scene := range scenes {
 			a := runtimePreviewApp(scene)
+			a.windowWidth = 1040
 			tr := ui.NewTester(a.view, 1040, 720)
 			tr.SetDark(dark)
 			tr.Frame()
 			writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("headless-%s-%s.png", theme, scene)), tr.Image())
 		}
 	}
-	for _, scene := range []string{"runtime-chat", "runtime-settings"} {
+	for _, scene := range []string{"runtime-chat", "runtime-working", "runtime-settings"} {
 		a := runtimePreviewApp(scene)
+		a.windowWidth = 960
 		tr := ui.NewTester(a.view, 960, 640)
 		tr.Frame()
 		writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("headless-light-min-%s.png", scene)), tr.Image())
 	}
-	a := runtimePreviewApp("runtime-chat")
+	a := runtimePreviewApp("runtime-working")
+	a.windowWidth = 1600
 	tr := ui.NewTester(a.view, 1600, 900)
 	tr.Frame()
 	writePreviewPNG(t, filepath.Join(dir, "headless-light-wide-runtime-chat.png"), tr.Image())
@@ -645,11 +662,11 @@ func TestToolFailureIsVisibleBeforeDetails(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ct := &contact{ID: "saki", Name: "Saki", Role: "Assistant", Loaded: true}
-			ct.Messages = []*message{{
-				Key: "tool", Kind: msgActivity, ToolName: "bash", ToolArgs: `{"command":"false"}`,
-				ToolOutput: tc.output,
+			ct.Works = []*workItem{{
+				TaskID: "t1", State: workRunning,
+				Tools: []*workTool{{CallID: "k1", Name: "bash", Args: `{"command":"false"}`, Output: tc.output, Started: true, Finished: true}},
 			}}
-			a := &appModel{demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1, contacts: []*contact{ct}}
+			a := &appModel{demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1, workspaceOpen: true, windowWidth: 1040, contacts: []*contact{ct}}
 			tr := ui.NewTester(a.view, 1040, 720)
 			tr.Frame()
 			if !tr.HasText(tc.want) || !tr.HasText("normal text") && !tr.HasText("still working") {

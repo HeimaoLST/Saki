@@ -463,9 +463,11 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 	}
 	var sawToolResult bool
 	h.pump.do(func() {
-		for _, m := range h.app.contacts[0].Messages {
-			if strings.Contains(m.ToolOutput, marker+"-file-content") {
-				sawToolResult = true
+		for _, w := range h.app.contacts[0].Works {
+			for _, call := range w.Tools {
+				if strings.Contains(call.Output, marker+"-file-content") {
+					sawToolResult = true
+				}
 			}
 		}
 	})

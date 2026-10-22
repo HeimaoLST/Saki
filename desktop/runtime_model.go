@@ -35,6 +35,7 @@ func newRuntimeApp() (*appModel, error) {
 		sessionDir:    guiSessionDir(storePath),
 		workDir:       workDir,
 		runtimeStatus: runtimeStateStarting,
+		workspaceOpen: true,
 		scrollTo:      -1,
 	}
 	for _, stored := range store.state.Contacts {
@@ -69,6 +70,7 @@ func newUnavailableApp(err error) *appModel {
 	a := &appModel{
 		runtimeStatus: runtimeStateFailed,
 		runtimeErr:    err.Error(),
+		workspaceOpen: true,
 		scrollTo:      -1,
 		contacts: []*contact{{
 			ID:        newContactID(),
@@ -187,6 +189,10 @@ func (a *appModel) startRuntime() {
 					}
 					for _, ct := range a.contacts {
 						if ct.ActiveTaskID != "" {
+							if w := ct.activeWork(); w != nil {
+								w.State = workUnknown
+								w.Detail = "Connection lost before the task finished; reload to verify."
+							}
 							ct.ActiveTaskID = ""
 							ct.SendState = sendUnknown
 							ct.Status = statusAttention
@@ -202,6 +208,10 @@ func (a *appModel) startRuntime() {
 					a.runtimeErr = "Runtime protocol error: " + message
 					for _, ct := range a.contacts {
 						if ct.SendState == sendSubmitting || ct.ActiveTaskID != "" {
+							if w := ct.activeWork(); w != nil {
+								w.State = workUnknown
+								w.Detail = "Protocol failure; result not confirmed."
+							}
 							ct.SendState = sendUnknown
 							ct.Status = statusAttention
 							ct.SendError = "Protocol failure; delivery not confirmed. Reload before sending again."
@@ -311,9 +321,13 @@ func (a *appModel) restoreSession(contactID, sessionID string) {
 		ct.Unavailable = ""
 		if session.ActiveTask != nil {
 			ct.ActiveTaskID = session.ActiveTask.TaskID
+			ct.LastTaskID = session.ActiveTask.TaskID
 			ct.SendState = sendAccepted
 			ct.Status = statusWorking
 			ct.Work = "Resuming"
+			if w := a.ensureWork(ct, session.ActiveTask.TaskID, session.ActiveTask.MessageID); w != nil {
+				w.State = workRunning
+			}
 		}
 		if err != nil {
 			ct.LoadErr = runtimeMessage(err)
@@ -326,6 +340,12 @@ func (a *appModel) restoreSession(contactID, sessionID string) {
 			return
 		}
 		a.applyHistory(ct, pages, status)
+		if session.ActiveTask != nil {
+			if w := a.ensureWork(ct, session.ActiveTask.TaskID, session.ActiveTask.MessageID); w != nil {
+				w.State = workRunning
+				ct.Work = a.workActivitySummary(ct)
+			}
+		}
 	})
 }
 
@@ -380,6 +400,9 @@ func (a *appModel) applyReload(contactID, sessionID string, gen int, session run
 		ct.Status = statusWorking
 		ct.Work = "Running"
 		ct.SendError = ""
+		if w := a.ensureWork(ct, session.ActiveTask.TaskID, session.ActiveTask.MessageID); w != nil {
+			w.State = workRunning
+		}
 		return
 	}
 	if ct.SendState == sendSubmitting {
@@ -420,26 +443,50 @@ func (a *appModel) historyAll(sessionID string) ([]historyRecord, string, error)
 func (a *appModel) applyHistory(ct *contact, records []historyRecord, status string) {
 	var messages []*message
 	var entries []historyEntry
+	var works []*workItem
+	byTask := map[string]*workItem{}
 	taskID, messageID := "", ""
 	detail := ""
+
+	ensure := func(id, msgID string) *workItem {
+		if id == "" {
+			return nil
+		}
+		if w := byTask[id]; w != nil {
+			if w.MessageID == "" {
+				w.MessageID = msgID
+			}
+			return w
+		}
+		w := &workItem{TaskID: id, MessageID: msgID, State: workUnknown}
+		byTask[id] = w
+		works = append(works, w)
+		return w
+	}
 	for _, rec := range records {
 		switch rec.Record.Type {
 		case "task_started":
 			taskID, messageID = rec.Record.TaskID, rec.Record.MessageID
-		case "task_finished":
-			taskID, messageID = "", ""
-			switch rec.Record.Status {
-			case "failed":
-				detail = "Task failed"
-				if rec.Record.Error != nil && strings.TrimSpace(*rec.Record.Error) != "" {
-					detail += ": " + strings.TrimSpace(*rec.Record.Error)
-				}
-			case "interrupted":
-				detail = "Task interrupted"
-			case "completed":
-				detail = ""
+			if w := ensure(taskID, messageID); w != nil {
+				w.State = workRunning
 			}
+		case "task_finished":
+			finishedTask := rec.Record.TaskID
+			if finishedTask == "" {
+				finishedTask = taskID
+			}
+			finishedMessage := rec.Record.MessageID
+			if finishedMessage == "" {
+				finishedMessage = messageID
+			}
+			if w := ensure(finishedTask, finishedMessage); w != nil {
+				w.State = workStateFromTask(rec.Record.Status)
+				w.Detail = historyWorkDetail(rec.Record.Status, rec.Record.Error)
+			}
+			detail = historyWorkDetail(rec.Record.Status, rec.Record.Error)
+			taskID, messageID = "", ""
 		case "messages":
+			w := ensure(taskID, messageID)
 			for index, item := range rec.Record.Items {
 				key := fmt.Sprintf("hist:%s:%d:%d", ct.SessionID, rec.Offset, index)
 				timeLabel := formatMillis(rec.TimestampMS)
@@ -457,6 +504,9 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 					if item.Role == "user" {
 						kind = msgUser
 						from = "me"
+						if w != nil && w.Prompt == "" {
+							w.Prompt = text
+						}
 					}
 					messages = append(messages, &message{
 						Key: key, Kind: kind, Text: text, Time: timeLabel,
@@ -464,17 +514,26 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 					})
 					entries = append(entries, historyEntry{ID: key, Date: timeLabel, From: from, Text: text})
 				case "tool_call":
-					messages = append(messages, &message{
-						Key: key, Kind: msgActivity, Text: item.Name, Time: timeLabel,
-						TaskID: taskID, MessageID: messageID, CallID: item.CallID,
-						ToolName: item.Name, ToolArgs: item.Arguments, History: true,
-					})
+					if w == nil {
+						continue
+					}
+					call := workToolFor(w, item.CallID)
+					if call == nil {
+						continue
+					}
+					call.Name = item.Name
+					call.Args = item.Arguments
+					call.Started = true
 				case "tool_result":
-					messages = append(messages, &message{
-						Key: key, Kind: msgActivity, Text: "Result", Time: timeLabel,
-						TaskID: taskID, MessageID: messageID, CallID: item.CallID,
-						ToolOutput: item.Output, History: true,
-					})
+					if w == nil {
+						continue
+					}
+					call := workToolFor(w, item.CallID)
+					if call == nil {
+						continue
+					}
+					call.Output = item.Output
+					call.Finished = true
 				case "reasoning", "provider_item":
 					// Reasoning stays internal; desktop.md does not show it.
 				}
@@ -483,6 +542,7 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 	}
 	ct.Messages = messages
 	ct.History = entries
+	ct.Works = works
 	ct.HistoryDirty = false
 	ct.Loaded = true
 	ct.Status = statusFromString(status)
@@ -490,6 +550,46 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 	if ct.Status == statusAttention && ct.StatusDetail == "" {
 		ct.StatusDetail = "Previous task did not complete."
 	}
+	if len(works) > 0 {
+		ct.LastTaskID = works[len(works)-1].TaskID
+	}
+	if w := ct.activeWork(); w != nil {
+		if w.State == workUnknown || w.State == workAccepted {
+			w.State = workRunning
+		}
+		ct.Work = a.workActivitySummary(ct)
+	} else {
+		ct.Work = ""
+	}
+}
+
+func historyWorkDetail(status string, errText *string) string {
+	switch status {
+	case "failed":
+		detail := "Task failed"
+		if errText != nil && strings.TrimSpace(*errText) != "" {
+			detail += ": " + strings.TrimSpace(*errText)
+		}
+		return detail
+	case "interrupted":
+		return "Task interrupted"
+	default:
+		return ""
+	}
+}
+
+func workToolFor(w *workItem, callID string) *workTool {
+	if callID == "" {
+		return nil
+	}
+	for _, call := range w.Tools {
+		if call.CallID == callID {
+			return call
+		}
+	}
+	call := &workTool{CallID: callID}
+	w.Tools = append(w.Tools, call)
+	return call
 }
 
 func statusFromString(status string) contactStatus {
@@ -561,6 +661,9 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 		ct.Status = statusWorking
 		ct.Work = "Starting"
 		ct.SendError = ""
+		if w := a.ensureWork(ct, event.TaskID, event.MessageID); w != nil {
+			w.State = workRunning
+		}
 	case "model_request_started":
 		if payload.Purpose == "compaction" {
 			ct.Work = "Compacting context"
@@ -580,15 +683,30 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 		item.Streaming = false
 		ct.Work = "Writing"
 	case "tool_started":
-		item := a.liveTool(ct, event.TaskID, payload.CallID)
-		item.ToolName = payload.Name
-		item.ToolArgs = payload.Arguments
-		item.Text = payload.Name
+		w := a.ensureWork(ct, event.TaskID, event.MessageID)
+		if w == nil {
+			return
+		}
+		call := workToolFor(w, payload.CallID)
+		if call == nil {
+			return
+		}
+		call.Name = payload.Name
+		call.Args = payload.Arguments
+		call.Started = true
 		ct.Work = "Running " + payload.Name
 	case "tool_finished":
-		item := a.liveTool(ct, event.TaskID, payload.CallID)
-		item.ToolName = payload.Name
-		item.ToolOutput = outputText(payload.Output)
+		w := a.ensureWork(ct, event.TaskID, event.MessageID)
+		if w == nil {
+			return
+		}
+		call := workToolFor(w, payload.CallID)
+		if call == nil {
+			return
+		}
+		call.Name = payload.Name
+		call.Output = outputText(payload.Output)
+		call.Finished = true
 		ct.Work = "Waiting for model"
 	case "task_finished":
 		if ct.ActiveTaskID != "" && event.TaskID != ct.ActiveTaskID {
@@ -606,8 +724,12 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 		if ct.Status == statusAttention && ct.StatusDetail == "" {
 			ct.StatusDetail = "Previous task did not complete."
 		}
-		if ct != a.selectedContact() {
-			ct.Unread++
+		if w := workFor(ct, event.TaskID); w != nil {
+			w.State = workStateFromTask(payload.Status)
+			w.Detail = ct.StatusDetail
+		} else if w := a.ensureWork(ct, event.TaskID, event.MessageID); w != nil {
+			w.State = workStateFromTask(payload.Status)
+			w.Detail = ct.StatusDetail
 		}
 		a.reloadContactByID(ct.ID)
 	}
@@ -638,18 +760,9 @@ func (a *appModel) liveText(ct *contact, taskID, itemID string) *message {
 	}
 	m := &message{Key: key, Kind: msgContact, TaskID: taskID, ItemID: itemID, Time: nowTime()}
 	ct.Messages = append(ct.Messages, m)
-	return m
-}
-
-func (a *appModel) liveTool(ct *contact, taskID, callID string) *message {
-	key := "live:" + taskID + ":tool:" + callID
-	for _, m := range ct.Messages {
-		if m.Key == key {
-			return m
-		}
+	if ct != a.selectedContact() {
+		ct.Unread++
 	}
-	m := &message{Key: key, Kind: msgActivity, TaskID: taskID, CallID: callID, Time: nowTime()}
-	ct.Messages = append(ct.Messages, m)
 	return m
 }
 
@@ -738,6 +851,10 @@ func (a *appModel) acceptTask(ct *contact, text string, result runtimeSendResult
 	ct.LastTaskID = result.TaskID
 	ct.SendState = sendAccepted
 	ct.SendError = ""
+	if w := a.ensureWork(ct, result.TaskID, result.MessageID); w != nil {
+		w.State = workAccepted
+		w.Prompt = text
+	}
 	if ct.draftRev == ct.SubmittedRev && strings.TrimSpace(ct.Draft) == strings.TrimSpace(text) {
 		ct.Draft = ""
 	}
@@ -781,6 +898,9 @@ func (a *appModel) cancelSelected() {
 		return
 	}
 	contactID, sessionID, taskID := ct.ID, ct.SessionID, ct.ActiveTaskID
+	if w := ct.activeWork(); w != nil {
+		w.State = workStopping
+	}
 	ct.SendError = "Cancellation requested"
 	go func() {
 		status, err := a.rt.cancelTask(sessionID, taskID)
@@ -795,6 +915,9 @@ func (a *appModel) applyCancelResult(contactID, taskID, status string, err error
 	}
 	if err != nil {
 		if ct.ActiveTaskID == taskID {
+			if w := ct.activeWork(); w != nil && w.State == workStopping {
+				w.State = workRunning
+			}
 			ct.SendError = "Cancel failed: " + runtimeMessage(err)
 		}
 		return
@@ -806,8 +929,14 @@ func (a *appModel) applyCancelResult(contactID, taskID, status string, err error
 	}
 	switch status {
 	case "requested":
+		if w := ct.activeWork(); w != nil && w.State == workRunning {
+			w.State = workStopping
+		}
 		ct.SendError = "Cancelling; waiting for the runtime to stop."
 	case "already_requested":
+		if w := ct.activeWork(); w != nil && w.State == workRunning {
+			w.State = workStopping
+		}
 		ct.SendError = "Cancellation already requested."
 	case "not_running":
 		ct.SendError = "The task already finished; waiting for its final state."
