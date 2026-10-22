@@ -995,7 +995,7 @@ claim 和 apply 沿用 metadata 写锁，在后台执行文件 I/O；标题只�
 
 终端历史通过服务分页 history 读取，使用 journal 文件读取器共用的唯一 reducer 构造 Replay；只读 Conversation 投影不打开、修复或独占 journal。上下文估算使用生效配置和工具声明。多连接创建使用 schema 2，不再在 app 另设单连接/schema 1 限制。旧文档承诺的直接 Agent SDK 调用保留为兼容入口，生产宿主只使用 Runtime；其窄范围 dead_code 标注不覆盖新服务接口，新标题 builder/metadata 订阅均有生产消费者。
 
-### Typed 终端消费契约（待与 TUI 联合接线）
+### Typed 终端消费契约（联合接线候选）
 
 输入为 32 条有界 mpsc，元素 `SessionRequest { request_id: u64, command: SessionCommand }`。终端宿主为请求分配递增 ID，通过 try_send 提交；容量不足保留原输入并反馈 busy，不等待而停止消费输出。命令回复 packet 保留该 request_id，启动及异步 metadata 通知为 None。Send 接纳成功先返回 Accepted 和完整 Association，再返回该流的 Agent 事件；拒绝返回原 RuntimeError 与 operation，不生成伪造的 task_id。消费者在 Accepted 后才提交暂存输入，按 request_id 固定拒绝/命令反馈的归属。
 
@@ -1007,4 +1007,4 @@ Opened 包含 metadata、稳定历史 Replay、context、服务 SessionState 及
 
 history_required 时，桥在 Finished 前读取服务完整历史并发送同关联的 HistoryRestored；它只更新所属投影，不能切换选中会话。读取失败返回明确的 history 操作错误，仍保留原 Finished.history_required，不伪称补齐。metadata Lagged 刷新各会话当前 TitleUpdated，不借 Listed 弹出 picker；手工 rename 和标题刷新沿同一输出顺序协调，迟到刷新不携带旧快照。
 
-上述是 Runtime 候选接口，TUI/console 的有界消费、按任务投影、暂存输入和运行中恢复仍由唯一 TUI writer 接线。联合编译与 U02–U05/default/resume/rename/cancel/title 真实 PTY 尚未通过；不能把 ad91214 薄桥阶段的 577+70 测试与 CI 通过结果套到这个新接口候选。
+上述是 Runtime 候选接口，TUI/console 的有界消费、按任务投影、暂存输入和运行中恢复由唯一 TUI writer 接线。6b302499 阶段消费者已按明确许可原样纳入联合分支，独立 check/build 通过；GUI 9e4144b 使用该固定阶段 binary 的九项真实进程测试和完整 Go race 通过。它们只证明对应阶段的构建和受控 stdio 组合，不代表完整仓库门禁或终端行为验收：fixture 迁移、格式/strict 检查、运行中投影恢复及 U02–U05/default/resume/rename/cancel/title 真实 PTY 仍待最终候选验证。不能把 ad91214 薄桥阶段或 GUI 阶段结果套作联合最终通过，也不能推导 GUI 自有展示队列已经有界。
