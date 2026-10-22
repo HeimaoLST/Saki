@@ -23,15 +23,28 @@ fn build_agent(store: &SessionStore, client: &ModelClient, loaded: LoadedSession
     let conversation = loaded
         .conversation
         .with_compaction_config(loaded.metadata.compaction)?;
+    let mut conversation = conversation;
+    if let Some(prompt) = &loaded.metadata.system_prompt {
+        conversation.set_system_prompt(prompt.clone());
+    }
+    let registry = build_tool_registry(store, &loaded.metadata)?;
+    Ok(Agent::new(client.clone(), registry, conversation).with_model(loaded.metadata.model))
+}
+
+fn build_tool_registry(store: &SessionStore, metadata: &SessionMetadata) -> Result<ToolRegistry> {
     let mut registry = ToolRegistry::new();
     register_builtins(
         &mut registry,
         ToolContext {
-            cwd: loaded.metadata.working_directory.clone(),
-            output_dir: store.directory(&loaded.metadata.id)?.join("tool-output"),
+            cwd: metadata.working_directory.clone(),
+            output_dir: store.directory(&metadata.id)?.join("tool-output"),
         },
     );
-    Ok(Agent::new(client.clone(), registry, conversation).with_model(loaded.metadata.model))
+    if let Some(selection) = &metadata.tool_selection {
+        let selection = config::validate_tool_selection(selection)?;
+        registry.retain_names(&selection.builtin);
+    }
+    Ok(registry)
 }
 
 pub const SYSTEM_PROMPT: &str = "You are Saki, an agent that can use tools. Respond in English unless the user requests another language.";
@@ -214,6 +227,10 @@ impl SessionManager {
         if id == self.metadata.id {
             bail!("This session is already open.");
         }
+        anyhow::ensure!(
+            self.store.metadata(id)?.schema_version == 1,
+            "enhanced sessions require the Runtime service (#109)"
+        );
         let loaded = self.store.open_for_api(id, self.client.api().as_str())?;
         let metadata = loaded.metadata.clone();
         let replay = loaded.replay.clone();

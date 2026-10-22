@@ -381,6 +381,13 @@ impl Conversation {
         });
     }
 
+    pub(crate) fn set_system_prompt(&mut self, prompt: String) {
+        self.items[0] = InputItem::Message {
+            role: MessageRole::System,
+            content: InputMessageContent::Text(prompt),
+        };
+    }
+
     pub fn add_assistant_message(&mut self, text: String) {
         self.items.push(InputItem::Message {
             role: MessageRole::Assistant,

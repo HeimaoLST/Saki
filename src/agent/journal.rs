@@ -26,6 +26,14 @@ pub struct TaskConfiguration {
     pub api: String,
     pub compaction: super::conversation::CompactionConfig,
     pub config_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_identity: Option<crate::client::connections::ConnectionIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_connection_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_selection: Option<crate::protocol::ToolSelection>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

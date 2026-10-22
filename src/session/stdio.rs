@@ -69,6 +69,8 @@ struct SessionId {
 struct Create {
     working_directory: Option<PathBuf>,
     system_prompt: Option<String>,
+    config: Option<ConfigPatch>,
+    storage_schema: Option<u32>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -112,7 +114,7 @@ struct Models {
     connection_id: String,
 }
 fn default_connection() -> String {
-    "default".to_owned()
+    String::new()
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -120,6 +122,17 @@ struct UpdateConfig {
     session_id: String,
     expected_revision: u64,
     patch: ConfigPatch,
+    #[serde(default)]
+    allow_schema_upgrade: bool,
+    #[serde(default)]
+    acknowledge_unknown_origin: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rollback {
+    session_id: String,
+    expected_revision: u64,
 }
 
 #[derive(Deserialize)]
@@ -170,13 +183,44 @@ fn decode(bytes: &[u8]) -> (Option<String>, Result<RuntimeCommand, RuntimeError>
                     session_id: p.session_id,
                     expected_revision: p.expected_revision,
                     patch: p.patch,
+                    allow_schema_upgrade: p.allow_schema_upgrade,
+                    acknowledge_unknown_origin: p.acknowledge_unknown_origin,
+                }
+            }
+            "connection.list" => {
+                let _: Empty = params(value)?;
+                RuntimeCommand::Connections
+            }
+            "session.config.rollback" => {
+                let p: Rollback = params(value)?;
+                RuntimeCommand::Rollback {
+                    session_id: p.session_id,
+                    expected_revision: p.expected_revision,
                 }
             }
             "session.create" => {
                 let p: Create = params(value)?;
-                RuntimeCommand::Create {
-                    working_directory: p.working_directory,
-                    system_prompt: p.system_prompt,
+                if p.config.is_some() || p.storage_schema.is_some() {
+                    let mut config = p.config.unwrap_or_default();
+                    if (p.working_directory.is_some() && config.working_directory.is_some())
+                        || (p.system_prompt.is_some() && config.system_prompt.is_some())
+                    {
+                        return Err(RuntimeError::new(
+                            "invalid_request",
+                            "do not repeat top-level create settings inside config",
+                        ));
+                    }
+                    config.working_directory = config.working_directory.or(p.working_directory);
+                    config.system_prompt = config.system_prompt.or(p.system_prompt);
+                    RuntimeCommand::CreateConfigured {
+                        config,
+                        storage_schema: p.storage_schema.unwrap_or(1),
+                    }
+                } else {
+                    RuntimeCommand::Create {
+                        working_directory: p.working_directory,
+                        system_prompt: p.system_prompt,
+                    }
                 }
             }
             "session.load" => RuntimeCommand::Load {
@@ -380,6 +424,9 @@ async fn deliver(
         }
     };
     match response {
+        RuntimeReply::Connections(connections) => {
+            reply(&output, &id, json!({"connections":connections})).await;
+        }
         RuntimeReply::TaskStatus(value) => {
             reply(&output, &id, value).await;
         }

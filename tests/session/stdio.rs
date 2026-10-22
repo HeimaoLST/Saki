@@ -104,7 +104,7 @@ async fn blocked_stdout_accepts_cancel_and_eof_then_drains_after_write_timeout()
         .map(|_| sse(json!({"type":"response.output_text.delta","item_id":"m","delta":"chunk"})))
         .collect::<String>()
         + &sse(json!({"type":"response.completed","response":completed("done")}));
-    let (client, server) = scripted_stream(vec![body]).await;
+    let (client, mut server) = scripted_stream(vec![body]).await;
     let (mut input, runtime_input) = tokio::io::duplex(16384);
     let (runtime_output, output) = tokio::io::duplex(64);
     let blocked = Arc::new(Notify::new());
@@ -120,7 +120,7 @@ async fn blocked_stdout_accepts_cancel_and_eof_then_drains_after_write_timeout()
             stall: stall.clone(),
         },
         StdioOptions {
-            write_timeout: Duration::from_millis(250),
+            write_timeout: Duration::from_secs(30),
             max_frame_bytes: 2048,
             output_bytes: 4096,
             output_messages: 1,
@@ -142,9 +142,23 @@ async fn blocked_stdout_accepts_cancel_and_eof_then_drains_after_write_timeout()
     .await;
     let accepted = row(&mut output).await;
     let task = accepted["result"]["task_id"].as_str().unwrap();
+    let captured = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            tokio::select! {
+                biased;
+                result=&mut server=>break result.unwrap(),
+                _=row(&mut output)=>{}
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(captured.len(), 1);
     stall.store(true, Ordering::SeqCst);
     writer_waker.wake();
-    blocked.notified().await;
+    tokio::time::timeout(Duration::from_secs(5), blocked.notified())
+        .await
+        .unwrap();
     command(
         &mut input,
         "cancel",
@@ -153,14 +167,28 @@ async fn blocked_stdout_accepts_cancel_and_eof_then_drains_after_write_timeout()
     )
     .await;
     drop(input);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if workspace.store().list().unwrap().iter().any(|session| {
+                session.metadata.id == id && session.status == TaskStatus::Interrupted
+            }) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(31)).await;
     let error = tokio::time::timeout(Duration::from_secs(5), worker)
         .await
         .unwrap()
         .unwrap()
         .unwrap_err();
     assert!(error.to_string().contains("timed out"), "{error:#}");
+    tokio::time::resume();
     drop(output);
-    server.await.unwrap();
     let loaded = workspace.store().open(&id).unwrap();
     assert_eq!(loaded.replay.status, TaskStatus::Interrupted);
     assert!(loaded.replay.active_task.is_none());
@@ -502,7 +530,12 @@ async fn two_task_pipeline_backpressure_keeps_control_independent_and_releases_a
     for end in ["recover", "disconnect", "deadline"] {
         let workspace = Workspace::new();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let client = ModelClient::for_test(format!("http://{}/v1", listener.local_addr().unwrap()));
+        let client = ModelClient::new(&crate::client::ClientConfig::new(
+            crate::client::ModelApi::Responses,
+            "fixture",
+            format!("http://{}/v1", listener.local_addr().unwrap()),
+        ))
+        .unwrap();
         let (arrived_tx, arrived) = oneshot::channel();
         let (release, released) = oneshot::channel();
         let server = tokio::spawn(async move {
@@ -559,7 +592,7 @@ async fn two_task_pipeline_backpressure_keeps_control_independent_and_releases_a
                 control_rx,
                 event_rx,
                 writer_state.clone(),
-                Duration::from_secs(1),
+                Duration::from_secs(30),
             )
             .await;
             if result.is_err() {
@@ -689,7 +722,7 @@ async fn two_task_pipeline_backpressure_keeps_control_independent_and_releases_a
         );
         if end == "deadline" {
             tokio::time::pause();
-            tokio::time::advance(Duration::from_secs(2)).await;
+            tokio::time::advance(Duration::from_secs(31)).await;
         } else {
             mode.store(if end == "recover" { 0 } else { 2 }, Ordering::SeqCst);
             waker.wake();
@@ -771,7 +804,12 @@ async fn eof_drains_both_accepted_tasks_with_open_blocked_and_disconnected_outpu
     for end in ["open", "blocked", "disconnected"] {
         let workspace = Workspace::new();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let client = ModelClient::for_test(format!("http://{}/v1", listener.local_addr().unwrap()));
+        let client = ModelClient::new(&crate::client::ClientConfig::new(
+            crate::client::ModelApi::Responses,
+            "fixture",
+            format!("http://{}/v1", listener.local_addr().unwrap()),
+        ))
+        .unwrap();
         let (arrived_tx, mut arrived) = oneshot::channel();
         let (release, released) = oneshot::channel();
         let server = tokio::spawn(async move {
@@ -808,7 +846,7 @@ async fn eof_drains_both_accepted_tasks_with_open_blocked_and_disconnected_outpu
                 stall: stall.clone(),
             },
             StdioOptions {
-                write_timeout: Duration::from_secs(1),
+                write_timeout: Duration::from_secs(30),
                 ..StdioOptions::default()
             },
         ));
@@ -865,9 +903,11 @@ async fn eof_drains_both_accepted_tasks_with_open_blocked_and_disconnected_outpu
                     .all(|value| value["event"]["status"] == "completed")
             );
         } else if end == "blocked" {
-            blocked.notified().await;
+            tokio::time::timeout(Duration::from_secs(5), blocked.notified())
+                .await
+                .unwrap();
             tokio::time::pause();
-            tokio::time::advance(Duration::from_secs(2)).await;
+            tokio::time::advance(Duration::from_secs(31)).await;
         } else {
             drop(output);
         }

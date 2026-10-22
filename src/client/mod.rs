@@ -1,5 +1,6 @@
 pub mod chat;
 pub mod config;
+pub mod connections;
 pub mod responses;
 mod transport;
 

@@ -173,6 +173,8 @@ async fn config_update(
 ) -> std::result::Result<ConfigView, RuntimeError> {
     match handle
         .call(RuntimeCommand::ConfigUpdate {
+            allow_schema_upgrade: false,
+            acknowledge_unknown_origin: false,
             session_id: session_id.to_owned(),
             expected_revision,
             patch,
@@ -495,6 +497,8 @@ async fn revision_conflicts_noop_writes_and_busy_failures_are_isolated_per_sessi
     // a broad busy response.
     let first_response = handle
         .submit(RuntimeCommand::ConfigUpdate {
+            allow_schema_upgrade: false,
+            acknowledge_unknown_origin: false,
             session_id: a.clone(),
             expected_revision: 1,
             patch: patch_model("model-b"),
@@ -502,6 +506,8 @@ async fn revision_conflicts_noop_writes_and_busy_failures_are_isolated_per_sessi
         .unwrap();
     let second_response = handle
         .submit(RuntimeCommand::ConfigUpdate {
+            allow_schema_upgrade: false,
+            acknowledge_unknown_origin: false,
             session_id: a.clone(),
             expected_revision: 1,
             patch: patch_model("model-b"),
@@ -962,4 +968,109 @@ async fn returning_to_a_model_does_not_resurrect_its_old_usage_calibration() {
     handle.call(RuntimeCommand::Shutdown).await.unwrap();
     drop(handle);
     actor.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn each_connections_default_model_uses_its_own_loaded_capacity() {
+    use crate::client::{
+        ClientConfig, ModelApi,
+        connections::{Connection, ConnectionRegistry},
+    };
+    let workspace = Workspace::new();
+    let connection = |id: &str, model: &str| {
+        Connection::new(
+            id.into(),
+            ClientConfig::new(
+                ModelApi::Responses,
+                "offline-key",
+                format!("http://127.0.0.1:1/{id}"),
+            ),
+            model.into(),
+        )
+        .unwrap()
+    };
+    let directory = ConnectionRegistry::new(
+        "a".into(),
+        vec![connection("a", "model-a"), connection("b", "model-b")],
+    )
+    .unwrap();
+    let (client, server) = scripted_http(vec![]).await;
+    let (handle, actor) = runtime(client, &workspace, "model-a", Some(catalog()))
+        .with_connections(directory)
+        .start();
+    let created = session(
+        handle
+            .call(RuntimeCommand::CreateConfigured {
+                storage_schema: 2,
+                config: ConfigPatch {
+                    connection_id: Some("b".into()),
+                    ..ConfigPatch::default()
+                },
+            })
+            .await
+            .unwrap(),
+    );
+    let view = config_get(&handle, &created.session_id).await;
+    assert_eq!(view.effective_config.model, "model-b");
+    assert_eq!(
+        view.effective_config.compaction.context_budget_tokens,
+        64000
+    );
+    assert_eq!(
+        view.effective_config.compaction.max_input_tokens,
+        Some(60000)
+    );
+    assert!(
+        matches!(view.effective_config.capacity_source,CapacitySource::Catalog{ref catalog_id} if catalog_id=="model-b")
+    );
+    match handle
+        .call(RuntimeCommand::Models {
+            connection_id: "b".into(),
+        })
+        .await
+        .unwrap()
+    {
+        RuntimeReply::Models {
+            configured_models, ..
+        } => assert_eq!(
+            configured_models[0].compaction,
+            view.effective_config.compaction
+        ),
+        _ => panic!("models expected"),
+    }
+    let a = session(
+        handle
+            .call(RuntimeCommand::CreateConfigured {
+                storage_schema: 2,
+                config: ConfigPatch {
+                    connection_id: Some("a".into()),
+                    ..ConfigPatch::default()
+                },
+            })
+            .await
+            .unwrap(),
+    );
+    let changed = config_update(
+        &handle,
+        &a.session_id,
+        1,
+        ConfigPatch {
+            connection_id: Some("b".into()),
+            model: Some("model-b".into()),
+            ..ConfigPatch::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        changed.effective_config.compaction,
+        view.effective_config.compaction
+    );
+    assert!(
+        matches!(changed.effective_config.capacity_source,CapacitySource::Catalog{ref catalog_id} if catalog_id=="model-b")
+    );
+    handle.call(RuntimeCommand::Shutdown).await.unwrap();
+    drop(handle);
+    actor.await.unwrap().unwrap();
+    assert!(request_bodies(server).await.is_empty());
 }
