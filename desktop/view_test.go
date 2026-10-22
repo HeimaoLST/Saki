@@ -622,6 +622,8 @@ func runtimePreviewApp(scene string) *appModel {
 		bound.Works[0].Detail = bound.StatusDetail
 	case "runtime-settings":
 		a.openSettings()
+	case "runtime-history":
+		a.openHistory()
 	}
 	return a
 }
@@ -655,7 +657,7 @@ func TestPreviewRuntimeStates(t *testing.T) {
 				write(scene, size.width, size.height, dark)
 			}
 		}
-		for _, scene := range []string{"runtime-error", "runtime-settings"} {
+		for _, scene := range []string{"runtime-error", "runtime-settings", "runtime-history"} {
 			write(scene, 1040, 720, dark)
 		}
 		// Overlay proof at 900; the native minimum is now 720, so this
