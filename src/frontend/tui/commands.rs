@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     command::{self, Command, Definition},
-    session::{SessionCommand, SessionEvent},
+    session::SessionCommand,
 };
 
 #[derive(Default)]
@@ -114,21 +114,6 @@ impl Commands {
         self.candidates.clear();
         sessions.pending = true;
         Some((command, request))
-    }
-
-    /// Clear a successful command before Session UI caches the outgoing draft.
-    /// Errors retain it; unrelated Agent events are never acknowledgements.
-    pub fn before_event(&mut self, editor: &mut Editor, event: &SessionEvent) {
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|command| command.acknowledged_by(event))
-        {
-            editor.reset();
-            self.pending = None;
-        } else if matches!(event, SessionEvent::Error { .. }) {
-            self.pending = None;
-        }
     }
 
     pub fn mouse(&mut self, editor: &mut Editor, mouse: MouseEvent) -> bool {

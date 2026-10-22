@@ -27,10 +27,8 @@ use tokio::sync::mpsc::Sender;
 
 use crate::agent::message::{self, ImageAttachment, UserMessage};
 use crate::command::{self, Command, ParsedInput};
-use crate::frontend::session_requests::{PendingRequest, SessionRequests};
-use crate::session::{
-    SessionCommand, SessionEvent, SessionEventReceiver, SessionRequest,
-};
+use crate::frontend::session_requests::{PendingRequest, RequestSendError, SessionRequests};
+use crate::session::{SessionCommand, SessionEvent, SessionEventReceiver, SessionRequest};
 use editor::Editor;
 use state::{App, Focus};
 use terminal_input::Input;
@@ -54,21 +52,28 @@ pub async fn run(
     let mut editor = Editor::new();
     let mut commands = commands::Commands::default();
     let mut requests = SessionRequests::new(input);
+    let mut external_edit: Option<ExternalEdit> = None;
+    let mut events_closed = false;
 
     loop {
-        commands.sync(&app, &editor);
-        session.draw(|frame| {
-            view::draw(frame, &mut app, &editor);
-            if sessions.picker.is_none() && !sessions.pending {
-                if !app.history.searching() && !transcript_search::active(&app) {
-                    commands.draw(frame, &app);
-                    path_completion::draw(frame, &app);
+        if external_edit.is_none() {
+            commands.sync(&app, &editor);
+            session.draw(|frame| {
+                view::draw(frame, &mut app, &editor);
+                if sessions.picker.is_none() && !sessions.pending {
+                    if !app.history.searching() && !transcript_search::active(&app) {
+                        commands.draw(frame, &app);
+                        path_completion::draw(frame, &app);
+                    }
+                    history::draw(frame, &app);
                 }
-                history::draw(frame, &app);
-            }
-            sessions.draw(frame, app.theme);
-        })?;
-        if app.should_quit() {
+                sessions.draw(frame, app.theme);
+            })?;
+        }
+        if events_closed && external_edit.is_none() {
+            break;
+        }
+        if app.should_quit() && external_edit.is_none() {
             break;
         }
         let feedback_deadline = app
@@ -80,7 +85,36 @@ pub async fn run(
             .edge_deadline()
             .map(tokio::time::Instant::from_std);
         tokio::select! {
-            maybe = session.next_input() => {
+            result = async {
+                match external_edit.as_mut() {
+                    Some((receiver, _, _)) => receiver.await,
+                    None => std::future::pending().await,
+                }
+            }, if external_edit.is_some() => {
+                let (_, guard, target) = external_edit.take().unwrap();
+                let resumed = session.resume_external();
+                drop(guard);
+                resumed?;
+                match result {
+                    Ok(Ok(text)) => {
+                        if app
+                            .session
+                            .as_ref()
+                            .is_some_and(|active| active.id == target)
+                        {
+                            editor.replace_text(&text);
+                        } else {
+                            sessions.replace_cached_text(&target, &text);
+                        }
+                    }
+                    Ok(Err(message)) => app.notify(message),
+                    Err(_) => app.notify("External editor stopped before returning.".to_owned()),
+                }
+                if events_closed || app.should_quit() {
+                    break;
+                }
+            }
+            maybe = session.next_input(), if external_edit.is_none() => {
                 let (copy, notify_copy) = match maybe {
                     Ok(Some(Input::Event(Event::Key(key)))) => {
                         let (handled, command) = sessions.key(&mut app, key);
@@ -89,14 +123,17 @@ pub async fn run(
                             path_completion::cancel(&mut app);
                         }
                         if let Some(command) = command
-                            && requests
-                                .try_send(command, PendingRequest::Control)
-                                .is_err()
+                            && let Err(error) =
+                                requests.try_send(command, PendingRequest::Control)
                         {
                             sessions.pending = false;
-                            app.notify(
-                                "Session command queue is full; try again.".to_owned(),
-                            );
+                            if request_failed(
+                                &mut app,
+                                error,
+                                "Session command queue is full; try again.",
+                            ) {
+                                return Ok(());
+                            }
                         }
                         if handled {
                             // A picker key ends any local history search and
@@ -115,14 +152,21 @@ pub async fn run(
                         }
                         let outcome = handle_key(&mut app, &mut editor, key);
                         if let Some(command) = outcome.command
-                            && let Some((command, request)) =
+                            && let Some((_command, request)) =
                                 commands.dispatch(command, &mut app, &mut editor, &mut sessions)
-                            && requests
-                                .try_send(request, PendingRequest::Command(command))
-                                .is_err()
+                            && let Err(error) = requests.try_send(
+                                request,
+                                PendingRequest::Command {
+                                    draft: editor.text(),
+                                    session_id: app.session.as_ref().map(|s| s.id.clone()),
+                                },
+                            )
                         {
                             sessions.pending = false;
-                            app.notify("Command queue is full; draft kept.".to_owned());
+                            if request_failed(&mut app, error, "Command queue is full; draft kept.")
+                            {
+                                return Ok(());
+                            }
                         }
                         if app.help_open {
                             app.history.cancel_search();
@@ -137,11 +181,20 @@ pub async fn run(
                                     session_id: association.session_id,
                                     task_id: association.task_id,
                                 };
-                                if requests.try_send(command, pending).is_err() {
-                                    app.notify("Cancel queue is full; task still running.".to_owned());
-                                } else {
-                                    app.cancelling = true;
-                                    app.status = None;
+                                match requests.try_send(command, pending) {
+                                    Ok(_) => {
+                                        app.cancelling = true;
+                                        app.status = None;
+                                    }
+                                    Err(error) => {
+                                        if request_failed(
+                                            &mut app,
+                                            error,
+                                            "Cancel queue is full; task still running.",
+                                        ) {
+                                            return Ok(());
+                                        }
+                                    }
                                 }
                             } else {
                                 app.notify("No running task to cancel.".to_owned());
@@ -159,21 +212,30 @@ pub async fn run(
                                     session_id: metadata.id.clone(),
                                     message,
                                 };
-                                if requests.try_send(command, pending).is_err() {
-                                    app.notify("Send queue is full; draft kept.".to_owned());
-                                } else {
-                                    app.status = Some("Sending…".to_owned());
+                                match requests.try_send(command, pending) {
+                                    Ok(_) => app.status = Some("Sending…".to_owned()),
+                                    Err(error) => {
+                                        if request_failed(
+                                            &mut app,
+                                            error,
+                                            "Send queue is full; draft kept.",
+                                        ) {
+                                            return Ok(());
+                                        }
+                                    }
                                 }
                             }
                         }
                         if outcome.paste_clipboard {
                             handle_clipboard(&mut app, &mut editor);
                         }
-                        if outcome.external_editor
-                            && let Err(error) =
-                                open_external_editor(&mut session, &mut app, &mut editor)
-                        {
-                            return Err(error.into());
+                        if outcome.external_editor {
+                            start_external_editor(
+                                &mut session,
+                                &mut app,
+                                &editor,
+                                &mut external_edit,
+                            );
                         }
                         if outcome.quit {
                             break;
@@ -212,12 +274,17 @@ pub async fn run(
                             path_completion::cancel(&mut app);
                             app.text_selection.clear();
                             sessions.pending = true;
-                            if requests
-                                .try_send(SessionCommand::List, PendingRequest::Control)
-                                .is_err()
+                            if let Err(error) =
+                                requests.try_send(SessionCommand::List, PendingRequest::Control)
                             {
                                 sessions.pending = false;
-                                app.notify("Session command queue is full; try again.".to_owned());
+                                if request_failed(
+                                    &mut app,
+                                    error,
+                                    "Session command queue is full; try again.",
+                                ) {
+                                    return Ok(());
+                                }
                             }
                             continue;
                         }
@@ -249,39 +316,96 @@ pub async fn run(
                     }
                 }
             }
-            packet = events.recv() => {
-                let Some(packet) = packet else { break; };
+            packet = events.recv(), if !events_closed => {
+                let packet: crate::session::SessionEventPacket = match packet {
+                    Some(packet) => packet,
+                    None => {
+                        if external_edit.is_some() {
+                            events_closed = true;
+                            continue;
+                        }
+                        break;
+                    }
+                };
                 let request_id = packet.request_id;
                 let resolution = request_id.and_then(|id| requests.take(id));
                 let mut handled = false;
                 match resolution {
-                    Some(PendingRequest::Send { .. }) => match &packet.event {
+                    Some(PendingRequest::Send { .. }) => {
+                        let session_id = match &resolution {
+                            Some(PendingRequest::Send { session_id, .. }) => session_id,
+                            _ => unreachable!(),
+                        };
+                        match &packet.event {
                         SessionEvent::Accepted => {
                             if let Some(association) = packet.association.clone() {
                                 if let Some(PendingRequest::Send { message, .. }) = &resolution {
                                     sessions.accept_send(&mut app, &mut editor, association, message);
                                 }
                             } else {
-                                app.notify("Send accepted without task association.".to_owned());
+                                sessions.notify_for(
+                                    &mut app,
+                                    session_id.as_str(),
+                                    "Send accepted without task association.".to_owned(),
+                                );
                             }
-                            app.status = None;
+                            if app
+                                .session
+                                .as_ref()
+                                .is_some_and(|active| active.id == *session_id)
+                            {
+                                app.status = None;
+                            }
                             handled = true;
                         }
                         SessionEvent::Error { operation, error } => {
-                            app.status = None;
-                            app.notify(format!("{}: {}", operation, error.message));
+                            if app
+                                .session
+                                .as_ref()
+                                .is_some_and(|active| active.id == *session_id)
+                            {
+                                app.status = None;
+                            }
+                            sessions.notify_for(
+                                &mut app,
+                                session_id.as_str(),
+                                format!("{}: {}", operation, error.message),
+                            );
                             handled = true;
                         }
                         _ => {}
-                    },
-                    Some(PendingRequest::Command(_)) => {
+                        }
+                    }
+                    Some(PendingRequest::Command {
+                        draft,
+                        session_id,
+                    }) => {
                         sessions.pending = false;
                         match &packet.event {
                             SessionEvent::Error { operation, error } => {
-                                app.notify(format!("{}: {}", operation, error.message));
+                                let message = format!("{}: {}", operation, error.message);
+                                if let Some(session_id) = session_id {
+                                    sessions.notify_for(&mut app, session_id.as_str(), message);
+                                } else {
+                                    app.notify(message);
+                                }
                                 handled = true;
                             }
-                            _ => editor.reset(),
+                            _ => {
+                                let target_current = session_id.as_ref().is_none_or(|session_id| {
+                                    app
+                                        .session
+                                        .as_ref()
+                                        .is_some_and(|active| active.id == *session_id)
+                                });
+                                if target_current {
+                                    if editor.text() == draft {
+                                        editor.reset();
+                                    }
+                                } else if let Some(session_id) = session_id {
+                                    sessions.reset_cached_editor_if(session_id.as_str(), draft.as_str());
+                                }
+                            }
                         }
                     }
                     Some(PendingRequest::Control) => {
@@ -291,17 +415,34 @@ pub async fn run(
                             handled = true;
                         }
                     }
-                    Some(PendingRequest::Cancel { .. }) => match &packet.event {
+                    Some(PendingRequest::Cancel {
+                        session_id,
+                        task_id,
+                    }) => match &packet.event {
                         SessionEvent::Cancelled { status } => {
-                            if *status == "not_running" {
+                            let current = sessions.current_association();
+                            let matches = current.as_ref().is_some_and(|current| {
+                                current.session_id == session_id && current.task_id == task_id
+                            });
+                            if matches && *status == "not_running" {
                                 app.cancelling = false;
                                 app.notify("No running task to cancel.".to_owned());
                             }
                             handled = true;
                         }
                         SessionEvent::Error { operation, error } => {
-                            app.cancelling = false;
-                            app.notify(format!("{}: {}", operation, error.message));
+                            let current = sessions.current_association();
+                            let matches = current.as_ref().is_some_and(|current| {
+                                current.session_id == session_id && current.task_id == task_id
+                            });
+                            if matches {
+                                app.cancelling = false;
+                            }
+                            sessions.notify_for(
+                                &mut app,
+                                session_id.as_str(),
+                                format!("{}: {}", operation, error.message),
+                            );
                             handled = true;
                         }
                         _ => {}
@@ -323,6 +464,14 @@ pub async fn run(
         }
     }
     Ok(())
+}
+
+fn request_failed(app: &mut App, error: RequestSendError, full_message: &str) -> bool {
+    match error {
+        RequestSendError::Full => app.notify(full_message.to_owned()),
+        RequestSendError::Closed => app.notify("Session output is closed.".to_owned()),
+    }
+    matches!(error, RequestSendError::Closed)
 }
 
 #[derive(Default)]
@@ -991,51 +1140,57 @@ fn handle_paste_text(app: &mut App, editor: &mut Editor, text: &str) {
 /// Ctrl+G: suspend the same terminal, run the configured editor with the draft
 /// in a temp file, restore the terminal, then load changed UTF-8 text as one
 /// undoable edit. Failures only notify and leave the exact draft/cursor/history.
-fn open_external_editor(
+type ExternalEdit = (
+    tokio::sync::oneshot::Receiver<Result<String, String>>,
+    Option<external_editor::SigintGuard>,
+    String,
+);
+
+fn start_external_editor(
     session: &mut terminal::TerminalSession,
     app: &mut App,
-    editor: &mut Editor,
-) -> std::io::Result<()> {
+    editor: &Editor,
+    external_edit: &mut Option<ExternalEdit>,
+) {
+    if external_edit.is_some() {
+        return;
+    }
     let launch = match external_editor::from_env() {
         Ok(launch) => launch,
         Err(message) => {
             app.notify(message);
-            return Ok(());
+            return;
         }
     };
-    let original = editor.text();
-    // Catch SIGINT while still raw and hold the guard through the whole cooked
-    // interval, including resume, so a terminal Ctrl+C can never kill the
-    // parent in a default-signal window. Installation failure aborts before
-    // any terminal state changes.
+    let Some(session_id) = app.session.as_ref().map(|session| session.id.clone()) else {
+        app.notify("Session is not ready. Draft kept.".to_owned());
+        return;
+    };
     let guard = match external_editor::SigintGuard::install() {
         Ok(guard) => guard,
         Err(message) => {
             app.notify(message);
-            return Ok(());
+            return;
         }
     };
-    let suspended = session.suspend_external();
-    let edited = suspended
-        .is_ok()
-        .then(|| external_editor::edit(&launch, &original));
-    let resumed = session.resume_external();
-    drop(guard);
-    if let Err(error) = suspended {
+    if let Err(error) = session.suspend_external() {
+        let _ = session.resume_external();
+        drop(guard);
         app.notify(format!(
             "External editor could not suspend the terminal: {error}"
         ));
+        return;
     }
-    // Terminal restoration failure is fatal: never pretend the UI is usable.
-    resumed?;
-    if let Some(result) = edited {
-        load_external_text(app, editor, result);
-    }
-    Ok(())
+    let original = editor.text();
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let result = external_editor::edit(&launch, &original);
+        let _ = sender.send(result);
+    });
+    *external_edit = Some((receiver, Some(guard), session_id));
 }
 
-/// Applies a finished editor result. Errors only notify: the draft, cursor,
-/// images, kill buffer and undo history stay exactly as they were.
+#[cfg(test)]
 fn load_external_text(app: &mut App, editor: &mut Editor, result: Result<String, String>) {
     match result {
         Ok(text) => {

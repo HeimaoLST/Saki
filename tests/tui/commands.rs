@@ -73,16 +73,22 @@ fn failed_switch_keeps_the_command_but_success_does_not_cache_it_as_a_draft() {
         operation: "create",
         error: crate::session::runtime::RuntimeError::new("busy", "cannot create session"),
     };
-    commands.before_event(&mut editor, &error);
     sessions.apply_event(&mut app, &mut editor, error);
     assert_eq!(editor.text(), "/new");
     assert_eq!(app.session.as_ref().unwrap().id, a.id);
-    assert!(!sessions.pending);
+    assert!(
+        sessions.pending,
+        "an async Error does not acknowledge the command"
+    );
+    sessions.pending = false;
     commands.dispatch(Command::New, &mut app, &mut editor, &mut sessions);
+    editor.reset();
     let event = opened(b, bh);
-    commands.before_event(&mut editor, &event);
     sessions.apply_event(&mut app, &mut editor, event);
-    assert!(editor.is_empty());
+    assert!(
+        editor.is_empty(),
+        "switching uses B's editor, not A's draft"
+    );
     sessions.apply_event(&mut app, &mut editor, opened(a, ah));
     assert!(
         editor.is_empty(),
@@ -107,7 +113,10 @@ fn busy_controls_and_automatic_title_updates_do_not_finish_the_active_job_or_cle
     );
     assert_eq!(editor.text(), "/new");
     assert!(app.running);
-    assert!(!sessions.pending);
+    assert!(
+        sessions.pending,
+        "command tracks the host request until its reply"
+    );
     editor.set_draft("/rename active");
     assert!(matches!(
         session_result(commands.dispatch(
@@ -122,7 +131,6 @@ fn busy_controls_and_automatic_title_updates_do_not_finish_the_active_job_or_cle
     ));
     metadata.title = "active".into();
     let automatic = SessionEvent::TitleUpdated(metadata.clone());
-    commands.before_event(&mut editor, &automatic);
     sessions.apply_event(&mut app, &mut editor, automatic);
     assert!(sessions.pending && app.running);
     assert_eq!(editor.text(), "/rename active");
@@ -133,15 +141,16 @@ fn busy_controls_and_automatic_title_updates_do_not_finish_the_active_job_or_cle
             delta: "working".into(),
         },
     };
-    commands.before_event(&mut editor, &progress);
     sessions.apply_event(&mut app, &mut editor, progress);
     assert!(sessions.pending && app.running);
     assert_eq!(editor.text(), "/rename active");
     let manual = SessionEvent::Renamed(metadata);
-    commands.before_event(&mut editor, &manual);
     sessions.apply_event(&mut app, &mut editor, manual);
-    assert!(editor.is_empty());
-    assert!(!sessions.pending);
+    assert!(
+        sessions.pending,
+        "metadata updates do not acknowledge commands"
+    );
+    assert_eq!(editor.text(), "/rename active");
     assert!(app.running);
 }
 
@@ -238,5 +247,5 @@ fn multiline_paste_and_escaped_slashes_use_the_existing_message_submission_path(
     let message = outcome.send.unwrap();
     assert_eq!(message.text, "/help");
     assert_eq!(message.images.len(), 1);
-    assert!(editor.is_empty());
+    assert_eq!(editor.text(), "//help", "draft remains until Accepted");
 }
