@@ -209,7 +209,7 @@ pub struct SessionEventReceiver {
 }
 
 impl SessionEventReceiver {
-    pub async fn recv(&mut self) -> Option<SessionEventPacket> {
+    pub async fn recv(&mut self) -> Option<super::SessionEventPacket> {
         if self.state.is_closed() {
             self.drain();
             return None;
