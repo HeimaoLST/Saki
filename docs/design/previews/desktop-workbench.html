@@ -70,32 +70,67 @@ a{color:var(--success)}
 .header-actions button{display:flex;align-items:center;gap:6px;padding:8px 9px;font-size:12px;color:var(--muted)}
 .header-actions button[aria-expanded=true]{background:var(--hover);color:var(--text)}
 .scroll{flex:1;overflow:auto;min-height:0;scrollbar-width:thin;scrollbar-color:var(--muted) transparent}
-.conversation{padding:9px 0 24px;overflow-wrap:anywhere}
-.date{text-align:center;font-size:11px;color:var(--muted);margin:0 0 21px;letter-spacing:.4px}
-.user-bubble{margin-left:auto;background:var(--hover);border-radius:16px 16px 4px 16px;padding:13px 17px;max-width:80%;font-size:14px;line-height:1.75}
-.assistant{margin-top:25px;font-size:15px;line-height:1.75}
-.assistant p{margin-top:12px}
-.assistant ul{padding-left:20px;margin:10px 0}
-.assistant li{padding:3px 0}
-.assistant li::marker{color:var(--muted)}
-.tool{margin:0 0 20px;font-size:12px;line-height:1.5;color:var(--muted)}
-.tool summary{display:flex;align-items:center;gap:8px;cursor:pointer;padding:7px 0;list-style:none}
+.conversation{padding:6px 0 24px;overflow-wrap:anywhere}
+.date{text-align:center;font-size:11px;color:var(--muted);margin:0 0 20px;letter-spacing:.4px}
+#thread{display:flex;flex-direction:column;gap:18px}
+.message{display:flex;align-items:flex-start;gap:9px;min-width:0}
+.message.user{justify-content:flex-end}
+.message>.avatar{width:28px;height:28px;border-radius:9px;margin-top:3px}
+.message-body{min-width:0;max-width:calc(100% - 37px)}
+.user .message-body{max-width:78%}
+.sender{font-size:12px;line-height:1.5;color:var(--muted);margin:0 0 5px 3px}
+.bubble{width:fit-content;max-width:100%;padding:12px 16px;font-size:14px;line-height:1.7;border-radius:4px 18px 18px 18px;background:var(--bg);border:1px solid color-mix(in srgb,var(--border) 55%,transparent)}
+.user .bubble{background:color-mix(in srgb,var(--accent) 18%,var(--surface));border-color:transparent;border-radius:18px 4px 18px 18px;white-space:pre-wrap}
+.bubble p+p{margin-top:10px}
+.bubble h3{font-size:14px;margin:18px 0 8px}
+.bubble ul{padding-left:18px;margin:8px 0 0}
+.bubble li{padding:3px 0}
+.bubble li::marker{color:var(--muted)}
+.message-meta{display:flex;align-items:center;gap:8px;font-size:11px;line-height:20px;color:var(--muted);margin:4px 3px 0}
+.user .message-meta{justify-content:flex-end}
+.message-meta button{display:inline-flex;align-items:center;gap:4px;padding:2px 5px;font-size:11px}
+.message-meta svg{width:13px;height:13px}
+.message-detail{margin:12px 0;border-block:1px solid var(--border);padding:10px 0}
+.message-detail summary{cursor:pointer;font-size:13px;color:var(--success)}
+.tool{margin:0 0 10px;padding-bottom:9px;border-bottom:1px solid var(--border);font-size:12px;line-height:1.5;color:var(--muted)}
+.tool summary{display:flex;align-items:center;gap:7px;cursor:pointer;padding:3px 0;list-style:none}
 .tool summary::-webkit-details-marker{display:none}
 .tool summary .chevron{width:14px;height:14px;transition:transform 120ms}
 .tool[open] .chevron{transform:rotate(90deg)}
 .tool .ok{color:var(--success);width:15px;height:15px}
-.tool-output{margin-top:5px;padding:13px 15px;background:var(--bg);border:1px solid var(--border);border-radius:10px}
+.tool-output{margin-top:9px;padding:10px 12px;background:var(--surface);border-radius:8px}
 .tool-output .row{margin-bottom:10px}
-.answer-card{padding:13px 16px;background:var(--bg);border:1px solid var(--border);border-radius:10px;margin-top:17px;font-size:13px}
-.answer-card .row{color:var(--success);margin-bottom:6px}
-.answer-actions{display:flex;align-items:center;justify-content:space-between;margin-top:17px;font-size:11px;color:var(--muted)}
-.answer-actions button{font-size:12px;padding:6px 8px;display:flex;align-items:center;gap:6px}
-.activity{display:flex;align-items:center;gap:9px;color:var(--success);font-size:13px;margin:0 0 14px}
+.table-wrap{max-width:100%;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px;line-height:1.7;text-align:left}
+caption{text-align:left;padding:9px 11px;color:var(--muted);background:var(--surface)}
+th,td{padding:10px 11px;vertical-align:top;border-top:1px solid var(--border)}
+th{font-weight:600;background:var(--surface)}
+th,td{overflow-wrap:anywhere}
+.table-actions{display:flex;justify-content:flex-end;margin:5px 0 12px}
+.table-actions button{font-size:12px;padding:5px 7px;color:var(--success)}
+.chart{margin:14px 0 12px;padding:12px;background:var(--surface);border-radius:10px}
+.chart figcaption{font-size:13px;font-weight:550;margin-bottom:8px}
+.chart svg{display:block;width:100%;height:auto;fill:none;stroke:none}
+.chart text{fill:var(--muted);font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.chart .track{fill:var(--hover)}
+.chart .bar-rose{fill:var(--accent)}
+.chart .bar-iris{fill:var(--focus)}
+.chart .bar-foam{fill:var(--success)}
+.chart button{font-size:12px;color:var(--success);padding:5px 7px}
+.chart-note{font-size:11px;color:var(--muted);margin-top:6px}
+.content-modal{width:min(920px,calc(100vw - 64px));max-height:calc(100dvh - 80px);padding:20px;border:1px solid var(--border);border-radius:16px;background:var(--bg);color:var(--text);box-shadow:var(--shadow)}
+.content-modal::backdrop{background:#12101d88}
+.content-modal h2{font-size:16px;letter-spacing:0}
+.content-modal #content-detail{margin-top:18px}
+.content-modal .chart{margin-bottom:0}
+.content-modal .chart figcaption{display:none}
+.content-modal .chart svg{min-width:0}
+.bubble:focus-visible,[data-expand-content]:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
+.activity{display:flex;align-items:center;gap:8px;color:var(--success);font-size:12px;margin:0 0 9px}
 .spinner{width:13px;height:13px;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin 1.1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}
 }
-.working-copy{color:var(--muted);font-size:14px}
-.interrupted{font-size:12px;color:var(--warning);margin-top:18px;display:flex;gap:7px;align-items:center}
+.interrupted{font-size:12px;color:var(--warning);margin-top:10px;display:flex;gap:7px;align-items:center}
 .composer-wrap{flex:none;padding:10px 0 17px}
 .composer{border:1px solid var(--border);border-radius:18px;background:var(--bg);padding:13px 14px 10px;box-shadow:0 2px 8px #00000006}
 .composer:focus-within{border-color:var(--focus)}
@@ -153,7 +188,8 @@ to{opacity:1;transform:translateX(0)}
 .reading{width:90%}
 .header-actions button span{display:none}
 .design-note{flex-wrap:wrap;gap:4px}
-.user-bubble{max-width:94%}
+.user .message-body{max-width:88%}
+.bubble{padding:11px 13px}
 }
 
 </style>
@@ -163,10 +199,11 @@ to{opacity:1;transform:translateX(0)}
 <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol><symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol><symbol id="i-history" viewBox="0 0 24 24"><path d="M3 11a9 9 0 1 1 2.5 7M3 5v6h6M12 7v5l3 2"/></symbol><symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></symbol><symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol><symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v12H3Z"/></symbol><symbol id="i-file" viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5ZM14 3v6h5M9 13h6m-6 4h6"/></symbol><symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
 </defs></svg>
 <div class="design-bar">
- <div class="design-brand"><strong>Saki</strong><span class="design-badge">设计原型 · 01</span><span class="muted">联系人 / 对话</span></div>
+ <div class="design-brand"><strong>Saki</strong><span class="design-badge">设计原型 · 02</span><span class="muted">气泡对话</span></div>
  <div class="design-controls">
   <div class="segmented" aria-label="预览主题"><button data-theme-choice="moon" aria-pressed="true">Moon</button><button data-theme-choice="dawn" aria-pressed="false">Dawn</button></div>
-  <label>场景 <select id="scene"><option value="ready">阅读结果</option><option value="working">工作中</option><option value="error">启动异常</option><option value="empty">空对话</option></select></label>
+  <label>场景 <select id="scene"><option value="ready">日常对话</option><option value="rich">表格与图表</option><option value="working">工作中</option><option value="error">启动异常</option><option value="empty">空对话</option></select></label>
+  <button id="finish-demo" class="pill" hidden>模拟回复完成</button>
   <label>画布 <select id="frame"><option value="1040">1040</option><option value="960">960</option><option value="1200">1200</option></select></label>
  </div>
 </div>
@@ -184,33 +221,49 @@ to{opacity:1;transform:translateX(0)}
   </header>
   <section class="error reading" id="error-banner" role="alert" hidden><strong>尚未启动 · 找不到运行程序</strong><p>已保留草稿。请确认应用包含 Saki-runtime，或配置其位置后重启应用。</p><button id="diagnostics">查看启动诊断</button></section>
   <div class="scroll" id="scroll"><div class="conversation reading" id="conversation">
-   <div id="thread"><div class="date">今天</div><div class="user-bubble" id="user-message" tabindex="-1">帮我把周末去海边的小旅行，整理成一份轻松的安排。先看 notes/trip.md，不要改文件。</div>
-    <article class="assistant">
-     <details class="tool" id="tool"><summary><svg aria-hidden="true" class="chevron"><use href="#i-chevron"/></svg><svg aria-hidden="true" class="ok"><use href="#i-check"/></svg><span id="tool-label">已读取 notes/trip.md</span><span class="grow"></span><span>read</span></summary><div class="tool-output"><div class="row between"><span>notes/trip.md · 读取成功</span><span>6 行</span></div><pre>出发：周六上午，不赶早班车
-想做：看海、喝咖啡、散步
-住一晚；周日下午回来
-记得：防晒、充电器、薄外套
-预算和住宿待确认
-不改动任何文件</pre></div></details>
-     <div id="working-content" hidden><div class="activity"><span class="spinner"></span><span id="activity-text">正在整理行程</span></div><p class="working-copy">已读完你的笔记。我会把周末留得宽松一些，先整理路线和需要确认的事情。</p></div>
-     <div id="answer"><h2 id="answer-heading" tabindex="-1">周末去看海，慢一点也很好。</h2><p>按你的笔记，不排满景点。把这两天留给散步、咖啡和海边的风。</p><ul><li><strong>周六 · 轻松出发</strong><br>上午出发，午后入住。找一家海边咖啡店，傍晚沿海岸散步。</li><li><strong>周日 · 不赶时间</strong><br>睡到自然醒，吃完早午餐再走一段海边，下午返程。</li></ul><div class="answer-card"><div class="row"><svg aria-hidden="true"><use href="#i-file"/></svg><strong>出发前，确认这三件事</strong></div><span>住宿与预算、往返车次、天气。记得带上防晒、充电器和薄外套。</span></div><div class="answer-actions"><span>已完成 · 未修改文件</span><button id="copy-answer"><svg aria-hidden="true"><use href="#i-copy"/></svg>复制回复</button></div></div>
-     <div class="interrupted" id="interrupted" hidden><svg aria-hidden="true"><use href="#i-stop"/></svg>已停止 · 已有内容仍保留</div>
-    </article>
-   </div>
+   <div class="date" id="date-label">今天 · 10:42</div>
+   <div id="thread" aria-label="消息记录"></div>
    <section class="empty" id="empty" hidden><img class="avatar" src="assets/saki-avatar-default.png" alt=""><h2>从一件小事开始。</h2><p>整理一个想法，读一份资料，<br>或把想做的事，慢慢说清楚。</p></section>
   </div></div>
   <div class="composer-wrap reading"><div class="composer"><label for="draft" class="sr-only">给当前联系人的消息</label><textarea id="draft" placeholder="还有什么想一起想想的？" rows="2"></textarea><div class="composer-footer"><button class="workspace" id="workspace"><svg aria-hidden="true"><use href="#i-folder"/></svg><span>notes/</span></button><button class="send" id="send" aria-label="发送消息"><svg aria-hidden="true"><use href="#i-arrow"/></svg></button></div></div><div class="compose-hint"><span id="hint">Enter 发送 · Shift Enter 换行</span><span id="draft-state">草稿仅保存在此原型页面</span></div></div>
  </main>
  <dialog class="panel" id="panel" aria-labelledby="panel-title"><div class="panel-head"><h2 id="panel-title">设置</h2><button class="icon" id="close-panel" aria-label="关闭面板"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div><div class="panel-content" id="panel-content"></div></dialog>
 </div>
-<div class="design-note"><span>设计模拟 · 不发送真实请求。可试：主题、场景、工具详情、历史、设置与草稿切换。</span><span>沿用现有 GUI · Rosé Pine Moon / Dawn</span></div>
+<div class="design-note"><span>设计模拟 · 不发送真实请求。消息会追加到对话中；可试富文本展开、连续发送与停止。</span><span>沿用现有 GUI · Rosé Pine Moon / Dawn</span></div>
+<dialog id="content-modal" class="content-modal" aria-labelledby="content-title"><div class="row between"><h2 id="content-title">内容详情</h2><button id="close-content" class="icon" aria-label="关闭内容详情"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div><div id="content-detail"></div></dialog>
 <div class="toast" id="toast" role="status" hidden></div><div class="sr-only" role="status" aria-live="polite" id="live"></div>
+<template id="trip-reply">
+ <details class="tool"><summary><svg aria-hidden="true" class="chevron"><use href="#i-chevron"/></svg><svg aria-hidden="true" class="ok"><use href="#i-check"/></svg><span>读完了 notes/trip.md</span><span class="grow"></span><span>read</span></summary><div class="tool-output"><div class="row between"><span>notes/trip.md</span><span>6 行</span></div><pre>出发：周六上午，不赶早班车
+想做：看海、喝咖啡、散步
+住一晚；周日下午回来
+记得：防晒、充电器、薄外套
+预算和住宿待确认
+不改动任何文件</pre></div></details>
+ <p>那就慢慢来。周六看海，周日睡到自然醒，其他时间都留白。</p>
+ <details class="message-detail"><summary>看看两天怎么安排</summary><ul><li><strong>周六</strong> · 上午出发，午后入住。喝杯咖啡，等傍晚再去海边散步。</li><li><strong>周日</strong> · 吃完早午餐，再走一段海边。下午从容返程。</li></ul></details>
+ <p>住宿和预算还没定。要先一起看看住哪里吗？</p>
+</template>
+<template id="rich-reply">
+ <p>可以，我把安排和时间分配放在一起了。依然留出一半时间自由活动。</p>
+ <h3>两天的安排</h3>
+ <div class="table-wrap"><table><caption>行程草案 · Markdown 表格呈现示例</caption><colgroup><col style="width:18%"><col style="width:31%"><col style="width:29%"><col style="width:22%"></colgroup><thead><tr><th scope="col">时间</th><th scope="col">安排</th><th scope="col">地点 / 路线</th><th scope="col">需要确认</th></tr></thead><tbody><tr><th scope="row">周六上午</th><td>不赶早班车，慢慢出发</td><td>家 → 海边小镇</td><td>往返车次</td></tr><tr><th scope="row">周六午后</th><td>入住、咖啡、海边散步</td><td>民宿 → 海边步道</td><td>住宿预算</td></tr><tr><th scope="row">周日白天</th><td>早午餐，自由走走</td><td>小镇 → 车站</td><td>返程时间</td></tr></tbody></table></div>
+ <div class="table-actions"><button type="button" data-expand-content="table">展开查看表格</button></div>
+ <figure class="chart"><figcaption>把时间留给喜欢的事</figcaption><svg viewBox="0 0 400 134" role="img" aria-label="计划时间分配：自由活动六小时，看海散步四小时，咖啡早午餐两小时。"><text x="0" y="24">自由活动</text><rect class="track" x="92" y="9" width="258" height="20" rx="5"/><rect class="bar-rose" x="92" y="9" width="258" height="20" rx="5"/><text x="362" y="24">6h</text><text x="0" y="67">看海散步</text><rect class="track" x="92" y="52" width="258" height="20" rx="5"/><rect class="bar-iris" x="92" y="52" width="172" height="20" rx="5"/><text x="362" y="67">4h</text><text x="0" y="110">咖啡早午餐</text><rect class="track" x="92" y="95" width="258" height="20" rx="5"/><rect class="bar-foam" x="92" y="95" width="86" height="20" rx="5"/><text x="362" y="110">2h</text></svg><div class="row between"><span class="chart-note">计划值 · 示例数据，未含交通和睡眠</span><button type="button" data-expand-content="chart">放大图表</button></div></figure>
+ <p>防晒、充电器和薄外套记得带。你想先定住宿，还是再把行程放松一点？</p>
+</template>
 <script>
 const $=id=>document.getElementById(id);
-const contacts=[{name:'Saki',draft:'',state:'ready',message:'帮我把周末去海边的小旅行，整理成一份轻松的安排。先看 notes/trip.md，不要改文件。',bound:true,purpose:'日常整理与阅读',directory:'notes/'},{name:'Mio',draft:'帮我整理一下明天想读的资料',state:'empty',message:'',bound:false,purpose:'',directory:''}];
-let selected=0,panelKind='',panelOrigin=null,stopTimer=null,toastTimer=null;
+function sampleMessages(rich=false){return [
+ {role:'user',text:'周末想去海边待两天，帮我安排得轻松一点。',time:'10:42'},
+ {role:'assistant',text:'好呀。你更想四处逛逛，还是找个地方慢慢待着？',time:'10:42'},
+ {role:'user',text:rich?'慢慢待着。看看 notes/trip.md，用表格和图表帮我理一下，先不要改文件。':'慢慢待着。看看 notes/trip.md，别安排太满，也先不要改文件。',time:'10:43'},
+ {role:'assistant',kind:rich?'rich':'trip',time:'10:43'}
+]}
+const contacts=[{name:'Saki',draft:'',state:'ready',messages:sampleMessages(),bound:true,purpose:'日常整理与阅读',directory:'notes/'},{name:'Mio',draft:'帮我整理一下明天想读的资料',state:'empty',messages:[],bound:false,purpose:'',directory:''}];
+let selected=0,panelKind='',panelOrigin=null,contentOrigin=null,stopTimer=null,toastTimer=null;
 const active=()=>contacts[selected];
 const icon=name=>`<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
+const isBusy=c=>['working','stopping'].includes(c.state);
 function announce(text){$('live').textContent=text}
 function toast(text){clearTimeout(toastTimer);$('toast').textContent=text;$('toast').hidden=false;toastTimer=setTimeout(()=>$('toast').hidden=true,2200)}
 function setTheme(theme){document.documentElement.dataset.theme=theme;document.querySelectorAll('[data-theme-choice]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.themeChoice===theme)))}
@@ -220,34 +273,62 @@ function renderContacts(){
   const button=document.createElement('button');button.className='contact';button.setAttribute('aria-current',String(i===selected));
   const image=document.createElement('img');image.src='assets/saki-avatar-default.png';image.className='avatar';image.alt='';
   const text=document.createElement('div');text.className='grow';const name=document.createElement('div');name.className='name';name.textContent=contact.name;
-  const snippet=document.createElement('div');snippet.className='snippet';snippet.textContent=contact.state==='working'?'工作中 · 正在整理':contact.state==='stopping'?'正在停止':contact.state==='interrupted'?'已停止':contact.draft?'草稿 · '+contact.draft:contact.state==='empty'?'新对话':contact.state==='error'?'需要检查启动配置':'周末去看海，慢一点';
-  text.append(name,snippet);button.append(image,text);button.addEventListener('click',()=>{active().draft=$('draft').value;selected=i;closePanel(false);render()});$('contacts').append(button);
+  const snippet=document.createElement('div');snippet.className='snippet';snippet.textContent=contact.state==='working'?'工作中 · 正在整理':contact.state==='stopping'?'正在停止':contact.state==='interrupted'?'已停止':contact.draft?'草稿 · '+contact.draft:contact.state==='empty'?'新对话':contact.state==='error'?'需要检查启动配置':contact.messages.at(-1)?.text||'要先一起看看住哪里吗？';
+  text.append(name,snippet);button.append(image,text);button.addEventListener('click',()=>{active().draft=$('draft').value;selected=i;closePanel(false);render();scrollToLatest()});$('contacts').append(button);
  });
 }
+function renderMessages(){
+ $('thread').replaceChildren();active().messages.forEach((message,index)=>{
+  const row=document.createElement('article');row.className='message '+message.role;row.setAttribute('aria-label',message.role==='user'?'你的消息':active().name+' 的消息');
+  if(message.role==='assistant'){const avatar=document.createElement('img');avatar.src='assets/saki-avatar-default.png';avatar.className='avatar';avatar.alt='';row.append(avatar)}
+  const body=document.createElement('div');body.className='message-body';
+  if(message.role==='assistant'){const sender=document.createElement('div');sender.className='sender';sender.textContent=active().name;body.append(sender)}
+  const bubble=document.createElement('div');bubble.className='bubble';bubble.id='message-'+index;bubble.tabIndex=-1;
+  if(['trip','rich'].includes(message.kind))bubble.append($(message.kind+'-reply').content.cloneNode(true));
+  else{
+   if(['working','stopping'].includes(message.kind)){const activity=document.createElement('div');activity.className='activity';activity.innerHTML='<span class="spinner"></span><span></span>';activity.lastElementChild.textContent=message.kind==='stopping'?'正在停止，请稍候':'正在整理';bubble.append(activity)}
+   if(message.text){const text=document.createElement('p');text.style.whiteSpace='pre-wrap';text.textContent=message.text;bubble.append(text)}
+   if(message.kind==='interrupted'){const status=document.createElement('div');status.className='interrupted';status.innerHTML=icon('stop')+'<span>已停止 · 已有内容仍保留</span>';bubble.append(status)}
+  }
+  const meta=document.createElement('div');meta.className='message-meta';const time=document.createElement('span');time.textContent=message.time+(['trip','rich'].includes(message.kind)?' · 未修改文件':'');meta.append(time);
+  if(message.role==='assistant'&&!['working','stopping'].includes(message.kind)){const copy=document.createElement('button');copy.innerHTML=icon('copy')+'复制';copy.setAttribute('aria-label','复制这条回复');copy.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(bubble.textContent.trim());toast('已复制回复')}catch{toast('未能访问剪贴板，请直接选择回复文字复制')}});meta.append(copy)}
+  bubble.querySelectorAll('[data-expand-content]').forEach(expand=>expand.addEventListener('click',()=>{contentOrigin=expand;const isChart=expand.dataset.expandContent==='chart';const content=bubble.querySelector(isChart?'.chart':'.table-wrap').cloneNode(true);content.querySelectorAll('button').forEach(button=>button.remove());$('content-title').textContent=isChart?'时间分配 · 图表示例':'两天的安排 · 表格详情';$('content-detail').replaceChildren(content);$('content-modal').showModal();$('close-content').focus()}));
+  body.append(bubble,meta);row.append(body);$('thread').append(row);
+ });
+}
+function scrollToLatest(){$('scroll').scrollTop=$('scroll').scrollHeight}
+function sizeDraft(){$('draft').style.height='auto';$('draft').style.height=Math.min(140,$('draft').scrollHeight)+'px'}
 function render(){
- const c=active(),busy=['working','stopping'].includes(c.state),otherBusy=contacts.some((x,i)=>i!==selected&&['working','stopping'].includes(x.state));
- $('workspace').querySelector('span').textContent=c.directory||'默认工作目录';$('contact-name').textContent=c.name;$('status-text').textContent={ready:'可以继续聊',working:'工作中',stopping:'正在停止',interrupted:'已停止',error:'需要检查启动配置',empty:'新的开始'}[c.state];
+ const c=active(),busy=isBusy(c),otherBusy=contacts.some((x,i)=>i!==selected&&isBusy(x));
+ $('workspace').querySelector('span').textContent=c.directory||'默认工作目录';$('contact-name').textContent=c.name;$('status-text').textContent={ready:'可以继续聊',rich:'可以继续聊',working:'工作中',stopping:'正在停止',interrupted:'已停止',error:'需要检查启动配置',empty:'新的开始'}[c.state];
  $('status-text').style.color=busy?'var(--success)':c.state==='error'?'var(--danger)':'var(--muted)';
- $('draft').value=c.draft;$('draft').placeholder=c.state==='empty'?'想让 '+c.name+' 帮你做什么？':'还有什么想一起想想的？';
- $('error-banner').hidden=c.state!=='error';$('empty').hidden=c.state!=='empty';$('thread').hidden=c.state==='empty';$('user-message').textContent=c.message;
- $('answer').hidden=busy||c.state==='interrupted';$('working-content').hidden=!busy&&c.state!=='interrupted';$('activity-text').textContent=c.state==='stopping'?'正在停止，请稍候':c.state==='interrupted'?'本次整理已停止':'正在整理行程';
- document.querySelector('.spinner').hidden=c.state==='interrupted';$('interrupted').hidden=c.state!=='interrupted';
+ $('draft').value=c.draft;$('draft').placeholder=c.messages.length?'给 '+c.name+' 发消息…':'想让 '+c.name+' 帮你做什么？';sizeDraft();
+ $('error-banner').hidden=c.state!=='error';$('empty').hidden=!!c.messages.length;$('date-label').hidden=!c.messages.length;
  $('scene').value=['interrupted','stopping'].includes(c.state)?'working':c.state;
+ $('finish-demo').hidden=c.state!=='working';
  $('send').classList.toggle('stop',busy);$('send').innerHTML=busy?icon('stop')+(c.state==='stopping'?'停止中':'停止'):icon('arrow');
  $('send').setAttribute('aria-label',busy?'停止当前任务':'发送消息');$('send').disabled=c.state==='stopping'||c.state==='error'||otherBusy||(!busy&&!c.draft.trim());
  $('hint').textContent=c.state==='error'?'启动恢复后才可发送；草稿仍可编辑':otherBusy?'另一个联系人正在工作，暂不可发送':busy?'可以先写下一条，草稿会保留':'Enter 发送 · Shift Enter 换行';
- renderContacts();
+ renderMessages();renderContacts();
 }
-function changeScene(scene){clearTimeout(stopTimer);contacts.forEach(c=>{if(['working','stopping'].includes(c.state))c.state='ready'});active().state=scene;active().message=contacts[0].message||'请帮我整理周末的安排。';closePanel(false);render();$('scroll').scrollTop=0;announce('设计场景：'+$('scene').selectedOptions[0].textContent)}
+function changeScene(scene){
+ clearTimeout(stopTimer);contacts.forEach(c=>{if(isBusy(c)){c.state='interrupted';c.messages.at(-1).kind='interrupted'}});
+ const c=active();c.state=scene;c.messages=scene==='empty'?[]:sampleMessages(scene==='rich');c.bound=scene!=='empty';
+ if(scene==='working')c.messages[c.messages.length-1]={role:'assistant',kind:'working',text:'读完笔记了。我先把周末的时间留得宽松一些。',time:'10:43'};
+ closePanel(false);render();if(scene==='rich')$('message-3').closest('.message').scrollIntoView({block:'start'});else scrollToLatest();announce('设计场景：'+$('scene').selectedOptions[0].textContent);
+}
 $('scene').addEventListener('change',e=>changeScene(e.target.value));
-$('draft').addEventListener('input',()=>{active().draft=$('draft').value;renderContacts();const busy=['working','stopping'].includes(active().state);$('send').disabled=active().state==='stopping'||active().state==='error'||contacts.some((c,i)=>i!==selected&&['working','stopping'].includes(c.state))||(!busy&&!active().draft.trim());$('draft').style.height='auto';$('draft').style.height=Math.min(140,$('draft').scrollHeight)+'px'});
+$('draft').addEventListener('input',()=>{active().draft=$('draft').value;renderContacts();const busy=isBusy(active());$('send').disabled=active().state==='stopping'||active().state==='error'||contacts.some((c,i)=>i!==selected&&isBusy(c))||(!busy&&!active().draft.trim());sizeDraft()});
 function send(){
  if($('send').disabled)return;const c=active();
- if(c.state==='working'){c.state='stopping';render();announce('停止请求已发送，等待结束');stopTimer=setTimeout(()=>{c.state='interrupted';render();announce('模拟任务已停止')},650);return}
- c.message=c.draft;c.draft='';c.state='working';c.bound=true;render();$('scroll').scrollTop=0;announce('模拟任务开始；可以点击停止或切换阅读场景')
+ if(c.state==='working'){c.state='stopping';c.messages.at(-1).kind='stopping';render();announce('停止请求已发送，等待结束');stopTimer=setTimeout(()=>{c.state='interrupted';c.messages.at(-1).kind='interrupted';render();announce('模拟任务已停止')},650);return}
+ c.messages.push({role:'user',text:c.draft,time:'刚刚'},{role:'assistant',kind:'working',text:'收到你的消息了，正在整理。',time:'刚刚'});c.draft='';c.state='working';c.bound=true;render();scrollToLatest();$('draft').focus();announce('模拟任务开始；可停止，或点击上方模拟回复完成');
 }
+$('finish-demo').addEventListener('click',()=>{const c=active();if(c.state!=='working')return;const reply=c.messages.at(-1);reply.kind='text';reply.text='收到，我们就从这里继续聊。这里是一条模拟回复，实际应用会显示 Agent 的输出。';c.state='ready';render();scrollToLatest();$('draft').focus();announce('模拟回复已追加，前面的消息仍保留')});
 $('send').addEventListener('click',send);$('draft').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();send()}});
-$('add-contact').addEventListener('click',()=>{active().draft=$('draft').value;contacts.push({name:'新联系人 '+contacts.length,draft:'',state:'empty',message:'',bound:false,purpose:'',directory:''});selected=contacts.length-1;closePanel(false);render();$('draft').focus();announce('已添加联系人')});
+$('add-contact').addEventListener('click',()=>{active().draft=$('draft').value;contacts.push({name:'新联系人 '+contacts.length,draft:'',state:'empty',messages:[],bound:false,purpose:'',directory:''});selected=contacts.length-1;closePanel(false);render();$('draft').focus();announce('已添加联系人')});
+function closeContent(){$('content-modal').close();contentOrigin?.focus()}
+$('close-content').addEventListener('click',closeContent);$('content-modal').addEventListener('cancel',e=>{e.preventDefault();closeContent()});
 function closePanel(restore=true){if(!$('panel').open)return;$('panel').close();$('app').classList.remove('panel-open');['history-button','settings-button'].forEach(id=>$(id).setAttribute('aria-expanded','false'));if(restore&&panelOrigin)panelOrigin.focus();panelKind=''}
 function openPanel(kind,origin){
  if(panelKind===kind&&$('panel').open){closePanel();return}closePanel(false);panelKind=kind;panelOrigin=origin;$('app').classList.add('panel-open');
@@ -255,12 +336,13 @@ function openPanel(kind,origin){
  if(kind==='settings'){
   $('settings-button').setAttribute('aria-expanded','true');
   $('panel-content').innerHTML='<label for="profile-name">名称</label><input class="field" id="profile-name"><label for="purpose">用途</label><input class="field" id="purpose"><label for="directory">工作目录</label><input class="field" id="directory"><p class="help">'+(active().bound?'此联系人已绑定会话。用途与工作目录在首次发送时确定，名称可单独修改。':'这些设置是可选的，将在首次发送时使用。')+'</p><div class="section-title">应用外观</div><div class="theme-options"><button data-theme-choice="moon"><span class="swatch"></span>Moon</button><button data-theme-choice="dawn"><span class="swatch dawn"></span>Dawn</button></div><p class="help">应用级预览，同时应用到所有联系人。</p><div class="section-title">模型配置</div><p class="help">模型由应用启动时的配置决定。</p>';
-  $('purpose').value=active().purpose;$('directory').value=active().directory;for(const [id,key] of [['purpose','purpose'],['directory','directory']]){$(id).disabled=active().bound;$(id).addEventListener('input',()=>{active()[key]=$(id).value;if(key==='directory')$('workspace').querySelector('span').textContent=active().directory||'默认工作目录'})}$('profile-name').value=active().name;$('profile-name').addEventListener('input',()=>{active().name=$('profile-name').value||'未命名联系人';$('contact-name').textContent=active().name;renderContacts()});setTheme(document.documentElement.dataset.theme);
+  $('purpose').value=active().purpose;$('directory').value=active().directory;for(const [id,key] of [['purpose','purpose'],['directory','directory']]){$(id).disabled=active().bound;$(id).addEventListener('input',()=>{active()[key]=$(id).value;if(key==='directory')$('workspace').querySelector('span').textContent=active().directory||'默认工作目录'})}$('profile-name').value=active().name;$('profile-name').addEventListener('input',()=>{active().name=$('profile-name').value||'未命名联系人';$('contact-name').textContent=active().name;renderContacts();document.querySelectorAll('.sender').forEach(sender=>sender.textContent=active().name)});setTheme(document.documentElement.dataset.theme);
  }else if(kind==='history'){
   $('history-button').setAttribute('aria-expanded','true');
   $('panel-content').innerHTML='<label for="history-search">查找这段对话</label><input class="field" id="history-search" type="search" placeholder="输入关键词"><p class="help">本原型只有一条示例记录。</p><button class="history-row" id="history-result"><strong>周末去看海</strong><span>今天 · 一份轻松的两日安排</span></button><p class="help" id="no-results" hidden>没有匹配的记录。</p>';
-  const hasHistory=active().bound&&active().state!=='empty';$('history-result').hidden=!hasHistory;if(!hasHistory){$('no-results').hidden=false;$('no-results').textContent='此联系人还没有历史记录。'}$('history-search').addEventListener('input',()=>{const found=hasHistory&&'周末去看海轻松旅行行程安排'.includes($('history-search').value.trim());$('history-result').hidden=!found;$('no-results').hidden=found});
-  $('history-result').addEventListener('click',()=>{closePanel(false);const target=$('answer').hidden?$('user-message'):$('answer-heading');target.scrollIntoView({block:'center'});target.focus();announce('已定位到示例对话')});
+  const hasHistory=active().messages.length>0;const title=active().messages.find(message=>message.role==='user')?.text||'';$('history-result').querySelector('strong').textContent=title;$('history-result').querySelector('span').textContent='今天 · '+active().messages.length+' 条消息';
+  $('history-result').hidden=!hasHistory;if(!hasHistory){$('no-results').hidden=false;$('no-results').textContent='此联系人还没有历史记录。'}$('history-search').addEventListener('input',()=>{const found=hasHistory&&active().messages.some(message=>(message.text||$(message.kind+'-reply')?.content.textContent||'').includes($('history-search').value.trim()));$('history-result').hidden=!found;$('no-results').hidden=found});
+  $('history-result').addEventListener('click',()=>{closePanel(false);const target=$('message-0');target.scrollIntoView({block:'start'});target.focus();announce('已定位到这段对话的第一条消息')});
  }else{
   $('panel-content').innerHTML='<p class="help">以下为设计示例，不读取本机配置。</p><div class="section-title">失败阶段</div><h3>定位运行程序</h3><p class="help">应用尚未建立运行连接，任务未发送。</p><div class="section-title">可执行的下一步</div><ol class="help"><li>确认应用安装包内包含 Saki-runtime。</li><li>自行构建时，核对运行程序位置。</li><li>修正配置后重新启动应用。</li></ol><div class="section-title">已保留</div><p class="help">本页草稿可以继续编辑。真实应用的草稿与历史恢复以存储和 Runtime 已确认的数据为准。</p>';
  }
@@ -270,8 +352,7 @@ function openPanel(kind,origin){
 $('history-button').addEventListener('click',e=>openPanel('history',e.currentTarget));$('settings-button').addEventListener('click',e=>openPanel('settings',e.currentTarget));$('appearance').addEventListener('click',e=>openPanel('settings',e.currentTarget));$('workspace').addEventListener('click',e=>openPanel('settings',e.currentTarget));$('diagnostics').addEventListener('click',e=>openPanel('diagnostics',e.currentTarget));$('close-panel').addEventListener('click',()=>closePanel());$('panel').addEventListener('cancel',e=>{e.preventDefault();closePanel()});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('panel').open){e.preventDefault();closePanel()}});
 function layout(){const rect=$('app').getBoundingClientRect();$('app').style.setProperty('--panel-top',rect.top+'px');$('app').style.setProperty('--panel-right',(innerWidth-rect.right)+'px');$('app').style.setProperty('--panel-height',rect.height+'px');const wide=rect.width>=1120;if(wide!==$('app').classList.contains('wide')){closePanel(false);$('app').classList.toggle('wide',wide)}}
 $('frame').addEventListener('change',e=>{closePanel(false);document.documentElement.style.setProperty('--frame',e.target.value+'px');layout()});new ResizeObserver(layout).observe($('app'));window.addEventListener('resize',layout);
-$('copy-answer').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('answer-heading').textContent+'\n\n'+$('answer').querySelector('p').textContent+'\n'+[...$('answer').querySelectorAll('li')].map(li=>li.textContent).join('\n')+'\n'+$('answer').querySelector('.answer-card').textContent);toast('已复制回复')}catch{toast('未能访问剪贴板，请直接选择回复文字复制')}});
-render();layout();
+render();layout();scrollToLatest();
 </script>
 </body>
 </html>
