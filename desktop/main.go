@@ -42,7 +42,7 @@ func main() {
 			Title:     "Saki",
 			Width:     1040,
 			Height:    720,
-			MinWidth:  960,
+			MinWidth:  720,
 			MinHeight: 640,
 			Content:   ui.View(a.view),
 		})

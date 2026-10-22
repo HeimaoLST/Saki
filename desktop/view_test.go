@@ -601,6 +601,20 @@ func runtimePreviewApp(scene string) *appModel {
 		bound.Works[0].Prompt = "Inspect README.md and summarize the project."
 		bound.Works[0].Tools[0].Finished = false
 		bound.Works[0].Tools[0].Output = ""
+	case "runtime-progress":
+		bound.Status = statusWorking
+		bound.Work = "Waiting for model"
+		bound.ActiveTaskID = "task-preview"
+		bound.SendState = sendAccepted
+		bound.Messages = append(bound.Messages, &message{
+			Key: "live:task-preview:progress", Kind: msgContact,
+			Text: "I found the first heading; checking the rest of the file before summarizing.",
+		})
+		bound.Works[0].State = workRunning
+		bound.Works[0].Prompt = "Inspect README.md and summarize the project."
+	case "runtime-empty":
+		a.contacts = []*contact{{ID: "saki", Name: "Saki", Role: "Assistant", Status: statusReady}}
+		a.selected = 0
 	case "runtime-error":
 		bound.Status = statusAttention
 		bound.StatusDetail = "Task failed: model_error: upstream request failed"
@@ -620,39 +634,34 @@ func TestPreviewRuntimeStates(t *testing.T) {
 	if err := loadAvatar(); err != nil {
 		t.Fatal(err)
 	}
-	scenes := []string{"runtime-chat", "runtime-working", "runtime-error", "runtime-settings"}
-	for _, dark := range []bool{false, true} {
+	write := func(scene string, width, height int, dark bool) {
 		theme := "light"
 		if dark {
 			theme = "dark"
 		}
-		for _, scene := range scenes {
-			a := runtimePreviewApp(scene)
-			a.windowWidth = 1040
-			tr := ui.NewTester(a.view, 1040, 720)
-			tr.SetDark(dark)
-			tr.Frame()
-			writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("headless-%s-%s.png", theme, scene)), tr.Image())
-		}
-	}
-	for _, scene := range []string{"runtime-chat", "runtime-working", "runtime-settings"} {
 		a := runtimePreviewApp(scene)
-		a.windowWidth = 960
-		tr := ui.NewTester(a.view, 960, 640)
+		a.windowWidth = width
+		tr := ui.NewTester(a.view, width, height)
+		tr.SetDark(dark)
 		tr.Frame()
-		writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("headless-light-min-%s.png", scene)), tr.Image())
+		writePreviewPNG(t, filepath.Join(dir,
+			fmt.Sprintf("headless-%s-%s-%dx%d.png", theme, scene, width, height)), tr.Image())
 	}
-	a := runtimePreviewApp("runtime-working")
-	a.windowWidth = 1600
-	tr := ui.NewTester(a.view, 1600, 900)
-	tr.Frame()
-	writePreviewPNG(t, filepath.Join(dir, "headless-light-wide-runtime-working.png"), tr.Image())
-
-	a = runtimePreviewApp("runtime-working")
-	a.windowWidth = 900
-	tr = ui.NewTester(a.view, 900, 640)
-	tr.Frame()
-	writePreviewPNG(t, filepath.Join(dir, "headless-light-narrow-runtime-work-overlay.png"), tr.Image())
+	for _, dark := range []bool{false, true} {
+		for _, size := range []struct {
+			width, height int
+		}{{1040, 720}, {960, 640}, {1380, 900}} {
+			for _, scene := range []string{"runtime-chat", "runtime-working", "runtime-progress", "runtime-empty"} {
+				write(scene, size.width, size.height, dark)
+			}
+		}
+		for _, scene := range []string{"runtime-error", "runtime-settings"} {
+			write(scene, 1040, 720, dark)
+		}
+		// Overlay proof at 900; the native minimum is now 720, so this
+		// presentation is reachable in the real window.
+		write("runtime-working", 900, 640, dark)
+	}
 }
 
 func TestToolFailureIsVisibleBeforeDetails(t *testing.T) {
