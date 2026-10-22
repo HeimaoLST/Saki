@@ -93,16 +93,19 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 
 ## 原生工作台（#130，实现事实）
 
-更新于 2026-10-22。产品源码 `d4b4499`；本条只记录 GUI 实现事实，不修改 [desktop-workbench.md](desktop-workbench.md) 的 PM 设计权威内容。
+更新于 2026-10-22。产品源码 `9e53bb9`；本条只记录 GUI 实现事实，不修改 [desktop-workbench.md](desktop-workbench.md) 的 PM 设计权威内容。
 
 - 三栏布局：宽度 ≥1120 时联系人栏 200px、工作区 360px；960–1119 使用 160px／320px 紧凑列；低于 960 时工作区通过带遮罩的模态覆盖打开，Close 始终可见。原生窗口最低宽度调整为 720px（高度仍 640px），使 900px 的覆盖分支可由实际 `ContentSize` 到达；960/1040/宽屏同样由实际内容宽度分类，headless 显式设置对应宽度。联系人栏可收起并由页头 Contacts 重开；工作区可收起并由 Work 重开；收起、覆盖、关闭和 Escape 后恢复入口焦点，侧栏/工作区状态不停止任务。
-- 颜色：使用既有单一 `ui.Theme` 语义映射实现 Paper & Moss（light Paper／dark Night Forest），不新增主题加载、保存或主题框架；完整 Appearance 模式与持久化仍归 #96，联系人设置不承载应用外观。
-- 消息与工作分开：用户/助手真实文本留在左右气泡，按 task/item 稳定 key 聚合增量、最终和历史，不因工具或完成追加占位回复。工具活动进入按 task/call 归属的 Work 投影，显示状态、摘要、详情和原文 Copy；工具失败只影响工具/工作呈现，不直接把任务判为失败。没有 Task ID 的旧工具记录保留为 “Earlier activity”，不伪造 task 归属。
-- 执行事实：`task_started`、`tool_started/finished`、`task_finished` 与 cancel 回复驱动 accepted/running/stopping/completed/failed/interrupted/unknown；Stop 针对当前 `ActiveTaskID`，取消结果不直接生成“已停止”，等待 `task_finished`。旧任务迟到 start/terminal 不会复活或污染新任务。单执行槽下其他联系人明确显示 busy/disabled，草稿不丢、不停止当前任务。
+- 颜色：按 PM 固定 `2182c1a` 的 root/night 数值，一次解析为小型 `workbenchTheme`（既有 `ui.Theme` + `Rail`/`BubbleUser`/`WorkSurface`/`WorkText`/`WorkMuted`/`WorkAttention`），组件不写 hex、不按品牌分支。用户气泡使用 `BubbleUser`，联系人栏使用 `Rail`，当前工作卡使用深色 `WorkSurface` hero；完整 Appearance 模式与持久化仍归 #96，联系人设置不承载应用外观。
+- 消息与工作分开：用户/助手真实文本留在左右气泡，按 task/item 稳定 key 聚合增量、最终和历史，不因工具或完成追加占位回复。工具活动进入按 task/call 归属的 Work 投影，显示状态、摘要、详情和原文 Copy；工具失败只影响工具/工作呈现，不直接把任务判为失败。没有 Task ID 的旧工具记录保留为 “Earlier activity”，不伪造 task 归属。当前工作卡是 `WorkSurface` hero，标题只保留一次 Current/Recent work，任务目的、状态与最新动作分层；工具正文不套用 hero。
+- 执行事实：`task_started`、`tool_started/finished`、`task_finished` 与 cancel 回复驱动 accepted/running/stopping/completed/failed/interrupted/unknown；Stop 针对当前 `ActiveTaskID`，取消结果不直接生成“已停止”，等待 `task_finished`；由 Stop 请求后的 interrupted 显示 `Stopped · interrupted`，保留中断原因，未请求停止的历史仍显示 Interrupted。旧任务迟到 start/terminal 不会复活或污染新任务。单执行槽下其他联系人明确显示 busy/disabled，草稿不丢、不停止当前任务。
 - 聊天未读只由新 Agent 文本消息增加；工具、普通完成、reload 和 restart 不重复计数；失败/未知仍通过 contact attention 与工作详情持续可见。未加载 session 的聊天/工作/History 显示未加载或不可用，不声称“没有历史”。Store 失败仍走既有本地 store fallback。
+- History：使用带遮罩的临时 modal 覆盖聊天/工作三栏，不把 `screen` 替换成主视图；Close/Escape/Backdrop 关闭后回到原三栏并恢复 History 入口焦点。搜索合并已落盘 `History` 与当前 `ct.Messages` 的真实文本，运行中尚未 reload 的消息仍可读；query 为空且无记录时显示 “No saved messages”，不伪报 “Try a shorter phrase”；session 未加载时显示未加载。View in conversation 关闭 modal 并定位原消息。
 - 恢复：`applyHistory` 从现有 Runtime 记录重建最近 task/call，保留文本、草稿和可查看工具输出；缺 task ID 的旧记录只保留可读活动，不新造关联。关闭/切换/History/Settings 往返不停止执行。
-- 测试：`go test ./...`、vet/build/gofmt/diffcheck 通过；`SAKI_TEST_RUNTIME_BIN=<dev helper> CGO_ENABLED=0 go test -race ./... -count=1` PASS 11.744s（日志 `/private/tmp/saki-gui-130/race-final.log`）；5 项真实 Go→Rust 集成 PASS。Headless 证据在 `/private/tmp/saki-gui-130/previews/`：30 张 runtime `ui.Tester` 图，覆盖 1040×720、960×640、1380×900、900×640 覆盖，明暗，以及 tool-only、文本仍在工作、真实空态、错误/设置；不是 native 窗口、IME 或显式 copy 验收。
-- 未验：真实 MyGo 窗口的 960/覆盖/Esc/焦点/原生剪贴板、用户动效/IME、PM 视觉复核；不以 headless 或 Tester 结果替代。当前工作区仍是默认单执行槽，不宣称并发或运行中 follow-up。
+- 测试：`go test ./...`、vet/build/gofmt/diffcheck 通过；`SAKI_TEST_RUNTIME_BIN=<dev helper> CGO_ENABLED=0 go test -race ./... -count=1` PASS 11.560s（日志 `/private/tmp/saki-gui-130/race-review2.log`）；5 项真实 Go→Rust 集成 PASS。新 hero/history headless 在 `/private/tmp/saki-gui-130/previews-9e53bb9/`：32 张 runtime `ui.Tester` 图，覆盖 1040×720、960×640、1380×900、900×640 覆盖、明暗、hero/progress/empty/history；不是 native 窗口、IME 或显式 copy 验收。旧 `previews/` 的 d4 图保留，不覆盖。
+- 独立候选包仍为 `/private/tmp/saki-gui-130-app/Saki.app`，bundle `dev.saki.desktop.workbench130`，构建源 `d4b4499`（当前源码已到 `9e53bb9`，按主责要求不重编当前包）；GUI `90f85e6924e79235d15b70c631b2da8720fb3269d186163c0a6d6ffdcdb981fa`，signed helper `aea5ff1142c989bf793c13ab5468e6f0c62a67d327a20868e3c4188935b2f8d8`。720×640 最低、隔离 `/private/tmp/saki-gui-130-native`，ad-hoc deep/strict 通过，不是发行包。
+- 受控 fixture：`/private/tmp/saki-gui-130/provider_fixture.py`，端口 8140；`tool-progress` 用 Event gate 停住第二/第三请求，`quiet` 无文本 completed，`fail` 合成失败；`GET /control/count`、`POST /control/release`、`POST /control/mode`；日志不记 Authorization，marker 在隔离 workdir。真实 Rust tool-progress 与 quiet smoke 已过；包 GUI 原生 CUA 由主责执行。
+- 未验：真实 MyGo 窗口的 960/720/覆盖/Esc/焦点/原生剪贴板、用户动效/IME、PM 视觉复核；不以 headless 或 Tester 结果替代。当前工作区仍是默认单执行槽，不宣称并发或运行中 follow-up。
 
 ## 验证与证据
 
