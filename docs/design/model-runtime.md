@@ -44,11 +44,12 @@
 - 请求：公共 `InputItem` 转为 messages；连续 `ToolCall` 聚合为一条 assistant 的 `tool_calls`，`ToolResult` 转为 `tool` 消息并携带 `tool_call_id`；工具声明为 `{"type":"function","function":{…}}`。`max_output_tokens`→`max_tokens`，`temperature` 原样传递。`MessageRole::Developer` 保留原生 `developer` 角色，不做供应商降级。
 - 流式：`stream:true` 且请求 `stream_options.include_usage:true`；按 index 聚合跨 chunk／交错的工具参数分片，响应完成后才把完整调用交给 Agent；usage 可缺失并保持未知，不编造 0；支持空 choices 的 usage 尾块与网关直接返回 JSON 的 fallback。
 - 终止：只有 `stop` 与 `tool_calls` 视为完成（JSON 与 SSE 一致）；`length`、`content_filter`、未知原因或缺少 finish_reason 都在客户端失败，不把截断文本或其中的工具调用交给 Agent，已显示的文本不自动重播。[DONE] 单独出现不构成完成。
-- 不可表示的数据：图片输入、Responses 的 reasoning／ProviderItem continuation 在发请求前返回明确转换错误；厂商专用 reasoning 扩展不在本轮。
+- 推理续接（#121 候选，实现事实，尚未合入 dev）：JSON 与 SSE 的 `reasoning_content` 原样聚合并通过现有 Reasoning/ProviderData 写入上下文；下一轮与同一 assistant 的文本和完整工具调用重组，空字符串与缺失区分。无工具调用的历史 assistant 也保留该字段；不伪造供应商未返回的推理。增量使用既有 ReasoningDelta，最终响应仍是写入历史的依据。
+- 不可表示的数据：图片输入、其他 API 的 reasoning／ProviderItem continuation 在发请求前返回明确转换错误。Chat 的 `reasoning_effort` 仍明确拒绝；本次不开放任意厂商参数。
 
-### 已知未支持组合（失败边界，已观察）
+### DeepSeek thinking 工具续接（#121 候选）
 
-DeepSeek thinking 模型经 Chat Completions 的第二轮请求要求回传 `reasoning_content`。本版本不发送也不扩展该字段，因此该模型的多轮工具续接会失败（首轮可正常返回）。这是已运行观察到的真实边界，归类为作者报告／已观察的未支持组合，不是修复或兼容层；如后续要支持，需另行实现并验证，是否开 RFC 取决于是否改变公共契约。
+2026-10-22 Magpie 网关真实验收再次发现旧适配器丢弃 `reasoning_content`，read 已完成但第二轮返回 HTTP 400。候选修复复用已有带 API 身份的续接数据，不新增执行循环、存储 schema 或隐式模型降级。依据 [DeepSeek 官方 thinking 契约](https://api-docs.deepseek.com/guides/thinking_mode/)，携带 tools 时须保留此前各轮 assistant 的 reasoning_content。JSON/SSE、文本与工具同条消息、空推理、无工具的历史轮及序列化恢复有确定性覆盖；实际网关闭环证据随 PR 记录，不将其他网关或模型推定为通过。
 
 ## 流式响应契约
 

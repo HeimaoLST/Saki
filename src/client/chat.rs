@@ -1,8 +1,8 @@
 //! Chat Completions adapter: request JSON, complete JSON and SSE chunks mapped
 //! onto the shared ModelRequest/ModelResponse/ModelStreamEvent types.
 //!
-//! First version: text and function tools. Responses-native continuation data
-//! (reasoning, provider items) is refused before any request is sent.
+//! Text, function tools and Chat-native reasoning continuation. Foreign native
+//! continuation data is refused before any request is sent.
 
 use std::future::Future;
 
@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::protocol::{
     InputContentPart, InputItem, InputMessageContent, MessageRole, ModelRequest, ModelResponse,
-    ModelStreamEvent, OutputItem, OutputText, ToolType, Usage,
+    ModelStreamEvent, OutputItem, OutputText, ProviderData, ReasoningText, ToolType, Usage,
 };
 
 use super::config::ClientConfig;
@@ -210,28 +210,39 @@ fn encode_content(content: &InputMessageContent) -> anyhow::Result<Value> {
 
 /// Consecutive tool calls belong to one assistant message; a tool result flushes
 /// the calls before its own message, so parallel calls keep their order.
-fn flush_calls(messages: &mut Vec<Value>, calls: &mut Vec<Value>) {
-    if calls.is_empty() {
+fn flush_assistant(
+    messages: &mut Vec<Value>,
+    calls: &mut Vec<Value>,
+    reasoning: &mut Option<Value>,
+) {
+    if calls.is_empty() && reasoning.is_none() {
         return;
     }
-    messages.push(json!({
-        "role": "assistant",
-        "content": "",
-        "tool_calls": std::mem::take(calls),
-    }));
+    let mut message = reasoning
+        .take()
+        .unwrap_or_else(|| json!({"role": "assistant", "content": ""}));
+    if !calls.is_empty() {
+        message["tool_calls"] = json!(std::mem::take(calls));
+    }
+    messages.push(message);
 }
 
 fn encode_messages(input: &[InputItem]) -> anyhow::Result<Vec<Value>> {
     let mut messages = Vec::new();
     let mut calls: Vec<Value> = Vec::new();
+    let mut reasoning: Option<Value> = None;
     for item in input {
         match item {
+            InputItem::Message {
+                role: MessageRole::Assistant,
+                content,
+            } if reasoning.is_some() => {
+                reasoning.as_mut().unwrap()["content"] = encode_content(content)?;
+            }
             InputItem::Message { role, content } => {
-                flush_calls(&mut messages, &mut calls);
-                messages.push(json!({
-                    "role": chat_role(role),
-                    "content": encode_content(content)?,
-                }));
+                flush_assistant(&mut messages, &mut calls, &mut reasoning);
+                messages
+                    .push(json!({"role": chat_role(role), "content": encode_content(content)?}));
             }
             InputItem::ToolCall {
                 call_id,
@@ -239,18 +250,24 @@ fn encode_messages(input: &[InputItem]) -> anyhow::Result<Vec<Value>> {
                 arguments,
             } => {
                 calls.push(json!({
-                    "id": call_id,
-                    "type": "function",
+                    "id": call_id, "type": "function",
                     "function": {"name": name, "arguments": arguments},
                 }));
             }
             InputItem::ToolResult { call_id, output } => {
-                flush_calls(&mut messages, &mut calls);
-                messages.push(json!({
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": output,
-                }));
+                flush_assistant(&mut messages, &mut calls, &mut reasoning);
+                messages.push(json!({"role": "tool", "tool_call_id": call_id, "content": output}));
+            }
+            InputItem::Reasoning {
+                provider_data: Some(data),
+                ..
+            } if data.api == API => {
+                let text = data.value["reasoning_content"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("invalid {API} reasoning continuation"))?;
+                flush_assistant(&mut messages, &mut calls, &mut reasoning);
+                reasoning =
+                    Some(json!({"role": "assistant", "content": "", "reasoning_content": text}));
             }
             InputItem::Reasoning { .. } | InputItem::ProviderItem { .. } => {
                 anyhow::bail!(
@@ -261,8 +278,20 @@ fn encode_messages(input: &[InputItem]) -> anyhow::Result<Vec<Value>> {
             }
         }
     }
-    flush_calls(&mut messages, &mut calls);
+    flush_assistant(&mut messages, &mut calls, &mut reasoning);
     Ok(messages)
+}
+
+fn reasoning_output(response_id: &str, text: String) -> OutputItem {
+    OutputItem::Reasoning {
+        id: format!("{response_id}-reasoning"),
+        status: "completed".to_owned(),
+        content: vec![ReasoningText { text: text.clone() }],
+        provider_data: Some(ProviderData {
+            api: API.to_owned(),
+            value: json!({"reasoning_content": text}),
+        }),
+    }
 }
 
 /// `tool_calls` is optional *or null* in the standard Chat schema; a missing
@@ -297,9 +326,13 @@ fn completed(finish: Option<&str>) -> anyhow::Result<()> {
 fn output_from_message(
     response_id: &str,
     content: Option<String>,
+    reasoning_content: Option<String>,
     tool_calls: Vec<ChatToolCall>,
 ) -> Vec<OutputItem> {
     let mut output = Vec::new();
+    if let Some(text) = reasoning_content {
+        output.push(reasoning_output(response_id, text));
+    }
     if let Some(content) = content.filter(|text| !text.is_empty()) {
         output.push(OutputItem::Message {
             id: format!("{response_id}-text"),
@@ -338,6 +371,7 @@ struct ChatChoice {
 #[derive(Deserialize)]
 struct ChatMessage {
     content: Option<String>,
+    reasoning_content: Option<String>,
     #[serde(default, deserialize_with = "absent_or_null")]
     tool_calls: Vec<ChatToolCall>,
 }
@@ -388,6 +422,7 @@ fn decode_response_value(response: ChatResponse) -> anyhow::Result<ModelResponse
         output: output_from_message(
             &response.id,
             choice.message.content,
+            choice.message.reasoning_content,
             choice.message.tool_calls,
         ),
         usage: response.usage.map(Into::into),
@@ -420,6 +455,7 @@ struct StreamChoice {
 #[derive(Deserialize, Default)]
 struct StreamDelta {
     content: Option<String>,
+    reasoning_content: Option<String>,
     #[serde(default)]
     tool_calls: Vec<ToolCallDelta>,
 }
@@ -451,6 +487,7 @@ struct StreamState {
     model: Option<String>,
     text: String,
     text_seen: bool,
+    reasoning: Option<String>,
     calls: Vec<PartialCall>,
     finish: Option<String>,
     usage: Option<ChatUsage>,
@@ -485,6 +522,16 @@ impl StreamState {
             if let Some(reason) = choice.finish_reason {
                 self.finish = Some(reason);
             }
+            if let Some(delta) = choice.delta.reasoning_content {
+                self.reasoning.get_or_insert_default().push_str(&delta);
+                if !delta.is_empty() {
+                    on_event(ModelStreamEvent::ReasoningDelta {
+                        item_id: format!("{}-reasoning", self.id),
+                        delta,
+                    })
+                    .await;
+                }
+            }
             if let Some(content) = choice.delta.content.filter(|text| !text.is_empty()) {
                 self.text.push_str(&content);
                 self.text_seen = true;
@@ -517,6 +564,9 @@ impl StreamState {
     fn finish(self) -> anyhow::Result<ModelResponse> {
         completed(self.finish.as_deref())?;
         let mut output = Vec::new();
+        if let Some(text) = self.reasoning {
+            output.push(reasoning_output(&self.id, text));
+        }
         if self.text_seen {
             output.push(OutputItem::Message {
                 id: format!("{}-text", self.id),
