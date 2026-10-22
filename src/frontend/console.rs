@@ -1,13 +1,9 @@
 use std::{
     collections::{HashMap, VecDeque},
-    io::{BufRead, IsTerminal, Write},
+    io::{IsTerminal, Write},
 };
 
-use tokio::io::AsyncBufRead;
-#[cfg(test)]
-use tokio::io::AsyncBufReadExt;
-#[cfg(test)]
-use tokio::io::BufReader;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc::Sender;
 
 use crate::agent::AgentEvent;
@@ -30,107 +26,30 @@ use crate::{
 /// channels the TUI will use. On stdin EOF it closes the input channel but keeps
 /// consuming events until the worker ends, so a piped single message still gets
 /// its answer printed.
-enum LineSource<R> {
-    #[cfg(test)]
-    Async(tokio::io::Lines<R>),
-    Native(
-        tokio::sync::mpsc::Receiver<std::io::Result<Option<String>>>,
-        std::marker::PhantomData<R>,
-    ),
-}
-
-impl<R: AsyncBufRead + Unpin> LineSource<R> {
-    async fn next_line(&mut self) -> std::io::Result<Option<String>> {
-        match self {
-            #[cfg(test)]
-            Self::Async(lines) => lines.next_line().await,
-            Self::Native(receiver, _) => match receiver.recv().await {
-                Some(Ok(line)) => Ok(line),
-                Some(Err(error)) => Err(error),
-                None => Ok(None),
-            },
-        }
-    }
-}
-
-/// Production stdin uses one ordinary OS thread and a bounded forwarder. Tokio's
-/// `stdin` would occupy its uncancellable blocking pool and can keep runtime
-/// shutdown waiting after the console loop exits; a detached process-owned
-/// native thread does not.
-fn spawn_stdin_reader(sender: tokio::sync::mpsc::Sender<std::io::Result<Option<String>>>) {
-    std::thread::spawn(move || {
-        let stdin = std::io::stdin();
-        let mut reader = stdin.lock();
-        loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => {
-                    let _ = sender.blocking_send(Ok(None));
-                    break;
-                }
-                Ok(_) => {
-                    if line.ends_with('\n') {
-                        line.pop();
-                        if line.ends_with('\r') {
-                            line.pop();
-                        }
-                    }
-                    if sender.blocking_send(Ok(Some(line))).is_err() {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    let _ = sender.blocking_send(Err(error));
-                    break;
-                }
-            }
-        }
-    });
-}
-
 pub async fn run(
     input: Sender<SessionRequest>,
     events: SessionEventReceiver,
 ) -> anyhow::Result<()> {
-    let (stdin_tx, stdin_rx) = tokio::sync::mpsc::channel(32);
-    spawn_stdin_reader(stdin_tx);
-    run_with_source(
+    run_with_io(
         input,
         events,
-        LineSource::<tokio::io::Empty>::Native(stdin_rx, std::marker::PhantomData),
+        BufReader::new(tokio::io::stdin()),
         std::io::stdout(),
         std::io::stdin().is_terminal(),
     )
     .await
 }
 
-#[cfg(test)]
 async fn run_with_io<R: AsyncBufRead + Unpin, W: Write>(
     input: Sender<SessionRequest>,
-    events: SessionEventReceiver,
-    reader: R,
-    writer: W,
-    interactive: bool,
-) -> anyhow::Result<()> {
-    run_with_source(
-        input,
-        events,
-        LineSource::Async(reader.lines()),
-        writer,
-        interactive,
-    )
-    .await
-}
-
-async fn run_with_source<R: AsyncBufRead + Unpin, W: Write>(
-    input: Sender<SessionRequest>,
     mut events: SessionEventReceiver,
-    mut lines: LineSource<R>,
+    reader: R,
     writer: W,
     interactive: bool,
 ) -> anyhow::Result<()> {
     let mut output = ConsoleOutput::new(writer);
     let mut requests = SessionRequests::new(input);
+    let mut lines = reader.lines();
     let mut session_id: Option<String> = None;
     let mut association: Option<Association> = None;
     let mut running = false;
