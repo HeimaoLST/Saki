@@ -1,10 +1,13 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs::File,
+    future::Future,
+    panic::AssertUnwindSafe,
     path::PathBuf,
     sync::Arc,
 };
 
+use futures_util::FutureExt;
 use serde::Serialize;
 use tokio::{
     io::{AsyncBufRead, AsyncWrite},
@@ -25,6 +28,7 @@ use super::{
         resolve_connection, select_connection,
     },
     store::{SessionMetadata, SessionStore, SessionSummary},
+    tool_context,
 };
 use crate::{
     agent::{
@@ -43,7 +47,11 @@ use crate::{
         connections::{ConnectionRegistry, ConnectionView},
     },
     model::catalog::ModelCatalog,
-    tools::tool_registry::ToolRegistry,
+    tools::{
+        ToolContext,
+        mcp::{McpTools, PreparedTools, SessionTools, SourceCatalog, ToolSourceError},
+        tool_registry::ToolRegistry,
+    },
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -112,6 +120,8 @@ pub struct SessionState {
     pub metadata: Option<SessionMetadata>,
     pub loaded: bool,
     pub state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<Box<RuntimeError>>,
     pub active_task: Option<ActiveTaskState>,
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -281,6 +291,9 @@ pub enum RuntimeCommand {
     },
     Capabilities,
     Connections,
+    Tools {
+        source_id: Option<String>,
+    },
     CreateConfigured {
         config: ConfigPatch,
         storage_schema: u32,
@@ -340,6 +353,10 @@ pub enum RuntimeReply {
     TaskStatus(TaskState),
     Capabilities(Capabilities),
     Connections(Vec<ConnectionView>),
+    Tools {
+        builtin: Vec<crate::protocol::ToolDefinition>,
+        sources: Vec<SourceCatalog>,
+    },
     Models {
         connection_id: String,
         models: Vec<CatalogModel>,
@@ -450,6 +467,7 @@ pub struct Runtime {
     limits: EventLimits,
     catalog: Option<Arc<ModelCatalog>>,
     connections: Option<Arc<ConnectionRegistry>>,
+    tools: Option<Arc<McpTools>>,
     max_active_tasks: usize,
     #[cfg(test)]
     panicking_sessions: HashSet<String>,
@@ -472,6 +490,7 @@ impl Runtime {
             limits: EventLimits::default(),
             catalog: None,
             connections: None,
+            tools: None,
             max_active_tasks: 1,
             #[cfg(test)]
             panicking_sessions: HashSet::new(),
@@ -506,6 +525,11 @@ impl Runtime {
         self.client = connections.default().client().clone();
         self.model = connections.default().default_model().to_owned();
         self.connections = Some(Arc::new(connections));
+        self
+    }
+
+    pub fn with_tool_sources(mut self, tools: Option<McpTools>) -> Self {
+        self.tools = tools.map(Arc::new);
         self
     }
 
@@ -554,6 +578,7 @@ impl Runtime {
             limits: self.limits,
             catalog: self.catalog,
             connections: self.connections,
+            tools: self.tools,
             output,
             work_drained: drained_tx,
             sessions: HashMap::new(),
@@ -565,6 +590,8 @@ impl Runtime {
             configuring: HashSet::new(),
             in_flight: 0,
             accepting: true,
+            shutdown_resources_started: false,
+            shutdown_error: None,
             commands: commands_rx,
             ops_tx,
             ops_rx,
@@ -591,6 +618,18 @@ struct OpDone {
 }
 
 enum Prepared {
+    ResourcesClosed,
+    SendReady {
+        session_id: String,
+        revision: u64,
+        message: UserMessage,
+        resources: SessionTools,
+        registry: ToolRegistry,
+    },
+    Tools {
+        builtin: Vec<crate::protocol::ToolDefinition>,
+        sources: Vec<SourceCatalog>,
+    },
     TaskStatus(TaskState),
     Configuration(ConfigView),
     Configured {
@@ -599,17 +638,23 @@ enum Prepared {
         selection: PreparedModelConfig,
         client: ModelClient,
         registry: Option<ToolRegistry>,
+        resources: Option<SessionTools>,
+        configuration_changed: bool,
         prompt: String,
     },
     Created {
         metadata: SessionMetadata,
         agent: Agent,
         status: TaskStatus,
+        resources: SessionTools,
+        tool_error: Option<RuntimeError>,
     },
     Loaded {
         metadata: SessionMetadata,
         agent: Agent,
         status: TaskStatus,
+        resources: SessionTools,
+        tool_error: Option<RuntimeError>,
     },
     Listed(Vec<SessionSummary>),
     History {
@@ -637,6 +682,8 @@ struct SessionEntry {
     status: TaskStatus,
     system_prompt: String,
     commit_unknown: bool,
+    resources: SessionTools,
+    tool_error: Option<RuntimeError>,
 }
 
 struct Active {
@@ -649,9 +696,17 @@ struct Active {
     config_revision: u64,
 }
 
+enum WorkerOutcome {
+    Finished {
+        agent: Box<Agent>,
+        result: anyhow::Result<()>,
+    },
+    Panicked(String),
+}
+
 struct WorkerDone {
     task_id: String,
-    outcome: std::result::Result<(Agent, anyhow::Result<()>), tokio::task::JoinError>,
+    outcome: std::result::Result<WorkerOutcome, tokio::task::JoinError>,
 }
 
 struct RuntimeActor {
@@ -663,6 +718,7 @@ struct RuntimeActor {
     limits: EventLimits,
     catalog: Option<Arc<ModelCatalog>>,
     connections: Option<Arc<ConnectionRegistry>>,
+    tools: Option<Arc<McpTools>>,
     output: OutputState,
     work_drained: watch::Sender<bool>,
     sessions: HashMap<String, SessionEntry>,
@@ -674,6 +730,8 @@ struct RuntimeActor {
     configuring: HashSet<String>,
     in_flight: usize,
     accepting: bool,
+    shutdown_resources_started: bool,
+    shutdown_error: Option<RuntimeError>,
     commands: mpsc::Receiver<Envelope>,
     ops_tx: mpsc::Sender<OpDone>,
     ops_rx: mpsc::Receiver<OpDone>,
@@ -696,7 +754,30 @@ impl RuntimeActor {
                 && self.in_flight == 0
                 && self.active.values().all(|active| active.result.is_some())
             {
-                self.work_drained.send_replace(true);
+                if !self.shutdown_resources_started {
+                    self.shutdown_resources_started = true;
+                    let resources: Vec<_> = self
+                        .sessions
+                        .values()
+                        .map(|session| session.resources.clone())
+                        .collect();
+                    let (reply, _) = oneshot::channel();
+                    self.spawn_async_op(reply, None, async move {
+                        let mut failure = None;
+                        for resources in resources {
+                            if let Err(error) = resources.close_except(None).await {
+                                failure = Some(tool_error(error));
+                            }
+                        }
+                        if let Some(error) = failure {
+                            Err(error)
+                        } else {
+                            Ok(Prepared::ResourcesClosed)
+                        }
+                    });
+                } else {
+                    self.work_drained.send_replace(true);
+                }
             }
             if !self.accepting && self.active.is_empty() && self.in_flight == 0 {
                 self.drain_stopped_commands();
@@ -739,6 +820,9 @@ impl RuntimeActor {
                     }
                 }
             }
+        }
+        if let Some(error) = self.shutdown_error {
+            return Err(error.into());
         }
         Ok(())
     }
@@ -803,17 +887,27 @@ impl RuntimeActor {
     ) where
         F: FnOnce() -> std::result::Result<Prepared, RuntimeError> + Send + 'static,
     {
+        self.spawn_async_op(reply, session_id, blocking_op(job));
+    }
+
+    fn spawn_async_op<F>(
+        &mut self,
+        reply: oneshot::Sender<ReplyResult>,
+        session_id: Option<String>,
+        job: F,
+    ) where
+        F: Future<Output = std::result::Result<Prepared, RuntimeError>> + Send + 'static,
+    {
         self.in_flight += 1;
         let sender = self.ops_tx.clone();
+        let worker = tokio::spawn(job);
         tokio::spawn(async move {
-            let result = tokio::task::spawn_blocking(job).await;
-            let result = match result {
-                Ok(result) => result,
-                Err(error) => Err(RuntimeError::new(
+            let result = worker.await.unwrap_or_else(|error| {
+                Err(RuntimeError::new(
                     "runtime_error",
                     format!("preparation task failed: {error}"),
-                )),
-            };
+                ))
+            });
             let _ = sender
                 .send(OpDone {
                     reply,
@@ -826,21 +920,79 @@ impl RuntimeActor {
 
     fn finish_op(&mut self, done: OpDone) {
         self.in_flight = self.in_flight.saturating_sub(1);
-        if let Some(session_id) = &done.session_id {
-            self.preparing.remove(session_id);
-            self.configuring.remove(session_id);
+        if self.shutdown_resources_started
+            && let Err(error) = &done.result
+        {
+            self.shutdown_error = Some(error.clone());
+        }
+        let was_configuring = done
+            .session_id
+            .as_ref()
+            .is_some_and(|id| self.configuring.contains(id));
+        if let Some(id) = &done.session_id {
+            self.preparing.remove(id);
+            self.configuring.remove(id);
+        }
+        let rejection = match &done.result {
+            Ok(Prepared::SendReady {
+                session_id,
+                revision,
+                message,
+                ..
+            }) => self
+                .validate_prepared_send(session_id, *revision, message)
+                .err(),
+            _ => None,
+        };
+        if let Some(error) = rejection {
+            let Ok(Prepared::SendReady {
+                session_id,
+                resources,
+                ..
+            }) = done.result
+            else {
+                unreachable!("only prepared sends have an admission rejection")
+            };
+            let keep = self
+                .sessions
+                .get(&session_id)
+                .map(|session| session.resources.clone());
+            self.preparing.insert(session_id.clone());
+            self.spawn_async_op(done.reply, Some(session_id), async move {
+                resources
+                    .close_except(keep.as_ref())
+                    .await
+                    .map_err(tool_error)?;
+                Err(error)
+            });
+            return;
         }
         let reply = match done.result {
             Ok(prepared) => self.apply(prepared),
             Err(error) => {
-                if error.code == "commit_unknown"
-                    && let Some(session) = done
-                        .session_id
-                        .as_ref()
-                        .and_then(|id| self.sessions.get_mut(id))
+                if let Some(session) = done
+                    .session_id
+                    .as_ref()
+                    .and_then(|id| self.sessions.get_mut(id))
                 {
-                    session.agent = None;
-                    session.commit_unknown = true;
+                    if !was_configuring
+                        && matches!(
+                            error.code,
+                            "tool_source_unavailable"
+                                | "tool_schema_changed"
+                                | "tool_capacity_exceeded"
+                        )
+                    {
+                        session.tool_error = Some(error.clone());
+                    }
+                    if error.reason == Some("configuration_cleanup_failed") {
+                        session.agent = None;
+                        session.tool_error = Some(error.clone());
+                    }
+                    if error.code == "commit_unknown" {
+                        session.agent = None;
+                        session.commit_unknown = true;
+                    }
                 }
                 Err(error)
             }
@@ -886,6 +1038,41 @@ impl RuntimeActor {
                     Ok(Prepared::TaskStatus(replayed_task_state(
                         session_id, task_id, replay,
                     )))
+                });
+            }
+            RuntimeCommand::Tools { source_id } => {
+                if !self.admit() {
+                    self.reject_busy(reply);
+                    return;
+                }
+                let mut registry = ToolRegistry::new();
+                crate::tools::register_builtins(
+                    &mut registry,
+                    ToolContext {
+                        cwd: self.cwd.clone(),
+                        output_dir: self.cwd.join(".saki/tool-output"),
+                    },
+                );
+                let builtin = registry.list_definition();
+                let tools = self.tools.clone();
+                let cwd = self.cwd.clone();
+                self.spawn_async_op(reply, None, async move {
+                    let sources = match tools {
+                        Some(tools) => tools
+                            .list(source_id.as_deref(), &cwd)
+                            .await
+                            .map_err(tool_error)?,
+                        None => {
+                            if source_id.is_some() {
+                                return Err(RuntimeError::new(
+                                    "unknown_tool_source",
+                                    "no MCP tool sources are configured",
+                                ));
+                            }
+                            Vec::new()
+                        }
+                    };
+                    Ok(Prepared::Tools { builtin, sources })
                 });
             }
             RuntimeCommand::Connections => {
@@ -939,6 +1126,7 @@ impl RuntimeActor {
                         "runtime.capabilities",
                         "model.list",
                         "connection.list",
+                        "tool.list",
                         "session.config.rollback",
                         "session.config.get",
                         "session.config.update",
@@ -957,7 +1145,7 @@ impl RuntimeActor {
                     max_active_tasks: self.max_active_tasks,
                     session_configuration: true,
                     multi_connection: self.connections.is_some(),
-                    external_tools: false,
+                    external_tools: self.tools.is_some(),
                     caller_context: true,
                 })));
             }
@@ -1090,6 +1278,10 @@ impl RuntimeActor {
                 if let Some(session) = self.sessions.get(&session_id)
                     && (session.agent.is_some() || self.active_for_session(&session_id).is_some())
                 {
+                    if let Some(error) = &session.tool_error {
+                        let _ = reply.send(Err(error.clone().session(&session_id)));
+                        return;
+                    }
                     let metadata = Some(session.metadata.clone());
                     let _ = reply.send(Ok(RuntimeReply::Session(self.session_state(
                         &session_id,
@@ -1112,21 +1304,28 @@ impl RuntimeActor {
                 let store = self.store.clone();
                 let host = self.host_configuration();
                 let id = session_id.clone();
-                self.spawn_op(reply, Some(session_id), move || {
-                    let metadata = metadata_for(&store, &id)?;
-                    let client =
-                        resolve_connection(&metadata, &host.client, host.connections.as_deref())
-                            .map_err(|error| error.session(&id))?;
-                    let loaded = open_for_api(&store, &metadata.api, &id)?;
-                    let status = loaded.replay.status.clone();
-                    let agent = build_agent(&store, &client, loaded).map_err(io_error)?;
-                    Ok(Prepared::Loaded {
-                        metadata,
-                        agent,
-                        status,
+                let tools = self.tools.clone();
+                self.spawn_async_op(reply, Some(session_id), async move {
+                    let store_for_load = store.clone();
+                    let (metadata, agent, status) = blocking_op(move || {
+                        let metadata = metadata_for(&store_for_load, &id)?;
+                        let client = resolve_connection(
+                            &metadata,
+                            &host.client,
+                            host.connections.as_deref(),
+                        )
+                        .map_err(|error| error.session(&id))?;
+                        let loaded = open_for_api(&store_for_load, &metadata.api, &id)?;
+                        let status = loaded.replay.status.clone();
+                        let agent =
+                            build_agent(&store_for_load, &client, loaded).map_err(io_error)?;
+                        Ok((metadata, agent, status))
                     })
+                    .await?;
+                    prepare_loaded_tools(store, tools, metadata, agent, status).await
                 });
             }
+
             RuntimeCommand::List => {
                 if !self.admit() {
                     self.reject_busy(reply);
@@ -1239,8 +1438,19 @@ impl RuntimeActor {
                 self.preparing.insert(session_id.clone());
                 let store = self.store.clone();
                 let id = session_id.clone();
-                self.spawn_op(reply, Some(session_id), move || {
-                    metadata_for(&store, &id)?;
+                let resources = self
+                    .sessions
+                    .get(&id)
+                    .map(|session| session.resources.clone())
+                    .unwrap_or_default();
+                self.spawn_async_op(reply, Some(session_id), async move {
+                    let store_for_read = store.clone();
+                    let read_id = id.clone();
+                    blocking_op(move || metadata_for(&store_for_read, &read_id)).await?;
+                    resources
+                        .close_except(None)
+                        .await
+                        .map_err(|error| tool_error(error).session(&id))?;
                     Ok(Prepared::Released { session_id: id })
                 });
             }
@@ -1369,28 +1579,101 @@ impl RuntimeActor {
         };
         let cwd = patch.working_directory.unwrap_or_else(|| self.cwd.clone());
         let prompt = patch.system_prompt.unwrap_or_else(|| SYSTEM_PROMPT.into());
-        let enhanced = if storage_schema == 2 {
-            Some(super::store::EnhancedCreation {
-                connection_identity: identity.expect("enhanced identity was validated"),
-                tool_selection: tools,
-            })
-        } else {
-            None
-        };
         let store = self.store.clone();
-        self.spawn_op(reply, None, move || {
-            let id = store
-                .create_configured(super::store::SessionCreation {
-                    cwd: &cwd,
-                    model: &model.model,
-                    system_prompt: &prompt,
-                    api: &api,
-                    compaction: model.compaction.get(),
-                    capacity_source: model.capacity_source,
-                    enhanced,
+        let sources = self.tools.clone();
+        self.spawn_async_op(reply, None, async move {
+            let cwd = blocking_op(move || {
+                let cwd = cwd.canonicalize().map_err(|error| {
+                    RuntimeError::new(
+                        "invalid_request",
+                        format!("working_directory is unavailable: {error}"),
+                    )
+                })?;
+                if !cwd.is_dir() {
+                    return Err(RuntimeError::new(
+                        "invalid_request",
+                        "working_directory must be a directory",
+                    ));
+                }
+                Ok(cwd)
+            })
+            .await?;
+            let mut prepared = prepare_tool_resources(
+                sources.as_deref(),
+                &tools,
+                &BTreeMap::new(),
+                true,
+                None,
+                &cwd,
+            )
+            .await?;
+            let enhanced = if storage_schema == 2 {
+                Some(super::store::EnhancedCreation {
+                    connection_identity: identity.expect("enhanced identity was validated"),
+                    tool_selection: tools.clone(),
+                    tool_schemas: prepared.schemas.clone(),
                 })
-                .map_err(io_error)?;
-            create_loaded(store, client, api, id)
+            } else {
+                None
+            };
+            let store_for_create = store.clone();
+            let created = blocking_op(move || {
+                let id = store_for_create
+                    .create_configured(super::store::SessionCreation {
+                        cwd: &cwd,
+                        model: &model.model,
+                        system_prompt: &prompt,
+                        api: &api,
+                        compaction: model.compaction.get(),
+                        capacity_source: model.capacity_source,
+                        enhanced,
+                    })
+                    .map_err(io_error)?;
+                create_loaded(store_for_create, client, api, id)
+            })
+            .await;
+            let created = match created {
+                Ok(created) => created,
+                Err(error) => {
+                    prepared
+                        .resources
+                        .close_except(None)
+                        .await
+                        .map_err(tool_error)?;
+                    return Err(error);
+                }
+            };
+            let Prepared::Created {
+                metadata,
+                mut agent,
+                status,
+                ..
+            } = created
+            else {
+                unreachable!("creation returns a created session")
+            };
+            let registry = build_tool_registry(&store, &metadata)
+                .and_then(|registry| Ok((registry, Arc::new(tool_context(&store, &metadata)?))));
+            let (mut registry, context) = match registry {
+                Ok(value) => value,
+                Err(error) => {
+                    prepared
+                        .resources
+                        .close_except(None)
+                        .await
+                        .map_err(tool_error)?;
+                    return Err(io_error(error).session(&metadata.id));
+                }
+            };
+            prepared.install(&tools, context, &mut registry);
+            agent.replace_tools(registry);
+            Ok(Prepared::Created {
+                metadata,
+                agent,
+                status,
+                resources: prepared.resources,
+                tool_error: None,
+            })
         });
     }
 
@@ -1455,7 +1738,11 @@ impl RuntimeActor {
                     return;
                 }
             };
-            if !candidate.changed {
+            if !candidate.changed && patch.tool_selection.is_none() {
+                if let Some(error) = &session.tool_error {
+                    let _ = reply.send(Err(error.clone().session(&session_id)));
+                    return;
+                }
                 let view = self.decorate_config(ConfigView::from_metadata(
                     &session.metadata,
                     session.system_prompt.clone(),
@@ -1466,14 +1753,12 @@ impl RuntimeActor {
                 }));
                 return;
             }
-            let registry = match build_tool_registry(&self.store, &candidate.metadata) {
-                Ok(registry) => registry,
-                Err(error) => {
-                    let _ = reply.send(Err(io_error(error).session(&session_id)));
-                    return;
-                }
-            };
-            Some((candidate, registry))
+            Some((
+                candidate,
+                session.resources.clone(),
+                session.metadata.tool_schemas.clone(),
+                config::has_native_continuation(agent.context_items()),
+            ))
         } else {
             if !patch.is_only_binding() {
                 let _=reply.send(Err(RuntimeError::new("not_found","load the session before updating configuration; an unloaded legacy session only permits explicit binding").session(&session_id)));
@@ -1485,46 +1770,44 @@ impl RuntimeActor {
         self.configuring.insert(session_id.clone());
         let store = self.store.clone();
         let id = session_id.clone();
-        self.spawn_op(reply, Some(session_id), move || {
-            let (candidate, registry, _lock) = match prepared {
-                Some((candidate, registry)) => (candidate, Some(registry), None),
-                None => {
-                    let lock = store.lock_config(&id)?;
-                    if lock.metadata.schema_version != 1 {
-                        return Err(RuntimeError::new(
-                            "not_found",
-                            "load an enhanced session before updating its configuration",
-                        )
-                        .session(&id));
-                    }
-                    if lock.metadata.config_revision != expected_revision {
-                        return Err(
-                            RuntimeError::conflict(lock.metadata.config_revision).session(&id)
-                        );
-                    }
-                    let prompt = config::system_prompt(&lock.replay.context);
-                    let candidate = prepare_configuration(
-                        &host,
-                        &lock.metadata,
-                        &lock.replay.context,
-                        &prompt,
-                        &patch,
-                        upgrade,
-                    )?;
-                    (candidate, None, Some(lock))
+        let sources = self.tools.clone();
+        self.spawn_async_op(reply,Some(session_id),async move {
+            if let Some((mut candidate,previous,old_schemas,native))=prepared {
+                let selection=candidate.metadata.tool_selection.clone().unwrap_or_else(config::default_tool_selection);
+                let mut registry=build_tool_registry(&store,&candidate.metadata).map_err(io_error)?;
+                let context=Arc::new(tool_context(&store,&candidate.metadata).map_err(io_error)?);
+                let mut tools=prepare_tool_resources(sources.as_deref(),&selection,&old_schemas,patch.tool_selection.is_some(),Some(&previous),&candidate.metadata.working_directory).await.map_err(|error|error.session(&id))?;
+                if tools.schemas!=old_schemas && native {
+                    tools.resources.close_except(Some(&previous)).await.map_err(tool_error)?;
+                    return Err(RuntimeError::new("continuation_not_supported","native continuation cannot be reinterpreted with a changed tool declaration").session(&id));
                 }
-            };
-            let metadata = store
-                .update_config(&id, expected_revision, candidate.metadata)
-                .map_err(|error| error.session(&id))?;
-            Ok(Prepared::Configured {
-                session_id: id,
-                metadata,
-                selection: candidate.selection,
-                client: candidate.client,
-                registry,
-                prompt: candidate.prompt,
-            })
+                let changed=candidate.changed || tools.schemas!=old_schemas;
+                candidate.metadata.tool_schemas=tools.schemas.clone();
+                let store_for_commit=store.clone();let commit_id=id.clone();
+                let next_metadata=candidate.metadata;
+                let commit=blocking_op(move|| {
+                    if changed {store_for_commit.update_config(&commit_id,expected_revision,next_metadata).map_err(|error|error.session(&commit_id))}
+                    else {let current=metadata_for(&store_for_commit,&commit_id)?;if current.config_revision!=expected_revision {return Err(RuntimeError::conflict(current.config_revision).session(&commit_id));}Ok(current)}
+                }).await;
+                let metadata=match commit {Ok(metadata)=>metadata,Err(error)=>{tools.resources.close_except(Some(&previous)).await.map_err(tool_error)?;return Err(error);}};
+                tools.install(&selection,context,&mut registry);
+                if let Err(error)=previous.close_except(Some(&tools.resources)).await {
+                    tools.resources.close_except(None).await.map_err(tool_error)?;
+                    let mut result=RuntimeError::new("io_error",format!("configuration was saved but tool cleanup failed: {error}; inspect config and reload")).session(&id);
+                    result.reason=Some("configuration_cleanup_failed");result.current_revision=Some(metadata.config_revision);return Err(result);
+                }
+                Ok(Prepared::Configured {session_id:id,metadata,selection:candidate.selection,client:candidate.client,registry:Some(registry),resources:Some(tools.resources),configuration_changed:changed,prompt:candidate.prompt})
+            }else {
+                blocking_op(move|| {
+                    let lock=store.lock_config(&id)?;
+                    if lock.metadata.schema_version!=1 {return Err(RuntimeError::new("not_found","load an enhanced session before updating its configuration").session(&id));}
+                    if lock.metadata.config_revision!=expected_revision {return Err(RuntimeError::conflict(lock.metadata.config_revision).session(&id));}
+                    let prompt=config::system_prompt(&lock.replay.context);
+                    let candidate=prepare_configuration(&host,&lock.metadata,&lock.replay.context,&prompt,&patch,upgrade)?;
+                    let metadata=store.update_config(&id,expected_revision,candidate.metadata).map_err(|error|error.session(&id))?;
+                    Ok(Prepared::Configured {session_id:id,metadata,selection:candidate.selection,client:candidate.client,registry:None,resources:None,configuration_changed:true,prompt:candidate.prompt})
+                }).await
+            }
         });
     }
 
@@ -1534,7 +1817,7 @@ impl RuntimeActor {
         session_id: String,
         message: UserMessage,
     ) {
-        let Some(session) = self.sessions.get(&session_id) else {
+        if !self.sessions.contains_key(&session_id) {
             if self
                 .connections
                 .as_ref()
@@ -1558,81 +1841,137 @@ impl RuntimeActor {
                         .session(&session_id)));
             }
             return;
-        };
-        if self.active_for_session(&session_id).is_some() {
-            let _ = reply.send(Err(RuntimeError::busy(
-                "session_busy",
-                "session already has an accepted task",
-            )
-            .session(&session_id)));
+        }
+        if let Err(error) = self.validate_send(&session_id, &message) {
+            let _ = reply.send(Err(error));
             return;
+        }
+        let session = &self.sessions[&session_id];
+        let selection = session
+            .metadata
+            .tool_selection
+            .clone()
+            .unwrap_or_else(config::default_tool_selection);
+        if selection.external.is_empty() {
+            let result = self.admit_task(session_id, message);
+            let _ = reply.send(result);
+            return;
+        }
+        if !self.admit() {
+            self.reject_busy(reply);
+            return;
+        }
+        let metadata = session.metadata.clone();
+        let previous = session.resources.clone();
+        let sources = self.tools.clone();
+        let store = self.store.clone();
+        self.preparing.insert(session_id.clone());
+        let id = session_id.clone();
+        self.spawn_async_op(reply, Some(session_id), async move {
+            let mut registry = build_tool_registry(&store, &metadata).map_err(io_error)?;
+            let context = Arc::new(tool_context(&store, &metadata).map_err(io_error)?);
+            let mut tools = prepare_tool_resources(
+                sources.as_deref(),
+                &selection,
+                &metadata.tool_schemas,
+                false,
+                Some(&previous),
+                &metadata.working_directory,
+            )
+            .await
+            .map_err(|error| error.session(&id))?;
+            tools.install(&selection, context, &mut registry);
+            Ok(Prepared::SendReady {
+                session_id: id,
+                revision: metadata.config_revision,
+                message,
+                resources: tools.resources,
+                registry,
+            })
+        });
+    }
+
+    fn validate_send(
+        &self,
+        session_id: &str,
+        message: &UserMessage,
+    ) -> std::result::Result<(), RuntimeError> {
+        let session = self.sessions.get(session_id).ok_or_else(|| {
+            RuntimeError::new("not_found", "session is not loaded").session(session_id)
+        })?;
+        if self.active_for_session(session_id).is_some() {
+            return Err(
+                RuntimeError::busy("session_busy", "session already has an accepted task")
+                    .session(session_id),
+            );
         }
         if self.active.len() >= self.max_active_tasks {
-            let _ = reply.send(Err(RuntimeError::busy(
-                "capacity_exceeded",
-                "runtime task capacity is full",
-            )
-            .session(&session_id)));
-            return;
+            return Err(
+                RuntimeError::busy("capacity_exceeded", "runtime task capacity is full")
+                    .session(session_id),
+            );
         }
-        if self.preparing.contains(&session_id) {
-            let _ = reply.send(Err(
-                RuntimeError::new("busy", "session is being prepared").session(&session_id)
-            ));
-            return;
+        if self.preparing.contains(session_id) {
+            return Err(RuntimeError::new("busy", "session is being prepared").session(session_id));
         }
         if session.commit_unknown {
-            let _ = reply.send(Err(RuntimeError::new(
+            return Err(RuntimeError::new(
                 "commit_unknown",
                 "configuration publication is uncertain; inspect config and reload",
             )
-            .session(&session_id)));
-            return;
+            .session(session_id));
         }
         if session.agent.is_none() {
-            let _ = reply.send(Err(RuntimeError::new(
+            return Err(RuntimeError::new(
                 "io_error",
                 "session is unavailable; release/load it from the journal to recover",
             )
-            .session(&session_id)));
-            return;
+            .session(session_id));
         }
-        if let Err(error) = message.validate() {
-            let _ = reply.send(Err(
-                RuntimeError::new("invalid_request", error).session(&session_id)
-            ));
-            return;
-        }
+        message
+            .validate()
+            .map_err(|error| RuntimeError::new("invalid_request", error).session(session_id))?;
         if session.metadata.api == crate::client::config::CHAT_COMPLETIONS_API
             && !message.images.is_empty()
         {
-            let _ = reply.send(Err(RuntimeError::new(
-                "invalid_request",
-                "images are unsupported by this API",
-            )
-            .session(&session_id)));
-            return;
+            return Err(
+                RuntimeError::new("invalid_request", "images are unsupported by this API")
+                    .session(session_id),
+            );
         }
-        if let Err(error) =
-            resolve_connection(&session.metadata, &self.client, self.connections.as_deref())
-        {
-            let _ = reply.send(Err(error.session(&session_id)));
-            return;
+        resolve_connection(&session.metadata, &self.client, self.connections.as_deref())
+            .map_err(|error| error.session(session_id))?;
+        Ok(())
+    }
+
+    fn validate_prepared_send(
+        &self,
+        session_id: &str,
+        revision: u64,
+        message: &UserMessage,
+    ) -> std::result::Result<(), RuntimeError> {
+        if !self.accepting {
+            return Err(
+                RuntimeError::new("io_error", "runtime is no longer accepting tasks")
+                    .session(session_id),
+            );
         }
-        let task_id = match journal::new_id() {
-            Ok(id) => id,
-            Err(error) => {
-                let _ = reply.send(Err(io_error(error).session(&session_id)));
-                return;
-            }
-        };
-        let message_id = match journal::new_id() {
-            Ok(id) => id,
-            Err(error) => {
-                let _ = reply.send(Err(io_error(error).session(&session_id)));
-                return;
-            }
-        };
+        let current = self.sessions.get(session_id).ok_or_else(|| {
+            RuntimeError::new("not_found", "session is not loaded").session(session_id)
+        })?;
+        if current.metadata.config_revision != revision {
+            return Err(
+                RuntimeError::conflict(current.metadata.config_revision).session(session_id)
+            );
+        }
+        self.validate_send(session_id, message)
+    }
+
+    fn admit_task(&mut self, session_id: String, message: UserMessage) -> ReplyResult {
+        self.validate_send(&session_id, &message)?;
+        let session = &self.sessions[&session_id];
+        let task_id = journal::new_id().map_err(|error| io_error(error).session(&session_id))?;
+        let message_id = journal::new_id().map_err(|error| io_error(error).session(&session_id))?;
         let configuration = journal::TaskConfiguration {
             model: session.metadata.model.clone(),
             api: session.metadata.api.clone(),
@@ -1654,19 +1993,14 @@ impl RuntimeActor {
                     .clone()
                     .unwrap_or_else(config::default_tool_selection),
             ),
+            tool_schemas: Some(session.metadata.tool_schemas.clone()),
         };
-        let Some(agent) = self
+        let resources = session.resources.clone();
+        let agent = self
             .sessions
             .get_mut(&session_id)
             .and_then(|session| session.agent.take())
-        else {
-            let _ = reply.send(Err(RuntimeError::new(
-                "io_error",
-                "session is unavailable; release/load it from the journal to recover",
-            )
-            .session(&session_id)));
-            return;
-        };
+            .expect("admission retains the validated idle agent");
 
         let (cancel, cancel_rx) = watch::channel(false);
         let (sink, events) =
@@ -1690,19 +2024,50 @@ impl RuntimeActor {
         let config_revision = configuration.config_revision;
         let worker = tokio::spawn(async move {
             let mut agent = agent;
-            #[cfg(test)]
-            if should_panic {
-                panic!("injected task worker panic");
+            let execution = AssertUnwindSafe(async {
+                #[cfg(test)]
+                if should_panic {
+                    panic!("injected task worker panic");
+                }
+                agent
+                    .handle_configured_task(
+                        message,
+                        worker_task_id,
+                        worker_message_id,
+                        Some(configuration),
+                    )
+                    .await
+            })
+            .catch_unwind()
+            .await;
+            match execution {
+                Ok(mut result) => {
+                    if result.as_ref().err().is_some_and(is_io_error)
+                        && let Err(cleanup) = resources.close_except(None).await
+                    {
+                        result = Err(result
+                            .unwrap_err()
+                            .context(format!("resource cleanup also failed: {cleanup}")));
+                    }
+                    WorkerOutcome::Finished {
+                        agent: Box::new(agent),
+                        result,
+                    }
+                }
+                Err(panic) => {
+                    let message = panic
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+                        .unwrap_or_else(|| "non-string panic".into());
+                    let cleanup = resources.close_except(None).await;
+                    drop(agent);
+                    WorkerOutcome::Panicked(match cleanup {
+                        Ok(()) => message,
+                        Err(error) => format!("{message}; resource cleanup failed: {error}"),
+                    })
+                }
             }
-            let result = agent
-                .handle_configured_task(
-                    message,
-                    worker_task_id,
-                    worker_message_id,
-                    Some(configuration),
-                )
-                .await;
-            (agent, result)
         });
         let workers = self.workers_tx.clone();
         let done_task_id = task_id.clone();
@@ -1728,7 +2093,7 @@ impl RuntimeActor {
                 config_revision,
             },
         );
-        let _ = reply.send(Ok(RuntimeReply::Accepted(AcceptedTask {
+        Ok(RuntimeReply::Accepted(AcceptedTask {
             association,
             events: TaskEvents {
                 metrics,
@@ -1741,7 +2106,7 @@ impl RuntimeActor {
                 defer_ack: false,
                 released: false,
             },
-        })));
+        }))
     }
 }
 impl RuntimeActor {
@@ -1759,7 +2124,12 @@ impl RuntimeActor {
         let status;
         let finished_status;
         let error;
-        match done.outcome {
+        let outcome = match done.outcome {
+            Ok(WorkerOutcome::Finished { agent, result }) => Ok((*agent, result)),
+            Ok(WorkerOutcome::Panicked(message)) => Err(message),
+            Err(error) => Err(error.to_string()),
+        };
+        match outcome {
             Ok((mut agent, result)) => {
                 let io_failure = result.as_ref().err().is_some_and(is_io_error);
                 if io_failure {
@@ -1789,8 +2159,16 @@ impl RuntimeActor {
                                         .session(&session_id),
                                 );
                             } else {
+                                let code = if worker_error
+                                    .downcast_ref::<crate::tools::tool_registry::ToolError>()
+                                    .is_some()
+                                {
+                                    "tool_source_unavailable"
+                                } else {
+                                    "model_error"
+                                };
                                 error = Some(
-                                    RuntimeError::new("model_error", format!("{worker_error:#}"))
+                                    RuntimeError::new(code, format!("{worker_error:#}"))
                                         .session(&session_id),
                                 );
                                 restored_agent = Some(agent);
@@ -1816,6 +2194,12 @@ impl RuntimeActor {
         if let Some(session) = self.sessions.get_mut(&session_id) {
             session.status = status;
             session.agent = restored_agent;
+            if error
+                .as_ref()
+                .is_some_and(|error| error.code == "tool_source_unavailable")
+            {
+                session.tool_error = error.clone();
+            }
         }
         let finished = TaskFinished {
             status: finished_status,
@@ -1834,6 +2218,28 @@ impl RuntimeActor {
 
     fn apply(&mut self, prepared: Prepared) -> std::result::Result<RuntimeReply, RuntimeError> {
         match prepared {
+            Prepared::ResourcesClosed => Ok(RuntimeReply::Shutdown { state: "drained" }),
+            Prepared::SendReady {
+                session_id,
+                message,
+                resources,
+                registry,
+                ..
+            } => {
+                let session = self
+                    .sessions
+                    .get_mut(&session_id)
+                    .expect("prepared admission retains the session");
+                session
+                    .agent
+                    .as_mut()
+                    .expect("prepared admission retains the idle agent")
+                    .replace_tools(registry);
+                session.resources = resources;
+                session.tool_error = None;
+                self.admit_task(session_id, message)
+            }
+            Prepared::Tools { builtin, sources } => Ok(RuntimeReply::Tools { builtin, sources }),
             Prepared::TaskStatus(state) => Ok(RuntimeReply::TaskStatus(state)),
             Prepared::Configuration(view) => Ok(RuntimeReply::Config(self.decorate_config(view))),
             Prepared::Configured {
@@ -1842,6 +2248,8 @@ impl RuntimeActor {
                 selection,
                 client,
                 registry,
+                resources,
+                configuration_changed,
                 prompt,
             } => {
                 if let Some(session) = self.sessions.get_mut(&session_id) {
@@ -1849,16 +2257,28 @@ impl RuntimeActor {
                         .agent
                         .as_mut()
                         .expect("configuration holds the idle agent");
-                    agent.apply_execution_config(
-                        client,
-                        selection.model,
-                        selection.compaction,
-                        prompt.clone(),
-                        registry.expect("loaded configuration prepares its tool registry"),
-                    );
+                    let registry =
+                        registry.expect("loaded configuration prepares its tool registry");
+                    if configuration_changed {
+                        agent.apply_execution_config(
+                            client,
+                            selection.model,
+                            selection.compaction,
+                            prompt.clone(),
+                            registry,
+                        );
+                    } else {
+                        agent.replace_tools(registry);
+                    }
                     session.system_prompt = prompt.clone();
-                    session.metadata = metadata.clone();
+                    let mut applied = metadata.clone();
+                    applied.title = session.metadata.title.clone();
+                    applied.title_source = session.metadata.title_source.clone();
+                    session.metadata = applied;
+                    session.resources = resources.expect("loaded configuration prepares resources");
+                    session.tool_error = None;
                 }
+
                 let view = self.decorate_config(ConfigView::from_metadata(&metadata, prompt));
                 Ok(RuntimeReply::ConfigUpdated {
                     config: view,
@@ -1869,11 +2289,15 @@ impl RuntimeActor {
                 metadata,
                 agent,
                 status,
+                resources,
+                tool_error,
             }
             | Prepared::Loaded {
                 metadata,
                 agent,
                 status,
+                resources,
+                tool_error,
             } => {
                 let id = metadata.id.clone();
                 let system_prompt = config::system_prompt(agent.context_items());
@@ -1885,8 +2309,13 @@ impl RuntimeActor {
                         status,
                         system_prompt,
                         commit_unknown: false,
+                        resources,
+                        tool_error: tool_error.clone(),
                     },
                 );
+                if let Some(error) = tool_error {
+                    return Err(error.session(&id));
+                }
                 Ok(RuntimeReply::Session(self.session_state(
                     &id,
                     Some(metadata),
@@ -1972,7 +2401,21 @@ impl RuntimeActor {
             storage_schema: config.as_ref().map(|view| view.storage_schema),
             metadata,
             loaded: self.sessions.contains_key(session_id),
-            state: if running { "running" } else { "idle" },
+            state: if running {
+                "running"
+            } else if self
+                .sessions
+                .get(session_id)
+                .is_some_and(|session| session.agent.is_none() || session.tool_error.is_some())
+            {
+                "unavailable"
+            } else {
+                "idle"
+            },
+            unavailable: self
+                .sessions
+                .get(session_id)
+                .and_then(|session| session.tool_error.clone().map(Box::new)),
             active_task: active.map(|active| ActiveTaskState {
                 task_id: active.association.task_id.clone(),
                 message_id: active.association.message_id.clone(),
@@ -1989,6 +2432,23 @@ impl RuntimeActor {
             .filter(|active| active.result.is_none());
         let running = active.is_some();
         let loaded = self.sessions.contains_key(&id);
+        let tool_error = self
+            .sessions
+            .get(&id)
+            .and_then(|session| session.tool_error.as_ref());
+        let unavailable = tool_error.map(ToString::to_string).or(summary.unavailable);
+        let state = if running {
+            "running"
+        } else if unavailable.is_some()
+            || self
+                .sessions
+                .get(&id)
+                .is_some_and(|session| session.agent.is_none())
+        {
+            "unavailable"
+        } else {
+            "idle"
+        };
         let status = if running {
             "running".to_owned()
         } else if let Some(session) = self.sessions.get(&id) {
@@ -2001,9 +2461,9 @@ impl RuntimeActor {
             updated_at: summary.updated_at,
             status,
             in_use: summary.in_use,
-            unavailable: summary.unavailable,
+            unavailable,
             loaded,
-            state: if running { "running" } else { "idle" },
+            state,
             active_task_id: active.map(|active| active.association.task_id.clone()),
         }
     }
@@ -2175,6 +2635,89 @@ fn open_for_api(
     })
 }
 
+async fn blocking_op<T: Send + 'static>(
+    job: impl FnOnce() -> std::result::Result<T, RuntimeError> + Send + 'static,
+) -> std::result::Result<T, RuntimeError> {
+    tokio::task::spawn_blocking(job).await.map_err(|error| {
+        RuntimeError::new("runtime_error", format!("preparation task failed: {error}"))
+    })?
+}
+
+fn tool_error(error: ToolSourceError) -> RuntimeError {
+    let code = match &error {
+        ToolSourceError::Capacity => "tool_capacity_exceeded",
+        ToolSourceError::SchemaChanged { .. } => "tool_schema_changed",
+        _ => "tool_source_unavailable",
+    };
+    let mut result = RuntimeError::new(code, error.to_string());
+    if matches!(error, ToolSourceError::CatalogUnstable { .. }) {
+        result.reason = Some("catalog_unstable");
+    }
+    result
+}
+
+async fn prepare_tool_resources(
+    tools: Option<&McpTools>,
+    selection: &config::ToolSelection,
+    schemas: &BTreeMap<String, crate::protocol::ToolSchema>,
+    confirm: bool,
+    previous: Option<&SessionTools>,
+    cwd: &std::path::Path,
+) -> std::result::Result<PreparedTools, RuntimeError> {
+    if selection.external.is_empty() {
+        return Ok(PreparedTools::empty());
+    }
+    let tools = tools.ok_or_else(|| {
+        RuntimeError::new(
+            "tool_source_unavailable",
+            "MCP tool sources are not configured in this host",
+        )
+    })?;
+    tools
+        .prepare(selection, schemas, confirm, previous, cwd)
+        .await
+        .map_err(tool_error)
+}
+
+async fn prepare_loaded_tools(
+    store: Arc<SessionStore>,
+    tools: Option<Arc<McpTools>>,
+    metadata: SessionMetadata,
+    mut agent: Agent,
+    status: TaskStatus,
+) -> std::result::Result<Prepared, RuntimeError> {
+    let selection = metadata
+        .tool_selection
+        .clone()
+        .unwrap_or_else(config::default_tool_selection);
+    let context = Arc::new(tool_context(&store, &metadata).map_err(io_error)?);
+    let mut registry = build_tool_registry(&store, &metadata).map_err(io_error)?;
+    let prepared = prepare_tool_resources(
+        tools.as_deref(),
+        &selection,
+        &metadata.tool_schemas,
+        false,
+        None,
+        &metadata.working_directory,
+    )
+    .await;
+    let (resources, error) = match prepared {
+        Ok(mut prepared) => {
+            prepared.install(&selection, context, &mut registry);
+            agent.replace_tools(registry);
+            (prepared.resources, None)
+        }
+        Err(error) => (SessionTools::default(), Some(error)),
+    };
+    Ok(Prepared::Loaded {
+        metadata,
+        agent,
+        status,
+        resources,
+        tool_error: error,
+    })
+}
+
 fn create_loaded(
     store: Arc<SessionStore>,
     client: ModelClient,
@@ -2189,6 +2732,8 @@ fn create_loaded(
         metadata,
         agent,
         status,
+        resources: SessionTools::default(),
+        tool_error: None,
     })
 }
 

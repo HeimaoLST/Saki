@@ -1,14 +1,12 @@
-use std::{
-    io::{self, Write},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 
 use super::AgentEvent;
+pub(crate) use crate::protocol::ByteCounter;
 
 #[derive(Clone)]
 pub struct OutputState(watch::Sender<bool>);
@@ -274,31 +272,6 @@ impl Drop for EventDelivery<'_> {
         if !self.sent && !self.output.is_closed() {
             self.incomplete.store(true, Ordering::Relaxed);
         }
-    }
-}
-
-pub(crate) struct ByteCounter {
-    pub len: usize,
-    limit: usize,
-}
-
-impl ByteCounter {
-    pub fn new(limit: usize) -> Self {
-        Self { len: 0, limit }
-    }
-}
-
-impl Write for ByteCounter {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if bytes.len() > self.limit.saturating_sub(self.len) {
-            return Err(io::Error::other("runtime frame exceeds its byte limit"));
-        }
-        self.len += bytes.len();
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
     }
 }
 

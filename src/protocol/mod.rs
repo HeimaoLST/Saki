@@ -61,6 +61,15 @@ pub struct ExternalToolBinding {
     pub exposed_name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolSchema {
+    pub description: String,
+    pub input_schema: Value,
+    pub output_schema: Option<Value>,
+    pub fingerprint: String,
+}
+
 /// Immutable continuation data owned by the named API adapter.
 /// When present on reasoning, this is the authoritative native item to replay.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,4 +253,31 @@ pub enum ModelStreamEvent {
     TextDelta { item_id: String, delta: String },
     ReasoningDelta { item_id: String, delta: String },
     ReasoningCompleted { item_id: String },
+}
+
+pub(crate) struct ByteCounter {
+    pub len: usize,
+    limit: usize,
+}
+
+impl ByteCounter {
+    pub fn new(limit: usize) -> Self {
+        Self { len: 0, limit }
+    }
+}
+
+impl std::io::Write for ByteCounter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > self.limit.saturating_sub(self.len) {
+            return Err(std::io::Error::other(
+                "runtime frame exceeds its byte limit",
+            ));
+        }
+        self.len += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }

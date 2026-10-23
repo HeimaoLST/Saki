@@ -5,14 +5,13 @@
 //! only the normalized protocol and endpoint so key rotation does not change
 //! persisted identity.
 
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, ensure};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Semaphore;
 
-use super::{ClientConfig, ModelApi, ModelClient};
+use super::{ClientConfig, ModelClient};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectionIdentity {
@@ -130,74 +129,12 @@ impl ConnectionRegistry {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct HostConfig {
-    pub default_connection_id: String,
-    pub connections: Vec<ConnectionDefinition>,
-    #[serde(default = "default_max_active_tasks")]
-    pub max_active_tasks: usize,
-    #[serde(default)]
-    pub tool_sources: Vec<serde_json::Value>,
-}
-
-fn default_max_active_tasks() -> usize {
-    1
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ConnectionDefinition {
     pub id: String,
     pub api: String,
     pub base_url: String,
     pub api_key_env: String,
     pub default_model: String,
-}
-
-impl HostConfig {
-    /// Read exactly the JSON host configuration. Environment lookup is
-    /// deliberately deferred to `build_connections`.
-    pub fn load(path: &Path) -> Result<Self> {
-        let bytes = std::fs::read(path)
-            .with_context(|| format!("reading host config {}", path.display()))?;
-        serde_json::from_slice(&bytes)
-            .with_context(|| format!("parsing host config {}", path.display()))
-    }
-
-    /// Build the immutable connection directory. The callback is the only
-    /// credential source; this function never reads `.env` or the process
-    /// environment and never performs network I/O.
-    pub fn build_connections(
-        &self,
-        read_env: impl Fn(&str) -> Option<String>,
-    ) -> Result<ConnectionRegistry> {
-        ensure!(
-            self.max_active_tasks > 0 && self.max_active_tasks <= Semaphore::MAX_PERMITS,
-            "max_active_tasks is outside the supported capacity"
-        );
-        ensure!(
-            self.tool_sources.is_empty(),
-            "tool_sources are not supported until issue #107"
-        );
-        let mut connections = Vec::with_capacity(self.connections.len());
-        for definition in &self.connections {
-            let api = ModelApi::parse(&definition.api)?;
-            let key = read_env(&definition.api_key_env)
-                .filter(|key| !key.is_empty())
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "API key environment variable {} is missing or empty",
-                        definition.api_key_env
-                    )
-                })?;
-            let config = ClientConfig::new(api, key, definition.base_url.clone());
-            connections.push(Connection::new(
-                definition.id.clone(),
-                config,
-                definition.default_model.clone(),
-            )?);
-        }
-        ConnectionRegistry::new(self.default_connection_id.clone(), connections)
-    }
 }
 
 fn normalize_endpoint(raw: &str) -> Result<String> {

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 pub use crate::protocol::ToolSelection;
 use serde::{Deserialize, Serialize, de::Deserializer};
@@ -84,6 +84,7 @@ pub struct EffectiveConfig {
     pub working_directory: PathBuf,
     pub system_prompt: String,
     pub tool_selection: ToolSelection,
+    pub tool_schemas: BTreeMap<String, crate::protocol::ToolSchema>,
     pub connection_binding: ConnectionBinding,
     pub connection_identity: Option<ConnectionIdentity>,
     pub execution_connection_id: Option<String>,
@@ -126,6 +127,7 @@ impl ConfigView {
                     .tool_selection
                     .clone()
                     .unwrap_or_else(default_tool_selection),
+                tool_schemas: metadata.tool_schemas.clone(),
                 connection_binding: ConnectionBinding {
                     origin: metadata.binding_origin.clone(),
                     bound_at_revision: metadata.bound_at_revision,
@@ -182,9 +184,7 @@ pub fn capacity_from_limits(
     config
 }
 
-pub fn builtin_names() -> &'static [&'static str] {
-    &["bash", "edit", "read", "write"]
-}
+pub use crate::tools::builtin_names;
 
 pub fn default_tool_selection() -> ToolSelection {
     ToolSelection {
@@ -197,12 +197,8 @@ pub fn default_tool_selection() -> ToolSelection {
 }
 
 pub fn validate_tool_selection(selection: &ToolSelection) -> Result<ToolSelection, RuntimeError> {
-    if !selection.external.is_empty() {
-        return Err(RuntimeError::new(
-            "unsupported_feature",
-            "external tools are not supported until issue #107",
-        ));
-    }
+    crate::tools::mcp::validate_selection(selection)
+        .map_err(|error| RuntimeError::new("invalid_tool_selection", error.to_string()))?;
     let available = builtin_names();
     if selection
         .builtin
@@ -217,10 +213,9 @@ pub fn validate_tool_selection(selection: &ToolSelection) -> Result<ToolSelectio
     let mut builtin = selection.builtin.clone();
     builtin.sort();
     builtin.dedup();
-    Ok(ToolSelection {
-        builtin,
-        external: Vec::new(),
-    })
+    let mut external = selection.external.clone();
+    external.sort_by(|left, right| left.exposed_name.cmp(&right.exposed_name));
+    Ok(ToolSelection { builtin, external })
 }
 
 pub fn has_native_continuation(items: &[InputItem]) -> bool {

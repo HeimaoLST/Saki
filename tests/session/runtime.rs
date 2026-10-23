@@ -2,6 +2,10 @@ use super::*;
 use crate::test_support::{completed, read_request, requests, scripted_http};
 use tokio::io::{BufReader, DuplexStream, Lines};
 
+#[cfg(unix)]
+#[path = "mcp.rs"]
+mod mcp_tests;
+
 struct Directory(PathBuf);
 impl Directory {
     fn new() -> Self {

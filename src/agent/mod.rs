@@ -250,6 +250,10 @@ impl Agent {
         self
     }
 
+    pub(crate) fn replace_tools(&mut self, registry: ToolRegistry) {
+        self.tool_registry = registry;
+    }
+
     pub fn clear_event_sink(&mut self) {
         self.started_signal = None;
         self.events = None;
@@ -334,6 +338,20 @@ impl Agent {
         self.conversation.add_user_message(message);
         self.conversation.save_history()?;
         let result = self.process_messages().await;
+        let result = match self.tool_registry.finish_task().await {
+            Ok(()) => result,
+            Err(cleanup) => Err(anyhow::Error::new(
+                crate::tools::tool_registry::ToolError::ExecutionFailed(format!(
+                    "{}; {cleanup}",
+                    result
+                        .as_ref()
+                        .err()
+                        .map_or("task execution completed".to_owned(), |error| format!(
+                            "{error:#}"
+                        ))
+                )),
+            )),
+        };
         match &result {
             Err(error) if is_interrupted(error) => self.conversation.interrupt_task()?,
             _ => {

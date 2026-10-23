@@ -125,6 +125,7 @@ fn schema_one_and_schema_two_creation_have_the_expected_fields() {
             capacity_source: CapacitySource::Explicit,
             enhanced: Some(EnhancedCreation {
                 connection_identity: identity(),
+                tool_schemas: BTreeMap::new(),
                 tool_selection: ToolSelection {
                     builtin: vec!["read".to_owned(), "edit".to_owned()],
                     external: Vec::new(),
@@ -308,6 +309,7 @@ fn create_configured_validates_before_creating_a_directory() {
         capacity_source: CapacitySource::Explicit,
         enhanced: Some(EnhancedCreation {
             connection_identity: wrong_identity,
+            tool_schemas: BTreeMap::new(),
             tool_selection: ToolSelection {
                 builtin: vec!["read".to_owned()],
                 external: Vec::new(),
@@ -332,6 +334,7 @@ fn schema_two_missing_fields_are_rejected() {
             capacity_source: CapacitySource::Stored,
             enhanced: Some(EnhancedCreation {
                 connection_identity: identity(),
+                tool_schemas: BTreeMap::new(),
                 tool_selection: ToolSelection {
                     builtin: vec!["read".to_owned()],
                     external: Vec::new(),
@@ -360,6 +363,7 @@ fn schema_two_connection_api_and_bound_revision_are_validated() {
             capacity_source: CapacitySource::Stored,
             enhanced: Some(EnhancedCreation {
                 connection_identity: identity(),
+                tool_schemas: BTreeMap::new(),
                 tool_selection: ToolSelection {
                     builtin: vec!["read".to_owned()],
                     external: Vec::new(),
@@ -549,9 +553,15 @@ fn unsupported_persisted_tool_selection_is_rejected_before_history_repair() {
     let mut history = fs::read(&history_path).unwrap();
     history.extend_from_slice(b"{\"torn\":");
     fs::write(&history_path, &history).unwrap();
-    for selection in [
-        serde_json::json!({"builtin":["unknown_builtin"],"external":[]}),
-        serde_json::json!({"builtin":["read"],"external":[{"source_id":"project","tool_name":"lookup","exposed_name":"project_lookup"}]}),
+    for (selection, message) in [
+        (
+            serde_json::json!({"builtin":["unknown_builtin"],"external":[]}),
+            "unsupported session tools",
+        ),
+        (
+            serde_json::json!({"builtin":["read"],"external":[{"source_id":"project","tool_name":"lookup","exposed_name":"project_lookup"}]}),
+            "tool declarations do not match",
+        ),
     ] {
         let mut candidate = metadata.clone();
         candidate["tool_selection"] = selection;
@@ -561,7 +571,7 @@ fn unsupported_persisted_tool_selection_is_rejected_before_history_repair() {
             .open_for_api(&id, RESPONSES_API)
             .err()
             .expect("unsupported tools must reject load");
-        assert!(format!("{error:#}").contains("unsupported session tools"));
+        assert!(format!("{error:#}").contains(message));
         assert_eq!(fs::read(&metadata_path).unwrap(), bytes);
         assert_eq!(fs::read(&history_path).unwrap(), history);
     }

@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
@@ -17,6 +18,7 @@ use crate::client::{
     config::{CHAT_COMPLETIONS_API, RESPONSES_API},
     connections::ConnectionIdentity,
 };
+use crate::protocol::ToolSchema;
 
 /// Title used until the first successful turn can generate one.
 pub const DEFAULT_TITLE: &str = "New session";
@@ -49,12 +51,15 @@ pub struct SessionMetadata {
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_selection: Option<ToolSelection>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tool_schemas: BTreeMap<String, ToolSchema>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct EnhancedCreation {
     pub connection_identity: ConnectionIdentity,
     pub tool_selection: ToolSelection,
+    pub tool_schemas: BTreeMap<String, ToolSchema>,
 }
 
 pub(crate) struct SessionCreation<'a> {
@@ -193,6 +198,9 @@ impl SessionStore {
             binding_origin: enhanced.as_ref().map(|_| "created".to_owned()),
             bound_at_revision: enhanced.as_ref().map(|_| 1),
             system_prompt: enhanced.as_ref().map(|_| creation.system_prompt.to_owned()),
+            tool_schemas: enhanced
+                .as_ref()
+                .map_or_else(BTreeMap::new, |enhanced| enhanced.tool_schemas.clone()),
             tool_selection: enhanced.map(|enhanced| enhanced.tool_selection),
         };
         validate_metadata(&metadata, &id)?;
@@ -337,6 +345,7 @@ impl SessionStore {
         candidate.bound_at_revision = next.bound_at_revision;
         candidate.system_prompt = next.system_prompt;
         candidate.tool_selection = next.tool_selection;
+        candidate.tool_schemas = next.tool_schemas;
         candidate.config_revision = expected_revision.checked_add(1).ok_or_else(|| {
             RuntimeError::new("config_conflict", "configuration revision exhausted")
         })?;
@@ -579,6 +588,7 @@ impl SessionStore {
                 bound_at_revision: None,
                 system_prompt: None,
                 tool_selection: None,
+                tool_schemas: BTreeMap::new(),
             });
             let modified = fs::metadata(&path)
                 .and_then(|value| value.modified())
@@ -627,7 +637,8 @@ fn validate_metadata(metadata: &SessionMetadata, id: &str) -> Result<()> {
                 && metadata.binding_origin.is_none()
                 && metadata.bound_at_revision.is_none()
                 && metadata.system_prompt.is_none()
-                && metadata.tool_selection.is_none(),
+                && metadata.tool_selection.is_none()
+                && metadata.tool_schemas.is_empty(),
             "enhanced configuration fields require metadata schema 2"
         );
     }
@@ -661,6 +672,19 @@ fn validate_metadata(metadata: &SessionMetadata, id: &str) -> Result<()> {
             .context("schema 2 metadata is missing tool_selection")?;
         super::config::validate_tool_selection(tools)
             .map_err(|error| anyhow::anyhow!("unsupported session tools: {}", error.message))?;
+        let names: std::collections::BTreeSet<_> = tools
+            .external
+            .iter()
+            .map(|binding| binding.exposed_name.as_str())
+            .collect();
+        ensure!(
+            names.len() == metadata.tool_schemas.len()
+                && metadata
+                    .tool_schemas
+                    .keys()
+                    .all(|name| names.contains(name.as_str())),
+            "schema 2 tool declarations do not match the selected external tools"
+        );
     }
     Ok(())
 }
