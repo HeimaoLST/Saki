@@ -1018,7 +1018,7 @@ history_required 时，桥在 Finished 前读取服务完整历史并发送同�
 
 ## 服务化联合验收记录
 
-更新日期：2026-10-23。分类：**实现事实与已执行验证；集成状态以 [#103](https://github.com/HeimaoLST/Saki/issues/103) 及各 PR 为准**。当前服务代码候选为 `dfe1913a622fec409e3fef211fb6d16a9c50e700`；后续保留祖先关系的 dev 同步和事实文档提交，不把原二进制实测改标成新 SHA。#104/#105/#121/#61/#108/#106/#107/#109 共用 Runtime、Agent、ToolRegistry 和 journal reducer；GUI 继续 stdio v1，TUI/console 使用 typed 桥。
+更新日期：2026-10-23。分类：**实现事实与已执行验证；集成状态以 [#103](https://github.com/HeimaoLST/Saki/issues/103) 及各 PR 为准**。本节保留 `dfe1913a622fec409e3fef211fb6d16a9c50e700` 的生产验收基线；后续 journal 锁释放修正及其验证单列于下，不把旧二进制实测改标成新 SHA。#104/#105/#121/#61/#108/#106/#107/#109 共用 Runtime、Agent、ToolRegistry 和 journal reducer；GUI 继续 stdio v1，TUI/console 使用 typed 桥。
 
 | 验收范围 | 可复查来源 | 结论边界 |
 | --- | --- | --- |
@@ -1038,3 +1038,12 @@ history_required 时，桥在 Finished 前读取服务完整历史并发送同�
 - Responses：固定 `dfe1913` binary（SHA256 `0ca902c54097c8bc97ca286168c3f3fc06c2a89d330eed6f6be61217976e91a2`）执行真实内置 read，两个请求均 HTTP 200；ToolFinished JSON 与下一请求 function_call_output 解码后完全一致，唯一 completed、回答／历史含唯一标记。两次 usage 分别为 input/output 396/39、492/21。证据 `/private/tmp/saki-service-goal/live103-responses-d0_kikcw/`；仅一次有界样本，无循环重试或伪造推理数据。
 
 历史并发 caller-context+read 的真实 Chat 400 仍因缺原始失败 wire 保留未知，[原始边界](https://github.com/HeimaoLST/Saki/issues/103#issuecomment-6332567925)。上述成功样本不证明全面根治。原生 GUI Finder／IME／VoiceOver、GUI 生产展示队列预算及后续 picker、后台任务面板不是这些进程测试或本次 Runtime 交付已验证的能力。默认 schema 1、显式 schema 2、既有回退限制和不自动重放副作用的契约保持。
+
+
+### 集成门禁发现的 journal 释放边界
+
+2026-10-23 的精确候选 `0167a64` 在 Linux CI `39932210905` 出现真实失败：`release_reaps_live_modern_subscription_and_returns_source_capacity` 中，release 返回后重新取得 journal 锁仍得到 locked；其余605项通过、1项失败、12 ignored。原始日志保留为 `/private/tmp/saki-service-goal/ci131-0167a64-failed.log`，没有重跑原候选到绿。
+
+此前 journal 文件依赖 File 关闭释放锁。复制描述符（包括 fork 到 exec 之间的继承）仍存活时，这个所有权结束边界不成立；Conversation 和 ConfigurationLock 两条路径均由受控 try_clone 夹具确定性复现同类错误（2 RED）。当前以同一 JournalLock 所有权 guard 在退出时显式 unlock，创建／恢复和配置检查失败路径也覆盖在该作用域内；列表的短期探测锁在读取完成后显式解除。不会解开其他 open-file-description 的新持有者，不改变真实持锁期间的排他、journal 字节或原有恢复重试契约。
+
+同一两项夹具修正后2 GREEN；它们还检查旧复制描述符关闭不会解除新持有者的锁。原 Linux 失败没有捕获当时持有者身份，因此这里说明确定性复现机制，不冒称直接抓到了那次 fork。最终完整门禁、实际 binary 消费与精确 SHA 在 PR131/#103 另行记录，不将 dfe/527 旧运行冒记为这一生产修正的验收。

@@ -11,6 +11,36 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocol::{InputItem, InputMessageContent, MessageRole, Usage};
 
+pub(crate) struct JournalLock(File);
+
+impl JournalLock {
+    pub(crate) fn from_locked_file(file: File) -> Self {
+        Self(file)
+    }
+}
+
+impl std::ops::Deref for JournalLock {
+    type Target = File;
+
+    fn deref(&self) -> &File {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for JournalLock {
+    fn deref_mut(&mut self) -> &mut File {
+        &mut self.0
+    }
+}
+
+impl Drop for JournalLock {
+    fn drop(&mut self) {
+        // A forked child can retain the descriptor until exec. The owner's
+        // release must unlock even while that copied descriptor remains open.
+        let _ = self.0.unlock();
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {

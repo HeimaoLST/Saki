@@ -85,7 +85,7 @@ const SCHEMA_ONE_BACKUP_STATE: &str = "metadata.schema1.backup.state.json";
 pub(crate) struct ConfigurationLock {
     pub metadata: SessionMetadata,
     pub replay: Replay,
-    _file: File,
+    _file: journal::JournalLock,
 }
 
 struct MetadataLock(File);
@@ -410,6 +410,7 @@ impl SessionStore {
                 return Err(RuntimeError::new("io_error", format!("{error:#}")).session(id));
             }
         }
+        let file = journal::JournalLock::from_locked_file(file);
         let (metadata, _) = self
             .metadata_at(id)
             .map_err(|error| RuntimeError::new("io_error", format!("{error:#}")).session(id))?;
@@ -587,6 +588,9 @@ impl SessionStore {
                         .map_err(|error| anyhow::anyhow!("{error}"))
                         .and_then(|file| journal::read(file, &path))
                 });
+            if !in_use && let Ok(file) = &file {
+                let _ = file.unlock();
+            }
             let unavailable = replay.as_ref().err().map(|error| format!("{error:#}"));
             let metadata = metadata.unwrap_or_else(|_| SessionMetadata {
                 schema_version: 0,

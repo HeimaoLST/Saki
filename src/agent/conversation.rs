@@ -144,7 +144,7 @@ pub struct Conversation {
     #[serde(skip)]
     has_summary: bool,
     #[serde(skip)]
-    history_file: Option<File>,
+    history_file: Option<journal::JournalLock>,
     #[serde(skip)]
     persisted_items: usize,
     #[serde(skip)]
@@ -189,8 +189,9 @@ impl Conversation {
             !self.has_summary,
             "attach the history journal before any compaction"
         );
-        self.history_file = Some(File::options().write(true).create_new(true).open(path)?);
-        lock_journal(self.history_file.as_ref().unwrap(), path)?;
+        let file = File::options().write(true).create_new(true).open(path)?;
+        lock_journal(&file, path)?;
+        self.history_file = Some(journal::JournalLock::from_locked_file(file));
         self.persisted_items = 0;
         self.save_history()?;
         Ok(self)
@@ -198,8 +199,9 @@ impl Conversation {
 
     /// Opens and locks an existing journal. Loading never runs a model or tool.
     pub fn restore(path: &Path) -> Result<(Self, Replay)> {
-        let mut file = File::options().read(true).write(true).open(path)?;
+        let file = File::options().read(true).write(true).open(path)?;
         lock_journal(&file, path)?;
+        let mut file = journal::JournalLock::from_locked_file(file);
         let replay = journal::read(&file, path)?;
         if file.metadata()?.len() != replay.valid_bytes {
             file.set_len(replay.valid_bytes)?;

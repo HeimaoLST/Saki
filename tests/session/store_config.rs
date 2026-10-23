@@ -601,3 +601,30 @@ fn unsupported_persisted_tool_selection_is_rejected_before_history_repair() {
         assert_eq!(fs::read(&history_path).unwrap(), history);
     }
 }
+
+#[test]
+fn configuration_journal_lock_release_does_not_wait_for_a_duplicated_descriptor() {
+    let workspace = Workspace::new();
+    let store = workspace.store();
+    let id = legacy(&store, &workspace);
+    let original = fs::read(history_path(&store, &id)).unwrap();
+    let lock = store.lock_config(&id).unwrap();
+    let duplicate = lock._file.try_clone().unwrap();
+    let error = match store.lock_config(&id) {
+        Ok(_) => panic!("live configuration lock was ignored"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, "locked");
+    drop(lock);
+    let next = store
+        .lock_config(&id)
+        .expect("released configuration retained the journal lock");
+    drop(duplicate);
+    assert!(
+        store.lock_config(&id).is_err(),
+        "old duplicate unlocked the new owner"
+    );
+    drop(next);
+    assert!(store.lock_config(&id).is_ok());
+    assert_eq!(fs::read(history_path(&store, &id)).unwrap(), original);
+}
