@@ -853,3 +853,13 @@ schema 1 仍未验证原 endpoint，effective_config 返回 connection_binding.s
 背压诊断 `TaskEvents::buffer_stats` 增加 waiting_producers，只有发送 future 实际 Pending 才计数，完成/取消/丢弃均归零。消息/字节统计覆盖生产者持有、队列、转发和写入期间的 permits，不能仅用队列长度代替总占用。事件与控制输出各有独立条数队列和字节预算；stdio 等待中的请求有 `32 + max_active_tasks` 上界，保留独立控制配额，不按事件数量创建任务。模型响应总字节限制及异步回调逐次等待继续生效。
 
 确定性验收覆盖双请求 gate、容量拒绝无排队、相同工具 ID 的不同 cwd、定向取消、模型失败/实际 worker panic、idle 锁释放、并发 compact、compact hook 发送等待、两个任务同时满事件链及控制回复缓冲、writer 恢复/断开/虚拟时钟期限、真实 stdio 双任务 EOF 三种输出状态。证据与具体 SHA 记录于 PR；并发能力不等同于任意模型/provider 已通过真实服务验收。
+
+## #108 调用方输入资料（候选实现事实）
+
+更新日期：2026-10-22。分类：**本 PR 候选，尚未合入 dev**。`runtime.capabilities.caller_context:true` 表示支持 stdio `task.send` 的顶层可选 `context:[{name,text}]`；typed 调用方在同一个 UserMessage.context 提供 ContextInput。缺省为空，原 text/images 请求继续可用；可以提交仅含 context 的用户消息。未知字段明确拒绝。
+
+唯一 Conversation 输入拼装按原始 text、按顺序的 context、images 组成一条 user 消息。每条资料为带 `caller_context` 类型、`Caller-provided context (user data)` 标签、name/text 的 JSON 文本部分；特殊换行/引号仍是字段数据，不变成 system 指令。它进入既有 token 估算、compact、journal 和恢复路径，不在工具后或下一轮额外注入；原始 journal 保留资料，compact 可将活动上下文变为摘要，不保证摘要逐字保存每个来源内容。
+
+资料部分实际编码后的 UTF-8 字节总和上限为 1 MiB（包含上述每条 JSON 包装）。typed 和 stdio 复用 UserMessage.validate，在任务接纳/分配 ID/写入用户历史之前返回 invalid_request；不静默截断。既有 8 MiB 整请求限制同时适用。通过资料入口限制仍须满足所选模型的上下文预算；预算不足时沿用原有 compact/明确失败规则，不绕过容量校验。
+
+资料随历史保留，不宣称一次使用后删除。TUI 构造 UserMessage 的既有位置仅补空 context 以保持编译，不提供资料编辑 UI；#109 消费方服务化仍另行交付。确定性证据覆盖两端实际模型输入、图片旧表示、特殊字符串、超限拒绝、合法边界不截断、compact 来源与历史原字节前缀、跨进程恢复及继续时不重复注入；验收 SHA 与真实模型结果见 PR。

@@ -356,12 +356,17 @@ impl Conversation {
 
     pub fn add_user_message(&mut self, message: impl Into<UserMessage>) {
         let message = message.into();
-        let content = if message.images.is_empty() {
+        let content = if message.images.is_empty() && message.context.is_empty() {
             InputMessageContent::Text(message.text)
         } else {
             let mut parts = Vec::new();
             if !message.text.is_empty() {
                 parts.push(InputContentPart::Text { text: message.text });
+            }
+            for context in message.context {
+                parts.push(InputContentPart::Text {
+                    text: context.as_input_text(),
+                });
             }
             for image in message.images {
                 parts.push(InputContentPart::Image {
@@ -517,6 +522,7 @@ impl Conversation {
         summary_input.add_user_message(UserMessage {
             text: transcript,
             images,
+            context: Vec::new(),
         });
         let request = ModelRequest::new(model.to_owned(), summary_input.items(), vec![])
             .with_generation(Some(config.max_summary_tokens), None, None);

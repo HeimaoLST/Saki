@@ -15,7 +15,7 @@ use super::runtime::{
 use crate::agent::{
     AgentEvent,
     events::{BufferMetrics, BufferPermit, ByteCounter, OutputState},
-    message::{ImageAttachment, UserMessage},
+    message::{ContextInput, ImageAttachment, UserMessage},
 };
 
 const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
@@ -89,6 +89,8 @@ struct History {
 struct SendTask {
     session_id: String,
     message: Message,
+    #[serde(default)]
+    context: Vec<ContextInput>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -217,6 +219,7 @@ fn decode(bytes: &[u8]) -> (Option<String>, Result<RuntimeCommand, RuntimeError>
                             .into_iter()
                             .map(|i| ImageAttachment::new(i.name, i.data_url))
                             .collect(),
+                        context: p.context,
                     },
                 }
             }

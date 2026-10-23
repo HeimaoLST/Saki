@@ -118,6 +118,7 @@ fn switching_restores_drafts_images_reading_position_and_thought_expansion() {
         offset: 0,
     });
     editor.set_draft(crate::agent::message::UserMessage {
+        context: Vec::new(),
         text: "unsent A draft".into(),
         images: vec![ImageAttachment::new("a.png", "data:image/png;base64,AA")],
     });
@@ -524,6 +525,7 @@ fn picker_search_preserves_draft_images_and_reading_position() {
     let (mut sessions, mut app, mut editor) =
         listed(vec![picker_summary("id-a", "alpha", "model", "/a")]);
     editor.set_draft(crate::agent::message::UserMessage {
+        context: Vec::new(),
         text: "keep this draft".into(),
         images: vec![ImageAttachment::new("a.png", "data:image/png;base64,AA")],
     });
