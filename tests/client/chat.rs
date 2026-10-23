@@ -583,3 +583,118 @@ async fn async_callback_backpressure_holds_chat_deltas_until_released() {
         matches!(&response.output[0], OutputItem::Message { content, .. } if content[0].text == "Hello")
     );
 }
+
+#[tokio::test]
+async fn reasoning_continuation_survives_json_sse_and_serialized_context() {
+    for streaming in [false, true] {
+        for reasoning in ["inspect file\nthen answer", ""] {
+            let tool = json!({"id":"read-1", "type":"function", "function":{"name":"read", "arguments":"{}"}});
+            let (kind, body) = if streaming {
+                let cut = reasoning.len() / 2;
+                (
+                    "text/event-stream",
+                    format!(
+                        "{}{}{}data: [DONE]\n\n",
+                        sse(
+                            json!({"id":"r", "choices":[{"delta":{"reasoning_content": &reasoning[..cut]}}]})
+                        ),
+                        sse(
+                            json!({"id":"r", "choices":[{"delta":{"reasoning_content": &reasoning[cut..], "content":"checking", "tool_calls":[{"index":0,"id":"read-1","function":{"name":"read","arguments":"{}"}}]}}]})
+                        ),
+                        sse(
+                            json!({"id":"r", "choices":[{"delta":{},"finish_reason":"tool_calls"}]})
+                        )
+                    ),
+                )
+            } else {
+                ("application/json", json!({"id":"r", "choices":[{"message":{"reasoning_content":reasoning,"content":"checking","tool_calls":[tool.clone()]},"finish_reason":"tool_calls"}]}).to_string())
+            };
+            let (client, server) = mock_once(200, kind, body).await;
+            let mut deltas = String::new();
+            let response = client
+                .respond_stream(
+                    ModelRequest::new("m".into(), &[user("read")], vec![]),
+                    |event| {
+                        if let ModelStreamEvent::ReasoningDelta { delta, .. } = event {
+                            deltas.push_str(&delta);
+                        }
+                    },
+                )
+                .await
+                .unwrap();
+            server.await.unwrap();
+            if streaming {
+                assert_eq!(deltas, reasoning);
+            }
+            let mut input = vec![user("read")];
+            for item in response.output {
+                input.push(match item {
+                    OutputItem::Reasoning {
+                        content,
+                        provider_data,
+                        ..
+                    } => InputItem::Reasoning {
+                        content,
+                        provider_data,
+                    },
+                    OutputItem::Message { role, content, .. } => InputItem::Message {
+                        role,
+                        content: InputMessageContent::Text(
+                            content.into_iter().map(|part| part.text).collect(),
+                        ),
+                    },
+                    OutputItem::ToolCall {
+                        call_id,
+                        name,
+                        arguments,
+                        ..
+                    } => InputItem::ToolCall {
+                        call_id,
+                        name,
+                        arguments,
+                    },
+                    _ => panic!("unexpected output"),
+                });
+            }
+            input.push(InputItem::ToolResult {
+                call_id: "read-1".into(),
+                output: "marker".into(),
+            });
+            // This is the same serde boundary used by persisted conversation context.
+            let restored: Vec<InputItem> =
+                serde_json::from_slice(&serde_json::to_vec(&input).unwrap()).unwrap();
+            let messages = encode_messages(&restored).unwrap();
+            assert_eq!(messages, json!([
+                {"role":"user","content":"read"},
+                {"role":"assistant","content":"checking","reasoning_content":reasoning,"tool_calls":[tool]},
+                {"role":"tool","tool_call_id":"read-1","content":"marker"}
+            ]).as_array().unwrap().clone());
+        }
+    }
+}
+
+#[test]
+fn final_assistant_reasoning_is_retained_across_user_turns() {
+    let input = vec![
+        user("first"),
+        InputItem::Reasoning {
+            content: vec![],
+            provider_data: Some(ProviderData {
+                api: API.into(),
+                value: json!({"reasoning_content":"complete reasoning"}),
+            }),
+        },
+        InputItem::Message {
+            role: MessageRole::Assistant,
+            content: InputMessageContent::Text("answer".into()),
+        },
+        user("next"),
+    ];
+    let messages = encode_messages(&input).unwrap();
+    assert_eq!(messages.len(), 3);
+    assert_eq!(
+        messages[1],
+        json!({"role":"assistant","reasoning_content":"complete reasoning","content":"answer"})
+    );
+    assert!(messages[1].get("tool_calls").is_none());
+}
