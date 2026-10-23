@@ -230,6 +230,13 @@ impl Agent {
     }
 
     /// Attach the event channel used to report display data to the UI.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "direct SDK compatibility; production hosts use Runtime"
+        )
+    )]
     pub fn with_events(self, events: UnboundedSender<AgentEvent>) -> Self {
         self.with_event_sink(EventSink::legacy(events))
     }
@@ -275,6 +282,13 @@ impl Agent {
     }
 
     /// Process a user message through model and tool calls while preserving the conversation on errors.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "direct SDK compatibility; production hosts use Runtime"
+        )
+    )]
     pub async fn handle_user_message(
         &mut self,
         message: impl Into<UserMessage>,

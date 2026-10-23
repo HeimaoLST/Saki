@@ -85,7 +85,17 @@ const SCHEMA_ONE_BACKUP_STATE: &str = "metadata.schema1.backup.state.json";
 pub(crate) struct ConfigurationLock {
     pub metadata: SessionMetadata,
     pub replay: Replay,
-    _file: File,
+    _file: journal::JournalLock,
+}
+
+struct MetadataLock(File);
+
+impl Drop for MetadataLock {
+    fn drop(&mut self) {
+        // A subprocess between fork and exec can retain the descriptor after
+        // this scope ends. Unlock explicitly rather than waiting for its close.
+        let _ = self.0.unlock();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +135,13 @@ impl SessionStore {
         Ok(self.root.join(id))
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "direct SDK compatibility; production hosts use Runtime"
+        )
+    )]
     pub fn create(
         &self,
         cwd: &Path,
@@ -393,6 +410,7 @@ impl SessionStore {
                 return Err(RuntimeError::new("io_error", format!("{error:#}")).session(id));
             }
         }
+        let file = journal::JournalLock::from_locked_file(file);
         let (metadata, _) = self
             .metadata_at(id)
             .map_err(|error| RuntimeError::new("io_error", format!("{error:#}")).session(id))?;
@@ -503,7 +521,7 @@ impl SessionStore {
         Ok(())
     }
 
-    fn lock_metadata(&self, id: &str) -> Result<File> {
+    fn lock_metadata(&self, id: &str) -> Result<MetadataLock> {
         let file = File::options()
             .read(true)
             .write(true)
@@ -511,7 +529,7 @@ impl SessionStore {
             .truncate(false)
             .open(self.directory(id)?.join("metadata.lock"))?;
         match file.try_lock() {
-            Ok(()) => Ok(file),
+            Ok(()) => Ok(MetadataLock(file)),
             Err(std::fs::TryLockError::WouldBlock) => Err(MetadataBusy.into()),
             Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
         }
@@ -570,6 +588,9 @@ impl SessionStore {
                         .map_err(|error| anyhow::anyhow!("{error}"))
                         .and_then(|file| journal::read(file, &path))
                 });
+            if !in_use && let Ok(file) = &file {
+                let _ = file.unlock();
+            }
             let unavailable = replay.as_ref().err().map(|error| format!("{error:#}"));
             let metadata = metadata.unwrap_or_else(|_| SessionMetadata {
                 schema_version: 0,

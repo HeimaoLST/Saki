@@ -476,6 +476,31 @@ fn changing_an_enhanced_schema_tag_does_not_enable_legacy_execution_or_repair_hi
 }
 
 #[test]
+fn releasing_metadata_guard_unlocks_while_a_duplicated_descriptor_remains_open() {
+    let workspace = Workspace::new();
+    let store = workspace.store();
+    let id = legacy(&store, &workspace);
+    let lock = store.lock_metadata(&id).unwrap();
+    let duplicate = lock.0.try_clone().unwrap();
+    assert!(
+        store
+            .claim_auto_title(&id)
+            .unwrap_err()
+            .downcast_ref::<MetadataBusy>()
+            .is_some()
+    );
+    drop(lock);
+
+    assert!(store.claim_auto_title(&id).unwrap());
+    assert!(!store.claim_auto_title(&id).unwrap());
+    let renamed = store.rename(&id, "Manual title").unwrap();
+    assert_eq!(renamed.title_source.as_deref(), Some("manual"));
+    assert!(store.apply_auto_title(&id, "Late title").unwrap().is_none());
+    assert_eq!(store.metadata(&id).unwrap().title, "Manual title");
+    drop(duplicate);
+}
+
+#[test]
 fn every_metadata_mutation_honors_one_lock_and_retains_other_configuration_fields() {
     let workspace = Workspace::new();
     let store = workspace.store();
@@ -575,4 +600,31 @@ fn unsupported_persisted_tool_selection_is_rejected_before_history_repair() {
         assert_eq!(fs::read(&metadata_path).unwrap(), bytes);
         assert_eq!(fs::read(&history_path).unwrap(), history);
     }
+}
+
+#[test]
+fn configuration_journal_lock_release_does_not_wait_for_a_duplicated_descriptor() {
+    let workspace = Workspace::new();
+    let store = workspace.store();
+    let id = legacy(&store, &workspace);
+    let original = fs::read(history_path(&store, &id)).unwrap();
+    let lock = store.lock_config(&id).unwrap();
+    let duplicate = lock._file.try_clone().unwrap();
+    let error = match store.lock_config(&id) {
+        Ok(_) => panic!("live configuration lock was ignored"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, "locked");
+    drop(lock);
+    let next = store
+        .lock_config(&id)
+        .expect("released configuration retained the journal lock");
+    drop(duplicate);
+    assert!(
+        store.lock_config(&id).is_err(),
+        "old duplicate unlocked the new owner"
+    );
+    drop(next);
+    assert!(store.lock_config(&id).is_ok());
+    assert_eq!(fs::read(history_path(&store, &id)).unwrap(), original);
 }

@@ -1,6 +1,6 @@
 # Runtime 调用契约与实施规划
 
-更新日期：2026-10-22。状态：**调用契约已确认；首轮机器入口由 #60 交付；跨端接入与后续能力分别追踪**。
+更新日期：2026-10-23。状态：**调用契约及服务化工作包已有实现；当前联合验收来源与范围见文末，集成状态以 #103 和对应 PR 为准**。
 
 需求依据：[Agent runtime 需求](../requirements/agent-runtime.md)、[#43](https://github.com/HeimaoLST/Saki/issues/43) 及 [GUI 首轮交接](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6235030388)。本文定义跨宿主调用契约与验收边界；实时优先级、任务状态和负责人以 GitHub 为准。
 
@@ -777,6 +777,8 @@ Runtime v1 候选的共同验收流程：
 每个工作包交付时附：最终 SHA、适用验收 ID 的结果、原始日志、实际模型/协议边界、配置与持久化迁移说明、回滚条件，以及 GUI/TUI 接入需要的变更。将本节已实施部分移入上方现行契约或对应模块事实文档，并删除被替代的提案描述，保持一个权威位置。
 
 
+以下按工作包保留各自交付时的阶段事实。早期“尚未迁移终端／尚未支持后续能力”限定于该层，不代表最终联合候选；当前两端接入与验证来源见文末。
+
 ### #104 候选实现事实与迁移入口
 
 分类：**本 PR 的实现事实，尚未集成到 dev**。#104 提取 typed 服务和 stdio 适配器，保持 stdio v1；#109 尚未迁移终端，旧 SessionManager 保留原执行路径，因此此阶段不能宣布“两端已经统一”。#105/#106 配置、#61 并发、#107 MCP、#108 输入资料均未在本 PR 实现，不升级用户 schema 或推测旧连接身份。
@@ -978,3 +980,70 @@ load 可恢复有效 Conversation 但工具不可用时，返回明确错误并�
 确定性测试位于 tests/session/mcp.rs、tests/tools/mcp*.rs 与 tests/support/mcp.rs，受控 Python 子进程只承载真实 JSONL wire；独立 SDK Rust server 继续另行构建和命名测试。覆盖声明变化/显式确认、结果一致、会话隔离、进程配额、创建前拒绝、失败配置回收、缺来源恢复/修复、取消和 panic 前置清理、大输出回读及清理等待被取消。现代 ACK 缺失、错误 ID、拒绝过滤项、订阅结束/新 ID、旧 ID 通知及业务失败后下一任务重连均有 wire 测试。另一个 SDK 级测试在消费前用同一 wire 的响应屏障证明订阅队列已满，观察 Lagged 终止及新 ID 重建；来源监听器对结束统一失效并在下次发现重建，该分支由真实来源的结束测试覆盖。两个 MCP 调用均已到达后取消 A，B 保持运行并随后成功；输出失效时另验证业务真实完成及工具/锁回收。E06 证据需保留这种 SDK/来源/服务分层边界，两端联合验收仍按 #103 逐项核对，不能以局部测试数量代替完成。
 
 验收补充日期：2026-10-23，分类仍为候选实现的确定性证据。已选工具的 description、有效 inputSchema、有效 outputSchema 分别变化时，下一 send 在模型请求前拒绝且 metadata/history 字节不变；显式确认后 revision 与持久化/生效 schema 同步，确认本身不启动业务调用。另以真实 SourceProcess 的现代 listen/ACK 和存活 PID 证明订阅尚未结束，再分别执行 Runtime release/shutdown，观察原进程回收、写锁可重新取得及同一来源配额重新可用；不是用直接 SourceProcess.close 代替 Runtime 收尾。modern/legacy/auto 三种策略另验证不支持的协议版本在工具发现前明确失败，进程及配额回收，不落入工具业务结果。cargo tree --locked -i rmcp -e features 核对实际依赖图仍为 rmcp 3.6.0，仅 client 与 transport-async-rw；未更改生产实现、SDK 版本或协议。以上不代表新的真实模型/GUI/TUI 组合已验收。
+
+## #109 终端服务委托与自动标题（实施中）
+
+更新日期：2026-10-23。分类：**候选实现事实，尚未集成到 dev**。app 只组装一份 Runtime，stdio 与终端选择各自适配器；SessionManager 已成为 RuntimeHandle 委托，不再持有 Agent、store 写入者或独立执行循环。终端展示通道和投影已接入候选，跨端真实运行及最终评审仍按 #103 核对，尚不能宣布 U02–U05 全部通过。
+
+标题生成统一在 `src/session/title.rs`，沿用原 2000 字符双侧输入、60 字符标题、独立 1024 输出预算、30 秒期限和失败不改标题的规则。SessionManager 启用服务的附属标题作业并订阅 metadata 失效通知，原有独立标题 claim/apply/运行流程已移除。
+
+typed Runtime 新增 `with_automatic_titles(bool)`，默认 false。启用时 capabilities 报告 automatic_titles=true、max_auxiliary_jobs=1；关闭时为 false/0。它不改变 max_active_tasks。候选在任务接纳时固定标题所用客户端、模型与用户文本，任务成功后从本次回复取有限摘要，在唯一附属作业槽空闲且仍接纳工作时尝试 claim。作业满时跳过本次，不放隐藏队列，metadata 继续 pending；未来用户任务可再次成为首次成功派发机会。已持久 claim 为 auto 后，即使生成失败或重启也不再次派发。shutdown 停止新派发并等待已有作业收尾。
+
+claim 和 apply 沿用 metadata 写锁，在后台执行文件 I/O；标题只更新 title/title_source，不改配置 revision、其他配置或历史。手工改名优先，迟到结果不能覆盖已确认的手工名称。标题不是用户任务，没有伪造 task_started/task_finished、工具或对话 journal 记录；使用固定快照发出的附属模型请求不暴露业务工具。
+
+metadata 写锁在持有作用域退出时显式解锁，生命周期不再依赖复制/继承文件描述符全部关闭。真实持锁期间的 rename、claim、apply 和配置提交仍返回既有 locked 错误；释放后，即使复制描述符尚未关闭，后续操作也能重新取得锁。受控复制描述符回归覆盖该边界及手工名称优先，不通过延迟重试掩盖锁冲突。
+
+`RuntimeHandle::subscribe_metadata()` 返回有界 32 条的 typed 通知，内容仅为 session_id 失效提示，调用方必须重新读取当前 metadata。这样迟到通知不会携带过时自动标题覆盖后来手工名称；收到 Lagged 时刷新所有正在显示的会话。当前可通过 session.list，或空闲 loaded 会话的幂等 load 获得 metadata；既有 status.metadata 可为 None 的契约保持。
+
+当前四项服务测试覆盖一次生成/历史隔离、手工名称与迟到结果、附属容量不占用户容量、空可解析标题失败后的重启不重跑；失败测试并未声称覆盖 HTTP 5xx 的客户端内部重试。终端启动/恢复、列表、发送、改名和取消均委托 typed 命令。控制操作最多同时准备 8 项，回复可以按完成顺序返回；初始 create/load 失败仍结束入口并返回错误。EOF 等待已接收操作并由服务 shutdown 收尾；展示接收端丢失关闭服务 OutputState。
+
+CLI 的 main 在 app::run 返回后结束宿主执行器。app 会等待 SessionManager worker，后者等待 Actor、操作和事件转发收尾；该边界之后不再等待 Tokio 不可取消的 stdin 阻塞读，因此 console 空闲 Ctrl-C 无需先关闭 stdin 才退出。运行中 Ctrl-C 仍只请求所观察任务取消，等待真实 Finished 后可继续输入；随后空闲退出才结束宿主。tests/session/process.rs 以子进程调用实际 main，验证保持 stdin 打开的退出、真实阻塞工具在终态前回收、唯一 interrupted 持久记录及退出后会话锁可重新取得。
+
+终端历史通过服务分页 history 读取，使用 journal 文件读取器共用的唯一 reducer 构造 Replay；只读 Conversation 投影不打开、修复或独占 journal。上下文估算使用生效配置和工具声明。多连接创建使用 schema 2，不再在 app 另设单连接/schema 1 限制。旧文档承诺的直接 Agent SDK 调用保留为兼容入口，生产宿主只使用 Runtime；其窄范围 dead_code 标注不覆盖新服务接口，新标题 builder/metadata 订阅均有生产消费者。
+
+### Typed 终端消费契约（联合接线候选）
+
+输入为 32 条有界 mpsc，元素 `SessionRequest { request_id: u64, command: SessionCommand }`。终端宿主为请求分配递增 ID，通过 try_send 提交；容量不足保留原输入并反馈 busy，不等待而停止消费输出。命令回复 packet 保留该 request_id，启动及异步 metadata 通知为 None。Send 接纳成功先返回 Accepted 和完整 Association，再返回该流的 Agent 事件；拒绝返回原 RuntimeError 与 operation，不生成伪造的 task_id。消费者在 Accepted 后才提交暂存输入，按 request_id 固定拒绝/命令反馈的归属。
+
+`Cancel { session_id, task_id }` 使用调用方实际观察到的任务，不能在处理时查询并替换成该 session 最新任务。取消走独立控制路径，Cancelled 只确认请求状态；唯一任务终态为 `Finished(TaskFinished)`，保留 status/error/persistence/history_required，不再额外生成 TurnCompleted/TurnInterrupted/TurnFailed。全部任务事件和 Finished 的 packet 保留原 Association，包括 message_id。
+
+`SessionManager::event_channel()` 创建与 Runtime 共用 OutputState 的通道。输出按 32 条、8 MiB 总字节和 8 MiB 单事件限制，发送前计数，整个 enqueue 期限为 30 秒；持有 payload 的 packet 包含显示预算及原 EventPacket 的字节 lease。消费者必须保留 packet 剩余字段到 apply/消费完成，不能提前析构 lease 后把 payload 复制进无界队列。显示失效只关闭 OutputState，解除排队展示等待；取消、业务结果持久化和资源清理不依赖显示队列继续消费。控制回复无法无等待入队时关闭该展示通道，不能堵住控制循环。
+
+Opened 包含 metadata、稳定历史 Replay、context、服务 SessionState 及 `stream: Option<Association>`。服务 state 是业务事实；stream 是桥尚未交付 Finished 的显示流，不把两者混作执行状态。桥在 Accepted、快照和每个流事件/Finished 的入队之间协调顺序：存在 stream 时，Replay 只包含其 task_started 之前的稳定历史；Accepted 不等待 worker 写入 task_started，该记录尚未出现时，已读取的完整历史本身就是稳定前缀，Open 仍返回同一 stream，不等待首段输出或制造错误。消费者继续使用已经按 Accepted/关联事件缓存的实时投影，不能将其按历史 interrupted 关闭。Finished 入显示队列后解除 stream，后续 Opened 使用完整 canonical history，且位于该流已入队事件之后。该顺序不取消后台任务，Create/Open 不再全局要求空闲。
+
+history_required 时，桥在 Finished 前读取服务完整历史并发送同关联的 HistoryRestored；它只更新所属投影，不能切换选中会话。读取失败返回明确的 history 操作错误，仍保留原 Finished.history_required，不伪称补齐。metadata Lagged 刷新各会话当前 TitleUpdated，不借 Listed 弹出 picker；手工 rename 和标题刷新沿同一输出顺序协调，迟到刷新不携带旧快照。
+
+上述 Runtime 候选接口已由 TUI/console 共同消费，有界消费、按任务投影、暂存输入和运行中恢复由唯一 TUI writer 实施。6b302499 与追加 7f87e44 已按明确许可原样纳入联合分支；联合候选及后续宿主收尾修正执行了完整 fmt、strict Clippy、all-targets 和 build，原标题失败与受控锁释放回归也在全量中通过。固定527b402 binary 已由 GUI 9e4144b 运行九项真实进程测试和完整 Go race（88 PASS/4 预期 SKIP），TUI 主责另完成 default/resume/rename/cancel/title 等五组 28 项实际 PTY 及保持 stdin 打开的初始 idle SIGINT 退出。此后独立评审指出 Accepted 到 task_started 之间立即 Open 的窗口，新增测试以仅测试用 worker 启动屏障确定性复现并覆盖修正；这些组件/消费结果不代表已集成到 dev，也不能推导 GUI 自有展示队列已经有界。
+
+
+## 服务化联合验收记录
+
+更新日期：2026-10-23。分类：**实现事实与已执行验证；集成状态以 [#103](https://github.com/HeimaoLST/Saki/issues/103) 及各 PR 为准**。本节保留 `dfe1913a622fec409e3fef211fb6d16a9c50e700` 的生产验收基线；后续 journal 锁释放修正及其验证单列于下，不把旧二进制实测改标成新 SHA。#104/#105/#121/#61/#108/#106/#107/#109 共用 Runtime、Agent、ToolRegistry 和 journal reducer；GUI 继续 stdio v1，TUI/console 使用 typed 桥。
+
+| 验收范围 | 可复查来源 | 结论边界 |
+| --- | --- | --- |
+| U01–U05，两端及任务投影 | [服务](../../tests/session/service.rs)、[终端桥](../../tests/session/terminal_delivery.rs)、[TUI 投影](../../tests/tui/sessions.rs) | 实际接纳关联、历史与 live 边界、取消及唯一终态；不是另建执行循环 |
+| C01–C10、C08a–e，配置及身份 | [配置](../../tests/session/config.rs)、[连接](../../tests/session/connections.rs)、[存储提交](../../tests/session/store_config.rs) | CAS、接纳快照、失败保持、未知旧身份、显式迁移及安全回退；不推测旧 endpoint |
+| N01–N08、N07a–d，并发及整链背压 | [并发](../../tests/session/concurrent.rs)、[stdio](../../tests/session/stdio.rs)、[通道](../../tests/session/channel.rs)、[真实宿主进程](../../tests/session/process.rs) | 受控到达／容量屏障与虚拟期限；输出失效后仍持久化、清理并释放锁 |
+| E01–E08、E06a–f，工具及输入资料 | [MCP 服务](../../tests/session/mcp.rs)、[MCP SDK](../../tests/tools/mcp_sdk.rs)、[来源](../../tests/tools/mcp_client.rs)、[资料](../../tests/session/context.rs) | SDK forced-lag、来源结束／重建、服务准入为分层证据，不宣称单一子进程 forced-lag 全链测试 |
+| D01–D06，持久化及消费失败 | 上述配置／服务测试；[GUI 固定组合结果](https://github.com/HeimaoLST/Saki/issues/109#issuecomment-6348517211) | journal 写入故障不返回 completed，未知结果可对账；GUI mapping 保存失败零发送 |
+
+这些测试的来源、函数断言和完整执行记录按 37 个主项及 15 个必需子场景逐项核对，组合边界仍按上文矩阵定义，不能以测试数量替代行为。`dfe1913` 相同源码／测试内容的完整本地 fmt、strict all-target Clippy、all-target tests、build 均通过：主程序 607 PASS / 12 ignored，支撑目标 70 PASS；[精确 CI 39835887112](https://github.com/HeimaoLST/Saki/actions/runs/39835887112) 四项通过。ignored 包含父测试显式启动的 process helper，不将其当普通 PASS；测试输出中的既有 example dead-code warnings 不被改写为“全程无警告”，strict Clippy 单独达标。
+
+终端实际验收由 TUI 主责使用固定 `527b402` binary 完成五组 28 项 PTY及初始 idle SIGINT（stdin 保持打开直到退出），[回交证据](https://github.com/HeimaoLST/Saki/issues/109#issuecomment-6348647199)。冻结 GUI `9e4144b` 与同一 binary 完成九项真实 Rust-process 测试及全 Go race（88 PASS / 0 FAIL / 4 预期 opt-in SKIP），[实际回交](https://github.com/HeimaoLST/Saki/issues/109#issuecomment-6348517211)。此后 `dfe1913` 只修正 typed 快照的 Accepted-before-TaskStarted 窗口，确定性 oneshot 回归先 RED 后 GREEN；[独立差异复审](https://github.com/HeimaoLST/Saki/pull/131#issuecomment-6348943265) 确认该生产差异不影响 stdio、desktop、store 或宿主退出，无需把旧组合改记为新 binary 实测。
+
+真实 provider 样本均使用用户提供的 Magpie 网关与 `deepseek/deepseek-flash`，分别记录协议，不能据此声称验证了多个真实 provider：
+
+- Chat Completions：MCP 服务实现 `870ba66` 的固定 Saki binary（SHA256 `bf00864ccdb0787c92a5a91492bde19a417020d6cebcb70a5ab08be72de0d796`）在单独构建 Rust MCP 示例前后不变；真实外部工具读取唯一文件标记，ToolFinished JSON 与下一模型 tool 输入完全相同，最终回答及历史含标记，两个模型请求均 HTTP 200。原始证据 `/private/tmp/saki-service-goal/live107-6442qqqb/`，不冒称 dfe 的重新运行。
+- Responses：固定 `dfe1913` binary（SHA256 `0ca902c54097c8bc97ca286168c3f3fc06c2a89d330eed6f6be61217976e91a2`）执行真实内置 read，两个请求均 HTTP 200；ToolFinished JSON 与下一请求 function_call_output 解码后完全一致，唯一 completed、回答／历史含唯一标记。两次 usage 分别为 input/output 396/39、492/21。证据 `/private/tmp/saki-service-goal/live103-responses-d0_kikcw/`；仅一次有界样本，无循环重试或伪造推理数据。
+
+历史并发 caller-context+read 的真实 Chat 400 仍因缺原始失败 wire 保留未知，[原始边界](https://github.com/HeimaoLST/Saki/issues/103#issuecomment-6332567925)。上述成功样本不证明全面根治。原生 GUI Finder／IME／VoiceOver、GUI 生产展示队列预算及后续 picker、后台任务面板不是这些进程测试或本次 Runtime 交付已验证的能力。默认 schema 1、显式 schema 2、既有回退限制和不自动重放副作用的契约保持。
+
+
+### 集成门禁发现的 journal 释放边界
+
+2026-10-23 的精确候选 `0167a64` 在 Linux CI `39932210905` 出现真实失败：`release_reaps_live_modern_subscription_and_returns_source_capacity` 中，release 返回后重新取得 journal 锁仍得到 locked；其余605项通过、1项失败、12 ignored。原始日志保留为 `/private/tmp/saki-service-goal/ci131-0167a64-failed.log`，没有重跑原候选到绿。
+
+此前 journal 文件依赖 File 关闭释放锁。复制描述符（包括 fork 到 exec 之间的继承）仍存活时，这个所有权结束边界不成立；Conversation 和 ConfigurationLock 两条路径均由受控 try_clone 夹具确定性复现同类错误（2 RED）。当前以同一 JournalLock 所有权 guard 在退出时显式 unlock，创建／恢复和配置检查失败路径也覆盖在该作用域内；列表的短期探测锁在读取完成后显式解除。不会解开其他 open-file-description 的新持有者，不改变真实持锁期间的排他、journal 字节或原有恢复重试契约。
+
+同一两项夹具修正后2 GREEN；它们还检查旧复制描述符关闭不会解除新持有者的锁。原 Linux 失败没有捕获当时持有者身份，因此这里说明确定性复现机制，不冒称直接抓到了那次 fork。最终完整门禁、实际 binary 消费与精确 SHA 在 PR131/#103 另行记录，不将 dfe/527 旧运行冒记为这一生产修正的验收。

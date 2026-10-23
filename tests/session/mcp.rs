@@ -25,19 +25,28 @@ struct Fixture {
 
 impl Fixture {
     async fn new(hold_calls: bool) -> Self {
-        Self::build(hold_calls, false).await
+        Self::build(hold_calls, false, "modern", false).await
     }
 
     async fn with_list_changed(hold_calls: bool) -> Self {
-        Self::build(hold_calls, true).await
+        Self::build(hold_calls, true, "modern", false).await
     }
 
-    async fn build(hold_calls: bool, list_changed: bool) -> Self {
+    async fn auto_reconnect() -> Self {
+        Self::build(true, true, "auto", true).await
+    }
+
+    async fn build(
+        hold_calls: bool,
+        list_changed: bool,
+        protocol: &'static str,
+        reconnect_versions: bool,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let definition = json!({
             "id":"controlled", "transport":"stdio", "command":python_command(),
             "args":[proxy_script().to_string_lossy(),"--control-port",listener.local_addr().unwrap().port().to_string()],
-            "env_from":["MCP_TEST_TOKEN"], "protocol":"modern",
+            "env_from":["MCP_TEST_TOKEN"], "protocol":protocol,
             "startup_timeout_ms":5000,"call_timeout_ms":30000,"cancel_grace_ms":50
         });
         let catalog = Arc::new(RwLock::new(vec![tool("alpha")]));
@@ -48,12 +57,15 @@ impl Fixture {
         let worker_trace = trace.clone();
         let worker = tokio::spawn(async move {
             let mut sources = JoinSet::new();
+            let mut connection_count = 0;
             loop {
                 tokio::select! {
                     _ = &mut stopped => break,
                     next = sources.join_next(), if !sources.is_empty() => { next.unwrap().unwrap(); },
                     connected = listener.accept() => {
                         assert!(sources.len() < 16, "fixture process limit exceeded");
+                        connection_count += 1;
+                        let generation = connection_count;
                         let (socket, _) = connected.unwrap();
                         let catalog = worker_catalog.clone();
                         let trace = worker_trace.clone();
@@ -76,7 +88,39 @@ impl Fixture {
                                 if message["event"] == "stdin_eof" { break; }
                                 let method = message["method"].as_str().unwrap_or("");
                                 let result = match method {
+                                    "server/discover"
+                                        if reconnect_versions && generation == 2 =>
+                                    {
+                                        let error = json!({
+                                            "jsonrpc": "2.0",
+                                            "id": message["id"],
+                                            "error": {
+                                                "code": -32601,
+                                                "message": "method not found"
+                                            }
+                                        });
+                                        control.send(error).await.unwrap();
+                                        trace.lock().unwrap().push((
+                                            pid,
+                                            json!({
+                                                "event": "modern_probe_rejected",
+                                                "id": message["id"],
+                                                "code": -32601
+                                            }),
+                                        ));
+                                        continue;
+                                    }
                                     "server/discover" => discover_result(list_changed),
+                                    "initialize" if reconnect_versions && generation == 3 => {
+                                        assert_eq!(
+                                            message["params"]["protocolVersion"],
+                                            "2025-11-25"
+                                        );
+                                        initialize_result()
+                                    }
+                                    "tools/list" if reconnect_versions && generation == 3 => {
+                                        tools_page(catalog.read().unwrap().clone(), None, false)
+                                    }
                                     "subscriptions/listen" => {
                                         assert_eq!(
                                             message["params"]["notifications"],
@@ -982,6 +1026,175 @@ async fn crashed_business_call_is_not_replayed_and_only_next_task_reconnects() {
         1,
         "business side effect was replayed"
     );
+}
+
+#[tokio::test]
+async fn reconnect_negotiates_legacy_after_modern_probe_method_not_found() {
+    let directory = Directory::new();
+    let mut fixture = Fixture::auto_reconnect().await;
+    let replies = vec![
+        tool_call(),
+        completed("reported tool failure"),
+        completed("next task without a call"),
+    ];
+    let (base, server) = scripted_server(
+        replies
+            .into_iter()
+            .map(|reply| (200, "application/json", serde_json::to_vec(&reply).unwrap()))
+            .collect(),
+    )
+    .await;
+    let mut driver = Driver::from_runtime(runtime(&directory, base, &fixture, 1)).await;
+    let id = create(&mut driver, &directory.0).await;
+    let first_pid = latest_source_pid(&fixture);
+    assert_live_modern_subscription(&fixture, first_pid);
+
+    let accepted = driver
+        .call(
+            "task.send",
+            json!({"session_id":id,"message":{"text":"first call"}}),
+        )
+        .await;
+    let (call_pid, _, _) = tokio::time::timeout(WIRE_TIMEOUT, fixture.calls.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(call_pid, first_pid);
+    assert_eq!(unsafe { libc::kill(first_pid as i32, libc::SIGKILL) }, 0);
+    assert_eq!(
+        driver.finish(&accepted["result"]).await["event"]["status"],
+        "completed"
+    );
+    let tool = driver
+        .seen
+        .iter()
+        .find(|event| {
+            event["task_id"] == accepted["result"]["task_id"]
+                && event["event"]["type"] == "tool_finished"
+        })
+        .unwrap()["event"]["output"]
+        .clone();
+    assert!(tool["error"].as_str().is_some());
+
+    let ready_before_next = fixture
+        .trace
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, value)| value["event"] == "ready")
+        .count();
+    assert_eq!(
+        ready_before_next, 1,
+        "first task reconnected before the next task"
+    );
+
+    let metadata_before =
+        std::fs::read(directory.0.join("sessions").join(&id).join("metadata.json")).unwrap();
+    let history_before_next =
+        std::fs::read(directory.0.join("sessions").join(&id).join("history.jsonl")).unwrap();
+    let config_before = driver
+        .call("session.config.get", json!({"session_id":id}))
+        .await["result"]
+        .clone();
+    let next = driver
+        .call(
+            "task.send",
+            json!({"session_id":id,"message":{"text":"next task"}}),
+        )
+        .await;
+    assert_eq!(
+        driver.finish(&next["result"]).await["event"]["status"],
+        "completed"
+    );
+
+    {
+        let trace = fixture.trace.lock().unwrap();
+        let ready: Vec<_> = trace
+            .iter()
+            .filter(|(_, value)| value["event"] == "ready")
+            .map(|(pid, _)| *pid)
+            .collect();
+        assert_eq!(
+            ready.len(),
+            3,
+            "expected modern, rejected probe and legacy sources: {trace:?}"
+        );
+        assert_eq!(ready[0], first_pid);
+        assert_eq!(unsafe { libc::kill(ready[0] as i32, 0) }, -1);
+        assert_eq!(unsafe { libc::kill(ready[1] as i32, 0) }, -1);
+        assert_eq!(unsafe { libc::kill(ready[2] as i32, 0) }, 0);
+
+        let rejected = trace
+            .iter()
+            .find(|(pid, value)| *pid == ready[1] && value["event"] == "modern_probe_rejected")
+            .expect("modern probe did not receive METHOD_NOT_FOUND");
+        assert_eq!(rejected.1["code"], -32601);
+        assert!(
+            !trace
+                .iter()
+                .any(|(pid, value)| *pid == ready[1] && value["method"] == "subscriptions/listen")
+        );
+        assert!(
+            !trace
+                .iter()
+                .any(|(pid, value)| *pid == ready[1] && value["method"] == "tools/list")
+        );
+
+        let initialize = trace
+            .iter()
+            .find(|(pid, value)| *pid == ready[2] && value["method"] == "initialize")
+            .expect("legacy generation did not initialize");
+        assert_eq!(initialize.1["params"]["protocolVersion"], "2025-11-25");
+        assert!(
+            !trace
+                .iter()
+                .any(|(pid, value)| *pid == ready[2] && value["method"] == "subscriptions/listen")
+        );
+        assert!(
+            trace
+                .iter()
+                .any(|(pid, value)| *pid == ready[2] && value["method"] == "tools/list")
+        );
+        assert_eq!(
+            trace
+                .iter()
+                .filter(|(_, value)| value["method"] == "tools/call")
+                .count(),
+            1
+        );
+    }
+
+    let config_after = driver
+        .call("session.config.get", json!({"session_id":id}))
+        .await["result"]
+        .clone();
+    assert_eq!(
+        config_after["config_revision"],
+        config_before["config_revision"]
+    );
+    assert_eq!(
+        config_after["effective_config"]["tool_selection"],
+        config_before["effective_config"]["tool_selection"]
+    );
+    assert_eq!(
+        config_after["effective_config"]["model"],
+        config_before["effective_config"]["model"]
+    );
+    assert_eq!(
+        std::fs::read(directory.0.join("sessions").join(&id).join("metadata.json")).unwrap(),
+        metadata_before
+    );
+    assert!(
+        std::fs::read(directory.0.join("sessions").join(&id).join("history.jsonl"))
+            .unwrap()
+            .starts_with(&history_before_next)
+    );
+    let wire = requests(server).await;
+    assert_eq!(wire.len(), 3, "unexpected extra model side effect");
+
+    driver.shutdown().await;
+    let trace = fixture.finish().await;
+    assert_all_sources_reaped(&trace);
 }
 
 #[tokio::test]

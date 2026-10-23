@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use crate::{
     agent::conversation::CompactionConfig,
     client::{
-        ClientConfig, ModelApi,
+        ClientConfig,
         connections::{Connection, ConnectionRegistry},
     },
     frontend::{console, tui},
@@ -93,43 +93,25 @@ pub async fn run() -> anyhow::Result<()> {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| cwd.join(".saki/sessions"));
     let store = SessionStore::new(root)?;
+    let runtime = crate::session::runtime::Runtime::new(store, client, cwd, model, config)
+        .with_connections(connections)
+        .with_tool_sources(tools)
+        .with_max_active_tasks(capacity)?
+        .with_catalog(loaded_catalog);
     if std::env::args().skip(1).any(|arg| arg == "--stdio") {
         #[cfg(unix)]
         let output = crate::session::stdio::NativeStdout::new()?;
         #[cfg(not(unix))]
         let output = tokio::io::stdout();
-        return crate::session::runtime::Runtime::new(store, client, cwd, model, config)
-            .with_connections(connections)
-            .with_tool_sources(tools)
-            .with_max_active_tasks(capacity)?
-            .with_catalog(loaded_catalog)
+        return runtime
             .run(tokio::io::BufReader::new(tokio::io::stdin()), output)
             .await;
     }
-    anyhow::ensure!(
-        connections.len() == 1,
-        "multiple connections require --stdio until terminal service migration (#109)"
-    );
-    let session_id = match std::env::var("SAKI_SESSION").ok().filter(|id| id != "new") {
-        // Explicit `new` (or no value at all) starts a fresh session; plain
-        // startup never resumes stored history. An explicit ID is opened below
-        // and fails loudly when it is missing or locked.
-        Some(id) => id,
-        None => match client.api() {
-            // The default API keeps the original creation path.
-            ModelApi::Responses => store.create(&cwd, &model, SYSTEM_PROMPT, config)?,
-            api => store.create_with_api(&cwd, &model, SYSTEM_PROMPT, api.as_str(), config)?,
-        },
-    };
-    anyhow::ensure!(
-        store.metadata(&session_id)?.schema_version == 1,
-        "enhanced sessions require --stdio until terminal service migration (#109)"
-    );
-    let loaded = store.open_for_api(&session_id, client.api().as_str())?;
-    let manager = SessionManager::new(store, client, loaded, cwd, model, config)?;
+    let initial_session = std::env::var("SAKI_SESSION").ok().filter(|id| id != "new");
+    let manager = SessionManager::from_runtime(runtime, initial_session);
 
-    let (events_tx, events_rx) = mpsc::unbounded_channel();
-    let (input_tx, input_rx) = mpsc::unbounded_channel();
+    let (events_tx, events_rx) = manager.event_channel();
+    let (input_tx, input_rx) = mpsc::channel(32);
     let worker = tokio::spawn(manager.run(input_rx, events_tx));
 
     // One choice point for the terminal front end. Both front ends connect to
@@ -149,7 +131,7 @@ pub async fn run() -> anyhow::Result<()> {
         Frontend::Tui => tui::run(input_tx, events_rx).await,
     };
     let worker_result = worker.await;
-    worker_result?;
+    worker_result??;
     frontend_result?;
     Ok(())
 }

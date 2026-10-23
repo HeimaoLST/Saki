@@ -171,6 +171,8 @@ pub struct App {
     pub disclosure_press: Option<usize>,
     /// Index of the open Activity marker for the task in progress.
     task_marker: Option<usize>,
+    /// First record index belonging to the current task's display projection.
+    task_record_start: Option<usize>,
     /// Record indices of every Activity marker, in creation order.
     activity_markers: Vec<usize>,
 }
@@ -218,6 +220,7 @@ impl App {
             disclosure_buttons: Vec::new(),
             disclosure_press: None,
             task_marker: None,
+            task_record_start: None,
             activity_markers: Vec::new(),
         }
     }
@@ -439,6 +442,8 @@ impl App {
     /// is retained and every later record keeps its identity.
     pub fn submit(&mut self, message: impl Into<UserMessage>) {
         let message = message.into();
+        self.response_records.clear();
+        self.task_record_start = Some(self.records.len());
         self.history.push(message.clone());
         self.push(Record::User {
             text: message.text,
@@ -552,8 +557,11 @@ impl App {
                 if !self.follow || self.log_view.is_some() {
                     self.unread_output = true;
                 }
-                let existing = self.records.iter().rposition(|record| {
-                    matches!(record, Record::Tool { call_id: id, output: None, .. } if *id == call_id)
+                let start = self.task_record_start.unwrap_or(0);
+                let existing = self.records.iter().enumerate().rev().find_map(|(index, record)| {
+                    (index >= start
+                        && matches!(record, Record::Tool { call_id: id, output: None, .. } if *id == call_id))
+                        .then_some(index)
                 });
                 match existing {
                     // Prefer the most recent unfinished record with this
@@ -664,6 +672,7 @@ impl App {
             self.bump_transcript_revision();
         }
         self.response_records.clear();
+        self.task_record_start = None;
         self.running = false;
         self.cancelling = false;
         self.status = None;
@@ -692,6 +701,7 @@ impl App {
             message: "Interrupted.".to_owned(),
         });
         self.response_records.clear();
+        self.task_record_start = None;
         self.running = false;
         self.cancelling = false;
         self.status = None;

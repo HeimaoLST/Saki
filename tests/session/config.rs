@@ -12,9 +12,12 @@ use crate::{
     agent::{
         conversation::CompactionConfig,
         journal::{JournalRecord, TaskConfiguration},
-        message::UserMessage,
+        message::{ImageAttachment, UserMessage},
     },
-    client::{ModelClient, config::RESPONSES_API},
+    client::{
+        ClientConfig, ModelApi, ModelClient,
+        config::{CHAT_COMPLETIONS_API, RESPONSES_API},
+    },
     model::catalog::ModelCatalog,
     session::{
         SYSTEM_PROMPT,
@@ -653,6 +656,100 @@ async fn unknown_invalid_and_opaque_config_changes_leave_disk_and_history_untouc
 }
 
 #[tokio::test]
+async fn config_incompatible_rejects_chat_image_history_without_writes() {
+    let workspace = Workspace::new();
+    let store = workspace.store();
+    let id = store
+        .create_with_api(
+            &workspace.0,
+            "model-a",
+            SYSTEM_PROMPT,
+            CHAT_COMPLETIONS_API,
+            large_compaction(),
+        )
+        .unwrap();
+    {
+        let mut loaded = store.open_for_api(&id, CHAT_COMPLETIONS_API).unwrap();
+        loaded.conversation.add_user_message(UserMessage {
+            text: "stored image turn".to_owned(),
+            images: vec![ImageAttachment::new(
+                "image.png",
+                "data:image/png;base64,AAAA",
+            )],
+            context: Vec::new(),
+        });
+        loaded
+            .conversation
+            .add_assistant_message("stored image acknowledged".to_owned());
+        loaded.conversation.save_history().unwrap();
+    }
+
+    let metadata_before = workspace.metadata_bytes(&id);
+    let history_before = workspace.history_bytes(&id);
+    let history_text = String::from_utf8_lossy(&history_before);
+    assert!(history_text.contains("data:image/png;base64,AAAA"));
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let client = ModelClient::new(&ClientConfig::new(
+        ModelApi::ChatCompletions,
+        "offline-key",
+        format!("http://{}/v1", listener.local_addr().unwrap()),
+    ))
+    .unwrap();
+    let (handle, actor) = runtime(client, &workspace, "model-a", Some(catalog())).start();
+
+    let loaded = session(
+        handle
+            .call(RuntimeCommand::Load {
+                session_id: id.clone(),
+            })
+            .await
+            .unwrap(),
+    );
+    assert!(loaded.loaded);
+    assert_eq!(loaded.config_revision, Some(1));
+    let before = config_get(&handle, &id).await;
+    assert_eq!(before.effective_config.api, CHAT_COMPLETIONS_API);
+    assert_eq!(before.effective_config.model, "model-a");
+    assert_eq!(before.config_revision, 1);
+    let records_before = serde_json::to_value(history_for(&handle, &id).await.records).unwrap();
+
+    let failed = config_update(
+        &handle,
+        &id,
+        1,
+        patch_model_compaction("model-b", small_compaction()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(failed.code, "config_incompatible");
+
+    let after = config_get(&handle, &id).await;
+    assert_eq!(after.effective_config.api, CHAT_COMPLETIONS_API);
+    assert_eq!(after.effective_config.model, "model-a");
+    assert_eq!(after.config_revision, 1);
+    assert_eq!(
+        after.effective_config.compaction,
+        before.effective_config.compaction
+    );
+    assert_eq!(
+        serde_json::to_value(history_for(&handle, &id).await.records).unwrap(),
+        records_before
+    );
+    assert_eq!(workspace.metadata_bytes(&id), metadata_before);
+    assert_eq!(workspace.history_bytes(&id), history_before);
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+
+    handle.call(RuntimeCommand::Shutdown).await.unwrap();
+    drop(handle);
+    actor.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn legacy_metadata_without_revision_reads_as_zero() {
     let workspace = Workspace::new();
     let store = workspace.store();
@@ -1073,4 +1170,53 @@ async fn each_connections_default_model_uses_its_own_loaded_capacity() {
     drop(handle);
     actor.await.unwrap().unwrap();
     assert!(request_bodies(server).await.is_empty());
+}
+
+#[tokio::test]
+async fn accepted_before_started_configuration_is_busy_but_idle_session_can_update() {
+    let workspace = Workspace::new();
+    let (client, server) = scripted_http(vec![(200, completed("done"))]).await;
+    let (release_start, start_gate) = oneshot::channel();
+    let (handle, actor) = runtime(client, &workspace, "model-a", Some(catalog()))
+        .with_task_start_gate(start_gate)
+        .start();
+    let a = create_session(&handle).await.metadata.unwrap().id;
+    let b = create_session(&handle).await.metadata.unwrap().id;
+    let metadata_before = workspace.metadata_bytes(&a);
+    let history_before = workspace.history_bytes(&a);
+    let task = send_task(&handle, &a, "accepted configuration snapshot").await;
+    match handle
+        .call(RuntimeCommand::TaskStatus {
+            session_id: a.clone(),
+            task_id: task.association.task_id.clone(),
+        })
+        .await
+        .unwrap()
+    {
+        RuntimeReply::TaskStatus(state) => assert_eq!(state.phase, "accepted"),
+        _ => panic!("expected accepted task status"),
+    }
+    let error = config_update(&handle, &a, 1, patch_model("model-b"))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "busy");
+    assert_eq!(workspace.metadata_bytes(&a), metadata_before);
+    assert_eq!(workspace.history_bytes(&a), history_before);
+    let unchanged = config_get(&handle, &a).await;
+    assert_eq!(unchanged.config_revision, 1);
+    assert_eq!(unchanged.effective_config.model, "model-a");
+    let changed = config_update(&handle, &b, 1, patch_model("model-b"))
+        .await
+        .unwrap();
+    assert_eq!(changed.config_revision, 2);
+    assert_eq!(changed.effective_config.model, "model-b");
+    release_start.send(()).unwrap();
+    assert_eq!(finish(task.events).await.status, "completed");
+    let snapshot = last_task_configuration(&history_for(&handle, &a).await);
+    assert_eq!(snapshot.model, "model-a");
+    assert_eq!(snapshot.config_revision, 1);
+    assert_eq!(request_one(server).await["model"], "model-a");
+    handle.call(RuntimeCommand::Shutdown).await.unwrap();
+    drop(handle);
+    actor.await.unwrap().unwrap();
 }

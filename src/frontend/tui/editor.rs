@@ -272,6 +272,20 @@ impl Editor {
         }
     }
 
+    /// Copy of the current draft for a pending send. The editor keeps its
+    /// contents until the Runtime acceptance reply.
+    pub fn draft_message(&self) -> UserMessage {
+        UserMessage {
+            context: Vec::new(),
+            text: self.text(),
+            images: self.images().to_vec(),
+        }
+    }
+
+    pub fn matches_message(&self, message: &UserMessage) -> bool {
+        self.text() == message.text && self.images() == message.images.as_slice()
+    }
+
     /// Removes and returns the draft, e.g. when submitting a message. The
     /// image snapshots are moved, not cloned, and undo history is reset so an
     /// executed task can never be undone.

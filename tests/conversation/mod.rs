@@ -456,7 +456,9 @@ async fn checkpoint_write_failure_does_not_install_the_summary() {
     let path = temp_path();
     std::fs::write(&path, "").unwrap();
     let mut conversation = long_history();
-    conversation.history_file = Some(File::open(&path).unwrap());
+    let file = File::open(&path).unwrap();
+    file.try_lock().unwrap();
+    conversation.history_file = Some(journal::JournalLock::from_locked_file(file));
     conversation.persisted_items = conversation.items.len();
     let before = snapshot(&conversation);
     let (client, server) = mock_response(200, completed("Valid summary")).await;
@@ -818,4 +820,35 @@ async fn cancelling_while_compaction_hook_is_backpressured_preserves_context() {
     );
     assert_eq!(receiver.try_recv(), Ok(()));
     assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn journal_lock_release_does_not_wait_for_a_duplicated_descriptor() {
+    let path = temp_path();
+    let conversation = Conversation::new("system".to_owned())
+        .with_history_file(&path)
+        .unwrap();
+    let duplicate = conversation
+        .history_file
+        .as_ref()
+        .unwrap()
+        .try_clone()
+        .unwrap();
+    let contender = File::options().read(true).write(true).open(&path).unwrap();
+    assert!(matches!(
+        contender.try_lock(),
+        Err(TryLockError::WouldBlock)
+    ));
+    drop(conversation);
+    contender
+        .try_lock()
+        .expect("released conversation retained the journal lock");
+    drop(duplicate);
+    let other = File::options().read(true).write(true).open(&path).unwrap();
+    assert!(matches!(other.try_lock(), Err(TryLockError::WouldBlock)));
+    drop(contender);
+    drop(other);
+    let (restored, _) = Conversation::restore(&path).unwrap();
+    drop(restored);
+    std::fs::remove_file(path).unwrap();
 }

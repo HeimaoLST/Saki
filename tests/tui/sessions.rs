@@ -80,7 +80,23 @@ pub(super) fn task_snapshot(title: &str) -> (SessionMetadata, Replay) {
     (metadata, replay)
 }
 
+pub(super) fn idle_state(id: &str) -> crate::session::runtime::SessionState {
+    crate::session::runtime::SessionState {
+        session_id: id.to_owned(),
+        metadata: None,
+        loaded: true,
+        state: "idle",
+        unavailable: None,
+        active_task: None,
+        status: "idle".to_owned(),
+        effective_config: None,
+        config_revision: None,
+        storage_schema: None,
+    }
+}
+
 pub(super) fn opened(metadata: SessionMetadata, replay: Replay) -> SessionEvent {
+    let state = idle_state(&metadata.id);
     SessionEvent::Opened {
         metadata,
         replay,
@@ -90,6 +106,8 @@ pub(super) fn opened(metadata: SessionMetadata, replay: Replay) -> SessionEvent 
             context_window: Some(1_000_000),
             input_limit: Some(991_808),
         },
+        state,
+        stream: None,
     }
 }
 
@@ -221,10 +239,13 @@ fn picker_is_on_demand_and_busy_switching_preserves_the_draft() {
     app.running = true;
     let (handled, request) = sessions.key(&mut app, key(KeyCode::Char('n')));
     assert!(handled);
-    assert!(request.is_none());
+    assert!(
+        matches!(request, Some(SessionCommand::Create)),
+        "U03 permits creating B while the current projection runs"
+    );
     assert!(app.running);
     assert_eq!(editor.text(), "unfinished draft");
-    assert!(app.feedback.as_ref().unwrap().0.contains("Wait"));
+    sessions.pending = false;
     app.running = false;
     let (_, request) = sessions.key(&mut app, key(KeyCode::Char('n')));
     assert!(matches!(request, Some(SessionCommand::Create)));
@@ -232,12 +253,13 @@ fn picker_is_on_demand_and_busy_switching_preserves_the_draft() {
         &mut app,
         &mut editor,
         SessionEvent::Error {
-            message: "cannot open target".into(),
+            operation: "open",
+            error: crate::session::runtime::RuntimeError::new("not_found", "cannot open target"),
         },
     );
-    assert!(!sessions.pending);
     assert_eq!(app.session.as_ref().unwrap().id, metadata.id);
     assert_eq!(editor.text(), "unfinished draft");
+    sessions.pending = false;
     sessions.key(&mut app, key(KeyCode::Esc));
     assert!(sessions.picker.is_none());
 }
@@ -659,4 +681,537 @@ fn session_switch_never_caches_a_path_completion_popup() {
         "reopening the cached session must not resurrect the popup"
     );
     std::fs::remove_dir_all(dir).ok();
+}
+
+fn association(id: &str, task: &str) -> crate::session::runtime::Association {
+    crate::session::runtime::Association {
+        session_id: id.to_owned(),
+        task_id: task.to_owned(),
+        message_id: format!("{task}-message"),
+    }
+}
+
+fn opened_stream(
+    metadata: SessionMetadata,
+    replay: Replay,
+    stream: crate::session::runtime::Association,
+) -> SessionEvent {
+    let mut state = idle_state(&metadata.id);
+    state.state = "running";
+    state.active_task = Some(crate::session::runtime::ActiveTaskState {
+        task_id: stream.task_id.clone(),
+        message_id: stream.message_id.clone(),
+        cancel_requested: false,
+    });
+    SessionEvent::Opened {
+        metadata,
+        replay,
+        context: AgentEvent::ContextUpdated {
+            model: "test-model".into(),
+            context_tokens: Some(1000),
+            context_window: Some(1_000_000),
+            input_limit: Some(991_808),
+        },
+        state,
+        stream: Some(stream),
+    }
+}
+
+fn finished(status: &'static str) -> crate::session::runtime::TaskFinished {
+    crate::session::runtime::TaskFinished {
+        status,
+        error: None,
+        persistence: None,
+        history_required: false,
+    }
+}
+
+#[test]
+fn cached_live_a_survives_view_b_and_return_before_finished() {
+    let (a, ah) = snapshot("Session A");
+    let (b, bh) = snapshot("Session B");
+    let mut sessions = Sessions::default();
+    let mut app = App::new();
+    let mut editor = Editor::new();
+    sessions.apply_event(&mut app, &mut editor, opened(a.clone(), ah.clone()));
+    let live = association(&a.id, "task-a");
+    sessions.accept_send(
+        &mut app,
+        &mut editor,
+        live.clone(),
+        &crate::agent::message::UserMessage::text("A is running"),
+    );
+    assert!(app.running);
+    let delta = |item: &str, value: &str| SessionEvent::Agent {
+        session_id: a.id.clone(),
+        event: AgentEvent::ResponseTextDelta {
+            item_id: item.into(),
+            delta: value.into(),
+        },
+    };
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        delta("same-item", "live-"),
+        Some(live.clone()),
+    );
+    sessions.apply_event(&mut app, &mut editor, opened(b.clone(), bh));
+    assert_eq!(app.session.as_ref().unwrap().id, b.id);
+    assert!(!app.running, "B is idle while A runs");
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        delta("same-item", "background"),
+        Some(live.clone()),
+    );
+    assert!(
+        !format!("{:?}", app.records).contains("background"),
+        "B must not receive A's event"
+    );
+    sessions.apply_event(
+        &mut app,
+        &mut editor,
+        opened_stream(a.clone(), ah, live.clone()),
+    );
+    let text = format!("{:?}", app.records);
+    assert!(text.contains("live-"), "A's live stream is preserved");
+    assert!(
+        text.contains("background"),
+        "offscreen A events were projected"
+    );
+    assert!(
+        !text.contains("live-background") || text.matches("background").count() == 1,
+        "late Opened does not duplicate streamed output"
+    );
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Finished(finished("completed")),
+        Some(live),
+    );
+    assert!(!app.running);
+    assert!(sessions.current_association().is_none());
+}
+
+#[test]
+fn reused_item_and_call_ids_do_not_cross_accepted_tasks() {
+    let (metadata, replay) = snapshot("Tasks");
+    let mut sessions = Sessions::default();
+    let mut app = App::new();
+    let mut editor = Editor::new();
+    sessions.apply_event(&mut app, &mut editor, opened(metadata.clone(), replay));
+    let first = association(&metadata.id, "task-1");
+    sessions.accept_send(
+        &mut app,
+        &mut editor,
+        first.clone(),
+        &crate::agent::message::UserMessage::text("first"),
+    );
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Agent {
+            session_id: metadata.id.clone(),
+            event: AgentEvent::ResponseTextDelta {
+                item_id: "reused".into(),
+                delta: "first-delta".into(),
+            },
+        },
+        Some(first.clone()),
+    );
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Agent {
+            session_id: metadata.id.clone(),
+            event: AgentEvent::ToolStarted {
+                call_id: "reused-call".into(),
+                name: "bash".into(),
+                arguments: "{}".into(),
+            },
+        },
+        Some(first),
+    );
+    let second = association(&metadata.id, "task-2");
+    sessions.accept_send(
+        &mut app,
+        &mut editor,
+        second.clone(),
+        &crate::agent::message::UserMessage::text("second"),
+    );
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Agent {
+            session_id: metadata.id.clone(),
+            event: AgentEvent::ResponseTextDelta {
+                item_id: "reused".into(),
+                delta: "second-delta".into(),
+            },
+        },
+        Some(second.clone()),
+    );
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Agent {
+            session_id: metadata.id.clone(),
+            event: AgentEvent::ToolFinished {
+                call_id: "reused-call".into(),
+                name: "bash".into(),
+                output: serde_json::json!({"exit_code": 0}),
+            },
+        },
+        Some(second),
+    );
+    let assistants: Vec<_> = app
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            Record::Assistant { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(assistants.contains(&"first-delta"));
+    assert!(assistants.contains(&"second-delta"));
+    assert!(
+        !assistants
+            .iter()
+            .any(|text| text.contains("first-deltasecond-delta")),
+        "same item id from a new task must not append to the old record"
+    );
+    let tools: Vec<_> = app
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            Record::Tool { output, .. } => Some(output.is_some()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tools, vec![false, true], "old unfinished call stays old");
+}
+
+#[test]
+fn stale_finished_cannot_finish_a_newer_task_and_history_repair_does_not_select() {
+    let (metadata, replay) = snapshot("Stale");
+    let (other, other_replay) = snapshot("Other");
+    let mut sessions = Sessions::default();
+    let mut app = App::new();
+    let mut editor = Editor::new();
+    sessions.apply_event(
+        &mut app,
+        &mut editor,
+        opened(metadata.clone(), replay.clone()),
+    );
+    let first = association(&metadata.id, "task-1");
+    sessions.accept_send(
+        &mut app,
+        &mut editor,
+        first.clone(),
+        &crate::agent::message::UserMessage::text("first"),
+    );
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Finished(finished("completed")),
+        Some(first.clone()),
+    );
+    let second = association(&metadata.id, "task-2");
+    sessions.accept_send(
+        &mut app,
+        &mut editor,
+        second.clone(),
+        &crate::agent::message::UserMessage::text("second"),
+    );
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Finished(finished("completed")),
+        Some(first),
+    );
+    assert!(app.running, "stale Finished cannot finalize the newer task");
+    assert_eq!(
+        sessions
+            .current_association()
+            .as_ref()
+            .map(|a| a.task_id.as_str()),
+        Some("task-2")
+    );
+
+    sessions.apply_event(&mut app, &mut editor, opened(other.clone(), other_replay));
+    assert_eq!(app.session.as_ref().unwrap().id, other.id);
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::HistoryRestored {
+            metadata: metadata.clone(),
+            replay,
+            context: AgentEvent::ContextUpdated {
+                model: "test-model".into(),
+                context_tokens: Some(1),
+                context_window: Some(2),
+                input_limit: Some(1),
+            },
+            state: idle_state(&metadata.id),
+        },
+        Some(second.clone()),
+    );
+    assert_eq!(
+        app.session.as_ref().unwrap().id,
+        other.id,
+        "HistoryRestored must not select the repaired session"
+    );
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Finished(crate::session::runtime::TaskFinished {
+            status: "failed",
+            error: Some(crate::session::runtime::RuntimeError::new(
+                "model_error",
+                "late failure",
+            )),
+            persistence: Some("unconfirmed"),
+            history_required: true,
+        }),
+        Some(second),
+    );
+    assert!(
+        !app.running,
+        "offscreen repair/finish must not make idle B run"
+    );
+    assert_eq!(app.session.as_ref().unwrap().id, other.id);
+    assert!(sessions.current_association().is_none());
+}
+
+#[test]
+fn cancel_acknowledgment_never_finishes_the_task() {
+    let (metadata, replay) = snapshot("Cancel");
+    let mut sessions = Sessions::default();
+    let mut app = App::new();
+    let mut editor = Editor::new();
+    sessions.apply_event(&mut app, &mut editor, opened(metadata.clone(), replay));
+    let live = association(&metadata.id, "task");
+    sessions.accept_send(
+        &mut app,
+        &mut editor,
+        live.clone(),
+        &crate::agent::message::UserMessage::text("run"),
+    );
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Cancelled {
+            status: "requested",
+        },
+        Some(live.clone()),
+    );
+    assert!(app.running, "cancel ack is not a terminal");
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Cancelled {
+            status: "not_running",
+        },
+        Some(live.clone()),
+    );
+    assert!(app.running, "not_running ack is not a Finished event");
+    assert!(sessions.current_association().is_some());
+}
+
+#[test]
+fn full_message_association_guards_agent_and_finished() {
+    let (metadata, replay) = snapshot("Assoc");
+    let mut sessions = Sessions::default();
+    let mut app = App::new();
+    let mut editor = Editor::new();
+    sessions.apply_event(&mut app, &mut editor, opened(metadata.clone(), replay));
+    let live = association(&metadata.id, "task");
+    sessions.accept_send(
+        &mut app,
+        &mut editor,
+        live.clone(),
+        &crate::agent::message::UserMessage::text("run"),
+    );
+    let mut stranger = live.clone();
+    stranger.message_id = "different-message".into();
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Agent {
+            session_id: metadata.id.clone(),
+            event: AgentEvent::ResponseTextDelta {
+                item_id: "x".into(),
+                delta: "must not apply".into(),
+            },
+        },
+        Some(stranger.clone()),
+    );
+    assert!(!format!("{:?}", app.records).contains("must not apply"));
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Finished(finished("completed")),
+        Some(stranger),
+    );
+    assert!(app.running, "mismatched message_id cannot finish the task");
+    assert!(sessions.current_association().is_some());
+}
+
+#[test]
+fn duplicate_finished_and_canonical_repair_keep_error_and_persistence_visible() {
+    let (metadata, replay) = snapshot("Canonical");
+    let mut sessions = Sessions::default();
+    let mut app = App::new();
+    let mut editor = Editor::new();
+    sessions.apply_event(
+        &mut app,
+        &mut editor,
+        opened(metadata.clone(), replay.clone()),
+    );
+    let live = association(&metadata.id, "task");
+    sessions.accept_send(
+        &mut app,
+        &mut editor,
+        live.clone(),
+        &crate::agent::message::UserMessage::text("run"),
+    );
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::HistoryRestored {
+            metadata: metadata.clone(),
+            replay,
+            context: AgentEvent::ContextUpdated {
+                model: "test-model".into(),
+                context_tokens: Some(1),
+                context_window: Some(2),
+                input_limit: Some(1),
+            },
+            state: idle_state(&metadata.id),
+        },
+        Some(live.clone()),
+    );
+    let failed = crate::session::runtime::TaskFinished {
+        status: "failed",
+        error: Some(crate::session::runtime::RuntimeError::new(
+            "model_error",
+            "canonical failure",
+        )),
+        persistence: Some("unconfirmed"),
+        history_required: true,
+    };
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Finished(failed.clone()),
+        Some(live.clone()),
+    );
+    assert!(!app.running);
+    let feedback = app
+        .feedback
+        .as_ref()
+        .map(|(message, _)| message.clone())
+        .unwrap_or_default();
+    assert!(feedback.contains("canonical failure"), "{feedback}");
+    assert!(feedback.contains("unconfirmed"), "{feedback}");
+    let records = app.records.len();
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Finished(failed),
+        Some(live),
+    );
+    assert_eq!(
+        app.records.len(),
+        records,
+        "duplicate Finished has no display effect"
+    );
+}
+
+#[test]
+fn full_request_queue_rejects_without_tracking() {
+    use crate::frontend::session_requests::{PendingRequest, SessionRequests};
+    let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+    let mut requests = SessionRequests::new(sender);
+    let first = requests
+        .try_send(SessionCommand::List, PendingRequest::Control)
+        .expect("first request fits");
+    assert_eq!(first, 1);
+    let rejected = requests.try_send(
+        SessionCommand::Send {
+            session_id: "s".into(),
+            message: crate::agent::message::UserMessage::text("draft"),
+        },
+        PendingRequest::Send {
+            session_id: "s".into(),
+            message: crate::agent::message::UserMessage::text("draft"),
+        },
+    );
+    assert!(
+        rejected.is_err(),
+        "full mailbox must reject without blocking"
+    );
+    assert!(matches!(
+        requests.take(first),
+        Some(PendingRequest::Control)
+    ));
+    assert!(
+        requests.take(2).is_none(),
+        "rejected request is not tracked"
+    );
+}
+
+#[test]
+fn same_current_opened_with_stream_preserves_live_app_editor_and_theme() {
+    let (metadata, replay) = snapshot("Same");
+    let mut sessions = Sessions::default();
+    let mut app = App::new();
+    let mut editor = Editor::new();
+    sessions.apply_event(
+        &mut app,
+        &mut editor,
+        opened(metadata.clone(), replay.clone()),
+    );
+    app.theme = crate::frontend::tui::theme::Theme::light();
+    let live = association(&metadata.id, "task");
+    sessions.accept_send(
+        &mut app,
+        &mut editor,
+        live.clone(),
+        &crate::agent::message::UserMessage::text("run"),
+    );
+    sessions.apply_event_with_association(
+        &mut app,
+        &mut editor,
+        SessionEvent::Agent {
+            session_id: metadata.id.clone(),
+            event: AgentEvent::ResponseTextDelta {
+                item_id: "m".into(),
+                delta: "live".into(),
+            },
+        },
+        Some(live.clone()),
+    );
+    editor.insert_str("draft stays");
+    let cursor = editor.cursor();
+    let before = format!("{:?}", app.records);
+    sessions.apply_event(
+        &mut app,
+        &mut editor,
+        opened_stream(metadata.clone(), replay, live),
+    );
+    assert_eq!(app.session.as_ref().unwrap().id, metadata.id);
+    assert_eq!(
+        app.theme,
+        crate::frontend::tui::theme::Theme::light(),
+        "same-current reload keeps the live palette"
+    );
+    assert_eq!(editor.text(), "draft stays");
+    assert_eq!(editor.cursor(), cursor);
+    assert_eq!(
+        format!("{:?}", app.records),
+        before,
+        "live records not rebuilt"
+    );
+    assert!(app.running);
 }

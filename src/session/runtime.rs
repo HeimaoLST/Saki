@@ -11,8 +11,8 @@ use futures_util::FutureExt;
 use serde::Serialize;
 use tokio::{
     io::{AsyncBufRead, AsyncWrite},
-    sync::{mpsc, oneshot, watch},
-    task::JoinHandle,
+    sync::{broadcast, mpsc, oneshot, watch},
+    task::{JoinHandle, JoinSet},
 };
 
 #[cfg(test)]
@@ -28,7 +28,7 @@ use super::{
         resolve_connection, select_connection,
     },
     store::{SessionMetadata, SessionStore, SessionSummary},
-    tool_context,
+    title, tool_context,
 };
 use crate::{
     agent::{
@@ -395,6 +395,8 @@ pub struct Capabilities {
     pub storage_schemas: Vec<u32>,
     pub methods: Vec<&'static str>,
     pub max_active_tasks: usize,
+    pub max_auxiliary_jobs: usize,
+    pub automatic_titles: bool,
     pub session_configuration: bool,
     pub multi_connection: bool,
     pub external_tools: bool,
@@ -406,6 +408,12 @@ pub struct RuntimeHandle {
     commands: mpsc::Sender<Envelope>,
     output: OutputState,
     work_drained: watch::Receiver<bool>,
+    metadata_updates: broadcast::Sender<SessionMetadataUpdate>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionMetadataUpdate {
+    pub session_id: String,
 }
 
 type ReplyResult = std::result::Result<RuntimeReply, RuntimeError>;
@@ -456,6 +464,13 @@ impl RuntimeHandle {
     pub fn output_state(&self) -> OutputState {
         self.output.clone()
     }
+
+    /// Metadata invalidations have a fixed 32-message buffer. Read current
+    /// metadata through the service; a notification is never a title snapshot.
+    /// A lagged receiver must refresh every displayed session.
+    pub fn subscribe_metadata(&self) -> broadcast::Receiver<SessionMetadataUpdate> {
+        self.metadata_updates.subscribe()
+    }
 }
 
 pub struct Runtime {
@@ -469,8 +484,12 @@ pub struct Runtime {
     connections: Option<Arc<ConnectionRegistry>>,
     tools: Option<Arc<McpTools>>,
     max_active_tasks: usize,
+    automatic_titles: bool,
+    output: OutputState,
     #[cfg(test)]
     panicking_sessions: HashSet<String>,
+    #[cfg(test)]
+    task_start_gate: Option<oneshot::Receiver<()>>,
 }
 
 impl Runtime {
@@ -492,8 +511,12 @@ impl Runtime {
             connections: None,
             tools: None,
             max_active_tasks: 1,
+            automatic_titles: false,
+            output: OutputState::default(),
             #[cfg(test)]
             panicking_sessions: HashSet::new(),
+            #[cfg(test)]
+            task_start_gate: None,
         }
     }
 
@@ -510,9 +533,24 @@ impl Runtime {
         self.max_active_tasks
     }
 
+    pub fn with_automatic_titles(mut self, enabled: bool) -> Self {
+        self.automatic_titles = enabled;
+        self
+    }
+
+    pub(super) fn output_state(&self) -> OutputState {
+        self.output.clone()
+    }
+
     #[cfg(test)]
     pub(crate) fn with_panicking_session(mut self, session_id: String) -> Self {
         self.panicking_sessions.insert(session_id);
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_task_start_gate(mut self, gate: oneshot::Receiver<()>) -> Self {
+        self.task_start_gate = Some(gate);
         self
     }
 
@@ -562,12 +600,15 @@ impl Runtime {
         let (ops_tx, ops_rx) = mpsc::channel(MAX_PREPARED);
         let (workers_tx, workers_rx) = mpsc::channel(self.max_active_tasks);
         let (releases_tx, releases_rx) = mpsc::channel(self.max_active_tasks);
-        let output = OutputState::default();
+        let output = self.output;
         let (drained_tx, drained_rx) = watch::channel(false);
+        let (metadata_updates, _) = broadcast::channel(32);
+        let (title_claims_tx, title_claims_rx) = mpsc::channel(1);
         let handle = RuntimeHandle {
             commands: commands_tx,
             output: output.clone(),
             work_drained: drained_rx,
+            metadata_updates: metadata_updates.clone(),
         };
         let actor = RuntimeActor {
             store: self.store,
@@ -584,8 +625,15 @@ impl Runtime {
             sessions: HashMap::new(),
             active: HashMap::new(),
             max_active_tasks: self.max_active_tasks,
+            automatic_titles: self.automatic_titles,
+            title_jobs: JoinSet::new(),
+            title_claims_tx,
+            title_claims_rx,
+            metadata_updates,
             #[cfg(test)]
             panicking_sessions: self.panicking_sessions,
+            #[cfg(test)]
+            task_start_gate: self.task_start_gate,
             preparing: HashSet::new(),
             configuring: HashSet::new(),
             in_flight: 0,
@@ -694,6 +742,25 @@ struct Active {
     result: Option<TaskFinished>,
     started: watch::Receiver<bool>,
     config_revision: u64,
+    title: Option<TaskTitle>,
+}
+
+struct TaskTitle {
+    client: ModelClient,
+    model: String,
+    user_text: String,
+    reply_text: String,
+}
+
+struct TitleJobResult {
+    session_id: String,
+    claimed: bool,
+    update: Option<TitleValue>,
+}
+
+struct TitleValue {
+    title: String,
+    title_source: Option<String>,
 }
 
 enum WorkerOutcome {
@@ -724,8 +791,15 @@ struct RuntimeActor {
     sessions: HashMap<String, SessionEntry>,
     active: HashMap<String, Active>,
     max_active_tasks: usize,
+    automatic_titles: bool,
+    title_jobs: JoinSet<TitleJobResult>,
+    title_claims_tx: mpsc::Sender<String>,
+    title_claims_rx: mpsc::Receiver<String>,
+    metadata_updates: broadcast::Sender<SessionMetadataUpdate>,
     #[cfg(test)]
     panicking_sessions: HashSet<String>,
+    #[cfg(test)]
+    task_start_gate: Option<oneshot::Receiver<()>>,
     preparing: HashSet<String>,
     configuring: HashSet<String>,
     in_flight: usize,
@@ -753,6 +827,7 @@ impl RuntimeActor {
             if !self.accepting
                 && self.in_flight == 0
                 && self.active.values().all(|active| active.result.is_some())
+                && self.title_jobs.is_empty()
             {
                 if !self.shutdown_resources_started {
                     self.shutdown_resources_started = true;
@@ -779,7 +854,11 @@ impl RuntimeActor {
                     self.work_drained.send_replace(true);
                 }
             }
-            if !self.accepting && self.active.is_empty() && self.in_flight == 0 {
+            if !self.accepting
+                && self.active.is_empty()
+                && self.in_flight == 0
+                && self.title_jobs.is_empty()
+            {
                 self.drain_stopped_commands();
                 break;
             }
@@ -792,6 +871,33 @@ impl RuntimeActor {
                 }
                 Some(done) = self.ops_rx.recv() => self.finish_op(done),
                 Some(done) = self.workers_rx.recv() => self.finish_worker(done),
+                Some(session_id) = self.title_claims_rx.recv() => {
+                    if let Some(session) = self.sessions.get_mut(&session_id)
+                        && session.metadata.title_source.as_deref() == Some("pending")
+                    {
+                        session.metadata.title_source = Some("auto".into());
+                    }
+                }
+                Some(done) = self.title_jobs.join_next(), if !self.title_jobs.is_empty() => {
+                    if let Ok(result) = done {
+                        if result.claimed && let Some(session) = self.sessions.get_mut(&result.session_id) {
+                            // Claim is durable even when generation fails. Only title
+                            // fields may change; configuration can advance meanwhile.
+                            if session.metadata.title_source.as_deref() == Some("pending") {
+                                session.metadata.title_source = Some("auto".into());
+                            }
+                        }
+                        if let Some(update) = result.update {
+                            if let Some(session) = self.sessions.get_mut(&result.session_id)
+                                && session.metadata.title_source.as_deref() != Some("manual")
+                            {
+                                session.metadata.title = update.title.clone();
+                                session.metadata.title_source = update.title_source.clone();
+                            }
+                            let _ = self.metadata_updates.send(SessionMetadataUpdate{session_id:result.session_id});
+                        }
+                    }
+                }
                 Some(task_id) = self.releases_rx.recv(), if self.active.values().any(|active| active.result.is_some()) => {
                     if self.active.get(&task_id).is_some_and(|active| active.result.is_some()) {
                         self.active.remove(&task_id);
@@ -1143,6 +1249,8 @@ impl RuntimeActor {
                         "runtime.shutdown",
                     ],
                     max_active_tasks: self.max_active_tasks,
+                    max_auxiliary_jobs: usize::from(self.automatic_titles),
+                    automatic_titles: self.automatic_titles,
                     session_configuration: true,
                     multi_connection: self.connections.is_some(),
                     external_tools: self.tools.is_some(),
@@ -1996,6 +2104,21 @@ impl RuntimeActor {
             tool_schemas: Some(session.metadata.tool_schemas.clone()),
         };
         let resources = session.resources.clone();
+        let title = if self.automatic_titles
+            && session.metadata.title_source.as_deref() == Some("pending")
+        {
+            let client =
+                resolve_connection(&session.metadata, &self.client, self.connections.as_deref())
+                    .map_err(|error| error.session(&session_id))?;
+            Some(TaskTitle {
+                client,
+                model: session.metadata.model.clone(),
+                user_text: title::truncate_chars(&message.text, title::TITLE_INPUT_CHARS),
+                reply_text: String::new(),
+            })
+        } else {
+            None
+        };
         let agent = self
             .sessions
             .get_mut(&session_id)
@@ -2021,10 +2144,16 @@ impl RuntimeActor {
         let worker_message_id = message_id.clone();
         #[cfg(test)]
         let should_panic = self.panicking_sessions.remove(&association.session_id);
+        #[cfg(test)]
+        let start_gate = self.task_start_gate.take();
         let config_revision = configuration.config_revision;
         let worker = tokio::spawn(async move {
             let mut agent = agent;
             let execution = AssertUnwindSafe(async {
+                #[cfg(test)]
+                if let Some(gate) = start_gate {
+                    let _ = gate.await;
+                }
                 #[cfg(test)]
                 if should_panic {
                     panic!("injected task worker panic");
@@ -2091,6 +2220,7 @@ impl RuntimeActor {
                 result: None,
                 started,
                 config_revision,
+                title,
             },
         );
         Ok(RuntimeReply::Accepted(AcceptedTask {
@@ -2121,6 +2251,7 @@ impl RuntimeActor {
         let session_id = active.association.session_id.clone();
         let mut persistence = None;
         let mut restored_agent = None;
+        let mut completed_title = None;
         let status;
         let finished_status;
         let error;
@@ -2142,6 +2273,10 @@ impl RuntimeActor {
                         status = TaskStatus::Completed;
                         finished_status = "completed";
                         error = None;
+                        if let Some(mut input) = active.title.take() {
+                            input.reply_text = title::reply_excerpt(agent.context_items());
+                            completed_title = Some(input);
+                        }
                         restored_agent = Some(agent);
                     }
                     Err(worker_error) => {
@@ -2201,6 +2336,9 @@ impl RuntimeActor {
                 session.tool_error = error.clone();
             }
         }
+        if let Some(input) = completed_title {
+            self.schedule_title(&session_id, input);
+        }
         let finished = TaskFinished {
             status: finished_status,
             error,
@@ -2214,6 +2352,58 @@ impl RuntimeActor {
         if !self.output.is_closed() {
             self.active.insert(done.task_id, active);
         }
+    }
+
+    fn schedule_title(&mut self, session_id: &str, input: TaskTitle) {
+        if !self.accepting
+            || !self.title_jobs.is_empty()
+            || self
+                .sessions
+                .get(session_id)
+                .is_none_or(|session| session.metadata.title_source.as_deref() != Some("pending"))
+        {
+            return;
+        }
+        let store = self.store.clone();
+        let session_id = session_id.to_owned();
+        let claims = self.title_claims_tx.clone();
+        self.title_jobs.spawn(async move {
+            let id = session_id.clone();
+            let claim_store = store.clone();
+            let claimed = tokio::task::spawn_blocking(move || claim_store.claim_auto_title(&id))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or(false);
+            let mut result = TitleJobResult {
+                session_id,
+                claimed,
+                update: None,
+            };
+            if !claimed {
+                return result;
+            }
+            if claims.send(result.session_id.clone()).await.is_err() {
+                return result;
+            }
+            let Some(title) =
+                title::generate(input.client, input.model, input.user_text, input.reply_text).await
+            else {
+                return result;
+            };
+            let id = result.session_id.clone();
+            result.update =
+                tokio::task::spawn_blocking(move || store.apply_auto_title(&id, &title))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .flatten()
+                    .map(|metadata| TitleValue {
+                        title: metadata.title,
+                        title_source: metadata.title_source,
+                    });
+            result
+        });
     }
 
     fn apply(&mut self, prepared: Prepared) -> std::result::Result<RuntimeReply, RuntimeError> {
