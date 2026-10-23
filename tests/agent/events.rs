@@ -37,8 +37,10 @@ async fn byte_permit_follows_dequeued_packet_and_cancel_releases_blocked_produce
     // The queue is empty, but the adapter still owns this event's byte budget.
     let mut second = pin!(sink.send(event()));
     assert_pending(second.as_mut()).await;
+    assert_eq!(sink.metrics().snapshot().waiting_producers, 1);
     cancel.send_replace(true);
     second.await;
+    assert_eq!(sink.metrics().snapshot().waiting_producers, 0);
     assert!(sink.history_required());
     assert!(!output.is_closed());
     assert!(receiver.try_recv().is_err());
@@ -62,8 +64,10 @@ async fn full_message_queue_stalls_producer_until_output_is_closed() {
     sink.send(AgentEvent::TurnCompleted).await;
     let mut second = pin!(sink.send(AgentEvent::TurnCompleted));
     assert_pending(second.as_mut()).await;
+    assert_eq!(sink.metrics().snapshot().waiting_producers, 1);
     output.close();
     second.await;
+    assert_eq!(sink.metrics().snapshot().waiting_producers, 0);
     assert!(receiver.recv().await.is_some());
     assert!(receiver.try_recv().is_err());
 }
@@ -102,6 +106,8 @@ async fn cancelling_the_enclosing_future_marks_the_projection_incomplete() {
     sink.send(AgentEvent::TurnCompleted).await;
     let mut send = Box::pin(sink.send(AgentEvent::TurnCompleted));
     assert_pending(send.as_mut()).await;
+    assert_eq!(sink.metrics().snapshot().waiting_producers, 1);
     drop(send);
+    assert_eq!(sink.metrics().snapshot().waiting_producers, 0);
     assert!(sink.history_required());
 }

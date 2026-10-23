@@ -161,6 +161,7 @@ pub struct Agent {
     tool_registry: ToolRegistry,
     conversation: Conversation,
     model: String,
+    started_signal: Option<tokio::sync::watch::Sender<bool>>,
     events: Option<EventSink>,
     cancel: Option<tokio::sync::watch::Receiver<bool>>,
 }
@@ -176,6 +177,7 @@ impl Agent {
             tool_registry,
             conversation,
             model: "deepseek-v4-flash".to_owned(),
+            started_signal: None,
             events: None,
             cancel: None,
         }
@@ -187,6 +189,11 @@ impl Agent {
     /// conversation state.
     pub fn with_cancel(mut self, cancel: tokio::sync::watch::Receiver<bool>) -> Self {
         self.cancel = Some(cancel);
+        self
+    }
+
+    pub(crate) fn with_started_signal(mut self, signal: tokio::sync::watch::Sender<bool>) -> Self {
+        self.started_signal = Some(signal);
         self
     }
 
@@ -230,6 +237,7 @@ impl Agent {
     }
 
     pub fn clear_event_sink(&mut self) {
+        self.started_signal = None;
         self.events = None;
         self.conversation.clear_model_request_hook();
     }
@@ -301,6 +309,9 @@ impl Agent {
         task_id: String,
         message_id: Option<String>,
     ) -> anyhow::Result<()> {
+        if let Some(signal) = &self.started_signal {
+            signal.send_replace(true);
+        }
         self.emit(AgentEvent::TaskStarted {
             task_id,
             message_id,
