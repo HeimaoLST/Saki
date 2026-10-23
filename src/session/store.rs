@@ -7,6 +7,7 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
+use super::config::CapacitySource;
 use crate::agent::{
     conversation::{CompactionConfig, Conversation},
     journal::{self, Replay, TaskStatus},
@@ -30,6 +31,10 @@ pub struct SessionMetadata {
     pub model: String,
     pub api: String,
     pub compaction: CompactionConfig,
+    #[serde(default)]
+    pub config_revision: u64,
+    #[serde(default)]
+    pub capacity_source: CapacitySource,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +119,8 @@ impl SessionStore {
             model: model.to_owned(),
             api: api.to_owned(),
             compaction: config,
+            config_revision: 1,
+            capacity_source: CapacitySource::Stored,
         };
         let conversation = conversation.with_history_file(&directory.join("history.jsonl"))?;
         self.save_metadata(&metadata)?;
@@ -222,6 +229,38 @@ impl SessionStore {
         Ok(Some(metadata))
     }
 
+    pub(crate) fn update_model_config(
+        &self,
+        id: &str,
+        expected_revision: u64,
+        model: String,
+        compaction: CompactionConfig,
+        capacity_source: CapacitySource,
+    ) -> std::result::Result<SessionMetadata, super::runtime::RuntimeError> {
+        use super::runtime::RuntimeError;
+        let mut metadata = self
+            .metadata(id)
+            .map_err(|error| RuntimeError::new("io_error", format!("{error:#}")))?;
+        if metadata.config_revision != expected_revision {
+            return Err(RuntimeError::conflict(metadata.config_revision));
+        }
+        metadata.model = model;
+        metadata.compaction = compaction;
+        metadata.capacity_source = capacity_source;
+        metadata.config_revision = expected_revision.checked_add(1).ok_or_else(|| {
+            RuntimeError::new("config_conflict", "configuration revision exhausted")
+        })?;
+        self.save_metadata(&metadata).map_err(|error| {
+            let code = if error.downcast_ref::<CommitUnknown>().is_some() {
+                "commit_unknown"
+            } else {
+                "io_error"
+            };
+            RuntimeError::new(code, format!("{error:#}"))
+        })?;
+        Ok(metadata)
+    }
+
     fn save_metadata(&self, metadata: &SessionMetadata) -> Result<()> {
         let directory = self.directory(&metadata.id)?;
         let temporary = directory.join(format!("metadata-{}.tmp", journal::new_id()?));
@@ -230,9 +269,19 @@ impl SessionStore {
                 .write(true)
                 .create_new(true)
                 .open(&temporary)?;
+            #[cfg(test)]
+            metadata_fault::check(&directory, metadata_fault::Point::BeforeWrite)?;
             file.write_all(&serde_json::to_vec_pretty(metadata)?)?;
             file.sync_all()?;
+            #[cfg(test)]
+            metadata_fault::check(&directory, metadata_fault::Point::BeforeRename)?;
             fs::rename(&temporary, directory.join("metadata.json"))?;
+            #[cfg(test)]
+            metadata_fault::check(&directory, metadata_fault::Point::AfterRename)
+                .map_err(|error| CommitUnknown(error.into()))?;
+            File::open(&directory)
+                .and_then(|file| file.sync_all())
+                .map_err(|error| CommitUnknown(error.into()))?;
             Ok(())
         })();
         if result.is_err() {
@@ -272,6 +321,8 @@ impl SessionStore {
                 model: String::new(),
                 api: String::new(),
                 compaction: CompactionConfig::new(262_144),
+                config_revision: 0,
+                capacity_source: CapacitySource::Stored,
             });
             let modified = fs::metadata(&path)
                 .and_then(|value| value.modified())
@@ -296,5 +347,54 @@ impl SessionStore {
                 .then_with(|| a.metadata.id.cmp(&b.metadata.id))
         });
         Ok(sessions)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("metadata publication could not be confirmed: {0:#}")]
+struct CommitUnknown(anyhow::Error);
+
+#[cfg(test)]
+pub(crate) mod metadata_fault {
+    use super::*;
+    use std::{
+        collections::HashMap,
+        sync::{Mutex, OnceLock},
+    };
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Point {
+        BeforeWrite,
+        BeforeRename,
+        AfterRename,
+    }
+    fn faults() -> &'static Mutex<HashMap<PathBuf, Point>> {
+        static FAULTS: OnceLock<Mutex<HashMap<PathBuf, Point>>> = OnceLock::new();
+        FAULTS.get_or_init(Default::default)
+    }
+    pub struct Guard(PathBuf);
+    impl Guard {
+        pub fn new(directory: PathBuf, point: Point) -> Self {
+            assert!(
+                faults()
+                    .lock()
+                    .unwrap()
+                    .insert(directory.clone(), point)
+                    .is_none()
+            );
+            Self(directory)
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            faults().lock().unwrap().remove(&self.0);
+        }
+    }
+    pub(super) fn check(directory: &Path, point: Point) -> std::io::Result<()> {
+        let mut registry = faults().lock().unwrap();
+        if registry.get(directory) == Some(&point) {
+            registry.remove(directory);
+            return Err(std::io::Error::other("injected metadata commit failure"));
+        }
+        Ok(())
     }
 }

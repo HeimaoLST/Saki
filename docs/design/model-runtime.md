@@ -1,6 +1,6 @@
 # Model runtime：协议、客户端与模型目录
 
-更新日期：2026-10-16。状态：已实施职责拆分、Responses 流式响应，以及 M1 的 Chat Completions 调用边界；主 Agent 默认流式，compact 与实验保留完整响应接口。参考依据见 [Pi 分层研究](../research/systems/model-runtime.md)。
+更新日期：2026-10-22。状态：已实施职责拆分、Responses 流式响应，以及 M1 的 Chat Completions 调用边界；主 Agent 默认流式，compact 与实验保留完整响应接口。参考依据见 [Pi 分层研究](../research/systems/model-runtime.md)。
 
 ## 模块与依赖
 
@@ -105,3 +105,13 @@ compact 仍由 Conversation 处理。摘要 transcript 使用公共历史表示�
 - `043b6c8`：两个真实 smoke——`opencode-go/gpt-6-luna` Chat 工具闭环成功（一次 `read`、回传、最终标记正确、completed）；DeepSeek thinking Chat 第二轮失败（边界见上节）。
 
 除已验收组合外不宣称支持其他兼容厂商。
+
+## 同连接会话模型配置（#105 候选）
+
+更新日期：2026-10-22。分类：**本 PR 候选实现事实，未合入 dev**。模型切换使用 Runtime 的 `session.config.get/update`，与 typed RuntimeHandle 为同一准备/提交路径；请求形状、错误、revision 和持久化边界见[Runtime 配置契约](runtime-api.md#105-同连接配置候选实现事实)。没有另一个独立 select-model 状态机。
+
+实际 endpoint 模型 ID 与 catalog_id 分开：后者只用于已加载容量查找。自定义模型可提供有效完整 CompactionConfig，配置期间不刷新 catalog、不发送探测推理；上游是否实际可用仍由真实任务确认。模型/预算原子保存到 schema 1 metadata，接纳任务记录当时配置快照；只读恢复不重跑历史工具。旧记录缺少快照保持未知。
+
+空闲目标可切换，已接纳目标返回 busy；另一个 session 运行不把本目标误判 busy。同版本竞争返回 config_conflict，有效值未改变不增加 revision。成功应用清除旧 usage 校准，后续正常 usage 会重新建立 baseline。降低预算沿用唯一 compact，summary/generation 都用新模型；失败保留上下文，不偷偷更换模型。
+
+含不透明 ProviderItem/provider_data 时首版拒绝改变模型，返回 continuation_not_supported 并保持文件和内存；同 API 不被当作原生续接兼容证明。跨连接、prompt/tool 更新和 schema 2 是 #106，GUI/TUI 选择控件不在此 Runtime PR。

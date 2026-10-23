@@ -63,7 +63,7 @@ fn lock_journal(file: &File, path: &Path) -> Result<()> {
     unreachable!("the final attempt always returns")
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompactionConfig {
     pub context_budget_tokens: usize,
     pub max_input_tokens: Option<usize>,
@@ -89,6 +89,35 @@ impl CompactionConfig {
         let available = self.context_budget_tokens - self.reserve_tokens as usize;
         self.max_input_tokens
             .map_or(available, |limit| available.min(limit))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ValidatedCompactionConfig(CompactionConfig);
+impl ValidatedCompactionConfig {
+    pub fn get(self) -> CompactionConfig {
+        self.0
+    }
+}
+impl CompactionConfig {
+    pub fn validate(self) -> Result<ValidatedCompactionConfig> {
+        let config = self;
+        ensure!(
+            config.context_budget_tokens > config.reserve_tokens as usize,
+            "context budget must exceed the output reserve"
+        );
+        ensure!(
+            config.max_summary_tokens > 0 && config.max_summary_tokens <= config.reserve_tokens,
+            "summary output must fit the output reserve"
+        );
+        ensure!(
+            config.keep_recent_tokens
+                < config
+                    .input_limit()
+                    .saturating_sub(config.max_summary_tokens as usize),
+            "recent history and summary must leave room for system instructions and tools"
+        );
+        Ok(ValidatedCompactionConfig(config))
     }
 }
 
@@ -145,24 +174,13 @@ impl Conversation {
     }
 
     pub fn with_compaction_config(mut self, config: CompactionConfig) -> Result<Self> {
-        ensure!(
-            config.context_budget_tokens > config.reserve_tokens as usize,
-            "context budget must exceed the output reserve"
-        );
-        ensure!(
-            config.max_summary_tokens > 0 && config.max_summary_tokens <= config.reserve_tokens,
-            "summary output must fit the output reserve"
-        );
-        ensure!(
-            config.keep_recent_tokens
-                < config
-                    .input_limit()
-                    .saturating_sub(config.max_summary_tokens as usize),
-            "recent history and summary must leave room for system instructions and tools"
-        );
-        self.compaction = Some(config);
-        self.usage_baseline = None;
+        self.apply_compaction_config(config.validate()?);
         Ok(self)
+    }
+
+    pub(crate) fn apply_compaction_config(&mut self, config: ValidatedCompactionConfig) {
+        self.compaction = Some(config.get());
+        self.usage_baseline = None;
     }
 
     /// Creates an append-only journal. Existing files are never overwritten.
@@ -223,6 +241,15 @@ impl Conversation {
         task_id: String,
         message_id: Option<String>,
     ) -> Result<()> {
+        self.begin_configured_task(task_id, message_id, None)
+    }
+
+    pub fn begin_configured_task(
+        &mut self,
+        task_id: String,
+        message_id: Option<String>,
+        configuration: Option<journal::TaskConfiguration>,
+    ) -> Result<()> {
         if let Some(task_id) = &self.active_task {
             if let Some(file) = &mut self.history_file {
                 journal::write(file, &JournalRecord::TaskFinished {
@@ -239,6 +266,7 @@ impl Conversation {
                 &JournalRecord::TaskStarted {
                     task_id: task_id.clone(),
                     message_id,
+                    configuration,
                 },
             )?;
         }

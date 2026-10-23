@@ -1,3 +1,4 @@
+pub mod config;
 pub mod runtime;
 pub mod stdio;
 pub mod store;

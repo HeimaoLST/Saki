@@ -8,6 +8,7 @@ use tokio::{
     task::JoinSet,
 };
 
+use super::config::ConfigPatch;
 use super::runtime::{
     Association, Runtime, RuntimeCommand, RuntimeError, RuntimeReply, TaskEvent, TaskFinished,
 };
@@ -104,6 +105,23 @@ struct Image {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Models {
+    #[serde(default = "default_connection")]
+    connection_id: String,
+}
+fn default_connection() -> String {
+    "default".to_owned()
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateConfig {
+    session_id: String,
+    expected_revision: u64,
+    patch: ConfigPatch,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Cancel {
     session_id: String,
     task_id: String,
@@ -134,6 +152,24 @@ fn decode(bytes: &[u8]) -> (Option<String>, Result<RuntimeCommand, RuntimeError>
         }
         let value = request.params;
         Ok(match request.method.as_str() {
+            "runtime.capabilities" => {
+                let _: Empty = params(value)?;
+                RuntimeCommand::Capabilities
+            }
+            "model.list" => RuntimeCommand::Models {
+                connection_id: params::<Models>(value)?.connection_id,
+            },
+            "session.config.get" => RuntimeCommand::ConfigGet {
+                session_id: params::<SessionId>(value)?.session_id,
+            },
+            "session.config.update" => {
+                let p: UpdateConfig = params(value)?;
+                RuntimeCommand::ConfigUpdate {
+                    session_id: p.session_id,
+                    expected_revision: p.expected_revision,
+                    patch: p.patch,
+                }
+            }
             "session.create" => {
                 let p: Create = params(value)?;
                 RuntimeCommand::Create {
@@ -334,6 +370,54 @@ async fn deliver(
         }
     };
     match response {
+        RuntimeReply::Capabilities(value) => {
+            reply(&output, &id, value).await;
+        }
+        RuntimeReply::Models {
+            connection_id,
+            models,
+            configured_models,
+        } => {
+            #[derive(Serialize)]
+            struct ModelList<T, C> {
+                connection_id: String,
+                models: T,
+                configured_models: C,
+            }
+            reply(
+                &output,
+                &id,
+                ModelList {
+                    connection_id,
+                    models,
+                    configured_models,
+                },
+            )
+            .await;
+        }
+        RuntimeReply::Config(value) => {
+            reply(&output, &id, value).await;
+        }
+        RuntimeReply::ConfigUpdated {
+            config,
+            effective_from,
+        } => {
+            #[derive(Serialize)]
+            struct Updated<T> {
+                #[serde(flatten)]
+                config: T,
+                effective_from: &'static str,
+            }
+            reply(
+                &output,
+                &id,
+                Updated {
+                    config,
+                    effective_from,
+                },
+            )
+            .await;
+        }
         RuntimeReply::Session(value) => {
             reply(&output, &id, value).await;
         }

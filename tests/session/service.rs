@@ -315,7 +315,7 @@ async fn typed_create_send_real_read_history_and_reload_keep_one_terminal() {
     assert!(page.records.iter().any(|record| {
         matches!(
             &record.record,
-            JournalRecord::TaskStarted { task_id, message_id }
+            JournalRecord::TaskStarted { task_id, message_id, .. }
                 if task_id == &association.task_id
                     && message_id.as_ref() == Some(&association.message_id)
         )
