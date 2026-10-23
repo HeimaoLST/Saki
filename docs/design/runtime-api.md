@@ -1,6 +1,6 @@
 # Runtime 调用契约与实施规划
 
-更新日期：2026-10-22。状态：**调用契约已确认；首轮机器入口由 #60 交付；跨端接入与后续能力分别追踪**。
+更新日期：2026-10-23。状态：**调用契约及服务化工作包已有实现；当前联合验收来源与范围见文末，集成状态以 #103 和对应 PR 为准**。
 
 需求依据：[Agent runtime 需求](../requirements/agent-runtime.md)、[#43](https://github.com/HeimaoLST/Saki/issues/43) 及 [GUI 首轮交接](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6235030388)。本文定义跨宿主调用契约与验收边界；实时优先级、任务状态和负责人以 GitHub 为准。
 
@@ -777,6 +777,8 @@ Runtime v1 候选的共同验收流程：
 每个工作包交付时附：最终 SHA、适用验收 ID 的结果、原始日志、实际模型/协议边界、配置与持久化迁移说明、回滚条件，以及 GUI/TUI 接入需要的变更。将本节已实施部分移入上方现行契约或对应模块事实文档，并删除被替代的提案描述，保持一个权威位置。
 
 
+以下按工作包保留各自交付时的阶段事实。早期“尚未迁移终端／尚未支持后续能力”限定于该层，不代表最终联合候选；当前两端接入与验证来源见文末。
+
 ### #104 候选实现事实与迁移入口
 
 分类：**本 PR 的实现事实，尚未集成到 dev**。#104 提取 typed 服务和 stdio 适配器，保持 stdio v1；#109 尚未迁移终端，旧 SessionManager 保留原执行路径，因此此阶段不能宣布“两端已经统一”。#105/#106 配置、#61 并发、#107 MCP、#108 输入资料均未在本 PR 实现，不升级用户 schema 或推测旧连接身份。
@@ -1012,3 +1014,27 @@ Opened 包含 metadata、稳定历史 Replay、context、服务 SessionState 及
 history_required 时，桥在 Finished 前读取服务完整历史并发送同关联的 HistoryRestored；它只更新所属投影，不能切换选中会话。读取失败返回明确的 history 操作错误，仍保留原 Finished.history_required，不伪称补齐。metadata Lagged 刷新各会话当前 TitleUpdated，不借 Listed 弹出 picker；手工 rename 和标题刷新沿同一输出顺序协调，迟到刷新不携带旧快照。
 
 上述 Runtime 候选接口已由 TUI/console 共同消费，有界消费、按任务投影、暂存输入和运行中恢复由唯一 TUI writer 实施。6b302499 与追加 7f87e44 已按明确许可原样纳入联合分支；联合候选及后续宿主收尾修正执行了完整 fmt、strict Clippy、all-targets 和 build，原标题失败与受控锁释放回归也在全量中通过。固定527b402 binary 已由 GUI 9e4144b 运行九项真实进程测试和完整 Go race（88 PASS/4 预期 SKIP），TUI 主责另完成 default/resume/rename/cancel/title 等五组 28 项实际 PTY 及保持 stdin 打开的初始 idle SIGINT 退出。此后独立评审指出 Accepted 到 task_started 之间立即 Open 的窗口，新增测试以仅测试用 worker 启动屏障确定性复现并覆盖修正；这些组件/消费结果不代表已集成到 dev，也不能推导 GUI 自有展示队列已经有界。
+
+
+## 服务化联合验收记录
+
+更新日期：2026-10-23。分类：**实现事实与已执行验证；集成状态以 [#103](https://github.com/HeimaoLST/Saki/issues/103) 及各 PR 为准**。当前服务代码候选为 `dfe1913a622fec409e3fef211fb6d16a9c50e700`；后续保留祖先关系的 dev 同步和事实文档提交，不把原二进制实测改标成新 SHA。#104/#105/#121/#61/#108/#106/#107/#109 共用 Runtime、Agent、ToolRegistry 和 journal reducer；GUI 继续 stdio v1，TUI/console 使用 typed 桥。
+
+| 验收范围 | 可复查来源 | 结论边界 |
+| --- | --- | --- |
+| U01–U05，两端及任务投影 | [服务](../../tests/session/service.rs)、[终端桥](../../tests/session/terminal_delivery.rs)、[TUI 投影](../../tests/tui/sessions.rs) | 实际接纳关联、历史与 live 边界、取消及唯一终态；不是另建执行循环 |
+| C01–C10、C08a–e，配置及身份 | [配置](../../tests/session/config.rs)、[连接](../../tests/session/connections.rs)、[存储提交](../../tests/session/store_config.rs) | CAS、接纳快照、失败保持、未知旧身份、显式迁移及安全回退；不推测旧 endpoint |
+| N01–N08、N07a–d，并发及整链背压 | [并发](../../tests/session/concurrent.rs)、[stdio](../../tests/session/stdio.rs)、[通道](../../tests/session/channel.rs)、[真实宿主进程](../../tests/session/process.rs) | 受控到达／容量屏障与虚拟期限；输出失效后仍持久化、清理并释放锁 |
+| E01–E08、E06a–f，工具及输入资料 | [MCP 服务](../../tests/session/mcp.rs)、[MCP SDK](../../tests/tools/mcp_sdk.rs)、[来源](../../tests/tools/mcp_client.rs)、[资料](../../tests/session/context.rs) | SDK forced-lag、来源结束／重建、服务准入为分层证据，不宣称单一子进程 forced-lag 全链测试 |
+| D01–D06，持久化及消费失败 | 上述配置／服务测试；[GUI 固定组合结果](https://github.com/HeimaoLST/Saki/issues/109#issuecomment-6348517211) | journal 写入故障不返回 completed，未知结果可对账；GUI mapping 保存失败零发送 |
+
+这些测试的来源、函数断言和完整执行记录按 37 个主项及 15 个必需子场景逐项核对，组合边界仍按上文矩阵定义，不能以测试数量替代行为。`dfe1913` 相同源码／测试内容的完整本地 fmt、strict all-target Clippy、all-target tests、build 均通过：主程序 607 PASS / 12 ignored，支撑目标 70 PASS；[精确 CI 39835887112](https://github.com/HeimaoLST/Saki/actions/runs/39835887112) 四项通过。ignored 包含父测试显式启动的 process helper，不将其当普通 PASS；测试输出中的既有 example dead-code warnings 不被改写为“全程无警告”，strict Clippy 单独达标。
+
+终端实际验收由 TUI 主责使用固定 `527b402` binary 完成五组 28 项 PTY及初始 idle SIGINT（stdin 保持打开直到退出），[回交证据](https://github.com/HeimaoLST/Saki/issues/109#issuecomment-6348647199)。冻结 GUI `9e4144b` 与同一 binary 完成九项真实 Rust-process 测试及全 Go race（88 PASS / 0 FAIL / 4 预期 opt-in SKIP），[实际回交](https://github.com/HeimaoLST/Saki/issues/109#issuecomment-6348517211)。此后 `dfe1913` 只修正 typed 快照的 Accepted-before-TaskStarted 窗口，确定性 oneshot 回归先 RED 后 GREEN；[独立差异复审](https://github.com/HeimaoLST/Saki/pull/131#issuecomment-6348943265) 确认该生产差异不影响 stdio、desktop、store 或宿主退出，无需把旧组合改记为新 binary 实测。
+
+真实 provider 样本均使用用户提供的 Magpie 网关与 `deepseek/deepseek-flash`，分别记录协议，不能据此声称验证了多个真实 provider：
+
+- Chat Completions：MCP 服务实现 `870ba66` 的固定 Saki binary（SHA256 `bf00864ccdb0787c92a5a91492bde19a417020d6cebcb70a5ab08be72de0d796`）在单独构建 Rust MCP 示例前后不变；真实外部工具读取唯一文件标记，ToolFinished JSON 与下一模型 tool 输入完全相同，最终回答及历史含标记，两个模型请求均 HTTP 200。原始证据 `/private/tmp/saki-service-goal/live107-6442qqqb/`，不冒称 dfe 的重新运行。
+- Responses：固定 `dfe1913` binary（SHA256 `0ca902c54097c8bc97ca286168c3f3fc06c2a89d330eed6f6be61217976e91a2`）执行真实内置 read，两个请求均 HTTP 200；ToolFinished JSON 与下一请求 function_call_output 解码后完全一致，唯一 completed、回答／历史含唯一标记。两次 usage 分别为 input/output 396/39、492/21。证据 `/private/tmp/saki-service-goal/live103-responses-d0_kikcw/`；仅一次有界样本，无循环重试或伪造推理数据。
+
+历史并发 caller-context+read 的真实 Chat 400 仍因缺原始失败 wire 保留未知，[原始边界](https://github.com/HeimaoLST/Saki/issues/103#issuecomment-6332567925)。上述成功样本不证明全面根治。原生 GUI Finder／IME／VoiceOver、GUI 生产展示队列预算及后续 picker、后台任务面板不是这些进程测试或本次 Runtime 交付已验证的能力。默认 schema 1、显式 schema 2、既有回退限制和不自动重放副作用的契约保持。

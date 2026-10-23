@@ -1,6 +1,6 @@
 # Model runtime：协议、客户端与模型目录
 
-更新日期：2026-10-22。状态：已实施职责拆分、Responses 流式响应，以及 M1 的 Chat Completions 调用边界；主 Agent 默认流式，compact 与实验保留完整响应接口。参考依据见 [Pi 分层研究](../research/systems/model-runtime.md)。
+更新日期：2026-10-23。状态：已实施职责拆分、Responses 流式响应，以及 M1 的 Chat Completions 调用边界；主 Agent 默认流式，compact 与实验保留完整响应接口。参考依据见 [Pi 分层研究](../research/systems/model-runtime.md)。
 
 ## 模块与依赖
 
@@ -107,9 +107,9 @@ compact 仍由 Conversation 处理。摘要 transcript 使用公共历史表示�
 
 除已验收组合外不宣称支持其他兼容厂商。
 
-## 同连接会话模型配置（#105 候选）
+## 同连接会话模型配置（#105）
 
-更新日期：2026-10-22。分类：**本 PR 候选实现事实，未合入 dev**。模型切换使用 Runtime 的 `session.config.get/update`，与 typed RuntimeHandle 为同一准备/提交路径；请求形状、错误、revision 和持久化边界见[Runtime 配置契约](runtime-api.md#105-同连接配置候选实现事实)。没有另一个独立 select-model 状态机。
+更新日期：2026-10-23。分类：**实现事实，已由 PR120 集成到 dev**。模型切换使用 Runtime 的 `session.config.get/update`，与 typed RuntimeHandle 为同一准备/提交路径；请求形状、错误、revision 和持久化边界见[Runtime 配置契约](runtime-api.md#105-同连接配置候选实现事实)。没有另一个独立 select-model 状态机。
 
 实际 endpoint 模型 ID 与 catalog_id 分开：后者只用于已加载容量查找。自定义模型可提供有效完整 CompactionConfig，配置期间不刷新 catalog、不发送探测推理；上游是否实际可用仍由真实任务确认。模型/预算原子保存到 schema 1 metadata，接纳任务记录当时配置快照；只读恢复不重跑历史工具。旧记录缺少快照保持未知。
 
