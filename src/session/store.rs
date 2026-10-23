@@ -1,18 +1,22 @@
 use std::{
     fs::{self, File},
-    io::Write,
+    io::{Read, Write},
     path::{Component, Path, PathBuf},
 };
 
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
-use super::config::CapacitySource;
+use super::config::{CapacitySource, ToolSelection};
 use crate::agent::{
     conversation::{CompactionConfig, Conversation},
     journal::{self, Replay, TaskStatus},
 };
-use crate::client::config::{CHAT_COMPLETIONS_API, RESPONSES_API};
+use crate::client::{
+    config::{CHAT_COMPLETIONS_API, RESPONSES_API},
+    connections::ConnectionIdentity,
+};
 
 /// Title used until the first successful turn can generate one.
 pub const DEFAULT_TITLE: &str = "New session";
@@ -35,6 +39,48 @@ pub struct SessionMetadata {
     pub config_revision: u64,
     #[serde(default)]
     pub capacity_source: CapacitySource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_identity: Option<ConnectionIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_origin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_at_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_selection: Option<ToolSelection>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct EnhancedCreation {
+    pub connection_identity: ConnectionIdentity,
+    pub tool_selection: ToolSelection,
+}
+
+pub(crate) struct SessionCreation<'a> {
+    pub cwd: &'a Path,
+    pub model: &'a str,
+    pub system_prompt: &'a str,
+    pub api: &'a str,
+    pub compaction: CompactionConfig,
+    pub capacity_source: CapacitySource,
+    pub enhanced: Option<EnhancedCreation>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SchemaOneBackupState {
+    journal_len: u64,
+    journal_sha256: String,
+    bound_revision: u64,
+}
+
+const SCHEMA_ONE_BACKUP: &str = "metadata.schema1.backup.json";
+const SCHEMA_ONE_BACKUP_STATE: &str = "metadata.schema1.backup.state.json";
+
+pub(crate) struct ConfigurationLock {
+    pub metadata: SessionMetadata,
+    pub replay: Replay,
+    _file: File,
 }
 
 #[derive(Debug, Clone)]
@@ -84,9 +130,8 @@ impl SessionStore {
         self.create_with_api(cwd, model, system_prompt, RESPONSES_API, config)
     }
 
-    /// Creates a session that records the API it was created on. The runtime
-    /// uses this with the selected protocol; `create` stays the Responses
-    /// default for existing callers.
+    /// Creates a session that records the API it was created on. This is the
+    /// legacy schema-1 path; enhanced callers use `create_configured`.
     pub fn create_with_api(
         &self,
         cwd: &Path,
@@ -95,33 +140,63 @@ impl SessionStore {
         api: &str,
         config: CompactionConfig,
     ) -> Result<String> {
+        self.create_configured(SessionCreation {
+            cwd,
+            model,
+            system_prompt,
+            api,
+            compaction: config,
+            capacity_source: CapacitySource::Stored,
+            enhanced: None,
+        })
+    }
+
+    /// The single session creation path. All validation that can fail without
+    /// leaving a session behind runs before the directory is created.
+    pub(crate) fn create_configured(&self, creation: SessionCreation<'_>) -> Result<String> {
         ensure!(
-            api == RESPONSES_API || api == CHAT_COMPLETIONS_API,
-            "unsupported session API: {api}"
+            creation.api == RESPONSES_API || creation.api == CHAT_COMPLETIONS_API,
+            "unsupported session API: {}",
+            creation.api
         );
-        let conversation =
-            Conversation::new(system_prompt.to_owned()).with_compaction_config(config)?;
-        let working_directory = cwd.canonicalize()?;
+        if let Some(enhanced) = &creation.enhanced {
+            ensure!(
+                enhanced.connection_identity.api == creation.api,
+                "connection identity API does not match the session API"
+            );
+        }
+        let conversation = Conversation::new(creation.system_prompt.to_owned())
+            .with_compaction_config(creation.compaction)?;
+        let working_directory = creation.cwd.canonicalize()?;
         ensure!(
             working_directory.is_dir(),
             "session working directory must be a directory"
         );
         let id = journal::new_id()?;
         let directory = self.directory(&id)?;
-        fs::create_dir(&directory)?;
+        let enhanced = creation.enhanced;
         let metadata = SessionMetadata {
-            schema_version: 1,
+            schema_version: if enhanced.is_some() { 2 } else { 1 },
             id: id.clone(),
             title: DEFAULT_TITLE.to_owned(),
             title_source: Some("pending".to_owned()),
             created_at: journal::now_ms()?,
             working_directory,
-            model: model.to_owned(),
-            api: api.to_owned(),
-            compaction: config,
+            model: creation.model.to_owned(),
+            api: creation.api.to_owned(),
+            compaction: creation.compaction,
             config_revision: 1,
-            capacity_source: CapacitySource::Stored,
+            capacity_source: creation.capacity_source,
+            connection_identity: enhanced
+                .as_ref()
+                .map(|enhanced| enhanced.connection_identity.clone()),
+            binding_origin: enhanced.as_ref().map(|_| "created".to_owned()),
+            bound_at_revision: enhanced.as_ref().map(|_| 1),
+            system_prompt: enhanced.as_ref().map(|_| creation.system_prompt.to_owned()),
+            tool_selection: enhanced.map(|enhanced| enhanced.tool_selection),
         };
+        validate_metadata(&metadata, &id)?;
+        fs::create_dir(&directory)?;
         let conversation = conversation.with_history_file(&directory.join("history.jsonl"))?;
         self.save_metadata(&metadata)?;
         drop(conversation);
@@ -129,21 +204,16 @@ impl SessionStore {
     }
 
     pub fn metadata(&self, id: &str) -> Result<SessionMetadata> {
+        self.metadata_at(id).map(|(metadata, _)| metadata)
+    }
+
+    fn metadata_at(&self, id: &str) -> Result<(SessionMetadata, Vec<u8>)> {
         let path = self.directory(id)?.join("metadata.json");
-        let metadata: SessionMetadata = serde_json::from_slice(
-            &fs::read(&path).with_context(|| format!("reading {}", path.display()))?,
-        )?;
-        ensure!(
-            metadata.schema_version == 1 && metadata.id == id,
-            "unsupported or mismatched session metadata: {}",
-            path.display()
-        );
-        ensure!(
-            metadata.api == RESPONSES_API || metadata.api == CHAT_COMPLETIONS_API,
-            "unsupported session API: {}",
-            metadata.api
-        );
-        Ok(metadata)
+        let bytes = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+        let metadata: SessionMetadata = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parsing {}", path.display()))?;
+        validate_metadata(&metadata, id)?;
+        Ok((metadata, bytes))
     }
 
     /// Loads a session only for the expected API. The check runs before the
@@ -191,6 +261,7 @@ impl SessionStore {
             !title.contains(['\r', '\n']),
             "session title must be one line"
         );
+        let _metadata_lock = self.lock_metadata(id)?;
         let mut metadata = self.metadata(id)?;
         metadata.title = title.trim().to_owned();
         metadata.title_source = Some("manual".to_owned());
@@ -202,6 +273,7 @@ impl SessionStore {
     /// Persisting this up front means a failed, empty, or interrupted job is
     /// never retried on a later turn or after a restart.
     pub fn claim_auto_title(&self, id: &str) -> Result<bool> {
+        let _metadata_lock = self.lock_metadata(id)?;
         let mut metadata = self.metadata(id)?;
         if metadata.title_source.as_deref() != Some("pending") {
             return Ok(false);
@@ -220,6 +292,7 @@ impl SessionStore {
             !title.contains(['\r', '\n']),
             "session title must be one line"
         );
+        let _metadata_lock = self.lock_metadata(id)?;
         let mut metadata = self.metadata(id)?;
         if metadata.title_source.as_deref() != Some("auto") || metadata.title != DEFAULT_TITLE {
             return Ok(None);
@@ -229,40 +302,218 @@ impl SessionStore {
         Ok(Some(metadata))
     }
 
-    pub(crate) fn update_model_config(
+    /// CAS configuration commit. Only configuration fields are taken from the
+    /// candidate; title/provenance, session id, creation time and cwd remain
+    /// the latest values read under the CAS read.
+    pub(crate) fn update_config(
         &self,
         id: &str,
         expected_revision: u64,
-        model: String,
-        compaction: CompactionConfig,
-        capacity_source: CapacitySource,
+        next: SessionMetadata,
     ) -> std::result::Result<SessionMetadata, super::runtime::RuntimeError> {
         use super::runtime::RuntimeError;
-        let mut metadata = self
-            .metadata(id)
+        let _metadata_lock = self.lock_metadata(id).map_err(super::runtime::io_error)?;
+        let (current, original_bytes) = self
+            .metadata_at(id)
             .map_err(|error| RuntimeError::new("io_error", format!("{error:#}")))?;
-        if metadata.config_revision != expected_revision {
-            return Err(RuntimeError::conflict(metadata.config_revision));
+        if current.config_revision != expected_revision {
+            return Err(RuntimeError::conflict(current.config_revision));
         }
-        metadata.model = model;
-        metadata.compaction = compaction;
-        metadata.capacity_source = capacity_source;
-        metadata.config_revision = expected_revision.checked_add(1).ok_or_else(|| {
+        if next.schema_version < current.schema_version {
+            return Err(RuntimeError::new(
+                "invalid_request",
+                "configuration schema cannot be downgraded",
+            )
+            .session(id));
+        }
+        let mut candidate = current.clone();
+        candidate.schema_version = next.schema_version;
+        candidate.model = next.model;
+        candidate.api = next.api;
+        candidate.compaction = next.compaction;
+        candidate.capacity_source = next.capacity_source;
+        candidate.connection_identity = next.connection_identity;
+        candidate.binding_origin = next.binding_origin;
+        candidate.bound_at_revision = next.bound_at_revision;
+        candidate.system_prompt = next.system_prompt;
+        candidate.tool_selection = next.tool_selection;
+        candidate.config_revision = expected_revision.checked_add(1).ok_or_else(|| {
             RuntimeError::new("config_conflict", "configuration revision exhausted")
         })?;
-        self.save_metadata(&metadata).map_err(|error| {
-            let code = if error.downcast_ref::<CommitUnknown>().is_some() {
-                "commit_unknown"
-            } else {
-                "io_error"
-            };
-            RuntimeError::new(code, format!("{error:#}"))
+        validate_metadata(&candidate, id).map_err(|error| {
+            RuntimeError::new("invalid_request", format!("{error:#}")).session(id)
         })?;
-        Ok(metadata)
+
+        if current.schema_version == 1 && candidate.schema_version == 2 {
+            let bound_revision = candidate.bound_at_revision.ok_or_else(|| {
+                RuntimeError::new("invalid_request", "schema 2 requires bound_at_revision")
+                    .session(id)
+            })?;
+            self.write_schema1_backup(id, &original_bytes, bound_revision)
+                .map_err(|error| RuntimeError::new("io_error", format!("{error:#}")).session(id))?;
+        }
+        self.save_metadata(&candidate)
+            .map_err(super::runtime::io_error)?;
+        Ok(candidate)
+    }
+
+    pub(crate) fn lock_config(
+        &self,
+        id: &str,
+    ) -> std::result::Result<ConfigurationLock, super::runtime::RuntimeError> {
+        use super::runtime::RuntimeError;
+        use std::fs::TryLockError;
+
+        let directory = self
+            .directory(id)
+            .map_err(|error| RuntimeError::new("invalid_request", error.to_string()).session(id))?;
+        let path = directory.join("history.jsonl");
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|error| RuntimeError::new("io_error", format!("{error:#}")).session(id))?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => {
+                return Err(
+                    RuntimeError::new("locked", "session journal is already locked").session(id),
+                );
+            }
+            Err(TryLockError::Error(error)) => {
+                return Err(RuntimeError::new("io_error", format!("{error:#}")).session(id));
+            }
+        }
+        let (metadata, _) = self
+            .metadata_at(id)
+            .map_err(|error| RuntimeError::new("io_error", format!("{error:#}")).session(id))?;
+        let replay = journal::read(&file, &path).map_err(|error| {
+            let code = if error
+                .chain()
+                .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
+            {
+                "io_error"
+            } else {
+                "invalid_history"
+            };
+            RuntimeError::new(code, format!("{error:#}")).session(id)
+        })?;
+        Ok(ConfigurationLock {
+            metadata,
+            replay,
+            _file: file,
+        })
+    }
+
+    pub(crate) fn rollback_config(
+        &self,
+        id: &str,
+        expected_revision: u64,
+    ) -> std::result::Result<SessionMetadata, super::runtime::RuntimeError> {
+        use super::runtime::RuntimeError;
+        let mut lock = self.lock_config(id)?;
+        let _metadata_lock = self.lock_metadata(id).map_err(super::runtime::io_error)?;
+        lock.metadata = self.metadata(id).map_err(super::runtime::io_error)?;
+        if lock.metadata.schema_version != 2 {
+            return Err(RuntimeError::new(
+                "rollback_unsafe",
+                "configuration rollback requires a schema 2 session",
+            )
+            .session(id));
+        }
+        if lock.metadata.config_revision != expected_revision {
+            return Err(RuntimeError::conflict(lock.metadata.config_revision).session(id));
+        }
+        let directory = self
+            .directory(id)
+            .map_err(|error| RuntimeError::new("io_error", error.to_string()).session(id))?;
+        let backup_path = directory.join(SCHEMA_ONE_BACKUP);
+        let backup_bytes = fs::read(&backup_path).map_err(|_| {
+            RuntimeError::new("rollback_unsafe", "schema 1 backup is missing").session(id)
+        })?;
+        let backup: SessionMetadata = serde_json::from_slice(&backup_bytes).map_err(|_| {
+            RuntimeError::new("rollback_unsafe", "schema 1 backup is invalid").session(id)
+        })?;
+        if backup.schema_version != 1
+            || backup.id != id
+            || backup.api != lock.metadata.api
+            || validate_metadata(&backup, id).is_err()
+        {
+            return Err(RuntimeError::new(
+                "rollback_unsafe",
+                "schema 1 backup identity is inconsistent",
+            )
+            .session(id));
+        }
+        let state: SchemaOneBackupState = serde_json::from_slice(
+            &fs::read(directory.join(SCHEMA_ONE_BACKUP_STATE)).map_err(|_| {
+                RuntimeError::new("rollback_unsafe", "schema 1 backup state is missing").session(id)
+            })?,
+        )
+        .map_err(|_| {
+            RuntimeError::new("rollback_unsafe", "schema 1 backup state is invalid").session(id)
+        })?;
+        let (journal_len, journal_sha256) =
+            journal_fingerprint(&directory.join("history.jsonl"))
+                .map_err(|error| RuntimeError::new("io_error", format!("{error:#}")).session(id))?;
+        if state.bound_revision != lock.metadata.bound_at_revision.unwrap_or(0)
+            || backup.config_revision.checked_add(1) != Some(state.bound_revision)
+            || state.journal_len != journal_len
+            || state.journal_sha256 != journal_sha256
+        {
+            return Err(RuntimeError::new(
+                "rollback_unsafe",
+                "journal changed after the schema 1 backup",
+            )
+            .session(id));
+        }
+        self.save_metadata_bytes(id, &backup_bytes)
+            .map_err(super::runtime::io_error)?;
+        Ok(backup)
+    }
+
+    fn write_schema1_backup(
+        &self,
+        id: &str,
+        metadata_bytes: &[u8],
+        bound_revision: u64,
+    ) -> Result<()> {
+        let directory = self.directory(id)?;
+        let (journal_len, journal_sha256) = journal_fingerprint(&directory.join("history.jsonl"))?;
+        write_sync(&directory.join(SCHEMA_ONE_BACKUP), metadata_bytes)?;
+        let state = SchemaOneBackupState {
+            journal_len,
+            journal_sha256,
+            bound_revision,
+        };
+        write_sync(
+            &directory.join(SCHEMA_ONE_BACKUP_STATE),
+            &serde_json::to_vec_pretty(&state)?,
+        )?;
+        File::open(&directory)?.sync_all()?;
+        Ok(())
+    }
+
+    fn lock_metadata(&self, id: &str) -> Result<File> {
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.directory(id)?.join("metadata.lock"))?;
+        match file.try_lock() {
+            Ok(()) => Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) => Err(MetadataBusy.into()),
+            Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
+        }
     }
 
     fn save_metadata(&self, metadata: &SessionMetadata) -> Result<()> {
-        let directory = self.directory(&metadata.id)?;
+        self.save_metadata_bytes(&metadata.id, &serde_json::to_vec_pretty(metadata)?)
+    }
+
+    fn save_metadata_bytes(&self, id: &str, bytes: &[u8]) -> Result<()> {
+        let directory = self.directory(id)?;
         let temporary = directory.join(format!("metadata-{}.tmp", journal::new_id()?));
         let result = (|| -> Result<()> {
             let mut file = File::options()
@@ -271,7 +522,7 @@ impl SessionStore {
                 .open(&temporary)?;
             #[cfg(test)]
             metadata_fault::check(&directory, metadata_fault::Point::BeforeWrite)?;
-            file.write_all(&serde_json::to_vec_pretty(metadata)?)?;
+            file.write_all(bytes)?;
             file.sync_all()?;
             #[cfg(test)]
             metadata_fault::check(&directory, metadata_fault::Point::BeforeRename)?;
@@ -323,6 +574,11 @@ impl SessionStore {
                 compaction: CompactionConfig::new(262_144),
                 config_revision: 0,
                 capacity_source: CapacitySource::Stored,
+                connection_identity: None,
+                binding_origin: None,
+                bound_at_revision: None,
+                system_prompt: None,
+                tool_selection: None,
             });
             let modified = fs::metadata(&path)
                 .and_then(|value| value.modified())
@@ -350,9 +606,99 @@ impl SessionStore {
     }
 }
 
+fn validate_metadata(metadata: &SessionMetadata, id: &str) -> Result<()> {
+    ensure!(
+        metadata.id == id,
+        "session metadata id does not match: {id}"
+    );
+    ensure!(
+        metadata.schema_version == 1 || metadata.schema_version == 2,
+        "unsupported session metadata schema version {}",
+        metadata.schema_version
+    );
+    ensure!(
+        metadata.api == RESPONSES_API || metadata.api == CHAT_COMPLETIONS_API,
+        "unsupported session API: {}",
+        metadata.api
+    );
+    if metadata.schema_version == 1 {
+        ensure!(
+            metadata.connection_identity.is_none()
+                && metadata.binding_origin.is_none()
+                && metadata.bound_at_revision.is_none()
+                && metadata.system_prompt.is_none()
+                && metadata.tool_selection.is_none(),
+            "enhanced configuration fields require metadata schema 2"
+        );
+    }
+    if metadata.schema_version == 2 {
+        let identity = metadata
+            .connection_identity
+            .as_ref()
+            .context("schema 2 metadata is missing connection_identity")?;
+        ensure!(
+            identity.api == metadata.api,
+            "schema 2 connection identity API does not match metadata API"
+        );
+        ensure!(
+            metadata.binding_origin.is_some(),
+            "schema 2 metadata is missing binding_origin"
+        );
+        let bound_at_revision = metadata
+            .bound_at_revision
+            .context("schema 2 metadata is missing bound_at_revision")?;
+        ensure!(
+            bound_at_revision <= metadata.config_revision,
+            "schema 2 bound_at_revision exceeds config_revision"
+        );
+        ensure!(
+            metadata.system_prompt.is_some(),
+            "schema 2 metadata is missing system_prompt"
+        );
+        let tools = metadata
+            .tool_selection
+            .as_ref()
+            .context("schema 2 metadata is missing tool_selection")?;
+        super::config::validate_tool_selection(tools)
+            .map_err(|error| anyhow::anyhow!("unsupported session tools: {}", error.message))?;
+    }
+    Ok(())
+}
+
+fn journal_fingerprint(path: &Path) -> Result<(u64, String)> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut length = 0u64;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        length = length.saturating_add(count as u64);
+        hasher.update(&buffer[..count]);
+    }
+    Ok((length, format!("{:x}", hasher.finalize())))
+}
+
+fn write_sync(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut file = File::options()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("session metadata is being updated")]
+pub(crate) struct MetadataBusy;
+
 #[derive(Debug, thiserror::Error)]
 #[error("metadata publication could not be confirmed: {0:#}")]
-struct CommitUnknown(anyhow::Error);
+pub(crate) struct CommitUnknown(anyhow::Error);
 
 #[cfg(test)]
 pub(crate) mod metadata_fault {
@@ -398,3 +744,7 @@ pub(crate) mod metadata_fault {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/session/store_config.rs"]
+mod store_config_tests;

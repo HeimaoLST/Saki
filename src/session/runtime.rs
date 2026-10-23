@@ -18,10 +18,11 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use super::{
-    SYSTEM_PROMPT, build_agent,
+    SYSTEM_PROMPT, build_agent, build_tool_registry,
     config::{
         self, CatalogModel, ConfigPatch, ConfigView, ConfiguredModel, EffectiveConfig,
-        PreparedModelConfig,
+        HostConfiguration, PreparedModelConfig, UpgradeOptions, prepare_configuration,
+        resolve_connection, select_connection,
     },
     store::{SessionMetadata, SessionStore, SessionSummary},
 };
@@ -37,8 +38,12 @@ use crate::{
         journal::{self, JournalRecord, Replay, TaskStatus},
         message::UserMessage,
     },
-    client::{ModelApi, ModelClient},
+    client::{
+        ModelApi, ModelClient,
+        connections::{ConnectionRegistry, ConnectionView},
+    },
     model::catalog::ModelCatalog,
+    tools::tool_registry::ToolRegistry,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -275,6 +280,15 @@ pub enum RuntimeCommand {
         task_id: String,
     },
     Capabilities,
+    Connections,
+    CreateConfigured {
+        config: ConfigPatch,
+        storage_schema: u32,
+    },
+    Rollback {
+        session_id: String,
+        expected_revision: u64,
+    },
     Models {
         connection_id: String,
     },
@@ -285,6 +299,8 @@ pub enum RuntimeCommand {
         session_id: String,
         expected_revision: u64,
         patch: ConfigPatch,
+        allow_schema_upgrade: bool,
+        acknowledge_unknown_origin: bool,
     },
     Create {
         working_directory: Option<PathBuf>,
@@ -323,6 +339,7 @@ pub enum RuntimeCommand {
 pub enum RuntimeReply {
     TaskStatus(TaskState),
     Capabilities(Capabilities),
+    Connections(Vec<ConnectionView>),
     Models {
         connection_id: String,
         models: Vec<CatalogModel>,
@@ -358,6 +375,7 @@ pub enum RuntimeReply {
 #[derive(Debug, Clone, Serialize)]
 pub struct Capabilities {
     pub protocol_version: u32,
+    pub storage_schemas: Vec<u32>,
     pub methods: Vec<&'static str>,
     pub max_active_tasks: usize,
     pub session_configuration: bool,
@@ -431,6 +449,7 @@ pub struct Runtime {
     config: CompactionConfig,
     limits: EventLimits,
     catalog: Option<Arc<ModelCatalog>>,
+    connections: Option<Arc<ConnectionRegistry>>,
     max_active_tasks: usize,
     #[cfg(test)]
     panicking_sessions: HashSet<String>,
@@ -452,6 +471,7 @@ impl Runtime {
             config,
             limits: EventLimits::default(),
             catalog: None,
+            connections: None,
             max_active_tasks: 1,
             #[cfg(test)]
             panicking_sessions: HashSet::new(),
@@ -479,6 +499,13 @@ impl Runtime {
 
     pub fn with_catalog(mut self, catalog: Option<ModelCatalog>) -> Self {
         self.catalog = catalog.map(Arc::new);
+        self
+    }
+
+    pub fn with_connections(mut self, connections: ConnectionRegistry) -> Self {
+        self.client = connections.default().client().clone();
+        self.model = connections.default().default_model().to_owned();
+        self.connections = Some(Arc::new(connections));
         self
     }
 
@@ -526,6 +553,7 @@ impl Runtime {
             config: self.config,
             limits: self.limits,
             catalog: self.catalog,
+            connections: self.connections,
             output,
             work_drained: drained_tx,
             sessions: HashMap::new(),
@@ -569,6 +597,9 @@ enum Prepared {
         session_id: String,
         metadata: SessionMetadata,
         selection: PreparedModelConfig,
+        client: ModelClient,
+        registry: Option<ToolRegistry>,
+        prompt: String,
     },
     Created {
         metadata: SessionMetadata,
@@ -631,6 +662,7 @@ struct RuntimeActor {
     config: CompactionConfig,
     limits: EventLimits,
     catalog: Option<Arc<ModelCatalog>>,
+    connections: Option<Arc<ConnectionRegistry>>,
     output: OutputState,
     work_drained: watch::Sender<bool>,
     sessions: HashMap<String, SessionEntry>,
@@ -709,6 +741,25 @@ impl RuntimeActor {
             }
         }
         Ok(())
+    }
+
+    fn decorate_config(&self, mut view: ConfigView) -> ConfigView {
+        view.effective_config.execution_connection_id = if let Some(identity) =
+            &view.effective_config.connection_identity
+        {
+            self.connections
+                .as_ref()
+                .and_then(|connections| connections.get(&identity.connection_id))
+                .filter(|connection| connection.identity() == identity)
+                .map(|connection| connection.identity().connection_id.clone())
+        } else if let Some(connections) = &self.connections {
+            (connections.len() == 1
+                && connections.default().identity().api == view.effective_config.api)
+                .then(|| connections.default().identity().connection_id.clone())
+        } else {
+            (self.client.api().as_str() == view.effective_config.api).then(|| "default".to_owned())
+        };
+        view
     }
 
     fn active_for_session(&self, session_id: &str) -> Option<&Active> {
@@ -830,20 +881,65 @@ impl RuntimeActor {
                     return;
                 }
                 let store = self.store.clone();
-                let api = self.client.api().as_str().to_owned();
                 self.spawn_op(reply, None, move || {
-                    let replay = replay_for(&store, &api, &session_id)?;
+                    let replay = replay_for(&store, &session_id)?;
                     Ok(Prepared::TaskStatus(replayed_task_state(
                         session_id, task_id, replay,
                     )))
                 });
             }
+            RuntimeCommand::Connections => {
+                let views = self
+                    .connections
+                    .as_ref()
+                    .map_or_else(Vec::new, |connections| connections.views());
+                let _ = reply.send(Ok(RuntimeReply::Connections(views)));
+            }
+            RuntimeCommand::Rollback {
+                session_id,
+                expected_revision,
+            } => {
+                if self.sessions.contains_key(&session_id) || self.preparing.contains(&session_id) {
+                    let _ = reply.send(Err(RuntimeError::new(
+                        "busy",
+                        "release the session before rolling back its storage upgrade",
+                    )
+                    .session(&session_id)));
+                    return;
+                }
+                if !self.admit() {
+                    self.reject_busy(reply);
+                    return;
+                }
+                self.preparing.insert(session_id.clone());
+                let store = self.store.clone();
+                let id = session_id.clone();
+                self.spawn_op(reply, Some(session_id), move || {
+                    let metadata = store.rollback_config(&id, expected_revision)?;
+                    let replay = replay_for(&store, &id)?;
+                    Ok(Prepared::Configuration(ConfigView::from_metadata(
+                        &metadata,
+                        config::system_prompt(&replay.context),
+                    )))
+                });
+            }
+            RuntimeCommand::CreateConfigured {
+                config,
+                storage_schema,
+            } => self.create_configured(reply, config, storage_schema),
             RuntimeCommand::Capabilities => {
                 let _ = reply.send(Ok(RuntimeReply::Capabilities(Capabilities {
                     protocol_version: 1,
+                    storage_schemas: if self.connections.is_some() {
+                        vec![1, 2]
+                    } else {
+                        vec![1]
+                    },
                     methods: vec![
                         "runtime.capabilities",
                         "model.list",
+                        "connection.list",
+                        "session.config.rollback",
                         "session.config.get",
                         "session.config.update",
                         "session.create",
@@ -860,19 +956,40 @@ impl RuntimeActor {
                     ],
                     max_active_tasks: self.max_active_tasks,
                     session_configuration: true,
-                    multi_connection: false,
+                    multi_connection: self.connections.is_some(),
                     external_tools: false,
                     caller_context: true,
                 })));
             }
             RuntimeCommand::Models { connection_id } => {
-                if connection_id != "default" {
+                let connection_id = if connection_id.is_empty() {
+                    self.connections.as_ref().map_or_else(
+                        || "default".into(),
+                        |directory| directory.default().identity().connection_id.clone(),
+                    )
+                } else {
+                    connection_id
+                };
+                let configured_model = if let Some(directory) = &self.connections {
+                    match directory.get(&connection_id) {
+                        Some(connection) => connection.default_model().to_owned(),
+                        None => {
+                            let _ = reply.send(Err(RuntimeError::new(
+                                "unknown_connection",
+                                "connection is not configured",
+                            )));
+                            return;
+                        }
+                    }
+                } else if connection_id == "default" {
+                    self.model.clone()
+                } else {
                     let _ = reply.send(Err(RuntimeError::new(
                         "unknown_connection",
                         "connection is not configured",
                     )));
                     return;
-                }
+                };
                 let models = self.catalog.as_ref().map_or_else(Vec::new, |catalog| {
                     catalog
                         .entries()
@@ -885,8 +1002,11 @@ impl RuntimeActor {
                         .collect()
                 });
                 let configured_models = vec![ConfiguredModel {
-                    model: self.model.clone(),
-                    compaction: self.config,
+                    model: configured_model.clone(),
+                    compaction: self
+                        .host_configuration()
+                        .model_capacity(&configured_model)
+                        .0,
                 }];
                 let _ = reply.send(Ok(RuntimeReply::Models {
                     connection_id,
@@ -900,10 +1020,9 @@ impl RuntimeActor {
                     return;
                 }
                 let store = self.store.clone();
-                let api = self.client.api().as_str().to_owned();
                 self.spawn_op(reply, None, move || {
-                    let metadata = metadata_for(&store, &api, &session_id)?;
-                    let replay = replay_for(&store, &api, &session_id)?;
+                    let metadata = metadata_for(&store, &session_id)?;
+                    let replay = replay_for(&store, &session_id)?;
                     Ok(Prepared::Configuration(ConfigView::from_metadata(
                         &metadata,
                         config::system_prompt(&replay.context),
@@ -914,13 +1033,35 @@ impl RuntimeActor {
                 session_id,
                 expected_revision,
                 patch,
+                allow_schema_upgrade,
+                acknowledge_unknown_origin,
             } => {
-                self.configure(reply, session_id, expected_revision, patch);
+                self.configure(
+                    reply,
+                    session_id,
+                    expected_revision,
+                    patch,
+                    UpgradeOptions {
+                        allow_schema_upgrade,
+                        acknowledge_unknown_origin,
+                    },
+                );
             }
             RuntimeCommand::Create {
                 working_directory,
                 system_prompt,
             } => {
+                if self
+                    .connections
+                    .as_ref()
+                    .is_some_and(|connections| connections.len() > 1)
+                {
+                    let _ = reply.send(Err(RuntimeError::new(
+                        "connection_binding_required",
+                        "multiple connections require explicit storage_schema:2 for a new session",
+                    )));
+                    return;
+                }
                 let cwd = working_directory.unwrap_or_else(|| self.cwd.clone());
                 if !self.admit() {
                     self.reject_busy(reply);
@@ -969,12 +1110,14 @@ impl RuntimeActor {
                 }
                 self.preparing.insert(session_id.clone());
                 let store = self.store.clone();
-                let client = self.client.clone();
-                let api = self.client.api().as_str().to_owned();
+                let host = self.host_configuration();
                 let id = session_id.clone();
                 self.spawn_op(reply, Some(session_id), move || {
-                    let metadata = metadata_for(&store, &api, &id)?;
-                    let loaded = open_for_api(&store, &api, &id)?;
+                    let metadata = metadata_for(&store, &id)?;
+                    let client =
+                        resolve_connection(&metadata, &host.client, host.connections.as_deref())
+                            .map_err(|error| error.session(&id))?;
+                    let loaded = open_for_api(&store, &metadata.api, &id)?;
                     let status = loaded.replay.status.clone();
                     let agent = build_agent(&store, &client, loaded).map_err(io_error)?;
                     Ok(Prepared::Loaded {
@@ -1015,10 +1158,9 @@ impl RuntimeActor {
                 }
                 self.preparing.insert(session_id.clone());
                 let store = self.store.clone();
-                let api = self.client.api().as_str().to_owned();
                 let id = session_id.clone();
                 self.spawn_op(reply, Some(session_id), move || {
-                    metadata_for(&store, &api, &id)?;
+                    metadata_for(&store, &id)?;
                     let metadata = store.rename(&id, &title).map_err(io_error)?;
                     Ok(Prepared::Renamed {
                         session_id: id,
@@ -1043,10 +1185,9 @@ impl RuntimeActor {
                     return;
                 }
                 let store = self.store.clone();
-                let api = self.client.api().as_str().to_owned();
                 let id = session_id.clone();
                 self.spawn_op(reply, None, move || {
-                    let replay = replay_for(&store, &api, &id)?;
+                    let replay = replay_for(&store, &id)?;
                     Ok(Prepared::History {
                         session_id: id,
                         replay,
@@ -1069,10 +1210,9 @@ impl RuntimeActor {
                     return;
                 }
                 let store = self.store.clone();
-                let api = self.client.api().as_str().to_owned();
                 let id = session_id.clone();
                 self.spawn_op(reply, None, move || {
-                    let replay = replay_for(&store, &api, &id)?;
+                    let replay = replay_for(&store, &id)?;
                     Ok(Prepared::Status {
                         session_id: id,
                         replay,
@@ -1098,10 +1238,9 @@ impl RuntimeActor {
                 }
                 self.preparing.insert(session_id.clone());
                 let store = self.store.clone();
-                let api = self.client.api().as_str().to_owned();
                 let id = session_id.clone();
                 self.spawn_op(reply, Some(session_id), move || {
-                    metadata_for(&store, &api, &id)?;
+                    metadata_for(&store, &id)?;
                     Ok(Prepared::Released { session_id: id })
                 });
             }
@@ -1138,25 +1277,139 @@ impl RuntimeActor {
         }
     }
 
+    fn host_configuration(&self) -> HostConfiguration {
+        HostConfiguration {
+            client: self.client.clone(),
+            connections: self.connections.clone(),
+            catalog: self.catalog.clone(),
+            model: self.model.clone(),
+            compaction: self.config,
+        }
+    }
+
+    fn create_configured(
+        &mut self,
+        reply: oneshot::Sender<ReplyResult>,
+        patch: ConfigPatch,
+        storage_schema: u32,
+    ) {
+        if ![1, 2].contains(&storage_schema) {
+            let _ = reply.send(Err(RuntimeError::new(
+                "unsupported_schema",
+                "supported storage schemas are 1 and 2",
+            )));
+            return;
+        }
+        if !self.admit() {
+            self.reject_busy(reply);
+            return;
+        }
+        let host = self.host_configuration();
+        let selection = select_connection(&host, patch.connection_id.as_deref());
+        let (client, identity, default_model) = match selection {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = reply.send(Err(error));
+                return;
+            }
+        };
+        if storage_schema == 1
+            && (patch.connection_id.is_some()
+                || patch.tool_selection.is_some()
+                || host
+                    .connections
+                    .as_ref()
+                    .is_some_and(|connections| connections.len() > 1))
+        {
+            let _ = reply.send(Err(RuntimeError::new(
+                "schema_upgrade_required",
+                "explicit storage_schema:2 is required for connection or tool selection",
+            )));
+            return;
+        }
+        if storage_schema == 2 && identity.is_none() {
+            let _ = reply.send(Err(RuntimeError::new(
+                "unknown_connection",
+                "enhanced sessions require an explicit host connection directory",
+            )));
+            return;
+        }
+        let default_tools = config::default_tool_selection();
+        let tools = match config::validate_tool_selection(
+            patch.tool_selection.as_ref().unwrap_or(&default_tools),
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = reply.send(Err(error));
+                return;
+            }
+        };
+        let mut model_patch = patch.clone();
+        model_patch.working_directory = None;
+        let api = client.api().as_str().to_owned();
+        let (default_capacity, default_source) = host.model_capacity(&default_model);
+        let model = match config::prepare_model_config(
+            config::ModelConfigInput {
+                model: &default_model,
+                api: &api,
+                compaction: default_capacity,
+                capacity_source: &default_source,
+            },
+            &[],
+            model_patch,
+            host.catalog.as_deref(),
+            &default_model,
+            host.model_capacity(&default_model),
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = reply.send(Err(error));
+                return;
+            }
+        };
+        let cwd = patch.working_directory.unwrap_or_else(|| self.cwd.clone());
+        let prompt = patch.system_prompt.unwrap_or_else(|| SYSTEM_PROMPT.into());
+        let enhanced = if storage_schema == 2 {
+            Some(super::store::EnhancedCreation {
+                connection_identity: identity.expect("enhanced identity was validated"),
+                tool_selection: tools,
+            })
+        } else {
+            None
+        };
+        let store = self.store.clone();
+        self.spawn_op(reply, None, move || {
+            let id = store
+                .create_configured(super::store::SessionCreation {
+                    cwd: &cwd,
+                    model: &model.model,
+                    system_prompt: &prompt,
+                    api: &api,
+                    compaction: model.compaction.get(),
+                    capacity_source: model.capacity_source,
+                    enhanced,
+                })
+                .map_err(io_error)?;
+            create_loaded(store, client, api, id)
+        });
+    }
+
     fn configure(
         &mut self,
         reply: oneshot::Sender<ReplyResult>,
         session_id: String,
         expected_revision: u64,
         patch: ConfigPatch,
+        upgrade: UpgradeOptions,
     ) {
         if self.configuring.contains(&session_id) {
             let revision = self
                 .sessions
                 .get(&session_id)
-                .expect("configuration reserves a loaded session")
-                .metadata
-                .config_revision;
-            let mut error = RuntimeError::conflict(revision);
-            error.message =
-                "another configuration update is being committed; read config before retrying"
-                    .to_owned();
-            let _ = reply.send(Err(error.session(&session_id)));
+                .map_or(expected_revision, |session| {
+                    session.metadata.config_revision
+                });
+            let _ = reply.send(Err(RuntimeError::conflict(revision).session(&session_id)));
             return;
         }
         if self.preparing.contains(&session_id) || self.active_for_session(&session_id).is_some() {
@@ -1167,73 +1420,110 @@ impl RuntimeActor {
             .session(&session_id)));
             return;
         }
-        let Some(session) = self.sessions.get(&session_id) else {
-            let _ = reply.send(Err(RuntimeError::new(
-                "not_found",
-                "load the session before updating configuration",
-            )
-            .session(&session_id)));
-            return;
-        };
-        let Some(agent) = session.agent.as_ref() else {
-            let _ = reply.send(Err(RuntimeError::new(
-                "commit_unknown",
-                "reload the session before changing its configuration",
-            )
-            .session(&session_id)));
-            return;
-        };
-        if session.metadata.config_revision != expected_revision {
-            let _ = reply.send(Err(RuntimeError::conflict(
-                session.metadata.config_revision,
-            )
-            .session(&session_id)));
-            return;
-        }
-        let selection = match config::prepare_model_config(
-            &session.metadata,
-            agent.context_items(),
-            patch,
-            self.catalog.as_deref(),
-            &self.model,
-            self.config,
-        ) {
-            Ok(selection) => selection,
-            Err(error) => {
-                let _ = reply.send(Err(error.session(&session_id)));
-                return;
-            }
-        };
-        if !selection.changed {
-            let view = ConfigView::from_metadata(&session.metadata, session.system_prompt.clone());
-            let _ = reply.send(Ok(RuntimeReply::ConfigUpdated {
-                config: view,
-                effective_from: "next_task",
-            }));
-            return;
-        }
         if !self.admit() {
             self.reject_busy(reply);
             return;
         }
+        let host = self.host_configuration();
+        let prepared = if let Some(session) = self.sessions.get(&session_id) {
+            let Some(agent) = session.agent.as_ref() else {
+                let _ = reply.send(Err(RuntimeError::new(
+                    "commit_unknown",
+                    "reload the session before changing configuration",
+                )
+                .session(&session_id)));
+                return;
+            };
+            if session.metadata.config_revision != expected_revision {
+                let _ = reply.send(Err(RuntimeError::conflict(
+                    session.metadata.config_revision,
+                )
+                .session(&session_id)));
+                return;
+            }
+            let candidate = match prepare_configuration(
+                &host,
+                &session.metadata,
+                agent.context_items(),
+                &session.system_prompt,
+                &patch,
+                upgrade,
+            ) {
+                Ok(candidate) => candidate,
+                Err(error) => {
+                    let _ = reply.send(Err(error.session(&session_id)));
+                    return;
+                }
+            };
+            if !candidate.changed {
+                let view = self.decorate_config(ConfigView::from_metadata(
+                    &session.metadata,
+                    session.system_prompt.clone(),
+                ));
+                let _ = reply.send(Ok(RuntimeReply::ConfigUpdated {
+                    config: view,
+                    effective_from: "next_task",
+                }));
+                return;
+            }
+            let registry = match build_tool_registry(&self.store, &candidate.metadata) {
+                Ok(registry) => registry,
+                Err(error) => {
+                    let _ = reply.send(Err(io_error(error).session(&session_id)));
+                    return;
+                }
+            };
+            Some((candidate, registry))
+        } else {
+            if !patch.is_only_binding() {
+                let _=reply.send(Err(RuntimeError::new("not_found","load the session before updating configuration; an unloaded legacy session only permits explicit binding").session(&session_id)));
+                return;
+            }
+            None
+        };
         self.preparing.insert(session_id.clone());
         self.configuring.insert(session_id.clone());
         let store = self.store.clone();
         let id = session_id.clone();
         self.spawn_op(reply, Some(session_id), move || {
+            let (candidate, registry, _lock) = match prepared {
+                Some((candidate, registry)) => (candidate, Some(registry), None),
+                None => {
+                    let lock = store.lock_config(&id)?;
+                    if lock.metadata.schema_version != 1 {
+                        return Err(RuntimeError::new(
+                            "not_found",
+                            "load an enhanced session before updating its configuration",
+                        )
+                        .session(&id));
+                    }
+                    if lock.metadata.config_revision != expected_revision {
+                        return Err(
+                            RuntimeError::conflict(lock.metadata.config_revision).session(&id)
+                        );
+                    }
+                    let prompt = config::system_prompt(&lock.replay.context);
+                    let candidate = prepare_configuration(
+                        &host,
+                        &lock.metadata,
+                        &lock.replay.context,
+                        &prompt,
+                        &patch,
+                        upgrade,
+                    )?;
+                    (candidate, None, Some(lock))
+                }
+            };
             let metadata = store
-                .update_model_config(
-                    &id,
-                    expected_revision,
-                    selection.model.clone(),
-                    selection.compaction.get(),
-                    selection.capacity_source.clone(),
-                )
+                .update_config(&id, expected_revision, candidate.metadata)
                 .map_err(|error| error.session(&id))?;
             Ok(Prepared::Configured {
                 session_id: id,
                 metadata,
-                selection,
+                selection: candidate.selection,
+                client: candidate.client,
+                registry,
+                prompt: candidate.prompt,
             })
         });
     }
@@ -1245,10 +1535,28 @@ impl RuntimeActor {
         message: UserMessage,
     ) {
         let Some(session) = self.sessions.get(&session_id) else {
-            let _ =
-                reply
+            if self
+                .connections
+                .as_ref()
+                .is_some_and(|connections| connections.len() > 1)
+            {
+                if !self.admit() {
+                    self.reject_busy(reply);
+                    return;
+                }
+                let store = self.store.clone();
+                let id = session_id.clone();
+                self.spawn_op(reply,None,move || {
+                    let metadata=metadata_for(&store, &id)?;
+                    if metadata.schema_version==1 {
+                        Err(RuntimeError::new("connection_binding_required","legacy session origin is unknown; explicitly bind a connection before execution").session(&id))
+                    } else {Err(RuntimeError::new("not_found","session is not loaded").session(&id))}
+                });
+            } else {
+                let _ = reply
                     .send(Err(RuntimeError::new("not_found", "session is not loaded")
                         .session(&session_id)));
+            }
             return;
         };
         if self.active_for_session(&session_id).is_some() {
@@ -1295,12 +1603,20 @@ impl RuntimeActor {
             ));
             return;
         }
-        if self.client.api() == ModelApi::ChatCompletions && !message.images.is_empty() {
+        if session.metadata.api == crate::client::config::CHAT_COMPLETIONS_API
+            && !message.images.is_empty()
+        {
             let _ = reply.send(Err(RuntimeError::new(
                 "invalid_request",
                 "images are unsupported by this API",
             )
             .session(&session_id)));
+            return;
+        }
+        if let Err(error) =
+            resolve_connection(&session.metadata, &self.client, self.connections.as_deref())
+        {
+            let _ = reply.send(Err(error.session(&session_id)));
             return;
         }
         let task_id = match journal::new_id() {
@@ -1322,6 +1638,22 @@ impl RuntimeActor {
             api: session.metadata.api.clone(),
             compaction: session.metadata.compaction,
             config_revision: session.metadata.config_revision,
+            connection_identity: session.metadata.connection_identity.clone(),
+            execution_connection_id: self
+                .decorate_config(ConfigView::from_metadata(
+                    &session.metadata,
+                    session.system_prompt.clone(),
+                ))
+                .effective_config
+                .execution_connection_id,
+            system_prompt: Some(session.system_prompt.clone()),
+            tool_selection: Some(
+                session
+                    .metadata
+                    .tool_selection
+                    .clone()
+                    .unwrap_or_else(config::default_tool_selection),
+            ),
         };
         let Some(agent) = self
             .sessions
@@ -1503,27 +1835,33 @@ impl RuntimeActor {
     fn apply(&mut self, prepared: Prepared) -> std::result::Result<RuntimeReply, RuntimeError> {
         match prepared {
             Prepared::TaskStatus(state) => Ok(RuntimeReply::TaskStatus(state)),
-            Prepared::Configuration(view) => Ok(RuntimeReply::Config(view)),
+            Prepared::Configuration(view) => Ok(RuntimeReply::Config(self.decorate_config(view))),
             Prepared::Configured {
                 session_id,
                 metadata,
                 selection,
+                client,
+                registry,
+                prompt,
             } => {
-                let session = self
-                    .sessions
-                    .get_mut(&session_id)
-                    .expect("configuration holds session admission");
-                let agent = session
-                    .agent
-                    .as_mut()
-                    .expect("configuration preserves the session agent");
-                agent.apply_model_config(selection.model, selection.compaction);
-                session.metadata = metadata;
+                if let Some(session) = self.sessions.get_mut(&session_id) {
+                    let agent = session
+                        .agent
+                        .as_mut()
+                        .expect("configuration holds the idle agent");
+                    agent.apply_execution_config(
+                        client,
+                        selection.model,
+                        selection.compaction,
+                        prompt.clone(),
+                        registry.expect("loaded configuration prepares its tool registry"),
+                    );
+                    session.system_prompt = prompt.clone();
+                    session.metadata = metadata.clone();
+                }
+                let view = self.decorate_config(ConfigView::from_metadata(&metadata, prompt));
                 Ok(RuntimeReply::ConfigUpdated {
-                    config: ConfigView::from_metadata(
-                        &session.metadata,
-                        session.system_prompt.clone(),
-                    ),
+                    config: view,
                     effective_from: "next_task",
                 })
             }
@@ -1618,9 +1956,12 @@ impl RuntimeActor {
                 .to_owned()
         };
         let config = metadata.as_ref().and_then(|metadata| {
-            self.sessions
-                .get(session_id)
-                .map(|session| ConfigView::from_metadata(metadata, session.system_prompt.clone()))
+            self.sessions.get(session_id).map(|session| {
+                self.decorate_config(ConfigView::from_metadata(
+                    metadata,
+                    session.system_prompt.clone(),
+                ))
+            })
         });
         SessionState {
             session_id: session_id.to_owned(),
@@ -1765,8 +2106,15 @@ fn status_str(status: &TaskStatus) -> &'static str {
     }
 }
 
-fn io_error(error: anyhow::Error) -> RuntimeError {
-    let code = if error.chain().any(|cause| {
+pub(crate) fn io_error(error: anyhow::Error) -> RuntimeError {
+    let code = if error.downcast_ref::<super::store::MetadataBusy>().is_some() {
+        "locked"
+    } else if error
+        .downcast_ref::<super::store::CommitUnknown>()
+        .is_some()
+    {
+        "commit_unknown"
+    } else if error.chain().any(|cause| {
         cause
             .downcast_ref::<std::io::Error>()
             .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)
@@ -1780,7 +2128,6 @@ fn io_error(error: anyhow::Error) -> RuntimeError {
 
 fn metadata_for(
     store: &SessionStore,
-    api: &str,
     session_id: &str,
 ) -> std::result::Result<SessionMetadata, RuntimeError> {
     store.directory(session_id).map_err(|error| {
@@ -1793,22 +2140,11 @@ fn metadata_for(
             RuntimeError::new("invalid_history", format!("{error:#}")).session(session_id)
         }
     })?;
-    if metadata.api != api {
-        return Err(RuntimeError::new(
-            "api_mismatch",
-            format!("session uses {}; runtime uses {api}", metadata.api),
-        )
-        .session(session_id));
-    }
     Ok(metadata)
 }
 
-fn replay_for(
-    store: &SessionStore,
-    api: &str,
-    session_id: &str,
-) -> std::result::Result<Replay, RuntimeError> {
-    metadata_for(store, api, session_id)?;
+fn replay_for(store: &SessionStore, session_id: &str) -> std::result::Result<Replay, RuntimeError> {
+    metadata_for(store, session_id)?;
     let path = store
         .directory(session_id)
         .map_err(io_error)?
@@ -1845,7 +2181,7 @@ fn create_loaded(
     api: String,
     session_id: String,
 ) -> std::result::Result<Prepared, RuntimeError> {
-    let metadata = metadata_for(&store, &api, &session_id)?;
+    let metadata = metadata_for(&store, &session_id)?;
     let loaded = open_for_api(&store, &api, &session_id)?;
     let status = loaded.replay.status.clone();
     let agent = build_agent(&store, &client, loaded).map_err(io_error)?;
@@ -1875,3 +2211,7 @@ mod concurrent_tests;
 #[cfg(test)]
 #[path = "../../tests/session/context.rs"]
 mod context_tests;
+
+#[cfg(test)]
+#[path = "../../tests/session/connections.rs"]
+mod connection_tests;

@@ -863,3 +863,34 @@ schema 1 仍未验证原 endpoint，effective_config 返回 connection_binding.s
 资料部分实际编码后的 UTF-8 字节总和上限为 1 MiB（包含上述每条 JSON 包装）。typed 和 stdio 复用 UserMessage.validate，在任务接纳/分配 ID/写入用户历史之前返回 invalid_request；不静默截断。既有 8 MiB 整请求限制同时适用。通过资料入口限制仍须满足所选模型的上下文预算；预算不足时沿用原有 compact/明确失败规则，不绕过容量校验。
 
 资料随历史保留，不宣称一次使用后删除。TUI 构造 UserMessage 的既有位置仅补空 context 以保持编译，不提供资料编辑 UI；#109 消费方服务化仍另行交付。确定性证据覆盖两端实际模型输入、图片旧表示、特殊字符串、超限拒绝、合法边界不截断、compact 来源与历史原字节前缀、跨进程恢复及继续时不重复注入；验收 SHA 与真实模型结果见 PR。
+## #106 连接、增强配置与显式升级（候选实现事实）
+
+更新日期：2026-10-22。分类：**本 PR 候选，尚未合入 dev**。schema 1 默认创建/读取与旧模型配置路径保持；增强字段仅使用显式 schema 2，不自动升级用户数据。下述 SDK、stdio 与启动配置的行为以本 PR 验收 SHA 为准。
+
+### 宿主配置和执行路由
+
+CLI 可设置 `SAKI_RUNTIME_CONFIG=/absolute/path/runtime.json`，读取本文件前文的 connections/default_connection_id/max_active_tasks JSON。每个 `api_key_env` 从宿主进程环境读取凭据；JSON 模式不依赖旧的 `API_KEY`、`SAKI_API` 或 `.env` 回退。未设置该路径时，原有 `ClientConfig::from_env`（含可选 `.env`）仍在唯一组装边界执行，建立名为 default 的单连接。SDK 调用方显式构建 ConnectionRegistry 并交给 Runtime::with_connections，无环境变量读取或配置更新时的探测推理。
+
+`connection.list` 返回 ID/API/规范化 endpoint/default_model；`model.list` 省略 ID 时使用实际配置的 default_connection_id，返回所选连接的宿主默认容量和已加载 catalog。不同连接默认模型可使用各自已加载容量，不能把默认连接 A 的容量误报为已知 B 容量；未知 provider 的实际能力仍由真实任务验证。Connection 构造器同时建立身份和实际客户端，只提供只读访问，不能单独替换其中一个而伪造绑定；目录在进程内不可变，凭据不进入返回值、metadata 或 journal。
+
+schema 1 单连接继续兼容执行，connection_binding.state=unknown、connection_id/connection_identity 为 null，execution_connection_id 仅说明本次执行连接。多连接时，无论 default 或 API 候选数，未绑定 legacy 的 load/send 返回 connection_binding_required，history/list/config.get 只读可用；不隐式 load、重跑或猜 endpoint。schema 2 的 API/规范化 endpoint/配置 ID 必须与目录完全匹配；同 ID 换 endpoint 明确 connection_mismatch，同身份换凭据可正常恢复。
+
+### 配置操作与工具集合
+
+新会话使用 `session.create {storage_schema:2,config:{connection_id,model?,compaction?,system_prompt?,working_directory?,tool_selection?}}`；旧顶层 working_directory/system_prompt 保留，重复提供同含义字段返回 invalid_request。多连接目录下旧的空 create 明确要求增强创建，不生成一个无法执行的 legacy 会话。capabilities.storage_schemas 返回宿主实际可创建的版本。
+
+`tool_selection` 使用已批准对象 `{"builtin":["read"],"external":[]}`；省略使用四内置工具，显式空对象/空两组开放零工具。MCP 接入前 external 非空明确拒绝；本候选不宣告外部工具支持。 读取持久 metadata 时也校验所选工具；未知内置工具或本版本不支持的外部工具在打开/修复 journal 前拒绝，不能静默只装载可识别的子集。不接受临时原型的名字数组作为另一套配置格式。该更正发生在未合入候选之间，schema 1 metadata 不新增工具字段，现有生产调用者未使用这一新增配置入口。
+
+普通 config.update 对已 loaded、idle session 执行。目标连接 API 不变时可切 provider，模型、prompt、工具集合和容量在同一次 CAS/metadata 提交后无 await 地替换 Agent；工作目录不可改。已接纳任务返回 busy，之后请求使用新配置，旧 journal 不重写。含原生 ProviderItem/provider_data 的模型/连接/prompt/工具重解释明确拒绝，不能通过丢原生数据实现迁移。有效值未改变不增加 revision、不写磁盘。 配置提交、手动改名和自动标题共用非阻塞 metadata 写锁，并在锁内重读最新值；锁冲突返回 locked。配置 CAS 只替换配置字段，保留最新标题及其来源，避免并发标题任务用旧副本覆盖已生效配置。
+
+system_prompt 保存在 schema 2 metadata；load 时替换有效上下文的原 system 前缀，不能追加第二个冲突前缀。压缩继续使用既有专用摘要指令，其结果保留当前 agent 前缀；之后生成及重启恢复使用同一有效前缀。旧原始 system 消息、历史工具结果与旧 task 快照保留。接纳时的 TaskStarted.configuration 记录实际连接身份/执行 ID/prompt/工具集合；旧字段缺失保持未知，不倒填。
+
+### 旧会话绑定与回退
+
+未 loaded schema 1 的 config.update 只允许 patch.connection_id，要求 expected_revision、allow_schema_upgrade:true、acknowledge_unknown_origin:true。在既有 journal 写锁中重新读取 metadata/revision，使用 journal reader 只读解析，校验 API 和公共上下文兼容性。完成后仍未 loaded，需要显式 load；绑定标记 explicit_legacy_binding 和 bound_at_revision，不宣称证明历史 endpoint。
+
+升级先保留 `metadata.schema1.backup.json` 的原始字节和配套 `metadata.schema1.backup.state.json`（journal 长度/SHA256/绑定 revision），全部 sync 后经现有临时文件/sync/rename/目录 sync 发布 metadata。写入前/rename 前失败保持旧 metadata/journal；rename 后不确定返回 commit_unknown，已 loaded 内存隔离，config.get 只读对账，显式 release/load 恢复。临时备份可在尚未发布的 schema 1 上重建，不能据此覆盖正在使用的 schema 2。
+
+增加明确的维护操作 `session.config.rollback {session_id,expected_revision}`：须先 release，仅对有一致 schema 1 备份、revision 匹配且 journal 指纹完全未变的增强会话恢复原 metadata 字节。新增任务、其他 journal 变更、缺少/不一致备份均返回 rollback_unsafe，不删除历史来回退。新建 schema 2 没有 schema 1 备份。旧二进制须在读取 schema 2 时明确拒绝。更改 schema 标签不能使增强字段被当成 legacy 执行。
+
+默认终端旧 SessionManager 在 #109 迁移前仅接收 schema 1/单连接，增强配置通过 Runtime 服务入口；拒绝在恢复修复 journal 前完成。此边界不是最终“两端统一”交付，后续由 #109 使用同一服务实现解除，不放入第二套连接/执行循环。

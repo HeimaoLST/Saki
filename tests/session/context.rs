@@ -569,6 +569,8 @@ async fn context_survives_compaction_and_restart_without_being_injected_again() 
         .call(RuntimeCommand::ConfigUpdate {
             session_id: id.clone(),
             expected_revision: 1,
+            allow_schema_upgrade: false,
+            acknowledge_unknown_origin: false,
             patch: ConfigPatch {
                 compaction: Some(CompactionConfig {
                     context_budget_tokens: 8192,

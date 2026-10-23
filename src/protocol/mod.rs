@@ -1,5 +1,65 @@
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Serialize,
+    de::{self, Deserializer, MapAccess, Visitor},
+};
 use serde_json::Value;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ToolSelection {
+    pub builtin: Vec<String>,
+    pub external: Vec<ExternalToolBinding>,
+}
+
+// A derived struct decoder also accepts positional arrays; this wire field requires an object.
+impl<'de> Deserialize<'de> for ToolSelection {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct SelectionVisitor;
+        impl<'de> Visitor<'de> for SelectionVisitor {
+            type Value = ToolSelection;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tool selection object with builtin and external fields")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut builtin = None;
+                let mut external = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "builtin" => {
+                            if builtin.is_some() {
+                                return Err(de::Error::duplicate_field("builtin"));
+                            }
+                            builtin = Some(map.next_value::<Vec<String>>()?);
+                        }
+                        "external" => {
+                            if external.is_some() {
+                                return Err(de::Error::duplicate_field("external"));
+                            }
+                            external = Some(map.next_value::<Vec<ExternalToolBinding>>()?);
+                        }
+                        other => {
+                            return Err(de::Error::unknown_field(other, &["builtin", "external"]));
+                        }
+                    }
+                }
+                Ok(ToolSelection {
+                    builtin: builtin.unwrap_or_default(),
+                    external: external.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_map(SelectionVisitor)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalToolBinding {
+    pub source_id: String,
+    pub tool_name: String,
+    pub exposed_name: String,
+}
 
 /// Immutable continuation data owned by the named API adapter.
 /// When present on reasoning, this is the authoritative native item to replay.

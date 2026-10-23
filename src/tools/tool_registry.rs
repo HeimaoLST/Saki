@@ -68,6 +68,10 @@ impl ToolRegistry {
             .ok_or_else(|| ToolError::NotFound(call.name.clone()))?;
         (tool.handler)(call.arguments).await
     }
+    pub(crate) fn retain_names(&mut self, names: &[String]) {
+        self.tools.retain(|name, _| names.contains(name));
+    }
+
     pub fn list_definition(&self) -> Vec<ToolDefinition> {
         self.tools
             .values()

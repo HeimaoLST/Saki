@@ -215,6 +215,20 @@ impl Agent {
         self
     }
 
+    pub(crate) fn apply_execution_config(
+        &mut self,
+        client: ModelClient,
+        model: String,
+        config: conversation::ValidatedCompactionConfig,
+        prompt: String,
+        registry: ToolRegistry,
+    ) {
+        self.client = client;
+        self.tool_registry = registry;
+        self.conversation.set_system_prompt(prompt);
+        self.apply_model_config(model, config);
+    }
+
     /// Attach the event channel used to report display data to the UI.
     pub fn with_events(self, events: UnboundedSender<AgentEvent>) -> Self {
         self.with_event_sink(EventSink::legacy(events))
