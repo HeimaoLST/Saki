@@ -1171,3 +1171,52 @@ async fn each_connections_default_model_uses_its_own_loaded_capacity() {
     actor.await.unwrap().unwrap();
     assert!(request_bodies(server).await.is_empty());
 }
+
+#[tokio::test]
+async fn accepted_before_started_configuration_is_busy_but_idle_session_can_update() {
+    let workspace = Workspace::new();
+    let (client, server) = scripted_http(vec![(200, completed("done"))]).await;
+    let (release_start, start_gate) = oneshot::channel();
+    let (handle, actor) = runtime(client, &workspace, "model-a", Some(catalog()))
+        .with_task_start_gate(start_gate)
+        .start();
+    let a = create_session(&handle).await.metadata.unwrap().id;
+    let b = create_session(&handle).await.metadata.unwrap().id;
+    let metadata_before = workspace.metadata_bytes(&a);
+    let history_before = workspace.history_bytes(&a);
+    let task = send_task(&handle, &a, "accepted configuration snapshot").await;
+    match handle
+        .call(RuntimeCommand::TaskStatus {
+            session_id: a.clone(),
+            task_id: task.association.task_id.clone(),
+        })
+        .await
+        .unwrap()
+    {
+        RuntimeReply::TaskStatus(state) => assert_eq!(state.phase, "accepted"),
+        _ => panic!("expected accepted task status"),
+    }
+    let error = config_update(&handle, &a, 1, patch_model("model-b"))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "busy");
+    assert_eq!(workspace.metadata_bytes(&a), metadata_before);
+    assert_eq!(workspace.history_bytes(&a), history_before);
+    let unchanged = config_get(&handle, &a).await;
+    assert_eq!(unchanged.config_revision, 1);
+    assert_eq!(unchanged.effective_config.model, "model-a");
+    let changed = config_update(&handle, &b, 1, patch_model("model-b"))
+        .await
+        .unwrap();
+    assert_eq!(changed.config_revision, 2);
+    assert_eq!(changed.effective_config.model, "model-b");
+    release_start.send(()).unwrap();
+    assert_eq!(finish(task.events).await.status, "completed");
+    let snapshot = last_task_configuration(&history_for(&handle, &a).await);
+    assert_eq!(snapshot.model, "model-a");
+    assert_eq!(snapshot.config_revision, 1);
+    assert_eq!(request_one(server).await["model"], "model-a");
+    handle.call(RuntimeCommand::Shutdown).await.unwrap();
+    drop(handle);
+    actor.await.unwrap().unwrap();
+}
