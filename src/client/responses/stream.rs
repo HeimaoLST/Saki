@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use serde::Deserialize;
@@ -30,10 +32,14 @@ enum Event {
     Other,
 }
 
-pub(super) async fn decode(
+pub(super) async fn decode<F, Fut>(
     response: reqwest::Response,
-    mut on_event: impl FnMut(ModelStreamEvent),
-) -> anyhow::Result<ModelResponse> {
+    mut on_event: F,
+) -> anyhow::Result<ModelResponse>
+where
+    F: FnMut(ModelStreamEvent) -> Fut,
+    Fut: Future<Output = ()>,
+{
     let content_type = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -48,7 +54,7 @@ pub(super) async fn decode(
         content_type.eq_ignore_ascii_case("text/event-stream"),
         "expected text/event-stream, received {content_type:?}"
     );
-    let mut events = response.bytes_stream().eventsource();
+    let mut events = crate::client::transport::limited_body_stream(response).eventsource();
     while let Some(event) = events.next().await {
         let event =
             event.map_err(|error| anyhow::anyhow!("response stream interrupted: {error}"))?;
@@ -59,10 +65,10 @@ pub(super) async fn decode(
             .map_err(|error| anyhow::anyhow!("invalid response stream event: {error}"))?;
         match event {
             Event::TextDelta { item_id, delta } => {
-                on_event(ModelStreamEvent::TextDelta { item_id, delta });
+                on_event(ModelStreamEvent::TextDelta { item_id, delta }).await;
             }
             Event::ReasoningDelta { item_id, delta } => {
-                on_event(ModelStreamEvent::ReasoningDelta { item_id, delta });
+                on_event(ModelStreamEvent::ReasoningDelta { item_id, delta }).await;
             }
             Event::ItemDone { item } => {
                 if item["type"] == "reasoning" {
@@ -71,7 +77,8 @@ pub(super) async fn decode(
                         .ok_or_else(|| anyhow::anyhow!("completed reasoning item has no id"))?;
                     on_event(ModelStreamEvent::ReasoningCompleted {
                         item_id: item_id.to_owned(),
-                    });
+                    })
+                    .await;
                 }
             }
             Event::Completed { response } => {

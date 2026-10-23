@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
+use serde::Serialize;
 
 /// True when the path's extension names a supported image type. Only the path
 /// shape is decided here; the actual mime comes from the bytes.
@@ -30,7 +31,7 @@ pub fn image_mime_from_bytes(bytes: &[u8]) -> Option<&'static str> {
 /// One image attachment kept as an immutable data-URL snapshot plus a display
 /// name. The raw bytes are never re-read, so later file changes cannot alter a
 /// draft or a recalled history entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ImageAttachment {
     pub name: String,
     /// `data:<mime>;base64,<payload>`.
@@ -56,7 +57,7 @@ impl ImageAttachment {
 ///
 /// `String` and `&str` convert into a text-only message so existing callers and
 /// the console front end stay unchanged.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct UserMessage {
     pub text: String,
     pub images: Vec<ImageAttachment>,

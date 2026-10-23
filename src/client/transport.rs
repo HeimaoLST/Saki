@@ -3,12 +3,15 @@
 
 use std::time::Duration;
 
+use futures_util::{StreamExt, stream::try_unfold};
 use reqwest::header;
 use serde_json::Value;
 
 use super::responses::ApiError;
 
 const MAX_RETRIES: u8 = 3;
+/// Upper bound for one model response body, including SSE and JSON fallback.
+pub(crate) const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone)]
 pub(crate) struct ApiTransport {
@@ -61,10 +64,10 @@ impl ApiTransport {
             .map_err(|e| anyhow::anyhow!("request failed: {e}"))?;
         if !response.status().is_success() {
             let status = response.status();
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|err| format!("<failed to read error body: {err}>"));
+            let body = match read_body_limited(response).await {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(error) => format!("<failed to read error body: {error}>"),
+            };
             let overflow = serde_json::from_str::<Value>(&body)
                 .ok()
                 .is_some_and(|value| is_overflow(&value));
@@ -110,4 +113,47 @@ impl ApiTransport {
         }
         unreachable!()
     }
+}
+
+/// Bounds a response body while it is being read. The cap applies to every
+/// chunk before it is handed to the SSE parser or the JSON fallback, so neither
+/// path can grow an unbounded internal buffer first.
+pub(crate) fn limited_body_stream(
+    response: reqwest::Response,
+) -> impl futures_util::Stream<Item = Result<Vec<u8>, anyhow::Error>> + Unpin {
+    limited_body_stream_with_limit(response, MAX_RESPONSE_BYTES)
+}
+
+pub(crate) fn limited_body_stream_with_limit(
+    response: reqwest::Response,
+    limit: usize,
+) -> impl futures_util::Stream<Item = Result<Vec<u8>, anyhow::Error>> + Unpin {
+    Box::pin(try_unfold(
+        (response.bytes_stream(), 0usize),
+        move |(mut stream, mut used)| async move {
+            match stream.next().await {
+                None => Ok(None),
+                Some(Err(error)) => Err(anyhow::anyhow!("response body read failed: {error}")),
+                Some(Ok(chunk)) => {
+                    used = used.saturating_add(chunk.len());
+                    if used > limit {
+                        return Err(anyhow::anyhow!(
+                            "response body exceeded the {limit}-byte limit"
+                        ));
+                    }
+                    Ok(Some((chunk.to_vec(), (stream, used))))
+                }
+            }
+        },
+    ))
+}
+
+/// Reads a complete non-streaming body under the same cap.
+pub(crate) async fn read_body_limited(response: reqwest::Response) -> anyhow::Result<Vec<u8>> {
+    let mut stream = limited_body_stream(response);
+    let mut body = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        body.extend_from_slice(&chunk?);
+    }
+    Ok(body)
 }

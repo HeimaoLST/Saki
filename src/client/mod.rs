@@ -7,6 +7,8 @@ pub use chat::ChatCompletionsClient;
 pub use config::{ClientConfig, ModelApi};
 pub use responses::{Attempted, ResponsesClient};
 
+use std::future::Future;
+
 use crate::protocol::{ModelRequest, ModelResponse, ModelStreamEvent};
 
 /// The runtime's one model-call boundary. Protocol selection is a simple enum
@@ -57,14 +59,36 @@ impl ModelClient {
 
     /// Delivers deltas synchronously as they arrive; the final response is
     /// authoritative for context, tools and usage.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "synchronous callback compatibility adapter")
+    )]
     pub async fn respond_stream(
         &self,
         request: ModelRequest<'_>,
-        on_event: impl FnMut(ModelStreamEvent),
+        mut on_event: impl FnMut(ModelStreamEvent),
     ) -> anyhow::Result<ModelResponse> {
+        self.respond_stream_async(request, |event| {
+            on_event(event);
+            std::future::ready(())
+        })
+        .await
+    }
+
+    /// Async-callback streaming for callers that need to await event handling
+    /// before the next upstream frame is read.
+    pub async fn respond_stream_async<F, Fut>(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: F,
+    ) -> anyhow::Result<ModelResponse>
+    where
+        F: FnMut(ModelStreamEvent) -> Fut,
+        Fut: Future<Output = ()>,
+    {
         match self {
-            Self::Responses(client) => client.respond_stream(request, on_event).await,
-            Self::ChatCompletions(client) => client.respond_stream(request, on_event).await,
+            Self::Responses(client) => client.respond_stream_async(request, on_event).await,
+            Self::ChatCompletions(client) => client.respond_stream_async(request, on_event).await,
         }
     }
 }

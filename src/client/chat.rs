@@ -4,6 +4,8 @@
 //! First version: text and function tools. Responses-native continuation data
 //! (reasoning, provider items) is refused before any request is sent.
 
+use std::future::Future;
+
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -123,14 +125,36 @@ impl ChatCompletionsClient {
     }
 
     /// Delivers text deltas synchronously as they arrive and returns the final
-    /// response. Tool calls are aggregated and only complete calls are handed
-    /// to the caller. Stream errors and missing terminals fail without replay;
-    /// a JSON body from a gateway is accepted as a complete response.
+    /// response. Kept for existing callers/tests; the async callback path owns
+    /// decoding. Tool calls are aggregated and only complete calls are handed
+    /// to the caller.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "synchronous callback compatibility adapter")
+    )]
     pub async fn respond_stream(
         &self,
         request: ModelRequest<'_>,
-        on_event: impl FnMut(ModelStreamEvent),
+        mut on_event: impl FnMut(ModelStreamEvent),
     ) -> anyhow::Result<ModelResponse> {
+        self.respond_stream_async(request, |event| {
+            on_event(event);
+            std::future::ready(())
+        })
+        .await
+    }
+
+    /// Async-callback streaming: each event is awaited before the next upstream
+    /// frame is pulled, providing backpressure without an unbounded queue.
+    pub async fn respond_stream_async<F, Fut>(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: F,
+    ) -> anyhow::Result<ModelResponse>
+    where
+        F: FnMut(ModelStreamEvent) -> Fut,
+        Fut: Future<Output = ()>,
+    {
         let mut body = Self::request_body(&request)?;
         body["stream"] = json!(true);
         // Ask for the usage tail block; vendors that do not support it still
@@ -371,7 +395,8 @@ fn decode_response_value(response: ChatResponse) -> anyhow::Result<ModelResponse
 }
 
 async fn decode_response(response: reqwest::Response) -> anyhow::Result<ModelResponse> {
-    decode_response_value(response.json::<ChatResponse>().await?)
+    let body = crate::client::transport::read_body_limited(response).await?;
+    decode_response_value(serde_json::from_slice::<ChatResponse>(&body)?)
 }
 
 #[derive(Deserialize)]
@@ -432,11 +457,11 @@ struct StreamState {
 }
 
 impl StreamState {
-    fn apply(
-        &mut self,
-        chunk: StreamChunk,
-        on_event: &mut impl FnMut(ModelStreamEvent),
-    ) -> anyhow::Result<()> {
+    async fn apply<F, Fut>(&mut self, chunk: StreamChunk, on_event: &mut F) -> anyhow::Result<()>
+    where
+        F: FnMut(ModelStreamEvent) -> Fut,
+        Fut: Future<Output = ()>,
+    {
         if let Some(error) = chunk.error {
             return Err(ApiError::Stream {
                 code: error["code"].as_str().map(str::to_owned),
@@ -466,7 +491,8 @@ impl StreamState {
                 on_event(ModelStreamEvent::TextDelta {
                     item_id: format!("{}-text", self.id),
                     delta: content,
-                });
+                })
+                .await;
             }
             for delta in choice.delta.tool_calls {
                 let index = delta.index as usize;
@@ -522,10 +548,14 @@ impl StreamState {
     }
 }
 
-async fn decode_stream(
+async fn decode_stream<F, Fut>(
     response: reqwest::Response,
-    mut on_event: impl FnMut(ModelStreamEvent),
-) -> anyhow::Result<ModelResponse> {
+    mut on_event: F,
+) -> anyhow::Result<ModelResponse>
+where
+    F: FnMut(ModelStreamEvent) -> Fut,
+    Fut: Future<Output = ()>,
+{
     use eventsource_stream::Eventsource;
     use futures_util::StreamExt;
 
@@ -544,7 +574,7 @@ async fn decode_stream(
         "expected text/event-stream, received {content_type:?}"
     );
     let mut state = StreamState::default();
-    let mut events = response.bytes_stream().eventsource();
+    let mut events = crate::client::transport::limited_body_stream(response).eventsource();
     while let Some(event) = events.next().await {
         let event = event.map_err(|error| anyhow::anyhow!("chat stream interrupted: {error}"))?;
         if event.data == "[DONE]" {
@@ -552,7 +582,7 @@ async fn decode_stream(
         }
         let chunk: StreamChunk = serde_json::from_str(&event.data)
             .map_err(|error| anyhow::anyhow!("invalid chat stream chunk: {error}"))?;
-        state.apply(chunk, &mut on_event)?;
+        state.apply(chunk, &mut on_event).await?;
     }
     state.finish()
 }

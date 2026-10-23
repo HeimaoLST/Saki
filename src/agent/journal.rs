@@ -86,6 +86,8 @@ pub fn new_id() -> Result<String> {
 }
 
 pub fn write(file: &mut File, record: &JournalRecord) -> Result<()> {
+    #[cfg(all(test, unix))]
+    fault::check(file, record)?;
     let mut bytes = serde_json::to_vec(&Envelope {
         schema_version: 1,
         timestamp_ms: now_ms()?,
@@ -228,4 +230,79 @@ pub fn read(file: &File, path: &Path) -> Result<Replay> {
     }
     replay.active_task = active_task;
     Ok(replay)
+}
+
+#[cfg(all(test, unix))]
+pub(crate) mod fault {
+    use super::*;
+    use std::{
+        collections::HashMap,
+        os::unix::fs::MetadataExt,
+        sync::{Mutex, OnceLock},
+    };
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Point {
+        Start,
+        User,
+        ToolResult,
+        Finish,
+    }
+
+    type Identity = (u64, u64);
+    fn faults() -> &'static Mutex<HashMap<Identity, Point>> {
+        static FAULTS: OnceLock<Mutex<HashMap<Identity, Point>>> = OnceLock::new();
+        FAULTS.get_or_init(Default::default)
+    }
+    fn identity(file: &File) -> std::io::Result<Identity> {
+        let metadata = file.metadata()?;
+        Ok((metadata.dev(), metadata.ino()))
+    }
+    pub struct Guard(Identity);
+    impl Guard {
+        pub fn new(path: &Path, point: Point) -> Self {
+            let id = identity(&File::open(path).unwrap()).unwrap();
+            assert!(faults().lock().unwrap().insert(id, point).is_none());
+            Self(id)
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            faults().lock().unwrap().remove(&self.0);
+        }
+    }
+    pub(super) fn check(file: &File, record: &JournalRecord) -> std::io::Result<()> {
+        let point = match record {
+            JournalRecord::TaskStarted { .. } => Some(Point::Start),
+            JournalRecord::TaskFinished { .. } => Some(Point::Finish),
+            JournalRecord::Messages { items } => {
+                if items
+                    .iter()
+                    .any(|item| matches!(item, InputItem::ToolResult { .. }))
+                {
+                    Some(Point::ToolResult)
+                } else if items.iter().any(|item| {
+                    matches!(
+                        item,
+                        InputItem::Message {
+                            role: MessageRole::User,
+                            ..
+                        }
+                    )
+                }) {
+                    Some(Point::User)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        let id = identity(file)?;
+        let mut registry = faults().lock().unwrap();
+        if point.is_some() && registry.get(&id).copied() == point {
+            registry.remove(&id);
+            return Err(std::io::Error::other("injected journal write failure"));
+        }
+        Ok(())
+    }
 }

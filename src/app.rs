@@ -67,11 +67,12 @@ pub async fn run() -> anyhow::Result<()> {
         .unwrap_or_else(|| cwd.join(".saki/sessions"));
     let store = SessionStore::new(root)?;
     if std::env::args().skip(1).any(|arg| arg == "--stdio") {
+        #[cfg(unix)]
+        let output = crate::session::stdio::NativeStdout::new()?;
+        #[cfg(not(unix))]
+        let output = tokio::io::stdout();
         return crate::session::runtime::Runtime::new(store, client, cwd, model, config)
-            .run(
-                tokio::io::BufReader::new(tokio::io::stdin()),
-                tokio::io::stdout(),
-            )
+            .run(tokio::io::BufReader::new(tokio::io::stdin()), output)
             .await;
     }
     let session_id = match std::env::var("SAKI_SESSION").ok().filter(|id| id != "new") {
