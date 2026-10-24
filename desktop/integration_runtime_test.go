@@ -794,6 +794,198 @@ func TestGUIAppStopSurvivesHistoryReload(t *testing.T) {
 	})
 }
 
+func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startGUIHarness(t, binary, provider, "saki-issue-141")
+	issueID := ""
+	h.pump.do(func() {
+		if !h.app.createIssue("Implement login", "Must support SMS verification.") {
+			t.Fatalf("createIssue failed: %s", h.app.issueFormError)
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		if issueID == "" || len(ct.Issues) != 1 || ct.Issues[0].Goal != "Implement login" {
+			t.Fatalf("issue not created/selected: %+v", ct)
+		}
+		ct.Draft = "ordinary composer draft"
+	})
+	run := func() {
+		h.pump.do(func() {
+			if !h.app.runIssue(issueID) {
+				t.Fatalf("runIssue failed: %s", h.app.issueFormError)
+			}
+		})
+		h.pump.wait(func() bool {
+			ct := h.app.selectedContact()
+			if len(ct.Issues) != 1 {
+				return false
+			}
+			exec := ct.Issues[0].Executions
+			return ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty &&
+				len(exec) > 0 && exec[len(exec)-1].Status == issueExecutionCompleted
+		})
+	}
+	run()
+	var prompt string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		prompt = issuePrompt(ct.Issues[0])
+		ct.Draft = prompt
+	})
+	run()
+	var issue *productIssue
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		issue = ct.Issues[0]
+		if len(issue.Executions) != 2 {
+			t.Fatalf("executions = %+v", issue.Executions)
+		}
+		if issue.Executions[0].TaskID == issue.Executions[1].TaskID ||
+			issue.Executions[0].SessionID == "" || issue.Executions[1].MessageID == "" {
+			t.Fatalf("execution associations = %+v", issue.Executions)
+		}
+		if issue.Status != issueStatusOpen {
+			t.Fatalf("runtime completion changed issue status: %q", issue.Status)
+		}
+		if !strings.Contains(issueEvidenceText(issue), "not recorded") {
+			t.Fatalf("completion evidence = %q", issueEvidenceText(issue))
+		}
+		if ct.Draft != prompt {
+			t.Fatalf("issue run consumed a composer draft equal to its prompt: %q", ct.Draft)
+		}
+		if issue.Executions[0].SessionID != ct.SessionID || issue.Executions[1].SessionID != ct.SessionID {
+			t.Fatalf("execution session mapping = %+v / %q", issue.Executions, ct.SessionID)
+		}
+	})
+	if provider.count() != 2 {
+		t.Fatalf("issue runs made %d model requests, want 2", provider.count())
+	}
+	h.shutdown(t)
+	beforeRestart := provider.count()
+	h2 := restartGUIHarness(t, binary)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.wait(func() bool {
+		ct := h2.app.contacts[0]
+		return ct.Loaded && len(ct.Issues) == 1 && len(ct.Issues[0].Executions) == 2
+	})
+	h2.snapshot(func() {
+		ct := h2.app.contacts[0]
+		issue = ct.Issues[0]
+		if issue.ID != issueID || issue.Status != issueStatusOpen || len(issue.Executions) != 2 {
+			t.Fatalf("restored issue = %+v", issue)
+		}
+		if issue.Executions[0].TaskID == "" || issue.Executions[1].TaskID == "" {
+			t.Fatalf("restored execution IDs = %+v", issue.Executions)
+		}
+		if ct.Draft != prompt {
+			t.Fatalf("restart issue draft = %q", ct.Draft)
+		}
+	})
+	if provider.count() != beforeRestart {
+		t.Fatalf("restart issued model requests: %d -> %d", beforeRestart, provider.count())
+	}
+}
+
+func TestGUIAppIssueSaveFailureStopsBeforeDispatch(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startGUIHarness(t, binary, provider, "saki-issue-save-failure-141")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	var issueID string
+	h.pump.do(func() {
+		if !h.app.createIssue("Implement login", "Must use SMS.") {
+			t.Fatalf("createIssue failed: %s", h.app.issueFormError)
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		ct := h.app.selectedContact()
+		ct.Draft = "ordinary draft"
+	})
+	badParent := filepath.Join(h.root, "not-a-directory")
+	if err := os.WriteFile(badParent, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.app.store.path = filepath.Join(badParent, "contacts.json")
+	h.pump.do(func() {
+		if h.app.runIssue(issueID) {
+			t.Fatal("runIssue unexpectedly dispatched with failing store")
+		}
+	})
+	ct := h.app.selectedContact()
+	if len(ct.Issues[0].Executions) != 0 || ct.Issues[0].Status != issueStatusOpen {
+		t.Fatalf("failed pre-save issue state = %+v", ct.Issues[0])
+	}
+	if ct.Draft != "ordinary draft" || provider.count() != 0 {
+		t.Fatalf("pre-save failure draft/requests = %q/%d", ct.Draft, provider.count())
+	}
+	if !strings.Contains(h.app.issueFormError, "save") {
+		t.Fatalf("issue save error = %q", h.app.issueFormError)
+	}
+}
+
+func TestGUIAppIssueStopKeepsItemAndExecution(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	hold := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(hold) }) }
+	defer release()
+	arrived := make(chan struct{})
+	provider := &providerFixture{ToolFirst: true, Hold: hold, Arrived: arrived}
+	h := startGUIHarness(t, binary, provider, "saki-issue-stop-141")
+	var issueID string
+	h.pump.do(func() {
+		if !h.app.createIssue("Stop test", "Keep item after stop.") {
+			t.Fatalf("createIssue failed: %s", h.app.issueFormError)
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue failed: %s", h.app.issueFormError)
+		}
+	})
+	select {
+	case <-arrived:
+	case <-time.After(15 * time.Second):
+		t.Fatal("issue provider did not receive first request")
+	}
+	h.pump.wait(func() bool { return h.app.selectedContact().ActiveTaskID != "" })
+	stopping := false
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "later issue draft"
+		h.app.cancelSelected()
+		w := ct.activeWork()
+		stopping = w != nil && w.State == workStopping
+	})
+	if !stopping {
+		release()
+		t.Fatal("cancel did not expose stopping")
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		if ct.ActiveTaskID != "" || ct.SendState != sendIdle || ct.HistoryDirty {
+			return false
+		}
+		issue := ct.issueByID(issueID)
+		return issue != nil && len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted
+	})
+	ct := h.app.selectedContact()
+	issue := ct.issueByID(issueID)
+	if issue == nil || issue.Status != issueStatusOpen || ct.Draft != "later issue draft" {
+		release()
+		t.Fatalf("stop issue/draft = %+v / %q", issue, ct.Draft)
+	}
+	release()
+	h.shutdown(t)
+}
+
 func TestGUIFirstCreateUsesProfileSnapshot(t *testing.T) {
 	binary := requireRuntimeBinary(t)
 	marker := "saki-profile-snapshot-63"

@@ -97,6 +97,16 @@ func openContactStore(path, defaultWorkspace string) (*contactStore, error) {
 			}
 			seen[contact.ID] = true
 		}
+		seenIssues := map[string]bool{}
+		for _, issue := range store.state.Issues {
+			if issue.ID == "" || seenIssues[issue.ID] {
+				return nil, fmt.Errorf("contact store %s has an empty or duplicate issue id", path)
+			}
+			if issue.ContactID == "" || !seen[issue.ContactID] {
+				return nil, fmt.Errorf("contact store %s issue %s has an unknown contact id", path, issue.ID)
+			}
+			seenIssues[issue.ID] = true
+		}
 		if !seen[store.state.Selected] {
 			store.state.Selected = store.state.Contacts[0].ID
 		}
