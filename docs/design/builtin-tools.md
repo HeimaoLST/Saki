@@ -1,6 +1,6 @@
 # Builtin tools：第一版实现契约
 
-更新日期：2026-10-19。主要参考 Pi 的四工具与输出处理、Codex 的执行生命周期；第三方研究见 [Builtin tools](../research/systems/builtin-tools.md)。本版范围是当前 agent loop 的工具执行，不引入恢复、归档、输出文件清理、TTL、磁盘配额、后台会话或主动取消。
+更新日期：2026-10-25。主要参考 Pi 的四工具与输出处理、Codex 的执行生命周期；第三方研究见 [Builtin tools](../research/systems/builtin-tools.md)。本版范围是当前 agent loop 的工具执行，不引入恢复、归档、输出文件清理、TTL、磁盘配额、后台会话；任务取消沿用 Runtime 既有入口。
 
 ## 注册与执行环境
 
@@ -8,7 +8,7 @@
 
 [register_builtins](../../src/tools/mod.rs) 复用现有 JSON Function 和 ToolRegistry。调用方注入 `ToolContext { cwd, output_dir }`，路径应为绝对路径；相对文件路径、bash 的相对 workdir 均基于 cwd，绝对路径直接使用。workdir 与命令内部 cd 只影响本次 bash，不改变其他工具的 cwd。
 
-ToolDefinition／ToolType 已归入[公共协议](../../src/protocol/mod.rs)；registry 只负责将声明与 handler 关联并执行。Responses 原生工具声明由[客户端](../../src/client/responses.rs)转换，详见[模型调用分层](model-runtime.md)。
+ToolDefinition／ToolType 已归入[公共协议](../../src/protocol/mod.rs)；registry 将声明与 handler 关联并执行，并在任务结束前等待各工具的清理。Responses 原生工具声明由[客户端](../../src/client/responses.rs)转换，详见[模型调用分层](model-runtime.md)。
 
 主程序使用启动目录作为 cwd，输出目录为已有 session 目录内的 `tool-output/`。该目录在第一次需要保存大输出时创建。
 
@@ -49,6 +49,7 @@ write 创建或整体覆盖 UTF-8 文件，创建缺失父目录，不回显内�
 - stdout/stderr 在子进程内合并到同一管道（stderr 重定向到 stdout），按实际写出顺序返回；不再依赖两路读取的完成顺序。
 - 非零退出是正常结果，保留退出码和输出供模型修复；无法启动、读取或保存输出的错误走 ToolError。
 - Unix 子进程使用独立进程组，超时与采集错误终止该组并等待 shell 退出。shell 正常退出后也终止剩余组成员，避免后台子进程持有管道导致无限等待。进程组终止是幂等的：一次成功发送信号（或 ESRCH）后不再重复终止，后续清理不会把已完成的超时变成新的错误。macOS 的 EPERM 仅在 libproc 确认组内成员均已退出或消失时视为清理完成；仍有存活成员、查询失败或列表截断时保留错误。spawn、wait 与 group kill 错误包含失败操作，避免只返回无法定位的 errno。主动脱离该进程组的后台任务不属于本版支持范围。
+- **实现事实（#146）**：通过 `register_builtins` 注册的 Bash 在任务取消丢弃执行 future 时，仍终止进程组，并由既有任务清理入口等待直接子进程 `wait` 完成，再持久化与发布任务终态；发送 SIGKILL 本身不等于完成回收。Bash 与 MCP 的清理均会执行，前一个清理失败不会跳过后续资源回收，最后返回首个清理错误。`ToolFinished` 是单次工具事件，不提供此任务终态保证。直接使用 `bash::init` 得到的独立 handler 在丢弃时安排回收，但没有 Runtime 的任务终态等待入口；运行时已退出后仍只有原有 Drop 清理。
 - 信号终止时 exit_code 可以为 null；timed_out 单独说明是否触发本工具的时限。
 
 macOS 的特殊分支依据 [Apple `killpg1` 实现](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_sig.c#L1675)：进程组遍历跳过僵尸成员，没有可发送信号的成员时也可能返回 EPERM。回归测试用 `waitid(WEXITED | WNOWAIT)` 保持一个已退出但未回收的组长，确定性验证清理成功与 guard 解除；另验证存活进程组不能被当作已退出。检查结束前再次枚举，出现未经检查的新成员时保留原错误。这不将旧版只含裸 errno 的历史失败追溯归因为同一调用。
