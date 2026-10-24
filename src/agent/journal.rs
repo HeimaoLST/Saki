@@ -200,6 +200,9 @@ pub(crate) fn read_bounded(
     if cancelled(cancel) {
         return Err(ReadCancelled.into());
     }
+    if max_memory < READER_OVERHEAD_BYTES {
+        return Err(BudgetExceeded.into());
+    }
     let mut reader = BufReader::new(file.try_clone()?);
     reader.seek(SeekFrom::Start(0))?;
     let mut reader = reader.take(end);
@@ -382,6 +385,10 @@ fn read_record<R: BufRead>(
             return Err(BudgetExceeded.into());
         }
         if line.capacity() < projected {
+            // Reallocation may retain the old buffer while allocating the new one.
+            if line.capacity().saturating_add(projected) > available_memory {
+                return Err(BudgetExceeded.into());
+            }
             line.try_reserve_exact(projected - line.len())
                 .map_err(|_| BudgetExceeded)?;
         }

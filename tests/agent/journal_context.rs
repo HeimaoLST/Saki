@@ -303,3 +303,10 @@ fn bounded_read_keeps_bad_intermediate_errors_but_ignores_torn_final() {
     assert_eq!(replay.replay.history.len(), 1);
     assert_eq!(replay.replay.valid_bytes, line(&system(), 1).len() as u64);
 }
+
+#[test]
+fn empty_source_with_no_read_budget_is_rejected_before_replay() {
+    let file = write_bytes("zero-budget", &[]);
+    let error = read_bounded_file(&file, 0, 0, &AtomicBool::new(false)).unwrap_err();
+    assert!(error.is::<BudgetExceeded>());
+}

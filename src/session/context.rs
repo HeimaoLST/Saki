@@ -28,6 +28,7 @@ const RESOURCE_BYTES: usize = 256 * 1024 * 1024;
 const RESOURCE_COUNT: usize = 32;
 const TTL: Duration = Duration::from_secs(600);
 const SEARCH_SCAN: usize = 1024 * 1024;
+const OPERATION_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ContextLimits {
@@ -39,6 +40,7 @@ pub struct ContextLimits {
     pub idle_ttl_ms: u64,
     pub max_result_bytes: usize,
     pub max_search_scan_bytes: usize,
+    pub operation_work_bytes: usize,
 }
 impl Default for ContextLimits {
     fn default() -> Self {
@@ -51,6 +53,7 @@ impl Default for ContextLimits {
             idle_ttl_ms: TTL.as_millis() as u64,
             max_result_bytes: RESULT_LIMIT,
             max_search_scan_bytes: SEARCH_SCAN,
+            operation_work_bytes: OPERATION_BYTES,
         }
     }
 }
@@ -256,22 +259,23 @@ impl ContextStore {
     fn expire(entries: &mut HashMap<String, Entry>) {
         entries.retain(|_, entry| entry.used_at.elapsed() < TTL);
     }
-    fn reserve(&self) -> Result<MemoryLease> {
+    fn reserve(&self, requested: Option<usize>) -> Result<MemoryLease> {
         let mut used = self.bytes.load(Ordering::Acquire);
         loop {
-            if used >= RESOURCE_BYTES {
+            let bytes = requested.unwrap_or_else(|| RESOURCE_BYTES.saturating_sub(used));
+            if bytes == 0 || bytes > RESOURCE_BYTES.saturating_sub(used) {
                 return Err(busy("context_bytes"));
             }
             match self.bytes.compare_exchange_weak(
                 used,
-                RESOURCE_BYTES,
+                used + bytes,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
                     return Ok(MemoryLease {
                         pool: self.bytes.clone(),
-                        bytes: RESOURCE_BYTES - used,
+                        bytes,
                     });
                 }
                 Err(current) => used = current,
@@ -305,7 +309,7 @@ impl ContextStore {
             .clone()
             .try_acquire_owned()
             .map_err(|_| busy("context_refs"))?;
-        let mut memory = self.reserve()?;
+        let mut memory = self.reserve(None)?;
         let path = store
             .directory(&request.session_id)
             .map_err(|_| invalid("invalid session ID"))?
@@ -472,6 +476,7 @@ impl ContextStore {
     ) -> Result<ContextChunk> {
         check_budget(request.max_bytes)?;
         let data = self.get(&request.context_ref, scope)?;
+        let _work = self.reserve(Some(OPERATION_BYTES))?;
         let text = &data.text;
         if !text.is_char_boundary(request.offset) {
             return Err(invalid("offset must be an in-range UTF-8 boundary"));
@@ -534,6 +539,7 @@ impl ContextStore {
             return Err(invalid("invalid query or max_hits"));
         }
         let data = self.get(&request.context_ref, scope)?;
+        let _work = self.reserve(Some(OPERATION_BYTES))?;
         let text = &data.text;
         let mut position = match request.cursor {
             None => 0,

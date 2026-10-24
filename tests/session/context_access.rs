@@ -328,8 +328,8 @@ async fn scope_release_task_cleanup_and_expiry_reclaim_capacity() {
 fn reservations_are_atomic_and_failure_returns_budget_and_slots() {
     let fixture = Fixture::new();
     let resources = ContextStore::default();
-    let lease = resources.reserve().unwrap();
-    assert_eq!(resources.reserve().unwrap_err().code, "busy");
+    let lease = resources.reserve(None).unwrap();
+    assert_eq!(resources.reserve(None).unwrap_err().code, "busy");
     drop(lease);
     assert_eq!(resources.bytes.load(Ordering::Acquire), 0);
     assert!(
@@ -543,4 +543,49 @@ fn reference_and_source_limits_reject_before_unbounded_work() {
         .unwrap_err();
     assert_eq!(excess.code, "resource_too_large");
     assert_eq!(resources.retained_bytes(), 0);
+}
+
+#[test]
+fn read_and_search_reserve_working_memory_before_constructing_results() {
+    let fixture = Fixture::new();
+    let resources = ContextStore::default();
+    let opened = fixture.open(&resources, ContextView::Working);
+    let retained = resources.retained_bytes();
+    let reservation = resources.reserve(None).unwrap();
+    assert_eq!(
+        resources
+            .read(
+                ReadContext {
+                    context_ref: opened.context_ref.clone(),
+                    offset: 0,
+                    max_bytes: 1024
+                },
+                None
+            )
+            .unwrap_err()
+            .reason,
+        Some("context_bytes")
+    );
+    assert_eq!(
+        resources
+            .search(search(&opened.context_ref, "system"), None)
+            .unwrap_err()
+            .reason,
+        Some("context_bytes")
+    );
+    drop(reservation);
+    assert_eq!(resources.retained_bytes(), retained);
+    assert!(
+        resources
+            .read(
+                ReadContext {
+                    context_ref: opened.context_ref.clone(),
+                    offset: 0,
+                    max_bytes: 1024
+                },
+                None
+            )
+            .is_ok()
+    );
+    assert_eq!(resources.retained_bytes(), retained);
 }
