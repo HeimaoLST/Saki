@@ -1,15 +1,17 @@
 //! Chat Completions adapter: request JSON, complete JSON and SSE chunks mapped
 //! onto the shared ModelRequest/ModelResponse/ModelStreamEvent types.
 //!
-//! First version: text and function tools. Responses-native continuation data
-//! (reasoning, provider items) is refused before any request is sent.
+//! Text, function tools and Chat-native reasoning continuation. Foreign native
+//! continuation data is refused before any request is sent.
+
+use std::future::Future;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::protocol::{
     InputContentPart, InputItem, InputMessageContent, MessageRole, ModelRequest, ModelResponse,
-    ModelStreamEvent, OutputItem, OutputText, ToolType, Usage,
+    ModelStreamEvent, OutputItem, OutputText, ProviderData, ReasoningText, ToolType, Usage,
 };
 
 use super::config::ClientConfig;
@@ -123,14 +125,36 @@ impl ChatCompletionsClient {
     }
 
     /// Delivers text deltas synchronously as they arrive and returns the final
-    /// response. Tool calls are aggregated and only complete calls are handed
-    /// to the caller. Stream errors and missing terminals fail without replay;
-    /// a JSON body from a gateway is accepted as a complete response.
+    /// response. Kept for existing callers/tests; the async callback path owns
+    /// decoding. Tool calls are aggregated and only complete calls are handed
+    /// to the caller.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "synchronous callback compatibility adapter")
+    )]
     pub async fn respond_stream(
         &self,
         request: ModelRequest<'_>,
-        on_event: impl FnMut(ModelStreamEvent),
+        mut on_event: impl FnMut(ModelStreamEvent),
     ) -> anyhow::Result<ModelResponse> {
+        self.respond_stream_async(request, |event| {
+            on_event(event);
+            std::future::ready(())
+        })
+        .await
+    }
+
+    /// Async-callback streaming: each event is awaited before the next upstream
+    /// frame is pulled, providing backpressure without an unbounded queue.
+    pub async fn respond_stream_async<F, Fut>(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: F,
+    ) -> anyhow::Result<ModelResponse>
+    where
+        F: FnMut(ModelStreamEvent) -> Fut,
+        Fut: Future<Output = ()>,
+    {
         let mut body = Self::request_body(&request)?;
         body["stream"] = json!(true);
         // Ask for the usage tail block; vendors that do not support it still
@@ -186,28 +210,39 @@ fn encode_content(content: &InputMessageContent) -> anyhow::Result<Value> {
 
 /// Consecutive tool calls belong to one assistant message; a tool result flushes
 /// the calls before its own message, so parallel calls keep their order.
-fn flush_calls(messages: &mut Vec<Value>, calls: &mut Vec<Value>) {
-    if calls.is_empty() {
+fn flush_assistant(
+    messages: &mut Vec<Value>,
+    calls: &mut Vec<Value>,
+    reasoning: &mut Option<Value>,
+) {
+    if calls.is_empty() && reasoning.is_none() {
         return;
     }
-    messages.push(json!({
-        "role": "assistant",
-        "content": "",
-        "tool_calls": std::mem::take(calls),
-    }));
+    let mut message = reasoning
+        .take()
+        .unwrap_or_else(|| json!({"role": "assistant", "content": ""}));
+    if !calls.is_empty() {
+        message["tool_calls"] = json!(std::mem::take(calls));
+    }
+    messages.push(message);
 }
 
 fn encode_messages(input: &[InputItem]) -> anyhow::Result<Vec<Value>> {
     let mut messages = Vec::new();
     let mut calls: Vec<Value> = Vec::new();
+    let mut reasoning: Option<Value> = None;
     for item in input {
         match item {
+            InputItem::Message {
+                role: MessageRole::Assistant,
+                content,
+            } if reasoning.is_some() => {
+                reasoning.as_mut().unwrap()["content"] = encode_content(content)?;
+            }
             InputItem::Message { role, content } => {
-                flush_calls(&mut messages, &mut calls);
-                messages.push(json!({
-                    "role": chat_role(role),
-                    "content": encode_content(content)?,
-                }));
+                flush_assistant(&mut messages, &mut calls, &mut reasoning);
+                messages
+                    .push(json!({"role": chat_role(role), "content": encode_content(content)?}));
             }
             InputItem::ToolCall {
                 call_id,
@@ -215,18 +250,24 @@ fn encode_messages(input: &[InputItem]) -> anyhow::Result<Vec<Value>> {
                 arguments,
             } => {
                 calls.push(json!({
-                    "id": call_id,
-                    "type": "function",
+                    "id": call_id, "type": "function",
                     "function": {"name": name, "arguments": arguments},
                 }));
             }
             InputItem::ToolResult { call_id, output } => {
-                flush_calls(&mut messages, &mut calls);
-                messages.push(json!({
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": output,
-                }));
+                flush_assistant(&mut messages, &mut calls, &mut reasoning);
+                messages.push(json!({"role": "tool", "tool_call_id": call_id, "content": output}));
+            }
+            InputItem::Reasoning {
+                provider_data: Some(data),
+                ..
+            } if data.api == API => {
+                let text = data.value["reasoning_content"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("invalid {API} reasoning continuation"))?;
+                flush_assistant(&mut messages, &mut calls, &mut reasoning);
+                reasoning =
+                    Some(json!({"role": "assistant", "content": "", "reasoning_content": text}));
             }
             InputItem::Reasoning { .. } | InputItem::ProviderItem { .. } => {
                 anyhow::bail!(
@@ -237,8 +278,20 @@ fn encode_messages(input: &[InputItem]) -> anyhow::Result<Vec<Value>> {
             }
         }
     }
-    flush_calls(&mut messages, &mut calls);
+    flush_assistant(&mut messages, &mut calls, &mut reasoning);
     Ok(messages)
+}
+
+fn reasoning_output(response_id: &str, text: String) -> OutputItem {
+    OutputItem::Reasoning {
+        id: format!("{response_id}-reasoning"),
+        status: "completed".to_owned(),
+        content: vec![ReasoningText { text: text.clone() }],
+        provider_data: Some(ProviderData {
+            api: API.to_owned(),
+            value: json!({"reasoning_content": text}),
+        }),
+    }
 }
 
 /// `tool_calls` is optional *or null* in the standard Chat schema; a missing
@@ -273,9 +326,13 @@ fn completed(finish: Option<&str>) -> anyhow::Result<()> {
 fn output_from_message(
     response_id: &str,
     content: Option<String>,
+    reasoning_content: Option<String>,
     tool_calls: Vec<ChatToolCall>,
 ) -> Vec<OutputItem> {
     let mut output = Vec::new();
+    if let Some(text) = reasoning_content {
+        output.push(reasoning_output(response_id, text));
+    }
     if let Some(content) = content.filter(|text| !text.is_empty()) {
         output.push(OutputItem::Message {
             id: format!("{response_id}-text"),
@@ -314,6 +371,7 @@ struct ChatChoice {
 #[derive(Deserialize)]
 struct ChatMessage {
     content: Option<String>,
+    reasoning_content: Option<String>,
     #[serde(default, deserialize_with = "absent_or_null")]
     tool_calls: Vec<ChatToolCall>,
 }
@@ -364,6 +422,7 @@ fn decode_response_value(response: ChatResponse) -> anyhow::Result<ModelResponse
         output: output_from_message(
             &response.id,
             choice.message.content,
+            choice.message.reasoning_content,
             choice.message.tool_calls,
         ),
         usage: response.usage.map(Into::into),
@@ -371,7 +430,8 @@ fn decode_response_value(response: ChatResponse) -> anyhow::Result<ModelResponse
 }
 
 async fn decode_response(response: reqwest::Response) -> anyhow::Result<ModelResponse> {
-    decode_response_value(response.json::<ChatResponse>().await?)
+    let body = crate::client::transport::read_body_limited(response).await?;
+    decode_response_value(serde_json::from_slice::<ChatResponse>(&body)?)
 }
 
 #[derive(Deserialize)]
@@ -395,6 +455,7 @@ struct StreamChoice {
 #[derive(Deserialize, Default)]
 struct StreamDelta {
     content: Option<String>,
+    reasoning_content: Option<String>,
     #[serde(default)]
     tool_calls: Vec<ToolCallDelta>,
 }
@@ -426,17 +487,18 @@ struct StreamState {
     model: Option<String>,
     text: String,
     text_seen: bool,
+    reasoning: Option<String>,
     calls: Vec<PartialCall>,
     finish: Option<String>,
     usage: Option<ChatUsage>,
 }
 
 impl StreamState {
-    fn apply(
-        &mut self,
-        chunk: StreamChunk,
-        on_event: &mut impl FnMut(ModelStreamEvent),
-    ) -> anyhow::Result<()> {
+    async fn apply<F, Fut>(&mut self, chunk: StreamChunk, on_event: &mut F) -> anyhow::Result<()>
+    where
+        F: FnMut(ModelStreamEvent) -> Fut,
+        Fut: Future<Output = ()>,
+    {
         if let Some(error) = chunk.error {
             return Err(ApiError::Stream {
                 code: error["code"].as_str().map(str::to_owned),
@@ -460,13 +522,24 @@ impl StreamState {
             if let Some(reason) = choice.finish_reason {
                 self.finish = Some(reason);
             }
+            if let Some(delta) = choice.delta.reasoning_content {
+                self.reasoning.get_or_insert_default().push_str(&delta);
+                if !delta.is_empty() {
+                    on_event(ModelStreamEvent::ReasoningDelta {
+                        item_id: format!("{}-reasoning", self.id),
+                        delta,
+                    })
+                    .await;
+                }
+            }
             if let Some(content) = choice.delta.content.filter(|text| !text.is_empty()) {
                 self.text.push_str(&content);
                 self.text_seen = true;
                 on_event(ModelStreamEvent::TextDelta {
                     item_id: format!("{}-text", self.id),
                     delta: content,
-                });
+                })
+                .await;
             }
             for delta in choice.delta.tool_calls {
                 let index = delta.index as usize;
@@ -491,6 +564,9 @@ impl StreamState {
     fn finish(self) -> anyhow::Result<ModelResponse> {
         completed(self.finish.as_deref())?;
         let mut output = Vec::new();
+        if let Some(text) = self.reasoning {
+            output.push(reasoning_output(&self.id, text));
+        }
         if self.text_seen {
             output.push(OutputItem::Message {
                 id: format!("{}-text", self.id),
@@ -522,10 +598,14 @@ impl StreamState {
     }
 }
 
-async fn decode_stream(
+async fn decode_stream<F, Fut>(
     response: reqwest::Response,
-    mut on_event: impl FnMut(ModelStreamEvent),
-) -> anyhow::Result<ModelResponse> {
+    mut on_event: F,
+) -> anyhow::Result<ModelResponse>
+where
+    F: FnMut(ModelStreamEvent) -> Fut,
+    Fut: Future<Output = ()>,
+{
     use eventsource_stream::Eventsource;
     use futures_util::StreamExt;
 
@@ -544,7 +624,7 @@ async fn decode_stream(
         "expected text/event-stream, received {content_type:?}"
     );
     let mut state = StreamState::default();
-    let mut events = response.bytes_stream().eventsource();
+    let mut events = crate::client::transport::limited_body_stream(response).eventsource();
     while let Some(event) = events.next().await {
         let event = event.map_err(|error| anyhow::anyhow!("chat stream interrupted: {error}"))?;
         if event.data == "[DONE]" {
@@ -552,7 +632,7 @@ async fn decode_stream(
         }
         let chunk: StreamChunk = serde_json::from_str(&event.data)
             .map_err(|error| anyhow::anyhow!("invalid chat stream chunk: {error}"))?;
-        state.apply(chunk, &mut on_event)?;
+        state.apply(chunk, &mut on_event).await?;
     }
     state.finish()
 }

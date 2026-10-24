@@ -21,6 +21,8 @@ impl From<std::io::Error> for ToolError {
 }
 type ToolFutute = Pin<Box<dyn Future<Output = Result<Value, ToolError>> + Send>>;
 type ToolHandler = Arc<dyn Fn(Value) -> ToolFutute + Send + Sync>;
+type TaskCleanupFuture = Pin<Box<dyn Future<Output = Result<(), ToolError>> + Send>>;
+type TaskCleanup = Arc<dyn Fn() -> TaskCleanupFuture + Send + Sync>;
 pub struct Tool {
     pub definition: ToolDefinition,
     pub handler: ToolHandler,
@@ -43,6 +45,7 @@ impl ToolCall {
 }
 pub struct ToolRegistry {
     tools: HashMap<String, Tool>,
+    task_cleanup: Option<TaskCleanup>,
 }
 impl Default for ToolRegistry {
     fn default() -> Self {
@@ -53,6 +56,7 @@ impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            task_cleanup: None,
         }
     }
     pub fn registry(&mut self, tool: Tool) {
@@ -68,10 +72,29 @@ impl ToolRegistry {
             .ok_or_else(|| ToolError::NotFound(call.name.clone()))?;
         (tool.handler)(call.arguments).await
     }
+    pub(crate) fn retain_names(&mut self, names: &[String]) {
+        self.tools.retain(|name, _| names.contains(name));
+    }
+
+    pub(crate) fn set_task_cleanup(
+        &mut self,
+        cleanup: impl Fn() -> TaskCleanupFuture + Send + Sync + 'static,
+    ) {
+        self.task_cleanup = Some(Arc::new(cleanup));
+    }
+    pub(crate) async fn finish_task(&self) -> Result<(), ToolError> {
+        if let Some(cleanup) = &self.task_cleanup {
+            cleanup().await?;
+        }
+        Ok(())
+    }
     pub fn list_definition(&self) -> Vec<ToolDefinition> {
-        self.tools
+        let mut definitions: Vec<_> = self
+            .tools
             .values()
             .map(|tool| tool.definition.clone())
-            .collect()
+            .collect();
+        definitions.sort_by(|left, right| left.name.cmp(&right.name));
+        definitions
     }
 }

@@ -33,14 +33,18 @@ fn default_timeout() -> u64 {
 /// ESRCH or confirmed exited group disarms it; a genuine first error leaves it armed for
 /// the drop cleanup. `kill_on_drop` alone only signals the shell.
 #[cfg(unix)]
-struct GroupGuard {
+pub(super) struct GroupGuard {
     pid: u32,
     armed: bool,
 }
 
 #[cfg(unix)]
 impl GroupGuard {
-    fn terminate(&mut self) -> Result<(), ToolError> {
+    pub(super) fn new(pid: u32) -> Self {
+        Self { pid, armed: true }
+    }
+
+    pub(super) fn terminate(&mut self) -> Result<(), ToolError> {
         if !self.armed {
             return Ok(());
         }
@@ -178,7 +182,7 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
         .spawn()
         .map_err(|error| ToolError::ExecutionFailed(format!("spawn bash: {error}")))?;
     let pid = child.id().unwrap();
-    let mut group = GroupGuard { pid, armed: true };
+    let mut group = GroupGuard::new(pid);
     let mut stdout = child.stdout.take().unwrap();
     let mut stdout_buffer = [0; 8192];
     let mut stdout_open = true;

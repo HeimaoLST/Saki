@@ -1,5 +1,74 @@
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Serialize,
+    de::{self, Deserializer, MapAccess, Visitor},
+};
 use serde_json::Value;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ToolSelection {
+    pub builtin: Vec<String>,
+    pub external: Vec<ExternalToolBinding>,
+}
+
+// A derived struct decoder also accepts positional arrays; this wire field requires an object.
+impl<'de> Deserialize<'de> for ToolSelection {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct SelectionVisitor;
+        impl<'de> Visitor<'de> for SelectionVisitor {
+            type Value = ToolSelection;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tool selection object with builtin and external fields")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut builtin = None;
+                let mut external = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "builtin" => {
+                            if builtin.is_some() {
+                                return Err(de::Error::duplicate_field("builtin"));
+                            }
+                            builtin = Some(map.next_value::<Vec<String>>()?);
+                        }
+                        "external" => {
+                            if external.is_some() {
+                                return Err(de::Error::duplicate_field("external"));
+                            }
+                            external = Some(map.next_value::<Vec<ExternalToolBinding>>()?);
+                        }
+                        other => {
+                            return Err(de::Error::unknown_field(other, &["builtin", "external"]));
+                        }
+                    }
+                }
+                Ok(ToolSelection {
+                    builtin: builtin.unwrap_or_default(),
+                    external: external.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_map(SelectionVisitor)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalToolBinding {
+    pub source_id: String,
+    pub tool_name: String,
+    pub exposed_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolSchema {
+    pub description: String,
+    pub input_schema: Value,
+    pub output_schema: Option<Value>,
+    pub fingerprint: String,
+}
 
 /// Immutable continuation data owned by the named API adapter.
 /// When present on reasoning, this is the authoritative native item to replay.
@@ -184,4 +253,31 @@ pub enum ModelStreamEvent {
     TextDelta { item_id: String, delta: String },
     ReasoningDelta { item_id: String, delta: String },
     ReasoningCompleted { item_id: String },
+}
+
+pub(crate) struct ByteCounter {
+    pub len: usize,
+    limit: usize,
+}
+
+impl ByteCounter {
+    pub fn new(limit: usize) -> Self {
+        Self { len: 0, limit }
+    }
+}
+
+impl std::io::Write for ByteCounter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > self.limit.saturating_sub(self.len) {
+            return Err(std::io::Error::other(
+                "runtime frame exceeds its byte limit",
+            ));
+        }
+        self.len += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }

@@ -1,7 +1,10 @@
 pub mod conversation;
+pub mod events;
 pub mod journal;
 pub mod message;
 
+use self::events::EventSink;
+use serde::Serialize;
 use serde_json::Value;
 use std::sync::Arc;
 #[cfg(test)]
@@ -15,7 +18,8 @@ use crate::{
     tools::tool_registry::{ToolCall, ToolRegistry},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ModelRequestPurpose {
     Generation,
     Compaction,
@@ -26,7 +30,8 @@ pub enum ModelRequestPurpose {
 /// The agent never writes to the terminal. A UI adapter forwards these events
 /// and keeps its own display history, so a compaction only adds an event and
 /// never removes events that were already sent.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
     /// Active context estimate and configured limits; `None` means unavailable.
     /// The estimate excludes unsent drafts and uses the same policy as compaction.
@@ -156,7 +161,8 @@ pub struct Agent {
     tool_registry: ToolRegistry,
     conversation: Conversation,
     model: String,
-    events: Option<UnboundedSender<AgentEvent>>,
+    started_signal: Option<tokio::sync::watch::Sender<bool>>,
+    events: Option<EventSink>,
     cancel: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
@@ -171,6 +177,7 @@ impl Agent {
             tool_registry,
             conversation,
             model: "deepseek-v4-flash".to_owned(),
+            started_signal: None,
             events: None,
             cancel: None,
         }
@@ -185,38 +192,103 @@ impl Agent {
         self
     }
 
+    pub(crate) fn with_started_signal(mut self, signal: tokio::sync::watch::Sender<bool>) -> Self {
+        self.started_signal = Some(signal);
+        self
+    }
+
+    pub(crate) fn context_items(&self) -> &[crate::protocol::InputItem] {
+        self.conversation.items()
+    }
+
+    pub(crate) fn apply_model_config(
+        &mut self,
+        model: String,
+        config: conversation::ValidatedCompactionConfig,
+    ) {
+        self.model = model;
+        self.conversation.apply_compaction_config(config);
+    }
+
     pub fn with_model(mut self, model: String) -> Self {
         self.model = model;
         self
     }
 
+    pub(crate) fn apply_execution_config(
+        &mut self,
+        client: ModelClient,
+        model: String,
+        config: conversation::ValidatedCompactionConfig,
+        prompt: String,
+        registry: ToolRegistry,
+    ) {
+        self.client = client;
+        self.tool_registry = registry;
+        self.conversation.set_system_prompt(prompt);
+        self.apply_model_config(model, config);
+    }
+
     /// Attach the event channel used to report display data to the UI.
-    pub fn with_events(mut self, events: UnboundedSender<AgentEvent>) -> Self {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "direct SDK compatibility; production hosts use Runtime"
+        )
+    )]
+    pub fn with_events(self, events: UnboundedSender<AgentEvent>) -> Self {
+        self.with_event_sink(EventSink::legacy(events))
+    }
+
+    pub fn with_event_sink(mut self, events: EventSink) -> Self {
         let hook_events = events.clone();
         self.conversation.set_model_request_hook(Arc::new(move || {
-            let _ = hook_events.send(AgentEvent::ModelRequestStarted {
-                purpose: ModelRequestPurpose::Compaction,
-            });
+            let events = hook_events.clone();
+            Box::pin(async move {
+                events
+                    .send(AgentEvent::ModelRequestStarted {
+                        purpose: ModelRequestPurpose::Compaction,
+                    })
+                    .await;
+            })
         }));
         self.events = Some(events);
         self
     }
 
+    pub(crate) fn replace_tools(&mut self, registry: ToolRegistry) {
+        self.tool_registry = registry;
+    }
+
+    pub fn clear_event_sink(&mut self) {
+        self.started_signal = None;
+        self.events = None;
+        self.conversation.clear_model_request_hook();
+    }
+
     /// Send one display event. A closed channel means the viewer is gone, which
     /// must not interrupt the single model/tool loop.
-    fn emit(&self, event: AgentEvent) {
+    async fn emit(&self, event: AgentEvent) {
         if let Some(events) = &self.events {
-            let _ = events.send(event);
+            events.send(event).await;
         }
     }
 
-    fn emit_context(&self) {
+    async fn emit_context(&self) {
         if self.events.is_some() {
-            self.emit(self.context_event());
+            self.emit(self.context_event()).await;
         }
     }
 
     /// Process a user message through model and tool calls while preserving the conversation on errors.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "direct SDK compatibility; production hosts use Runtime"
+        )
+    )]
     pub async fn handle_user_message(
         &mut self,
         message: impl Into<UserMessage>,
@@ -233,14 +305,32 @@ impl Agent {
     /// Starts a task with caller-supplied ids. The task id is written to the
     /// journal before `TaskStarted` is emitted; terminal events still belong to
     /// the worker at the `handle_*` return boundary.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "unconfigured task compatibility entry point")
+    )]
     pub async fn handle_task(
         &mut self,
         message: UserMessage,
         task_id: String,
         message_id: String,
     ) -> anyhow::Result<()> {
-        self.conversation
-            .begin_task_with_id(task_id.clone(), Some(message_id.clone()))?;
+        self.handle_configured_task(message, task_id, message_id, None)
+            .await
+    }
+
+    pub async fn handle_configured_task(
+        &mut self,
+        message: UserMessage,
+        task_id: String,
+        message_id: String,
+        configuration: Option<journal::TaskConfiguration>,
+    ) -> anyhow::Result<()> {
+        self.conversation.begin_configured_task(
+            task_id.clone(),
+            Some(message_id.clone()),
+            configuration,
+        )?;
         self.run_started_task(message, task_id, Some(message_id))
             .await
     }
@@ -251,13 +341,31 @@ impl Agent {
         task_id: String,
         message_id: Option<String>,
     ) -> anyhow::Result<()> {
+        if let Some(signal) = &self.started_signal {
+            signal.send_replace(true);
+        }
         self.emit(AgentEvent::TaskStarted {
             task_id,
             message_id,
-        });
+        })
+        .await;
         self.conversation.add_user_message(message);
         self.conversation.save_history()?;
         let result = self.process_messages().await;
+        let result = match self.tool_registry.finish_task().await {
+            Ok(()) => result,
+            Err(cleanup) => Err(anyhow::Error::new(
+                crate::tools::tool_registry::ToolError::ExecutionFailed(format!(
+                    "{}; {cleanup}",
+                    result
+                        .as_ref()
+                        .err()
+                        .map_or("task execution completed".to_owned(), |error| format!(
+                            "{error:#}"
+                        ))
+                )),
+            )),
+        };
         match &result {
             Err(error) if is_interrupted(error) => self.conversation.interrupt_task()?,
             _ => {
@@ -287,7 +395,7 @@ impl Agent {
                 return Err(interrupted());
             }
             let tools = self.tool_registry.list_definition();
-            self.emit_context();
+            self.emit_context().await;
             let compaction = {
                 let client = &self.client;
                 let conversation = &mut self.conversation;
@@ -307,8 +415,9 @@ impl Agent {
                         .usage
                         .as_ref()
                         .and_then(|usage| usage.output_tokens),
-                });
-                self.emit_context();
+                })
+                .await;
+                self.emit_context().await;
             }
             let mut overflow_recovery_attempted = false;
             let respond = loop {
@@ -329,11 +438,11 @@ impl Agent {
                         _ = cancelled(cancel) => None,
                         result = async {
                             if let Some(events) = &events {
-                                let _ = events.send(AgentEvent::ModelRequestStarted {
+                                events.send(AgentEvent::ModelRequestStarted {
                                     purpose: ModelRequestPurpose::Generation,
-                                });
+                                }).await;
                             }
-                            client.respond_stream(request, |event| {
+                            client.respond_stream_async(request, |event| {
                                 match &event {
                                     ModelStreamEvent::TextDelta { item_id, delta } => {
                                         stream_has_output = true;
@@ -358,8 +467,11 @@ impl Agent {
                                         AgentEvent::ReasoningCompleted { item_id }
                                     }
                                 };
-                                if let Some(events) = &events {
-                                    let _ = events.send(event);
+                                let events = events.clone();
+                                async move {
+                                    if let Some(events) = events {
+                                        events.send(event).await;
+                                    }
                                 }
                             }).await
                         } => Some(result),
@@ -410,8 +522,9 @@ impl Agent {
                                 .usage
                                 .as_ref()
                                 .and_then(|usage| usage.output_tokens),
-                        });
-                        self.emit_context();
+                        })
+                        .await;
+                        self.emit_context().await;
                         continue;
                     }
                 };
@@ -428,7 +541,8 @@ impl Agent {
                             .collect::<String>();
 
                         self.conversation.add_assistant_message(text.clone());
-                        self.emit(AgentEvent::ResponseText { item_id: id, text });
+                        self.emit(AgentEvent::ResponseText { item_id: id, text })
+                            .await;
                     }
                     OutputItem::Reasoning {
                         id,
@@ -443,7 +557,8 @@ impl Agent {
                         self.emit(AgentEvent::Reasoning {
                             item_id: id,
                             text: thinking_text,
-                        });
+                        })
+                        .await;
                         self.conversation.add_reasoning(content, provider_data);
                     }
                     OutputItem::ToolCall {
@@ -467,8 +582,9 @@ impl Agent {
             self.emit(AgentEvent::Usage {
                 input_tokens: respond.usage.as_ref().and_then(|usage| usage.input_tokens),
                 output_tokens: respond.usage.as_ref().and_then(|usage| usage.output_tokens),
-            });
-            self.emit_context();
+            })
+            .await;
+            self.emit_context().await;
             self.conversation.save_history()?;
             if pending_function_call.is_empty() {
                 break;
@@ -481,7 +597,8 @@ impl Agent {
                     call_id: call_id.clone(),
                     name: name.clone(),
                     arguments: arguments.clone(),
-                });
+                })
+                .await;
                 let function_call_output = match serde_json::from_str(&arguments) {
                     Ok(arg) => {
                         let call = ToolCall::new(call_id.clone(), name.clone(), arg);
@@ -505,7 +622,7 @@ impl Agent {
                                         call_id: call_id.clone(),
                                         name: name.clone(),
                                         output: interrupted_output,
-                                    });
+                                    }).await;
                                     return Err(interrupted());
                                 }
                                 result = tool_registry.execution_tool(call) => result,
@@ -531,8 +648,9 @@ impl Agent {
                     call_id,
                     name,
                     output: function_call_output,
-                });
-                self.emit_context();
+                })
+                .await;
+                self.emit_context().await;
             }
             self.conversation.save_history()?;
         }
@@ -549,14 +667,18 @@ impl Agent {
 /// is compiled only for tests.
 #[cfg(test)]
 pub async fn run_agent(mut agent: Agent, mut input: UnboundedReceiver<UserMessage>) {
-    agent.emit_context();
+    agent.emit_context().await;
     while let Some(message) = input.recv().await {
         match agent.handle_user_message(message).await {
-            Ok(()) => agent.emit(AgentEvent::TurnCompleted),
-            Err(error) if is_interrupted(&error) => agent.emit(AgentEvent::TurnInterrupted),
-            Err(error) => agent.emit(AgentEvent::TurnFailed {
-                message: format!("{error:#}"),
-            }),
+            Ok(()) => agent.emit(AgentEvent::TurnCompleted).await,
+            Err(error) if is_interrupted(&error) => agent.emit(AgentEvent::TurnInterrupted).await,
+            Err(error) => {
+                agent
+                    .emit(AgentEvent::TurnFailed {
+                        message: format!("{error:#}"),
+                    })
+                    .await
+            }
         }
     }
 }

@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     command::{self, Command, Definition},
-    session::{SessionCommand, SessionEvent},
+    session::SessionCommand,
 };
 
 #[derive(Default)]
@@ -97,13 +97,7 @@ impl Commands {
         app: &mut App,
         editor: &mut Editor,
         sessions: &mut Sessions,
-    ) -> Option<SessionCommand> {
-        if command.needs_idle() && app.running {
-            app.notify(
-                "Agent is busy. Draft kept; wait for the current task to finish.".to_owned(),
-            );
-            return None;
-        }
+    ) -> Option<(Command, SessionCommand)> {
         if command == Command::Help {
             editor.reset();
             app.help_open = true;
@@ -116,26 +110,10 @@ impl Commands {
             app.notify("Session is not ready. Draft kept.".to_owned());
             return None;
         };
-        let request = command.request(&metadata.id);
-        self.pending = Some(command);
+        let request = command.request(&metadata.id)?;
         self.candidates.clear();
         sessions.pending = true;
-        request
-    }
-
-    /// Clear a successful command before Session UI caches the outgoing draft.
-    /// Errors retain it; unrelated Agent events are never acknowledgements.
-    pub fn before_event(&mut self, editor: &mut Editor, event: &SessionEvent) {
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|command| command.acknowledged_by(event))
-        {
-            editor.reset();
-            self.pending = None;
-        } else if matches!(event, SessionEvent::Error { .. }) {
-            self.pending = None;
-        }
+        Some((command, request))
     }
 
     pub fn mouse(&mut self, editor: &mut Editor, mouse: MouseEvent) -> bool {

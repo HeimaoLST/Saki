@@ -257,6 +257,7 @@ impl Editor {
         let text = self.text();
         if self.is_empty() {
             return UserMessage {
+                context: Vec::new(),
                 text,
                 images: Vec::new(),
             };
@@ -264,7 +265,25 @@ impl Editor {
         self.checkpoint(false);
         let images = self.take_images();
         self.clear_state();
-        UserMessage { text, images }
+        UserMessage {
+            context: Vec::new(),
+            text,
+            images,
+        }
+    }
+
+    /// Copy of the current draft for a pending send. The editor keeps its
+    /// contents until the Runtime acceptance reply.
+    pub fn draft_message(&self) -> UserMessage {
+        UserMessage {
+            context: Vec::new(),
+            text: self.text(),
+            images: self.images().to_vec(),
+        }
+    }
+
+    pub fn matches_message(&self, message: &UserMessage) -> bool {
+        self.text() == message.text && self.images() == message.images.as_slice()
     }
 
     /// Removes and returns the draft, e.g. when submitting a message. The
@@ -275,7 +294,11 @@ impl Editor {
         self.reset_history();
         let images = self.take_images();
         self.clear_state();
-        UserMessage { text, images }
+        UserMessage {
+            context: Vec::new(),
+            text,
+            images,
+        }
     }
 
     /// Replaces the whole draft (history recall) with the cursor at the end.

@@ -1,4 +1,4 @@
-use crate::session::{SessionCommand, SessionEvent};
+use crate::session::SessionCommand;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandKind {
@@ -141,10 +141,6 @@ pub fn completions(text: &str) -> Vec<&'static Definition> {
 }
 
 impl Command {
-    pub fn needs_idle(&self) -> bool {
-        matches!(self, Self::New | Self::Resume { .. })
-    }
-
     pub fn request(&self, active_session: &str) -> Option<SessionCommand> {
         Some(match self {
             Self::New => SessionCommand::Create,
@@ -158,18 +154,6 @@ impl Command {
             },
             Self::Help => return None,
         })
-    }
-
-    pub fn acknowledged_by(&self, event: &SessionEvent) -> bool {
-        match (self, event) {
-            (Self::New, SessionEvent::Opened { .. }) => true,
-            (Self::Resume { session_id }, SessionEvent::Opened { metadata, .. }) => {
-                session_id == &metadata.id
-            }
-            (Self::Sessions, SessionEvent::Listed(_)) => true,
-            (Self::Rename { title }, SessionEvent::Renamed(metadata)) => title == &metadata.title,
-            _ => false,
-        }
     }
 }
 

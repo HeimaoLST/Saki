@@ -15,6 +15,7 @@ fn palette_update_repaints_and_preserves_reading_state() {
     editor.insert_str("kept draft");
     editor.insert_image(ImageAttachment::new("a.png", "data:image/png;base64,AA"));
     app.history.push(UserMessage {
+        context: Vec::new(),
         text: "earlier".to_owned(),
         images: Vec::new(),
     });

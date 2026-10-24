@@ -10,6 +10,7 @@ macro_rules! registry_tool {
 pub mod bash;
 pub mod caculator;
 pub mod edit;
+pub mod mcp;
 mod output;
 pub mod read;
 pub mod tool_registry;
@@ -39,6 +40,10 @@ pub fn register_builtins(registry: &mut ToolRegistry, context: ToolContext) {
     registry.registry(write::init(context));
 }
 
+pub fn builtin_names() -> &'static [&'static str] {
+    &["bash", "edit", "read", "write"]
+}
+
 fn parse_args<T: DeserializeOwned>(args: Value) -> Result<T, ToolError> {
     serde_json::from_value(args).map_err(|error| ToolError::InvalidArgs(error.to_string()))
 }
@@ -46,3 +51,7 @@ fn parse_args<T: DeserializeOwned>(args: Value) -> Result<T, ToolError> {
 #[cfg(test)]
 #[path = "../../tests/tools/mod.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/tools/mcp_sdk.rs"]
+mod mcp_sdk_tests;

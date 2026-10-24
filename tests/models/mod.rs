@@ -156,3 +156,130 @@ async fn missing_or_corrupt_cache_is_rebuilt_only_from_a_valid_response() {
     assert!(!path.exists());
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn provider_only_snapshot_exposes_usable_entries() {
+    let data = json!({
+        "providers": {
+            "provider": {
+                "models": {
+                    "model": {
+                        "name": "Provider Only",
+                        "limit": {"context": 131072, "input": 120000, "output": 8192}
+                    }
+                }
+            }
+        }
+    });
+    let catalog = ModelCatalog::from_snapshot(&serde_json::to_vec(&data).unwrap()).unwrap();
+    let entries = catalog.entries();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].id, "provider/model");
+    assert_eq!(entries[0].name.as_deref(), Some("Provider Only"));
+    assert_eq!(
+        entries[0].limits,
+        ModelLimits {
+            context: 131072,
+            input: Some(120000),
+            output: Some(8192),
+        }
+    );
+    assert_eq!(catalog.limits("provider/model"), Some(entries[0].limits));
+}
+
+#[test]
+fn entries_are_deduplicated_sorted_and_match_direct_limits() {
+    let data = json!({
+        "providers": {
+            "zeta": {
+                "models": {
+                    "b": {"name": "Provider B", "limit": {"context": 200, "output": 10}},
+                    "dup": {"name": "Provider Dup", "limit": {"context": 300}},
+                    "zero": {"limit": {"context": 0}}
+                }
+            },
+            "alpha": {
+                "models": {
+                    "a": {"limit": {"context": 100}}
+                }
+            }
+        },
+        "models": {
+            "zeta/dup": {"name": "Root Dup", "limit": {"context": 999}},
+            "zeta/a": {"name": "Root A", "limit": {"context": 50}},
+            "root-only": {"name": "Root Only", "limit": {"context": 400}},
+            "bad/zero": {"limit": {"context": 0}},
+            "shared/one": {"name": "Shared", "limit": {"context": 10}},
+            "shared/two": {"name": "Shared", "limit": {"context": 20}}
+        }
+    });
+    let catalog = ModelCatalog::from_snapshot(&serde_json::to_vec(&data).unwrap()).unwrap();
+    let entries = catalog.entries();
+    let ids: Vec<_> = entries.iter().map(|entry| entry.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "alpha/a",
+            "root-only",
+            "shared/one",
+            "shared/two",
+            "zeta/a",
+            "zeta/b",
+            "zeta/dup",
+        ]
+    );
+    assert!(entries.windows(2).all(|pair| pair[0].id < pair[1].id));
+    for entry in &entries {
+        assert_eq!(catalog.limits(&entry.id), Some(entry.limits));
+    }
+    let duplicate = entries.iter().find(|entry| entry.id == "zeta/dup").unwrap();
+    assert_eq!(duplicate.name.as_deref(), Some("Provider Dup"));
+    assert_eq!(duplicate.limits.context, 300);
+    assert!(catalog.limits("Shared").is_none());
+}
+
+#[test]
+fn zero_context_entries_are_excluded_and_do_not_mask_a_valid_fallback() {
+    let data = json!({
+        "providers": {
+            "p": {
+                "models": {
+                    "m": {"limit": {"context": 0}},
+                    "n": {"limit": {"context": 0}}
+                }
+            }
+        },
+        "models": {
+            "p/m": {"name": "Root Fallback", "limit": {"context": 42}},
+            "valid": {"name": "Valid", "limit": {"context": 1}},
+            "invalid": {"name": "Invalid", "limit": {"context": 0}}
+        }
+    });
+    let catalog = ModelCatalog::from_snapshot(&serde_json::to_vec(&data).unwrap()).unwrap();
+    let entries = catalog.entries();
+    let ids: Vec<_> = entries.iter().map(|entry| entry.id.as_str()).collect();
+    assert_eq!(ids, ["p/m", "valid"]);
+    let fallback = entries.iter().find(|entry| entry.id == "p/m").unwrap();
+    assert_eq!(fallback.name.as_deref(), Some("Root Fallback"));
+    assert_eq!(fallback.limits.context, 42);
+    assert_eq!(catalog.limits("p/m"), Some(fallback.limits));
+    assert!(catalog.limits("invalid").is_none());
+    assert_eq!(catalog.limits("valid").unwrap().context, 1);
+}
+
+#[test]
+fn an_exact_qualified_root_id_wins_over_its_unqualified_alias() {
+    let snapshot = br#"{"models":{"m":{"limit":{"context":100}},"p/m":{"limit":{"context":200}}}}"#;
+    let catalog = ModelCatalog::from_snapshot(snapshot).unwrap();
+    assert_eq!(catalog.limits("p/m").unwrap().context, 200);
+    assert_eq!(
+        catalog
+            .entries()
+            .iter()
+            .find(|entry| entry.id == "p/m")
+            .unwrap()
+            .limits
+            .context,
+        200
+    );
+}

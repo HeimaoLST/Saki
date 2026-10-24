@@ -318,7 +318,7 @@ fn enter_sends_the_draft_when_idle() {
         outcome.send.map(|message| message.text),
         Some("hello".to_owned())
     );
-    assert!(editor.is_empty());
+    assert_eq!(editor.text(), "hello", "draft remains until Accepted");
 }
 
 #[test]

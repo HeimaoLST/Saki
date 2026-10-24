@@ -456,7 +456,9 @@ async fn checkpoint_write_failure_does_not_install_the_summary() {
     let path = temp_path();
     std::fs::write(&path, "").unwrap();
     let mut conversation = long_history();
-    conversation.history_file = Some(File::open(&path).unwrap());
+    let file = File::open(&path).unwrap();
+    file.try_lock().unwrap();
+    conversation.history_file = Some(journal::JournalLock::from_locked_file(file));
     conversation.persisted_items = conversation.items.len();
     let before = snapshot(&conversation);
     let (client, server) = mock_response(200, completed("Valid summary")).await;
@@ -511,6 +513,7 @@ fn large_base64_is_not_counted_as_text_tokens() {
     conversation.add_user_message(UserMessage {
         text: "hi".to_owned(),
         images: vec![image],
+        context: Vec::new(),
     });
     let tokens = estimated_tokens(&conversation.items[1..2]).unwrap();
     assert!(tokens >= IMAGE_TOKEN_ESTIMATE);
@@ -528,6 +531,7 @@ async fn compaction_attaches_prefix_images_as_input_image_parts() {
             "old.png",
             "data:image/png;base64,OLDPAYLOAD",
         )],
+        context: Vec::new(),
     });
     conversation.add_assistant_message("saw it".to_owned());
     conversation.add_user_message("recent goal ".repeat(200));
@@ -561,6 +565,7 @@ async fn compaction_keeps_the_latest_turn_image() {
     conversation.add_user_message(UserMessage {
         text: "latest".to_owned(),
         images: vec![ImageAttachment::new("new.png", "data:image/png;base64,NEW")],
+        context: Vec::new(),
     });
 
     let (client, _request) = mock_response(200, completed("summary")).await;
@@ -598,6 +603,7 @@ fn journal_roundtrip_preserves_images_tools_and_native_reasoning() {
             "fixture.png",
             "data:image/png;base64,SNAPSHOT",
         )],
+        context: Vec::new(),
     });
     conversation.add_reasoning(vec![ReasoningText::new("inspect first")], Some(ProviderData {
         api: "openai-responses".to_owned(),
@@ -704,6 +710,7 @@ async fn compaction_request_hook_fires_only_for_a_real_summary_request() {
     let small_counter = small_calls.clone();
     small.set_model_request_hook(Arc::new(move || {
         small_counter.fetch_add(1, Ordering::SeqCst);
+        Box::pin(std::future::ready(()))
     }));
     let unreachable = ModelClient::for_test("http://127.0.0.1:1/v1".to_owned());
     assert!(
@@ -724,6 +731,7 @@ async fn compaction_request_hook_fires_only_for_a_real_summary_request() {
     let long_counter = long_calls.clone();
     long.set_model_request_hook(Arc::new(move || {
         long_counter.fetch_add(1, Ordering::SeqCst);
+        Box::pin(std::future::ready(()))
     }));
     let (client, server) = mock_response(
         200,
@@ -756,11 +764,91 @@ fn old_task_records_without_message_id_remain_readable_with_timestamps() {
         JournalRecord::TaskStarted {
             task_id,
             message_id,
+            configuration,
         } => {
             assert_eq!(task_id, "old-task");
             assert_eq!(*message_id, None);
+            assert!(
+                configuration.is_none(),
+                "old tasks must not inherit the current model"
+            );
         }
         other => panic!("expected TaskStarted, got {other:?}"),
     }
+    std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
+async fn cancelling_while_compaction_hook_is_backpressured_preserves_context() {
+    use std::{
+        future::Future,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        task::Poll,
+    };
+    let mut conversation = long_history();
+    let before = conversation.items().to_vec();
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+    sender.send(()).await.unwrap();
+    let entered = Arc::new(AtomicBool::new(false));
+    let hook_entered = entered.clone();
+    conversation.set_model_request_hook(Arc::new(move || {
+        let sender = sender.clone();
+        let entered = hook_entered.clone();
+        Box::pin(async move {
+            entered.store(true, Ordering::SeqCst);
+            sender.send(()).await.unwrap();
+        })
+    }));
+    let client = ModelClient::for_test("http://127.0.0.1:1/v1".to_owned());
+    let mut compact = Box::pin(conversation.compact_if_needed(&client, "test", &[]));
+    std::future::poll_fn(|cx| {
+        assert!(compact.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    assert!(
+        entered.load(Ordering::SeqCst),
+        "compaction must await the hook inline"
+    );
+    drop(compact);
+    assert_eq!(
+        serde_json::to_value(conversation.items()).unwrap(),
+        serde_json::to_value(before).unwrap()
+    );
+    assert_eq!(receiver.try_recv(), Ok(()));
+    assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn journal_lock_release_does_not_wait_for_a_duplicated_descriptor() {
+    let path = temp_path();
+    let conversation = Conversation::new("system".to_owned())
+        .with_history_file(&path)
+        .unwrap();
+    let duplicate = conversation
+        .history_file
+        .as_ref()
+        .unwrap()
+        .try_clone()
+        .unwrap();
+    let contender = File::options().read(true).write(true).open(&path).unwrap();
+    assert!(matches!(
+        contender.try_lock(),
+        Err(TryLockError::WouldBlock)
+    ));
+    drop(conversation);
+    contender
+        .try_lock()
+        .expect("released conversation retained the journal lock");
+    drop(duplicate);
+    let other = File::options().read(true).write(true).open(&path).unwrap();
+    assert!(matches!(other.try_lock(), Err(TryLockError::WouldBlock)));
+    drop(contender);
+    drop(other);
+    let (restored, _) = Conversation::restore(&path).unwrap();
+    drop(restored);
     std::fs::remove_file(path).unwrap();
 }

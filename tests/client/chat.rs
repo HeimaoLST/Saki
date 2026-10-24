@@ -1,9 +1,15 @@
 use super::*;
 use crate::protocol::ToolDefinition;
+use futures_util::FutureExt;
 use serde_json::json;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::oneshot,
     task::JoinHandle,
 };
 
@@ -511,4 +517,184 @@ async fn null_tool_calls_mean_no_calls() {
     assert!(
         matches!(&response.output[0], OutputItem::Message { content, .. } if content[0].text == "direct")
     );
+}
+
+#[tokio::test]
+async fn async_callback_backpressure_holds_chat_deltas_until_released() {
+    let body = sse(json!({"id":"c1","choices":[{"delta":{"content":"Hel"}}]}))
+        + &sse(json!({"id":"c1","choices":[{"delta":{"content":"lo"}}]}))
+        + &sse(json!({"id":"c1","choices":[{"delta":{},"finish_reason":"stop"}]}))
+        + "data: [DONE]\n\n";
+    let (client, server) = mock_once(200, "text/event-stream", body).await;
+    let (seen_tx, seen_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen_events = Arc::new(Mutex::new(Vec::new()));
+    let mut gate = Some(release_rx);
+    let mut notify = Some(seen_tx);
+    let task_calls = calls.clone();
+    let task_events = seen_events.clone();
+    let task = tokio::spawn(async move {
+        client
+            .respond_stream_async(
+                ModelRequest::new("m".to_owned(), &[], Vec::new()),
+                move |event| {
+                    task_calls.fetch_add(1, Ordering::SeqCst);
+                    task_events.lock().unwrap().push(event.clone());
+                    let gate = gate.take();
+                    let notify = notify.take();
+                    async move {
+                        if let Some(notify) = notify {
+                            let _ = notify.send(());
+                        }
+                        if let Some(gate) = gate {
+                            let _ = gate.await;
+                        }
+                    }
+                    .boxed()
+                },
+            )
+            .await
+    });
+    seen_rx.await.unwrap();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the decoder must not deliver another Chat delta while the first callback is gated"
+    );
+    release_tx.send(()).unwrap();
+    let response = task.await.unwrap().unwrap();
+    let _ = server.await.unwrap();
+    let events = seen_events.lock().unwrap();
+    assert_eq!(
+        events.as_slice(),
+        &[
+            ModelStreamEvent::TextDelta {
+                item_id: "c1-text".to_owned(),
+                delta: "Hel".to_owned()
+            },
+            ModelStreamEvent::TextDelta {
+                item_id: "c1-text".to_owned(),
+                delta: "lo".to_owned()
+            }
+        ]
+    );
+    assert!(
+        matches!(&response.output[0], OutputItem::Message { content, .. } if content[0].text == "Hello")
+    );
+}
+
+#[tokio::test]
+async fn reasoning_continuation_survives_json_sse_and_serialized_context() {
+    for streaming in [false, true] {
+        for reasoning in ["inspect file\nthen answer", ""] {
+            let tool = json!({"id":"read-1", "type":"function", "function":{"name":"read", "arguments":"{}"}});
+            let (kind, body) = if streaming {
+                let cut = reasoning.len() / 2;
+                (
+                    "text/event-stream",
+                    format!(
+                        "{}{}{}data: [DONE]\n\n",
+                        sse(
+                            json!({"id":"r", "choices":[{"delta":{"reasoning_content": &reasoning[..cut]}}]})
+                        ),
+                        sse(
+                            json!({"id":"r", "choices":[{"delta":{"reasoning_content": &reasoning[cut..], "content":"checking", "tool_calls":[{"index":0,"id":"read-1","function":{"name":"read","arguments":"{}"}}]}}]})
+                        ),
+                        sse(
+                            json!({"id":"r", "choices":[{"delta":{},"finish_reason":"tool_calls"}]})
+                        )
+                    ),
+                )
+            } else {
+                ("application/json", json!({"id":"r", "choices":[{"message":{"reasoning_content":reasoning,"content":"checking","tool_calls":[tool.clone()]},"finish_reason":"tool_calls"}]}).to_string())
+            };
+            let (client, server) = mock_once(200, kind, body).await;
+            let mut deltas = String::new();
+            let response = client
+                .respond_stream(
+                    ModelRequest::new("m".into(), &[user("read")], vec![]),
+                    |event| {
+                        if let ModelStreamEvent::ReasoningDelta { delta, .. } = event {
+                            deltas.push_str(&delta);
+                        }
+                    },
+                )
+                .await
+                .unwrap();
+            server.await.unwrap();
+            if streaming {
+                assert_eq!(deltas, reasoning);
+            }
+            let mut input = vec![user("read")];
+            for item in response.output {
+                input.push(match item {
+                    OutputItem::Reasoning {
+                        content,
+                        provider_data,
+                        ..
+                    } => InputItem::Reasoning {
+                        content,
+                        provider_data,
+                    },
+                    OutputItem::Message { role, content, .. } => InputItem::Message {
+                        role,
+                        content: InputMessageContent::Text(
+                            content.into_iter().map(|part| part.text).collect(),
+                        ),
+                    },
+                    OutputItem::ToolCall {
+                        call_id,
+                        name,
+                        arguments,
+                        ..
+                    } => InputItem::ToolCall {
+                        call_id,
+                        name,
+                        arguments,
+                    },
+                    _ => panic!("unexpected output"),
+                });
+            }
+            input.push(InputItem::ToolResult {
+                call_id: "read-1".into(),
+                output: "marker".into(),
+            });
+            // This is the same serde boundary used by persisted conversation context.
+            let restored: Vec<InputItem> =
+                serde_json::from_slice(&serde_json::to_vec(&input).unwrap()).unwrap();
+            let messages = encode_messages(&restored).unwrap();
+            assert_eq!(messages, json!([
+                {"role":"user","content":"read"},
+                {"role":"assistant","content":"checking","reasoning_content":reasoning,"tool_calls":[tool]},
+                {"role":"tool","tool_call_id":"read-1","content":"marker"}
+            ]).as_array().unwrap().clone());
+        }
+    }
+}
+
+#[test]
+fn final_assistant_reasoning_is_retained_across_user_turns() {
+    let input = vec![
+        user("first"),
+        InputItem::Reasoning {
+            content: vec![],
+            provider_data: Some(ProviderData {
+                api: API.into(),
+                value: json!({"reasoning_content":"complete reasoning"}),
+            }),
+        },
+        InputItem::Message {
+            role: MessageRole::Assistant,
+            content: InputMessageContent::Text("answer".into()),
+        },
+        user("next"),
+    ];
+    let messages = encode_messages(&input).unwrap();
+    assert_eq!(messages.len(), 3);
+    assert_eq!(
+        messages[1],
+        json!({"role":"assistant","reasoning_content":"complete reasoning","content":"answer"})
+    );
+    assert!(messages[1].get("tool_calls").is_none());
 }

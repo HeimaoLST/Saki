@@ -549,6 +549,7 @@ fn restore_collapses_completed_tasks_and_leaves_legacy_history_untouched() {
             JournalRecord::TaskStarted {
                 task_id: "t1".into(),
                 message_id: None,
+                configuration: None,
             },
             JournalRecord::Messages {
                 items: vec![
@@ -601,6 +602,7 @@ fn restore_interrupted_group_does_not_absorb_the_next_task() {
             JournalRecord::TaskStarted {
                 task_id: "t1".into(),
                 message_id: None,
+                configuration: None,
             },
             JournalRecord::Messages {
                 items: vec![
