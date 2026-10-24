@@ -264,7 +264,6 @@ jobs:
         with:
           name: saki-macos-arm64-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
-            ${{ runner.temp }}/saki-macos-candidate/Saki.app
             ${{ runner.temp }}/saki-macos-candidate/Saki.app.zip
             ${{ runner.temp }}/saki-macos-candidate/manifest.json
             ${{ runner.temp }}/saki-macos-candidate/SHA256SUMS
@@ -282,7 +281,7 @@ jobs:
             echo "### macOS candidate (arm64, ad-hoc)"
             echo ""
             echo "- Standard \`macos-15\` runner; arm64 checked by \`uname -m\`, \`file\` and \`lipo\`."
-            echo "- **Engineering candidate only**: current dev does not include #141/#126/#132 product work; this is not Nagi MVP completion."
+            echo "- **Engineering candidate only**: this build does not establish Nagi MVP completion. Product scope and real trials are tracked in #140."
             echo "- Artifact: \`Saki.app.zip\` + manifest + SHA256SUMS + build/codesign/validation/helper-smoke logs."
             echo "- No Finder launch, real window/IME, Gatekeeper/notarization, external provider or user-trial claim."
           } >> "$GITHUB_STEP_SUMMARY"

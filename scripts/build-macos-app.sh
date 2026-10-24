@@ -13,7 +13,7 @@
 # The caller may also tee this script's output to <output-dir>/build.log.
 #
 # This is a packaging helper only. It does not change product source, call a
-# provider, or include user store/session/.env data. Requires macOS arm64 with
+# external provider, or include user store/session/.env data. Requires macOS arm64 with
 # bash, Go (from desktop/go.mod), Rust/cargo, Python 3, Xcode/codesign, ditto,
 # lipo and plutil.
 set -euo pipefail

@@ -78,15 +78,15 @@ CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -mod=readonly -buildvc
 
 产物为 `Saki.app`，其中 `Contents/MacOS/Saki` 为 GUI、`Saki-runtime` 为 Rust helper；Info.plist 使用既有 `dev.saki.desktop` / `Saki` / `0.1.0` / build `1` / minimum 11.0 契约。脚本校验 `uname -m`、`go env GOOS/GOARCH`、`rustc` host、`file`/`lipo` 为 arm64，`plutil` 字段，先签 helper 再签 app，分别 `codesign --verify --strict`，app 再 `--deep --strict`；对已签名 bundle 内 helper 调用现有 `examples/runtime_stdio.py --self-test`。`ditto` 生成保留权限/签名的 `Saki.app.zip`；`manifest.json`、`SHA256SUMS`、`codesign.log`、`validation.log`、`helper-smoke.log` 与 `build.log` 一并上传，artifact 名含实际 source SHA，保留 14 天，`if-no-files-found: error`。
 
-- artifact 同时包含完成签名/校验的 `Saki.app/`（供 SHA256SUMS 直接核对）与保权限/签名的 `Saki.app.zip`；manifest 记录 actual checkout/source SHA、CI event SHA、run URL、`uname`/macOS/runner image、Go/Rust/cargo/Xcode/SDK、app/helper/Info.plist/zip SHA256、签名与文件清单；build log 在脚本结束后由 CI 完整保存，不作为“写入中”的 hash 对象。
+- artifact 只含 `Saki.app.zip`、`manifest.json`、`SHA256SUMS` 与日志；下载后先在**新目录**执行 `ditto -x -k Saki.app.zip .` 解包，再 `shasum -a 256 -c SHA256SUMS`（此时 app/helper/plist/zip/manifest 的相对路径均存在）。manifest 记录 actual checkout/source SHA、CI event SHA、run URL、`uname`/macOS/runner image、Go/Rust/cargo/Xcode/SDK、app/helper/Info.plist/zip SHA256、签名与文件清单；build log 在脚本结束后由 CI 完整保存，不作为“写入中”的 hash 对象。
 - ad-hoc only；不做证书/公证/Gatekeeper 承诺；minimumOS 字段不表示已在旧 OS 或真实 Finder/IME 实测。
 - 当前 dev 未含 #141/PR126/PR132 产品切片，因此该 artifact 只能称 **CI 工程候选**，不是 Nagi MVP 完成；真实窗口/IME、外部 provider、用户试用由对应 owner/PM 负责。
 - 本地构建与下载核验命令（macOS arm64）：
 
 ```sh
 bash scripts/build-macos-app.sh /private/tmp/saki-macos-candidate
-# download artifact 后：
-unzip -q Saki.app.zip
+# download artifact 到新目录后，先解包再校验：
+ditto -x -k Saki.app.zip .
 shasum -a 256 -c SHA256SUMS
 plutil -p Saki.app/Contents/Info.plist
 file Saki.app/Contents/MacOS/Saki Saki.app/Contents/MacOS/Saki-runtime
@@ -95,7 +95,7 @@ codesign --verify --strict Saki.app
 codesign --verify --deep --strict Saki.app
 ```
 
-真实首次 `macos-app` run URL/artifact 在 PR 完成首轮后回填；失败时不以计划或本地 exit 冒充 CI 证据。
+首次候选历史证据：run 40107805903，source `04d579a`；最终 head/run/artifact 以 PR 正式过程记录为准，失败时不以计划或本地 exit 冒充 CI 证据。
 
 ## 触发、并发与权限
 
