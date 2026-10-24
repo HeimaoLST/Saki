@@ -3,7 +3,12 @@ use crate::{agent::journal, tools::tool_registry::ToolCall};
 use rmcp::model::CallToolResult;
 
 fn context() -> ToolContext {
-    let cwd = std::env::temp_dir().join(format!("saki-mcp-output-{}", journal::new_id().unwrap()));
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let cwd = std::env::temp_dir().join(format!(
+        "saki-mcp-output-{}-{}",
+        journal::new_id().unwrap(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::create_dir(&cwd).unwrap();
     ToolContext {
         output_dir: cwd.join("outputs"),
