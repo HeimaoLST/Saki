@@ -1,8 +1,8 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-20。状态：**实现事实（#63 运行时接入、#90 局部布局打磨）；#92 主题系统仅完成设计，功能尚未实现**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
+更新日期：2026-10-23。状态：**实现事实基线为 dev@47d01ee（#63、#90）；主题与新工作台为待实施设计**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
 
-[previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。当前代码仍使用 Main/Dawn 派生色；#92 设计目标是用户确认的 Moon/Dawn，但本轮只交付设计，不代表换色功能已实现。concurrency、`search_history`／`read_history`、附件、模型切换等仍是后续独立任务，不在首轮。
+现行产品要求以用户与 PM 最新讨论及 [Desktop workbench](desktop-workbench.md) 为准；#130 实施原生初版，#96 实施外观。旧浏览器预览与被替代的布局/配色要求已移除，历史可查 Git。本文保留明确标注的原生实现事实和主题接线契约；代码仍使用 Main/Dawn 派生色是基线事实，不是后续开发目标。当前视觉基准为纸白/夜林，不能把设计更新写成生产已换色。
 
 ## 已确认需求与交付边界
 
@@ -141,14 +141,11 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 - 无自动重连；断连后重启应用重新加载 history。未知接纳不自动重发。
 - 无附件、托盘/菜单、contact 级模型配置、头像 picker；原生窗口的发送/切换/设置/Stop/History/退出/重启已实测，但真实系统 IME 组合、VoiceOver、light 系统主题、复杂滚动与更多 provider 组合仍需后续验收。
 - GUI 不解析 Rust JSONL；旧 journal 的零时间戳显示为空，不伪造日期，缺失 message_id 保持缺失。
-- #92 的 Moon/Dawn、Appearance 模式/持久化、系统外观切换和自定义主题加载**尚未实现**；当前代码仍是 Main/Dawn 派生。设计完成不等于功能交付。
+- Appearance 模式/持久化、系统外观切换和自定义主题加载尚未实现；#96 按当前纸白/夜林设计实施，#97 是后续自定义。旧 Main/Dawn 仅为代码事实。
 
 ## 产品模型
 
-- 用户添加 **CONTACTS**：独立 agent，具有稳定的 name／avatar／profile／requirements 与长期对话；没有 New session 或 session picker 入口。
-- 每个 contact 拥有自己的 profile、历史与未来的 memory，不再继承单一全局 Saki 身份。
-- 历史查询计划新增 `search_history`／`read_history` 工具，绑定当前 contact。UI 只呈现可理解的活动与带出处的历史消息；primary flow 不暴露 compact、JSONL、token budget 或内部工具名。
-- source/history 与当前 settings 分离：绑定后 profile（purpose/instructions/workspace）锁定，只有显示名可改；保存不会改写已保存的消息或草稿。
+联系人是 GUI 中可交谈也可独立工作的 Agent 入口。消息、一次执行和长期事项有不同生命周期：消息是沟通，执行事实来自 Runtime，长期事项/轨迹属于后续 GUI 应用层能力。现行布局、行为与首单范围只在 [Desktop workbench](desktop-workbench.md) 维护；本文件不保留另一套产品模型。
 
 ## 与完整 runtime 需求的剩余差距（实现事实）
 
@@ -162,218 +159,69 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 
 上述是当前交付边界；不得把单执行槽或本地过滤写成并发执行／模型检索已完成。
 
-## 布局与断点（浏览器历史示意）
+## 主题系统
 
-本节保留浏览器历史示意；当前原生布局以“布局打磨（#90）”为准。
+状态：**当前设计，待 #96 实施**。用户于 2026-10-23 明确要求旧设计及时移除，当前原生视觉基准为 [纸与苔 / Paper & Moss](desktop-workbench.md#第-06-版纸与苔--paper--moss)。内置浅色 ID `paper`（纸白）、深色 ID `night`（夜林）。旧 Moon/Dawn 目标和原始 palette 表已移除，不同时作为实施要求。更多方案与用户自定义保留在 #97。
 
-- **≥920px**：`contact rail (默认 220px)` ｜ conversation ｜ 右侧 aux 300px，仅在 source/settings 等操作后出现；没有常驻第三栏。
-- **640–919px**：rail + 单栏内容；source/settings 直接替换主内容，而不是压缩两栏。
-- **<640px**：contact list 变为可展开 compact 列表；aux 同样替换主内容。
-- 不使用 viewport-height 布局、fixed 定位或内部滚动盒；内容随页面增长，任何宽度都不出现横向溢出。
-- Tweak（宿主支持时）：contact list width、message spacing、reading width 三个只影响布局的参数。
+### 语义映射
 
-## 主题系统（#92 设计）
+完整颜色数值、层级、文字对比度检查范围与视觉状态只在 [工作台视觉规范](desktop-workbench.md#第-06-版纸与苔--paper--moss) 和其 HTML 原型维护。以下规定原生消费方式，不再复制另一份 hex 表。
 
-状态：**设计完成，功能未实现**（[#92](https://github.com/HeimaoLST/Saki/issues/92)）。用户已确认：夜间使用 Rosé Pine Moon，白天使用 Rosé Pine Dawn；未来需要更多配色和用户自定义。本设计只定义 GUI 配色数据、模式、持久化与自定义边界，不把设计关闭写成切换功能已经交付。
-
-### 当前实现事实（不是目标）
-
-- 当前 `desktop/theme.go:8-53`（[源码](https://github.com/HeimaoLST/Saki/blob/3c449404a3648ae0a7932bab749adf3a884ef062/desktop/theme.go#L8-L53)）的深色是 **Main**：`base #191724`、`surface #1f1d2e`、`overlay #26233a`、`border #403d52`、`accent #ebbcba`、`accentText #191724`；不能把它称为 Moon。
-- 当前浅色是 Dawn 派生：`text #575279` 是旧值，官方 Dawn 现为 `#464261`；`TextMuted #64607b`、`Warning #985900`、`Danger #9c4a62` 是 #90 为可读性做的派生，不是官方 raw 值。
-- 当前 `desktop/view.go:11-13`（[源码](https://github.com/HeimaoLST/Saki/blob/3c449404a3648ae0a7932bab749adf3a884ef062/desktop/view.go#L11-L13)）每帧用 `c.Theme().Dark` 选择并 `SetTheme`；没有 app 级 mode/theme ID。
-- 当前 `desktop/store.go:32-36`（[源码](https://github.com/HeimaoLST/Saki/blob/3c449404a3648ae0a7932bab749adf3a884ef062/desktop/store.go#L32-L36)）只有 `Version/Selected/Contacts`；`:56-99` 读取并严格检查 `Version==1`；`:138-161` 保存时重建 state。没有 appearance 字段，也没有主题目录/loader。
-- 当前 `desktop/main.go:41-48` 使用默认 titlebar，未设置 `BackgroundColor`/`TitleBarStyle`/`Vibrancy`。
-- 当前没有 app 级 `Link/Progress/BubbleUser/QuoteHighlight` token；`t.Selection` 同时用于 user 气泡 `view.go:273` 和 history 高亮 `view.go:197`。A 必须拆出应用 token，不能把 MyGo 的文字选择色当聊天气泡色。
-- 旧浏览器原型的视觉规则与头像尺寸只在文末历史验证节保留，只作历史快照；当前原生尺寸见 #90 节与头像节，不是主题目标。
-
-### 官方原始 palette
-
-来源：[Rosé Pine 官方 palette](https://rosepinetheme.com/palette/)（2026-10-20 核对原始 HTML；Dawn 的 `#464261` 存在，旧文档 `#575279` 不在官方表中）。
-
-| 原始角色 | Moon（dark） | Dawn（light） |
+| 原生角色 | 原型语义变量 | 用途 |
 | --- | --- | --- |
-| base | `#232136` | `#faf4ed` |
-| surface | `#2a273f` | `#fffaf3` |
-| overlay | `#393552` | `#f2e9e1` |
-| muted | `#6e6a86` | `#9893a5` |
-| subtle | `#908caa` | `#797593` |
-| text | `#e0def4` | `#464261` |
-| love | `#eb6f92` | `#b4637a` |
-| gold | `#f6c177` | `#ea9d34` |
-| rose | `#ea9a97` | `#d7827e` |
-| pine | `#3e8fb0` | `#286983` |
-| foam | `#9ccfd8` | `#56949f` |
-| iris | `#c4a7e7` | `#907aa9` |
-| highlightLow | `#2a283e` | `#f4ede8` |
-| highlightMed | `#44415a` | `#dfdad9` |
-| highlightHigh | `#56526e` | `#cecacd` |
+| Background / Surface / SurfaceHover | `bg` / `surface` / `hover` | 页面、容器、悬停 |
+| SurfacePressed / Border | `hover` / `border` | 按压底色与分隔；按压仍需可辨反馈，边框不单独承担控件识别 |
+| Text / TextMuted | `text` / `muted` | 正文和辅助文字 |
+| Accent / AccentHover / AccentText | `accent` / `accent-hover` / `accent-text` | 主要动作；AccentPressed 可复用 AccentHover，配合现有按压反馈 |
+| Danger / Warning / Success / Focus | `danger` / `warning` / `success` / `focus` | 错误、注意、状态与键盘焦点 |
+| Selection / Scrollbar | `hover` / `muted` | 文本选择背景与滚动条，不能冒充用户气泡背景 |
+| Link / Progress / QuoteHighlight | `success` / `success` / `hover` | 链接、执行提示与历史定位；保持各自语义 |
+| BubbleUser / Rail | `user-bubble` / `rail` | 用户气泡与联系人栏 |
+| WorkSurface / WorkText / WorkMuted / WorkAttention | `hero` / `hero-text` / `hero-muted` / `hero-alert` | 当前工作卡的底色、正文、说明与异常 |
+| AttentionText / AttentionSurface | `clay` / `clay-soft` | 需要用户处理的内容 |
 
-**决定**：
-- 内置 night 方案 ID `rose-pine-moon`，显示名 `Rosé Pine Moon`；day 方案 ID `rose-pine-dawn`，显示名 `Rosé Pine Dawn`。
-- 不把 Main 加入内置方案；当前 Main 只作为实现历史/迁移来源。
-- 原始 palette 只是数据源；组件不读取 `rose/pine/foam` 等品牌角色，不按 `themeID` 写分支。
-
-### 语义映射与可读派生
-
-应用只向组件暴露语义角色；下表的 Moon/Dawn 值是设计基线（原始 + 有依据的派生）。`SurfacePressed` 明确复用 `SurfaceHover`；该 overlay 上的 `TextMuted` 已 ≥4.5（Moon 5.78 / Dawn 5.00）。只有 `highlightMed` 不承载 muted 小字；pressed/hover 同色，真实按压/焦点反馈列入实施验收，不假称已有额外视觉区分。
-
-| 语义角色 | Moon | Dawn | 说明 |
-| --- | --- | --- | --- |
-| Background | `#232136` | `#faf4ed` | 官方 base |
-| Surface | `#2a273f` | `#fffaf3` | 官方 surface |
-| SurfaceHover | `#393552` | `#f2e9e1` | 官方 overlay |
-| SurfacePressed | `#393552` | `#f2e9e1` | 与 hover 同色；muted 在此 overlay 仍 ≥4.5 |
-| Border | `#44415a` | `#dfdad9` | 官方 highlightMed；只作非文字边界，不单独承担控件识别 |
-| Text | `#e0def4` | `#464261` | 官方 text |
-| TextMuted | `#b8b4cc` | `#64607b` | Moon 派生；Dawn 沿用 #90 派生 |
-| Accent | `#ea9a97` | `#d7827e` | 官方 rose；主按钮背景 |
-| AccentHover | `#f2b0ad` | `#e09a96` | 由 rose 派生 |
-| AccentPressed | `#d98885` | `#d0736f` | 由 rose 派生；保证 AccentText ≥4.5 |
-| AccentText | `#232136` | `#232136` | 深色前景，不用白字（白字仅 2.19/2.84） |
-| Danger | `#f79bb2` | `#9c4a62` | Moon 派生；Dawn 沿用 #90 派生 |
-| Warning | `#f6c177` | `#985900` | Moon 官方 gold；Dawn 派生（官方 gold 仅 2.16/1.87） |
-| Success | `#9ccfd8` | `#286983` | Moon foam / Dawn pine；用于可读文本/状态 |
-| Selection | `#44415a` | `#dfdad9` | MyGo 的文字选择高亮（highlightMed） |
-| Focus | `#c4a7e7` | `#907aa9` | 官方 iris；非文字 3:1 |
-| Link（app） | `#9ccfd8` | `#286983` | 与 Success 初始复用，但独立语义 |
-| Progress（app） | `#9ccfd8` | `#286983` | 与 Link 初始复用，但独立语义 |
-| BubbleUser（app） | `#393552` | `#f2e9e1` | user 气泡背景；不再借用 Selection |
-| QuoteHighlight（app） | `#2a283e` | `#f4ede8` | history 定位高亮 |
-| Scrollbar（MyGo） | `TextMuted`（不透明） | `TextMuted`（不透明） | `ui.Theme` 字段；对 base/surface/overlay ≥3（Moon 7.78/7.15/5.78，Dawn 5.49/5.78/5.00） |
-| Inverse（MyGo） | `Text` | `Text` | 零值 fallback 即可 |
-| InverseText（MyGo） | `Background` | `Background` | 零值 fallback 即可 |
-
-**唯一小型 resolved 容器**：`ui.Theme` 没有 Link/Progress/BubbleUser/QuoteHighlight 字段。resolver 返回一个容器，例如：
-
-```go
-type resolvedTheme struct {
-    Widgets        *ui.Theme
-    Link           ui.Color
-    Progress       ui.Color
-    BubbleUser     ui.Color
-    QuoteHighlight ui.Color
-}
-```
-
-`view` 把 `resolvedTheme` 传给组件；组件读取 `resolved.Widgets` 的框架语义与四个 app 角色。不要往 `ui.Theme` 强塞新字段，不要复用 `Selection`/`Success` 顶替这四个职责，也不预建组件主题框架。A 只有这四个 app 角色；未来 tool/code 块若需要独立 surface，优先复用 `Surface`/`TextMuted`，不为尚未接入的 Markdown 预建主题系统。
-
-**可读性计算**（WCAG；正文/小字目标 ≥4.5:1，背景列为 base / surface / overlay）：
-
-| 前景 | Moon | Dawn |
-| --- | --- | --- |
-| Text | 11.86 / 10.90 / 8.82 | 8.69 / 9.14 / 7.92 |
-| TextMuted | 7.78 / 7.15 / 5.78 | 5.49 / 5.78 / 5.00 |
-| Danger | 7.66 / 7.04 / 5.70 | 5.39 / 5.66 / 4.91 |
-| Warning | 9.55 / 8.77 / 7.10 | 5.11 / 5.37 / 4.65 |
-| Link/Success | 9.19 / 8.44 / 6.83 | 5.59 / 5.88 / 5.09 |
-| AccentText on Accent | 7.13 | 5.50 |
-| Focus（非文字 3:1） | 7.47 / 6.87 / 5.56 | 3.47 / 3.65 / 3.16 |
-
-- 官方 raw 的 `subtle/love/gold` 在 Dawn 不足 4.5，`subtle` 在 Moon 的 overlay 也不足；因此 TextMuted/Danger/Warning 采用派生值。
-- `Border`（highlightMed）对 Surface 对比不足 3:1，不能作为唯一控件边界；控件通过 surface 层级、文字和 Focus 识别。`TextMuted` 不放在 highlightMed 上；当前 `SurfacePressed` 是 overlay，已 ≥4.5。pressed/hover 同色，真实按压/焦点反馈列入实施验收。
-- 不为每个 hex 写机械测试；对比度作为设计计算，实施验收检查真实组合。
+框架已有角色使用 `ui.Theme`，应用专属角色放在同一个小型 resolved 值中，按实际组件需要提供；不往第三方结构强塞字段，不按品牌名在组件内分支，不预建组件主题框架。普通文件/工具内容复用 surface 与正文角色，装饰 canvas/书册不要求提前映射为原生公共 API。
 
 ### Appearance、模式与解析
 
-- **入口**：应用级 `Appearance`，独立于 Contact Settings；建议放在联系人侧栏底部的低权重入口，显示当前有效主题名。Contact Settings 仍只编辑联系人 profile。
-- **模式**：`system`（默认）/`light`/`dark`；按 OS 明暗，不做定时切换。light 与 dark 各自记录 scheme ID，默认 `rose-pine-dawn` / `rose-pine-moon`。当前每类只有一个内置方案，A 阶段只显示“当前有效主题”（不显示没有选择意义的空下拉）；B 阶段有多个方案/自定义后再显示选择器。
-- **app model**：持有 `Appearance{mode, lightID, darkID}`；每帧只有一个 resolver：根据 mode 与 OS 明暗选出 scheme，再生成上文的 `resolvedTheme`（`Widgets *ui.Theme` + 四个 app 角色）。`view` 只在入口调用一次 resolver，后续组件接收 `resolvedTheme` 并读取语义角色；不在组件里判断 Moon/Dawn/品牌名。
-- **解析顺序**：`mode=system` 时读取当帧 `c.Theme().Dark`（这是 SetTheme 之前的默认主题，反映 OS/后端 effective appearance）；`mode=light|dark` 时直接使用存储的 mode，不把 `SetSource` 后的 forced Dark 当 OS。解析后立即 `c.SetTheme`，本帧后续使用该主题。
-- **无效设置值与 fallback**：appearance 独立校验，不能因 mode/ID 错误把整个 contacts store 判坏。`mode` 非法→按 `system`；light/dark ID 缺失、未知或 kind 不匹配（例如 light 槽指向 dark 主题）→该槽回退内置默认同 kind 主题，保留用户选择 ID 并显示非阻塞提示；不覆写用户偏好。恢复 `system` 时必须让 backend source 为 `ThemeSystem`；首次创建窗口时按两类 scheme 的 base 设置 `light-dark` pair，避免先显示错误色再切换。
-- **禁用项**：不改布局、字体大小、圆角、spacing；不重建 runtime/session/contact，不取消/重发任务，不清草稿、焦点、选择项、滚动位置。换主题不是换 app 状态。
-- **框架重绘**：`Context.SetTheme` 每帧局部（`ui/context.go:305-315`，[链接](https://github.com/egoist/mygo/blob/fea932a7a2a9/ui/context.go#L305-L315)）；`ui/runtime.go:118` 每帧重置默认主题。因此不要只在启动时 SetTheme，也不要注册重复 listener 来维护 effective 状态；每帧 resolver 即可。
-- **禁止重复 SetSource**：`mygo.Theme.SetSource` 只在启动和模式变更时调用一次；不在每帧调用，以免每帧触发 `contentThemeChanged`。系统模式恢复 `ThemeSystem`，手动模式设 `ThemeLight/ThemeDark`；`SetSource` 的说明见 `modules.go:411-429`（[链接](https://github.com/egoist/mygo/blob/fea932a7a2a9/modules.go#L411-L429)）。
+- **入口**：联系人侧栏底部的应用级 Appearance；与联系人设置独立，后者仅编辑联系人 profile。
+- **模式**：`system`（默认）/`light`/`dark`；跟随系统或用户手动选择，不做定时切换。light/dark 分别默认 `paper`/`night`；当前每类仅一个内置方案，展示有效主题名，不设置空的方案下拉。
+- **唯一解析路径**：应用保存 `Appearance{mode, lightID, darkID}`；view 入口解析一次并向组件传递颜色。组件不自行读系统明暗、判断主题 ID 或写盘。
+- **异常偏好**：非法 mode 回退 system；缺失/未知/类型不符 ID 回退对应内置方案并保留原选择，显示非阻塞说明。外观错误不能令联系人存储整体不可读。
+- **切换保留状态**：只改颜色；任务、会话、草稿、联系人、焦点、滚动和字体/间距不因换色重置。失败说明不能伪称保存成功。
 
 ### 持久化
 
-- **单一字段**：contact store 顶层可选 `appearance`，不写进 contact/session/profile：
-  ```json
-  {
-    "appearance": {
-      "mode": "system",
-      "light": "rose-pine-dawn",
-      "dark": "rose-pine-moon"
-    }
-  }
-  ```
-- **兼容**：保持 `Version=1`；旧文件缺 `appearance` 时使用默认 `{system, rose-pine-dawn, rose-pine-moon}`。`store.save` 必须保留该字段；当前 `store.go:138-161` 重建 state 的实现边界必须同步改，不能一次联系人保存把主题偏好抹掉。未来若字段形状不兼容再 bump store 版本并提供迁移，不在本次实现。
-- **失败**：切换先让当次会话生效（内存/当前窗口），随后保存；保存失败显示明确“主题已生效但未保存”，不伪称重启后保留。保留当前生效，不因保存失败重启 runtime、回滚任务或清草稿。
-- **边界**：主题持久化只走现有的 `contactStore` 保存入口，不新建独立配置文件、不复制 store、不在 view 散落写盘。
+只扩展现有 contact store 顶层可选 `appearance`，不放到 contact/session/profile，不另建配置文件或存储入口：
 
-### 系统外观、窗口 chrome 与系统偏好
+```json
+{"appearance":{"mode":"system","light":"paper","dark":"night"}}
+```
 
-- **系统来源**：`ui.Context.Theme()` 在 SetTheme 前返回默认主题；`Dark` 来自后端 `IsDark`（`content.go:51`），默认主题还会应用桌面偏好（`ui/preferences.go:49-77`）。`mygo.Theme` 提供 `Source/SetSource/IsDark/OnUpdated`（`modules.go:299-453`）；系统变化链路是 `app.go:593-600` → `content.go:302-307` → `ui/window.go:54-58`，会请求重绘并触发 `OnUpdated`。`SetSource` 会重绘但不会触发 `OnUpdated`。[链接](https://github.com/egoist/mygo/blob/fea932a7a2a9/modules.go#L299-L453)
-- **设计使用**：框架已因系统变化重绘，不需要额外 listener 来维护主题；A 不注册 `OnUpdated`，不缓存 effective theme。仅启动/模式变更调用一次 `SetSource`；system 模式使用系统来源，manual 模式固定 light/dark。
-- **窗口 chrome / backing color**：A 只保证平台明暗：`SetSource` 让 native titlebar/menus 跟随 light/dark；`WindowOptions.BackgroundColor` / `Window.SetBackgroundColor` 设置窗口 backing color（`window.go:934-946`，[链接](https://github.com/egoist/mygo/blob/fea932a7a2a9/window.go#L934-L946)）。**`light-dark()` 不是只跟随原始 OS**：`backgroundColor()` 用 `backend().Theme().IsDark()` 选择 light/dark 分支（当前 `window.go:393-414`，[链接](https://github.com/egoist/mygo/blob/fea932a7a2a9/window.go#L393-L414)；最新 `window.go:405-426`，[链接](https://github.com/egoist/mygo/blob/163d50e2acc1b5361d29bc6d26a8a0e11ebdb847/window.go#L405-L426)），而 `SetSource` 走同一个 backend override 并调用 `updateBackgrounds()`（当前 `modules.go:414-429`，[链接](https://github.com/egoist/mygo/blob/fea932a7a2a9/modules.go#L414-L429)；`window.go:406-414`）。因此它跟随 **effective appearance**，手动 light/dark 也会生效。
-  - **统一 A/B 底色路径**：`light-dark(lightID 对应 scheme.Background, darkID 对应 scheme.Background)`；`Theme.SetSource(system/light/dark)` 决定 effective 明暗，A 与 B 共用这一条路径。手动模式不再另造两个相同 stop，B 也不另换显式 base 路径。
-  - **更新时机**：启动顺序为恢复 preferences → 解析 light/dark 两类 scheme 与背景 pair → 在 `App.Run` 前调用 `SetSource`；运行期模式改动只调用 `SetSource`，只有 light/dark ID 变更或自定义文件派生值变更才更新两个 stop。OS 变化由 backend 的 `updateBackgrounds` 处理；不为窗口底色注册 OS listener，也不每帧写入。
-  - native titlebar/menus 仍只有 light/dark，不承诺任意品牌色填充；自绘 titlebar 需要 hidden titlebar/frameless + `Context.TitleBar`/拖动区域，另立 feature 并做真实窗口验收。
-- **系统偏好边界**（基于源码，不凭空承诺全系统 accessibility）：
-  - `ReduceMotion`：MyGo 的 `Animate`/`Transition`/`Timeline` 会遵循；A 没有新增持续动画，因此无额外承诺。
-  - `HighContrast`/`TextScale`：默认主题的 `Theme.follow` 会应用（`ui/preferences.go:49-77`），但 `Context.SetTheme` 的自定义主题不会自动 follow。当前 #90 的 `roseTheme` 已经绕过它们；A 明确**不新增**全系统 HighContrast/TextScale 适配，也不声称已支持。若产品要求，需在 resolver 中集中处理并单独验收，不扩本次配色功能。
-  - 系统 Accent：A 使用 Moon/Dawn 自有 accent，不用系统 accent 替换品牌色；这是配色选择，不作为系统 accent 已适配的声明。
-  - `ReduceTransparency`：最新 MyGo 的 `ThemePreferences` 已增加（[定义](https://github.com/egoist/mygo/blob/163d50e2acc1b5361d29bc6d26a8a0e11ebdb847/modules.go#L320-L350)）；当前 app 不使用 `Vibrancy`/透明材质，A 无需新增机制。若未来使用材质，应在该偏好为 true 时关闭/blur 替换为不透明 surface，单独验收。
-- **模式切换与字体**：换主题不改变 FontSize/Radius/Spacing，也不改布局；只有颜色变化。系统 TextScale 若未来实现，必须在所有 scheme 上统一处理，不能因换色改变字号。
+保持 store `Version=1`；旧数据无此字段时采用上述默认值，联系人保存必须保留外观字段。切换先在内存生效，再保存；失败提示“主题已生效但未保存”，不回滚正在执行的任务。当前基线未实现 theme ID 保存；若开发发现其他在途分支或实际用户已有保存的 ID，先核对事实并保留读取兼容，不借配色变更删除用户偏好。
 
-### 自定义主题（B 阶段设计）
+### 系统外观与窗口
 
-- **目录**：`UserConfigDir()/Saki/themes/*.json`；一个文件一个主题。文件名自由；`id` 必须是小写 kebab-case、稳定且唯一，不能与任何注册内置 ID 相同。不强制 `id` 等于文件名，也不另设前缀命名系统；内置注册表 ID 受保护。
-- **格式**：完整语义颜色定义，不做继承、表达式、脚本、模板或品牌角色输入。`schema_version` 当前为 `1`，必须与 `id`、`name`、`kind`（`light|dark`）、`colors` 一起提供。
-- **必填 colors**：`background/surface/surfaceHover/border/text/textMuted/accent/accentHover/accentPressed/accentText/danger/warning/success/selection/focus`。
-- **可选 colors 与唯一 fallback**：`surfacePressed→surfaceHover`、`link→success`、`progress→link`、`bubbleUser→selection`、`quoteHighlight→selection`、`scrollbar→textMuted`、`inverse→text`、`inverseText→background`。可选字段缺失时使用该 fallback，不继承其他主题。
-- **颜色格式**：`#rrggbb` 或 `#rrggbbaa`；不接受命名色、函数色或透明度运算，保证单一 validator 可判定。
-- **完整可解析示例**（`my-moon.json`）：
-  ```json
-  {
-    "schema_version": 1,
-    "id": "my-moon",
-    "name": "My Moon",
-    "kind": "dark",
-    "colors": {
-      "background": "#232136",
-      "surface": "#2a273f",
-      "surfaceHover": "#393552",
-      "surfacePressed": "#393552",
-      "border": "#44415a",
-      "text": "#e0def4",
-      "textMuted": "#b8b4cc",
-      "accent": "#ea9a97",
-      "accentHover": "#f2b0ad",
-      "accentPressed": "#d98885",
-      "accentText": "#232136",
-      "danger": "#f79bb2",
-      "warning": "#f6c177",
-      "success": "#9ccfd8",
-      "selection": "#44415a",
-      "focus": "#c4a7e7",
-      "link": "#9ccfd8",
-      "progress": "#9ccfd8",
-      "bubbleUser": "#393552",
-      "quoteHighlight": "#2a283e",
-      "scrollbar": "#908caa",
-      "inverse": "#e0def4",
-      "inverseText": "#232136"
-    }
-  }
-  ```
-- **单一 loader 边界**：读取目录、解析 JSON、schema/字段/颜色/`kind`/ID 唯一性/内置冲突；错误必须报告 `file` 与字段（例如 `colors.textMuted`）；不把坏文件静默覆盖。一个文件失败只影响该文件，同 kind 回退默认内置 Moon/Dawn。
-- **冲突与缺失**：
-  - 内置 ID 冲突：用户文件无效，内置优先；报告 `id`。
-  - 自定义 ID 重复：所有该 ID 文件无效（不任意选一个），报告全部文件；不会覆盖内置。
-  - 已选文件被删除/改名/变无效：回退同 kind 默认内置；保留 store 中的选择 ID，便于文件恢复；显示非阻塞提示；不删除/改写用户文件。
-  - 缺字段/坏颜色/未知字段：拒绝该文件并报 file/field；未知字段按 v1 拒绝，避免拼写错误静默生效。
-- **对比度**：loader 可对 `text/background`、`text/surface`、`text/surfaceHover`、`accentText/accent` 计算并提示低于 4.5；这是提示，不阻止保存/加载（按用户自定义自由）；内置 Moon/Dawn 必须通过验收。不要把审美校验扩展成通用主题引擎。
-- **B 的非目标**：不做主题商城、下载、在线同步、可视化编辑器、热重载、跨 TUI/Runtime 主题系统。B 只做加载/发现/选择与单一错误边界。
+以下接线依据已核对的 MyGo `fea932a7a2a9`；依赖升级由 #98 重新验证，不把快照当永久约束。
 
-### 分阶段与验收
+- `Context.SetTheme` 是帧内设置。先读取默认 `c.Theme().Dark`，解析本帧主题，再 SetTheme；不只在启动时设置，也不每帧注册监听。见 [Context](https://github.com/egoist/mygo/blob/fea932a7a2a9/ui/context.go#L305-L315)。
+- `Theme.SetSource` 仅启动和模式改变时调用；system 恢复 ThemeSystem，手动模式选择 ThemeLight/ThemeDark。框架负责系统变化重绘，不另造 effective appearance 缓存/监听。见 [Theme](https://github.com/egoist/mygo/blob/fea932a7a2a9/modules.go#L299-L453)。
+- 窗口 backing color 使用 `light-dark(paper.Background, night.Background)`，按后端 effective appearance 选择。启动恢复偏好后设置 pair 与 Source；仅 scheme ID/解析颜色改变时更新 pair。native chrome 的品牌色外观由 #101 独立处理，不在主题任务重做标题栏。见 [window](https://github.com/egoist/mygo/blob/fea932a7a2a9/window.go#L393-L414)。
+- 减少动态效果、系统字体缩放和高对比度按实际原生支持分别验收，不由 HTML 或主题 resolver 自动推定已支持。当前没有新增透明材质或常驻动画；不扩大为系统偏好框架。
 
-- **A（本次设计后的实现任务）**：内置 Moon/Dawn + 单一语义映射 + Appearance 模式/ID + 持久化 + 系统/手动切换 + 窗口平台明暗/背景。要求：
-  - #90 最终布局下，1040×720、1600×900、960×640（含 300px aux）的聊天/工具/错误/历史/Settings 截图，light/dark 两套；headless 与实际 macOS 窗口分开记录。
-  - system/light/dark 切换、重启恢复、系统外观变化（system 模式）；切换中保留草稿/选中/滚动/任务，不重启 runtime、不重建 session、不取消/重发。
-  - 4.5:1 文字对比、焦点可见、状态不只靠颜色；窗口背景/平台 chrome 一致。
-- **B（后续独立任务）**：用户主题目录/loader/选择；合法/非法 JSON、缺字段、坏颜色、ID 冲突/重复、已选文件删除的回退与 file/field 错误；内置验收仍强制，自定义对比提示不阻断。
-- **设计完成 ≠ 功能实现**：本文件提交后只是设计；A/B 分别建 feature 并验收，未实现前不得在 UI 文案或 README 声称已支持 Moon/Dawn 切换/自定义。
-- 依赖升级独立验收：MyGo 更新不混入本设计 PR 的配色实现；升级后重新核对 `SetTheme/SetSource/OnUpdated/Preferences/markdown/animations` 接口并跑目标测试。
+### 更多方案与自定义（#97，后续）
+
+保留 `UserConfigDir()/Saki/themes/*.json` 的本地加载方向：稳定且唯一的小写 kebab-case ID、显示名、light/dark kind、schema version 和语义颜色。复用 #96 的唯一解析/校验边界，不做品牌继承、脚本、表达式、商城、同步或热重载。完整字段集合应以 #96 实际消费的语义角色定稿，不继续执行已被新工作卡设计替代的旧字段清单。
+
+内置 ID 不能被覆盖；重复 ID/无效文件给出文件与字段错误，仅影响对应方案。当前选中的文件丢失或无效时，回退同 kind 的内置方案，保留用户所选 ID 便于恢复，不改写文件。自定义对比度可提示；内置方案必须通过实际使用组合的可读性检查。
+
+### 验收
+
+- #96 交付内置方案、system/light/dark、保存和恢复；#97 后续交付文件加载/发现/选择。布局和工作区本身由 #130 实施，不互相复制。
+- 两色下正常/工作/失败/禁用/焦点状态，默认/960×640/1040×720/宽窗口，包含独立 Appearance 与联系人设置；浏览器、headless、真实原生窗口分别标注。
+- 切换与重启后方案正确，任务、草稿、焦点、选择与滚动保留；旧 store 和保存失败不损坏联系人。
+- 正文/小字按实际前后景组合检查 4.5:1；焦点可见、状态不只靠颜色。原型已有 18 组计算不代表全原生控件通过。
+- 设计与文档更新不等于产品已实现，Go 测试、真实系统切换与候选 SHA 证据分别记录。
 
 ### 依赖快照与上游差异（只读核对，不作为冻结政策）
 
@@ -390,23 +238,17 @@ type resolvedTheme struct {
 
 ## 头像（Saki mascot）
 
-- 当前默认（candidate default，proposed）：内置 imagegen 生成的原图（1254×1254 RGBA），只做 256px 等比缩放，未做二次创作。Prompt：original minimal cat head, pale lavender, Rose Pine rose tuft/ears, dark plum outline, transparent background, readable at small size。
-- 资产：[previews/assets/saki-avatar-default.png](previews/assets/saki-avatar-default.png)，256×256 RGBA PNG。同一份优化字节以单个 data URI 内嵌在 fragment 中，供离线 sandbox 使用；不写入 widget state，也不引入 picker、上传或 contact 级头像抽象。
-- 当前原生（#90）：rail 32px、header 28px；主聊天不再逐条重复头像，历史引用/demo 仍可在需要时显示 28px；同一默认 mascot，圆角 tile 使用 overlay 背景。旧浏览器原型曾用 rail/消息 28px、header 36px，已属历史，不作为当前尺寸契约。
-- 头像是装饰（`alt=""`），名字始终保持可见；选中态属于行与名字，不改变 mascot 颜色。改名/切换主题不会重置历史；绑定后 profile 锁定，只有显示名可改。
-- 未来：same-family 的可选头像集合，保持一致的 silhouette、linework 与 Rose Pine／Dawn 调色。
-- 验证：头像针对性检查 27/27 通过——内嵌字节与 workspace 资产逐字节一致，256px RGBA，各位置 `naturalWidth` 256，新建／重命名／回复／Working 均使用默认头像，选中不重着色，1024／320 light／dark 无横向溢出，0 运行时错误。
+沿用现有 [mascot 资产](previews/assets/saki-avatar-default.png)，不新增上传、picker 或身份/成长机制。基线 #90 原生 rail 32px、header 28px 是旧代码事实；目标尺寸与圆形气泡头像只按 [当前视觉规则](desktop-workbench.md#美学规则) 实施。名称与选中态保持可辨，不依靠 mascot 颜色表达状态。可选头像集合留后续，不绑定已移除的旧 palette。
 
 ## 关键流程（当前原生应用）
 
 1. **选择 contact**：切换 name、profile、messages 与 draft；草稿按 contact 保存。A 在 runtime 执行时切到 B 查看不会 cancel A；首轮 B 的发送返回 busy。状态词只描述工作：Ready／Working／Needs attention，不假装在线。
-2. **Add contact**：一次点击直接创建、选中 Ready 默认联系人并进入空会话；无需填写 Name／Purpose／Instructions／Workspace。composer 只取得一次焦点，连续创建也可直接输入。个性化通过可选 Settings 编辑；首次发送才创建 runtime session。浏览器旧示意的 Create／Cancel 表单是历史原型。
+2. **Add contact**：一次点击直接创建、选中 Ready 默认联系人并进入空会话；无需填写 Name／Purpose／Instructions／Workspace。composer 只取得一次焦点，连续创建也可直接输入。个性化通过可选 Settings 编辑；首次发送才创建 runtime session。
 3. **Contact settings**：显示名始终可编辑；purpose／instructions／workspace 只在首次 create 时使用，绑定后只读。不会提示“changes apply to future messages”，也不会重建 session 或丢历史/草稿。
 4. **Composer**：textarea、Send 与 Stop；Enter 发送、Shift+Enter 换行、IME 组合期不发送。发送进入真实 runtime：接纳后显示等待开始，`task_started` 后才 Working；delta 流式、final 覆盖同一项；工具与最终文字按 task 归属。当前没有附件入口。
-5. **Source action（仅浏览器/本地 fixture 历史）**：样例来源面板与 View in conversation 是旧演示能力；真实模式暂不展示样例 Sources，也不伪造引用。
-6. **History action**：对当前 contact 已加载的 transcript 做本地过滤；无结果有明确说明。它不等于 runtime 的 `search_history`，也不会出现其他 contact 的消息或暗示 shared memory。
+5. **History action**：对当前 contact 已加载的 transcript 做本地过滤；无结果有明确说明。它不等于 runtime 的 `search_history`，也不会出现其他 contact 的消息或暗示 shared memory。
 
-## 状态与反馈
+## 状态与反馈（dev@47d01ee 的实现事实）
 
 | 状态 | 表现与下一步 |
 | --- | --- |
@@ -415,33 +257,7 @@ type resolvedTheme struct {
 | Needs attention | gold 状态 + 已保存的失败/中断原因；不在未知接纳时自动重发 |
 | No history results | 说明该 query 在此 contact 已加载历史中无匹配，建议更短的短语 |
 | Validation | Settings 保存时名称不得为空；绑定后 profile 字段只读 |
-| Sources | 仅旧浏览器/fixture 历史；真实模式不显示样例引用 |
-
-## 可访问性与可视化契约（浏览器示意）
-
-原生 button／input／textarea，语义标签与可见 focus；aria-live 只播报有意义的更新（联系人切换、回复到达、创建/保存、无结果）；用户文本一律通过 textContent 写入 DOM。所有 ID 唯一，CSS 限定在 `#saki-desktop-contacts` 下。1024／736／375／320 宽度与 light/dark 均可读，无横向溢出。
-
-## 验收清单（2026-10-14 浏览器历史记录）
-
-以下是浏览器旧原型的历史结果，不替代当前原生流程验收。当前创建与设置证据见上文 Runtime-backed native app；本节仅是浏览器历史快照。
-
-- [x] Saki 默认选中，MyGo 桌面 shell 会话可读，最终回复带 “2 earlier messages”，Activity 可展开为 search／read 进度，无原始 reasoning。
-- [x] 选择切换 name/profile/messages/draft；Ren 的 Working 与切走/切回保持；Mio unread 清除。
-- [x] Add contact 的校验、创建、取消；Settings 保存后 header 与列表更新。
-- [x] Composer 的 Enter／Shift+Enter；发送后 working→reply 归属正确；附件 chip 可移除。
-- [~] IME 组合保护只做了代码走查（`event.isComposing` 与 `keyCode === 229`），未用真实输入法组合输入实测。
-- [x] Sources 打开、引用内容与原文、View in conversation 定位高亮；History 搜索、无结果、仅当前 contact。
-- [x] 1024／736／375／320 无横向溢出；light／dark 正常；fragment 自身无网络请求。
-- [x] 所有 contact（含新建与重命名）共用同一默认 mascot，rail／header／messages／working 均加载；装饰 `alt=""`；选中不改变 mascot 颜色。可选头像家族属于后续工作。
-
-## 浏览器验证（2026-10-14）
-
-- 环境：本地 Chrome（headless）＋ Playwright；对象是 [previews/desktop-contacts.html](previews/desktop-contacts.html) 经 `render.py` 生成的独立预览。截图与脚本只放在 QA 临时目录，不进入仓库。
-- 结果：57/57 项交互检查通过，0 个页面脚本错误；1024／736／375／320 均无横向溢出；历史浏览器预览使用旧 Main／Dawn 表，`light-dark()` 角色可解析；这不是 #92 的 Moon/Dawn 设计验收。
-- 覆盖：默认会话与 Activity、逐 contact 草稿、切换期间回复归属与 unread、Add／Settings、附件 chip、Sources 揭示与高亮、History 范围与无结果、Ren 的 Working→Needs attention→Try again→Ready。最后两处文案调整（m2／m4 的引用配对与 composer 工作态文案）另做了 16/16 的针对性回归检查（copy-check.log）。
-- 头像更新的针对性验证：27/27 通过——内嵌字节与 workspace 资产逐字节一致（sha256）、256px RGBA、各位置 `naturalWidth` 256、新建／重命名／回复／Working 均使用默认头像、选中不重着色、1024／320 light／dark 无横向溢出、0 运行时错误。
-- 限制：所有 Working／回复／历史都是本地模拟，不代表后端并行或真实模型调用；sandbox 预览禁止原生表单提交，因此发送／创建／保存走显式本地处理；Lucide 图标由宿主沙箱提供，脱离宿主的独立预览会显示空占位；host 模型配置、后台并行与 contact 级持久化仍 deferred。
 
 ## 当前不做
 
-多 agent 协作、shared memory、同宿主后台并行执行、原始推理链展示、contact 级模型/provider/key 设置（deferred）、附件、头像 picker／上传／contact 级头像设置（same-family 集合以后再评估）。Stop／取消已实现，只按 `(session,task)` 生效。主题编辑器、主题商城/下载/同步、主题热重载、自绘 titlebar 不在当前承诺；#92 只交付设计，A/B 功能另立任务。
+多 agent 协作、shared memory、同宿主后台并行执行、原始推理链展示、contact 级模型/provider/key 设置（deferred）、附件、头像 picker／上传／contact 级头像设置（same-family 集合以后再评估）。Stop／取消已实现，只按 `(session,task)` 生效。主题编辑器、主题商城/下载/同步、主题热重载不在当前范围；主题切换与自定义分别由 #96/#97 交付，标题栏按 #101 在途任务推进。当前基线限制不覆盖后续任务已明确的实施范围。

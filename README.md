@@ -30,7 +30,7 @@ Runtime 承担模型调用、工具执行、会话、上下文与执行事件等
 
 模型调用、工具执行和上下文压缩应当有统一的实现路径。界面提交请求、观察事件，无需自行编排模型与工具循环。这样，交互形态可以变化，运行行为仍然可理解、可验证。
 
-当前 `Agent` 已通过事件报告文本增量、工具调用、用量、压缩与任务结果，不依赖终端绘制。TUI 和纯文本 console 连接同一个会话管理入口；GUI 展示尚未接入这个核心。
+当前 `Agent` 已通过事件报告文本增量、工具调用、用量、压缩与任务结果，不依赖终端绘制。TUI 和纯文本 console 连接同一个会话管理入口；GUI 通过 stdio 机器接口连接真实 Runtime，消费任务事件与执行历史。
 
 ### 区分会话、执行与长期状态
 
@@ -68,7 +68,7 @@ Session 承载一段工作的上下文与历史；一次任务执行有自己的
 | 工作上下文 | 已实现 usage 校准、自动 compact、有限超限恢复及 checkpoint |
 | 会话 | 已实现 JSONL 历史、显式恢复、新建／切换／重命名；当前一个 `SessionManager` 同时执行一个任务 |
 | TUI／console 展示 | 已接入 Rust 核心；TUI 提供工作记录、Markdown、工具展开、图文输入与会话操作 |
-| GUI 展示 | `desktop/` 提供 MyGo 原生 UI 设计预览，回复、活动和历史查询使用本地演示数据，尚未连接 Rust 核心 |
+| GUI | `desktop/` 提供 MyGo 原生应用，已连接真实 Runtime；当前三栏气泡与独立工作区仍在实施，设计原型不等于产品交付 |
 | 多 session 重叠执行 | 已有[需求说明](docs/requirements/agent-runtime.md)，尚未实施 |
 | 长期成长 | 已有设计与独立实验，尚未接入主 Agent |
 
@@ -111,7 +111,7 @@ SAKI_UI=console cargo run
 SAKI_SESSION=your-session-id cargo run
 ```
 
-历史默认保存在当前工作目录的 `.saki/sessions/`。恢复会话会读取已保存状态，不自动重跑未完成的模型或工具任务。更多操作见[会话管理](docs/design/session-management.md)、[本地命令](docs/design/command-system.md)和 [TUI 使用说明](docs/design/tui.md)。GUI 预览的运行方式见[桌面展示文档](docs/design/desktop.md)。
+历史默认保存在当前工作目录的 `.saki/sessions/`。恢复会话会读取已保存状态，不自动重跑未完成的模型或工具任务。更多操作见[会话管理](docs/design/session-management.md)、[本地命令](docs/design/command-system.md)和 [TUI 使用说明](docs/design/tui.md)。GUI 的运行方式见[桌面应用文档](docs/design/desktop.md)，当前视觉与初版范围见[工作台设计](docs/design/desktop-workbench.md)。
 
 ## 从哪里开始理解与构建
 
@@ -126,7 +126,7 @@ SAKI_SESSION=your-session-id cargo run
 | [`src/model/`](src/model/) | 模型目录、匹配与容量信息 |
 | [`src/tools/`](src/tools/) | 工具注册、内置工具与输出处理 |
 | [`src/frontend/`](src/frontend/) | TUI 与 console 输入、展示适配 |
-| [`desktop/`](desktop/) | 独立的 Go GUI 设计预览 |
+| [`desktop/`](desktop/) | 通过 stdio 连接 Agent Runtime 的独立 Go GUI |
 | [`examples/`](examples/) | 独立实验入口与实验材料 |
 
 构建自己的宿主时，可以从 `SessionCommand`／`SessionEvent` 的请求与事件边界理解调用方式；扩展工具可以从 `ToolRegistry` 与现有工具入手。应用负责组装，Runtime 保持唯一的执行循环。具体契约见[模型调用分层](docs/design/model-runtime.md)和[工具实现](docs/design/builtin-tools.md)。
