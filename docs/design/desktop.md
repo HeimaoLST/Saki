@@ -1,10 +1,12 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-23。状态：**实现事实基线为 dev@47d01ee（#63、#90）；主题与新工作台为待实施设计**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
+更新日期：2026-10-24。状态：**实现事实基线为 dev@47d01ee（#63、#90）；主题与新工作台为待实施设计**。本次仅更新产品定义引用，不新增原生验收结论。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
 
-现行产品要求以用户与 PM 最新讨论及 [Desktop workbench](desktop-workbench.md) 为准；#130 实施原生初版，#96 实施外观。旧浏览器预览与被替代的布局/配色要求已移除，历史可查 Git。本文保留明确标注的原生实现事实和主题接线契约；代码仍使用 Main/Dawn 派生色是基线事实，不是后续开发目标。当前视觉基准为纸白/夜林，不能把设计更新写成生产已换色。
+现行产品定义以 [Nagi 产品定义与需求](../requirements/desktop.md) 为准，视觉与交互以 [Desktop workbench](desktop-workbench.md) 为准；#130 实施阶段性的原生初版，#96 实施外观。旧浏览器预览与被替代的布局/配色要求已移除，历史可查 Git。本文保留原生实现事实和主题接线契约；单会话映射、单执行槽及代码中的 Main/Dawn 派生色均为基线事实，不是最终产品要求。
 
 ## 已确认需求与交付边界
+
+本节记录 #63 阶段行为。Nagi 的联系人可以关联持续对话与多项工作的执行会话；以下 contact → 单 `session_id` 是旧版存储映射，不对最终产品模型作限制。本次修订不改字段、已有数据或迁移方式。
 
 需求／产品决定（用户确认，#44）：首次使用无需先定义 agent。添加联系人即得到可输入的默认通用助手；name／purpose／instructions／workspace 为可选设置。默认助手不解决 host 的模型、凭据与工具配置。
 
@@ -133,7 +135,7 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 - 本机验收 env：`SAKI_GUI_WORKDIR=/Users/heimaolst/Workspace/Rust/Saki`，`SAKI_GUI_STORE=/private/tmp/saki-gui-63-native-review/contacts.json`，`SAKI_SESSION_DIR=/private/tmp/saki-gui-63-native-review/sessions`，`SAKI_API=openai-chat-completions`，root 已有 `.env`；重启时 unset `SAKI_RUNTIME_BIN`，应用包内 helper 可直接恢复。
 - **未验范围**：CUA 的 typeText 对中文有工具注入限制，因此不能宣称真实系统 IME 组合期已验；VoiceOver 与 light 系统主题也未实测（light/dark 只有 headless 覆盖）。Shift+Enter 与 Unicode 粘贴已验。
 
-## 已知限制
+## 已知限制（dev@47d01ee 的 GUI 基线）
 
 - 单 active task；并发/后台执行由 #61 承载，不承诺 UI 的并行观感。
 - `search_history`／`read_history` 未实现；History 只对已加载 transcript 做本地过滤，不是模型检索工具。
@@ -145,9 +147,9 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 
 ## 产品模型
 
-联系人是 GUI 中可交谈也可独立工作的 Agent 入口。消息、一次执行和长期事项有不同生命周期：消息是沟通，执行事实来自 Runtime，长期事项/轨迹属于后续 GUI 应用层能力。现行布局、行为与首单范围只在 [Desktop workbench](desktop-workbench.md) 维护；本文件不保留另一套产品模型。
+联系人、事项、对话会话与执行会话的关系，以及自主工作与 GUI/TUI 协作目标，统一在 [Nagi 产品定义与需求](../requirements/desktop.md) 维护。本文件只记录实现事实和接线；[Desktop workbench](desktop-workbench.md) 记录对应界面及阶段原型，不再分别定义产品。
 
-## 与完整 runtime 需求的剩余差距（实现事实）
+## 与完整产品目标的差距（dev@47d01ee 的 GUI 基线）
 
 | 能力 | 当前实现 | 说明 |
 | --- | --- | --- |
@@ -157,7 +159,7 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 | 附件 | 未接入 GUI；runtime 现有图片输入能力未暴露 | 不保存文件内容 |
 | 模型配置 | host 环境变量／启动配置；contact 级配置 deferred | GUI 不改写 API/key |
 
-上述是当前交付边界；不得把单执行槽或本地过滤写成并发执行／模型检索已完成。
+上述是该 GUI 基线的交付边界，不表示最新 Runtime 仍缺少同样能力；当前服务实现见 [Runtime API](runtime-api.md)。不得把单执行槽或本地过滤写成 GUI 已完成并发执行／模型检索，也不能把旧限制继续当作产品目标。
 
 ## 主题系统
 
@@ -258,6 +260,6 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 | No history results | 说明该 query 在此 contact 已加载历史中无匹配，建议更短的短语 |
 | Validation | Settings 保存时名称不得为空；绑定后 profile 字段只读 |
 
-## 当前不做
+## 该阶段未覆盖的能力
 
 多 agent 协作、shared memory、同宿主后台并行执行、原始推理链展示、contact 级模型/provider/key 设置（deferred）、附件、头像 picker／上传／contact 级头像设置（same-family 集合以后再评估）。Stop／取消已实现，只按 `(session,task)` 生效。主题编辑器、主题商城/下载/同步、主题热重载不在当前范围；主题切换与自定义分别由 #96/#97 交付，标题栏按 #101 在途任务推进。当前基线限制不覆盖后续任务已明确的实施范围。

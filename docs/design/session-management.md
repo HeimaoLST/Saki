@@ -1,10 +1,10 @@
 # Session management
 
-Updated: 2026-10-20. Status: implemented. Local slash commands are implemented; see [Local command system](command-system.md). The accepted machine API contract and phased runtime work are documented in [Runtime API](runtime-api.md); implementation is delivered in #60.
+Updated: 2026-10-24. Status: implemented session storage and host behavior, with product terminology clarified in this revision. Local slash commands are implemented; see [Local command system](command-system.md). Current service capacity and host contracts are documented in [Runtime API](runtime-api.md).
 
 ## Behavior
 
-SAKI supports multiple persistent conversations with **one active job at a time**. A personal-assistant host can always select the same session ID; a development host can select different IDs for different jobs. Both use the same Agent loop.
+SAKI supports multiple persistent conversations. At `dev@fd58ec2`, the Runtime defaults to a capacity of one active task and supports configuring concurrent tasks in different sessions; each individual session still accepts at most one active task. Host UI limits are separate from Runtime capacity. A host can reuse a session or create separate sessions for different work, using the same Agent loop; neither choice defines the final Nagi contact model.
 
 Plain startup always creates a fresh session; it never restores stored history implicitly. Existing history is restored only through an explicit `SAKI_SESSION=<id>`, `/resume <id>`, or the session picker. `SAKI_SESSION=new` explicitly requests the same fresh-session behavior as plain startup. Opening a session reads history; it does not call the model, resume an unfinished job, or execute tools. Opening also takes an exclusive journal lock; because `fork(2)` copies the descriptor table, a child that has not `exec`'d yet can briefly keep a released lock alive, so lock acquisition retries for a bounded window before reporting the session as locked.
 
@@ -14,7 +14,7 @@ A session also records the wire protocol it was created on (`api`: `openai-respo
 
 Session isolation covers conversation state and output directories. Two sessions using the same working directory still modify the same files. Switching sessions does not roll back the filesystem, create a worktree, or provide a sandbox.
 
-A session is not SAKI's long-term identity. Shared beliefs, experiences, and relationship history remain outside this implementation; session contents are not automatically mixed into one another's prompts.
+A session is a context and history boundary, not an application-level contact or work item. Nagi's target model associates a continuing conversation and separate work sessions with the same contact; see [Nagi product requirements](../requirements/desktop.md). Shared beliefs, experiences, and relationship history remain outside this session implementation; session contents are not automatically mixed into one another's prompts.
 
 ## Use
 
