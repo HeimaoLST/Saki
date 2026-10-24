@@ -27,6 +27,10 @@ use super::{
         HostConfiguration, PreparedModelConfig, UpgradeOptions, prepare_configuration,
         resolve_connection, select_connection,
     },
+    context::{
+        ContextChunk, ContextResource, ContextScope, ContextStore, OpenContext, ReadContext,
+        SearchContext, SearchPage,
+    },
     store::{SessionMetadata, SessionStore, SessionSummary},
     title, tool_context,
 };
@@ -283,8 +287,26 @@ pub struct AcceptedTask {
     pub events: TaskEvents,
 }
 
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SendOptions {
+    #[serde(default)]
+    pub context_sources: Vec<String>,
+}
+
 #[derive(Serialize)]
 pub enum RuntimeCommand {
+    ContextOpen(OpenContext),
+    ContextRead(ReadContext),
+    ContextSearch(SearchContext),
+    ContextRelease {
+        context_ref: String,
+    },
+    SendWithOptions {
+        session_id: String,
+        message: UserMessage,
+        options: SendOptions,
+    },
     TaskStatus {
         session_id: String,
         task_id: String,
@@ -350,6 +372,12 @@ pub enum RuntimeCommand {
 }
 
 pub enum RuntimeReply {
+    ContextOpened(ContextResource),
+    ContextRead(ContextChunk),
+    ContextSearch(SearchPage),
+    ContextReleased {
+        released: bool,
+    },
     TaskStatus(TaskState),
     Capabilities(Capabilities),
     Connections(Vec<ConnectionView>),
@@ -401,6 +429,7 @@ pub struct Capabilities {
     pub multi_connection: bool,
     pub external_tools: bool,
     pub caller_context: bool,
+    pub context_access: super::context::ContextLimits,
 }
 
 #[derive(Clone)]
@@ -475,6 +504,7 @@ impl RuntimeHandle {
 
 pub struct Runtime {
     store: Arc<SessionStore>,
+    contexts: ContextStore,
     client: ModelClient,
     cwd: PathBuf,
     model: String,
@@ -502,6 +532,7 @@ impl Runtime {
     ) -> Self {
         Self {
             store: Arc::new(store),
+            contexts: ContextStore::default(),
             client,
             cwd,
             model,
@@ -623,6 +654,7 @@ impl Runtime {
             output,
             work_drained: drained_tx,
             sessions: HashMap::new(),
+            contexts: self.contexts,
             active: HashMap::new(),
             max_active_tasks: self.max_active_tasks,
             automatic_titles: self.automatic_titles,
@@ -666,11 +698,13 @@ struct OpDone {
 }
 
 enum Prepared {
+    Context(Box<RuntimeReply>),
     ResourcesClosed,
     SendReady {
         session_id: String,
         revision: u64,
         message: UserMessage,
+        options: SendOptions,
         resources: SessionTools,
         registry: ToolRegistry,
     },
@@ -789,6 +823,7 @@ struct RuntimeActor {
     output: OutputState,
     work_drained: watch::Sender<bool>,
     sessions: HashMap<String, SessionEntry>,
+    contexts: ContextStore,
     active: HashMap<String, Active>,
     max_active_tasks: usize,
     automatic_titles: bool,
@@ -823,6 +858,7 @@ impl RuntimeActor {
         if output_closed_seen {
             self.accepting = false;
         }
+        let mut context_expiry = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             if !self.accepting
                 && self.in_flight == 0
@@ -869,6 +905,7 @@ impl RuntimeActor {
                     self.accepting = false;
                     self.active.retain(|_, active| active.result.is_none());
                 }
+                _ = context_expiry.tick() => self.contexts.expire_idle(),
                 Some(done) = self.ops_rx.recv() => self.finish_op(done),
                 Some(done) = self.workers_rx.recv() => self.finish_worker(done),
                 Some(session_id) = self.title_claims_rx.recv() => {
@@ -908,7 +945,7 @@ impl RuntimeActor {
                         Some(envelope) => {
                             let stopped_control = matches!(
                                 &envelope.command,
-                                RuntimeCommand::Cancel { .. } | RuntimeCommand::Shutdown
+                                RuntimeCommand::Cancel { .. } | RuntimeCommand::Shutdown | RuntimeCommand::Status { .. } | RuntimeCommand::TaskStatus { .. } | RuntimeCommand::ContextRelease { .. }
                             );
                             if self.accepting || stopped_control {
                                 self.handle_command(envelope);
@@ -966,7 +1003,11 @@ impl RuntimeActor {
         while let Ok(envelope) = self.commands.try_recv() {
             if matches!(
                 &envelope.command,
-                RuntimeCommand::Cancel { .. } | RuntimeCommand::Shutdown
+                RuntimeCommand::Cancel { .. }
+                    | RuntimeCommand::Shutdown
+                    | RuntimeCommand::Status { .. }
+                    | RuntimeCommand::TaskStatus { .. }
+                    | RuntimeCommand::ContextRelease { .. }
             ) {
                 self.handle_command(envelope);
             } else {
@@ -1106,9 +1147,87 @@ impl RuntimeActor {
         let _ = done.reply.send(reply);
     }
 
+    fn spawn_context_op(
+        &mut self,
+        mut reply: oneshot::Sender<ReplyResult>,
+        command: RuntimeCommand,
+    ) {
+        self.in_flight += 1;
+        let resources = self.contexts.clone();
+        let store = self.store.clone();
+        let done = self.ops_tx.clone();
+        tokio::spawn(async move {
+            let cancellation = super::context::ReadCancellation::new();
+            let cancel = cancellation.flag.clone();
+            let reader_resources = resources.clone();
+            let mut job = tokio::task::spawn_blocking(move || {
+                Ok(match command {
+                    RuntimeCommand::ContextOpen(request) => RuntimeReply::ContextOpened(
+                        reader_resources.open(&store, request, None, &cancel)?,
+                    ),
+                    RuntimeCommand::ContextRead(request) => {
+                        RuntimeReply::ContextRead(reader_resources.read(request, None)?)
+                    }
+                    RuntimeCommand::ContextSearch(request) => {
+                        RuntimeReply::ContextSearch(reader_resources.search(request, None)?)
+                    }
+                    _ => unreachable!(),
+                })
+            });
+            let outcome = tokio::select! {
+                biased;
+                _ = reply.closed() => {
+                    cancellation.flag.store(true, std::sync::atomic::Ordering::Release);
+                    job.await
+                }
+                result = &mut job => result,
+            };
+            let mut result = outcome.unwrap_or_else(|_| {
+                Err(RuntimeError::new("runtime_error", "context reader failed"))
+            });
+            if reply.is_closed() {
+                if let Ok(RuntimeReply::ContextOpened(resource)) = &result {
+                    let _ = resources.release(&resource.context_ref, None);
+                }
+                result = Err(RuntimeError::new(
+                    "cancelled",
+                    "context caller stopped waiting",
+                ));
+            }
+            let _ = done
+                .send(OpDone {
+                    reply,
+                    session_id: None,
+                    result: result.map(|reply| Prepared::Context(Box::new(reply))),
+                })
+                .await;
+        });
+    }
+
     fn handle_command(&mut self, envelope: Envelope) {
         let Envelope { command, reply } = envelope;
         match command {
+            RuntimeCommand::ContextRelease { context_ref } => {
+                let result = self
+                    .contexts
+                    .release(&context_ref, None)
+                    .map(|released| RuntimeReply::ContextReleased { released });
+                let _ = reply.send(result);
+            }
+            command @ (RuntimeCommand::ContextOpen(_)
+            | RuntimeCommand::ContextRead(_)
+            | RuntimeCommand::ContextSearch(_)) => {
+                if !self.admit() {
+                    self.reject_busy(reply);
+                    return;
+                }
+                self.spawn_context_op(reply, command);
+            }
+            RuntimeCommand::SendWithOptions {
+                session_id,
+                message,
+                options,
+            } => self.send_command(reply, session_id, message, options),
             RuntimeCommand::TaskStatus {
                 session_id,
                 task_id,
@@ -1159,7 +1278,9 @@ impl RuntimeActor {
                         output_dir: self.cwd.join(".saki/tool-output"),
                     },
                 );
-                let builtin = registry.list_definition();
+                let mut builtin = registry.list_definition();
+                builtin.extend(crate::tools::context::definitions());
+                builtin.sort_by(|a, b| a.name.cmp(&b.name));
                 let tools = self.tools.clone();
                 let cwd = self.cwd.clone();
                 self.spawn_async_op(reply, None, async move {
@@ -1241,6 +1362,10 @@ impl RuntimeActor {
                         "session.list",
                         "session.rename",
                         "session.history",
+                        "context.open",
+                        "context.read",
+                        "context.search",
+                        "context.release",
                         "session.status",
                         "session.release",
                         "task.send",
@@ -1255,6 +1380,7 @@ impl RuntimeActor {
                     multi_connection: self.connections.is_some(),
                     external_tools: self.tools.is_some(),
                     caller_context: true,
+                    context_access: super::context::ContextLimits::default(),
                 })));
             }
             RuntimeCommand::Models { connection_id } => {
@@ -1566,7 +1692,7 @@ impl RuntimeActor {
                 session_id,
                 message,
             } => {
-                self.send_command(reply, session_id, message);
+                self.send_command(reply, session_id, message, SendOptions::default());
             }
             RuntimeCommand::Cancel {
                 session_id,
@@ -1924,7 +2050,20 @@ impl RuntimeActor {
         reply: oneshot::Sender<ReplyResult>,
         session_id: String,
         message: UserMessage,
+        options: SendOptions,
     ) {
+        if options.context_sources.len() > 32
+            || options
+                .context_sources
+                .iter()
+                .any(|source| self.store.directory(source).is_err())
+        {
+            let _ = reply.send(Err(RuntimeError::new(
+                "invalid_request",
+                "context_sources must contain at most 32 valid session IDs",
+            )));
+            return;
+        }
         if !self.sessions.contains_key(&session_id) {
             if self
                 .connections
@@ -1961,7 +2100,7 @@ impl RuntimeActor {
             .clone()
             .unwrap_or_else(config::default_tool_selection);
         if selection.external.is_empty() {
-            let result = self.admit_task(session_id, message);
+            let result = self.admit_task(session_id, message, options);
             let _ = reply.send(result);
             return;
         }
@@ -1993,6 +2132,7 @@ impl RuntimeActor {
                 session_id: id,
                 revision: metadata.config_revision,
                 message,
+                options,
                 resources: tools.resources,
                 registry,
             })
@@ -2075,7 +2215,12 @@ impl RuntimeActor {
         self.validate_send(session_id, message)
     }
 
-    fn admit_task(&mut self, session_id: String, message: UserMessage) -> ReplyResult {
+    fn admit_task(
+        &mut self,
+        session_id: String,
+        message: UserMessage,
+        options: SendOptions,
+    ) -> ReplyResult {
         self.validate_send(&session_id, &message)?;
         let session = &self.sessions[&session_id];
         let task_id = journal::new_id().map_err(|error| io_error(error).session(&session_id))?;
@@ -2119,11 +2264,34 @@ impl RuntimeActor {
         } else {
             None
         };
-        let agent = self
+        let selected_context_tools = configuration
+            .tool_selection
+            .as_ref()
+            .expect("admission fixes tool selection")
+            .builtin
+            .clone();
+        let mut source_sessions: HashSet<_> = options.context_sources.into_iter().collect();
+        source_sessions.insert(session_id.clone());
+        let task_context = crate::tools::context::TaskContext {
+            scope: ContextScope {
+                task_id: task_id.clone(),
+                sessions: source_sessions,
+                cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            },
+            resources: self.contexts.clone(),
+            sessions: self.store.clone(),
+        };
+        let mut agent = self
             .sessions
             .get_mut(&session_id)
             .and_then(|session| session.agent.take())
             .expect("admission retains the validated idle agent");
+
+        crate::tools::context::install(
+            agent.tool_registry_mut(),
+            &selected_context_tools,
+            &task_context,
+        );
 
         let (cancel, cancel_rx) = watch::channel(false);
         let (sink, events) =
@@ -2148,6 +2316,7 @@ impl RuntimeActor {
         let start_gate = self.task_start_gate.take();
         let config_revision = configuration.config_revision;
         let worker = tokio::spawn(async move {
+            let _task_context = task_context;
             let mut agent = agent;
             let execution = AssertUnwindSafe(async {
                 #[cfg(test)]
@@ -2408,10 +2577,12 @@ impl RuntimeActor {
 
     fn apply(&mut self, prepared: Prepared) -> std::result::Result<RuntimeReply, RuntimeError> {
         match prepared {
+            Prepared::Context(reply) => Ok(*reply),
             Prepared::ResourcesClosed => Ok(RuntimeReply::Shutdown { state: "drained" }),
             Prepared::SendReady {
                 session_id,
                 message,
+                options,
                 resources,
                 registry,
                 ..
@@ -2427,7 +2598,7 @@ impl RuntimeActor {
                     .replace_tools(registry);
                 session.resources = resources;
                 session.tool_error = None;
-                self.admit_task(session_id, message)
+                self.admit_task(session_id, message, options)
             }
             Prepared::Tools { builtin, sources } => Ok(RuntimeReply::Tools { builtin, sources }),
             Prepared::TaskStatus(state) => Ok(RuntimeReply::TaskStatus(state)),

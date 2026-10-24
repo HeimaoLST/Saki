@@ -1,5 +1,6 @@
 pub mod channel;
 pub mod config;
+pub mod context;
 pub mod host;
 pub mod runtime;
 pub mod stdio;

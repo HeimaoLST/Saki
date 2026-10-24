@@ -1,4 +1,7 @@
 use super::*;
+
+#[path = "context_service.rs"]
+mod context_service;
 use crate::test_support::{completed, read_request, requests, scripted_http};
 use tokio::io::{BufReader, DuplexStream, Lines};
 

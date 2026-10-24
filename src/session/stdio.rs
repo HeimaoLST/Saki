@@ -10,7 +10,8 @@ use tokio::{
 
 use super::config::ConfigPatch;
 use super::runtime::{
-    Association, Runtime, RuntimeCommand, RuntimeError, RuntimeReply, TaskEvent, TaskFinished,
+    Association, Runtime, RuntimeCommand, RuntimeError, RuntimeReply, SendOptions, TaskEvent,
+    TaskFinished,
 };
 use crate::agent::{
     AgentEvent,
@@ -93,6 +94,8 @@ struct SendTask {
     message: Message,
     #[serde(default)]
     context: Vec<ContextInput>,
+    #[serde(default)]
+    context_sources: Vec<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -139,6 +142,12 @@ struct UpdateConfig {
 struct Rollback {
     session_id: String,
     expected_revision: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextRef {
+    context_ref: String,
 }
 
 #[derive(Deserialize)]
@@ -246,6 +255,18 @@ fn decode(bytes: &[u8]) -> (Option<String>, Result<RuntimeCommand, RuntimeError>
                     title: p.title,
                 }
             }
+            "context.open" => {
+                RuntimeCommand::ContextOpen(params::<super::context::OpenContext>(value)?)
+            }
+            "context.read" => {
+                RuntimeCommand::ContextRead(params::<super::context::ReadContext>(value)?)
+            }
+            "context.search" => {
+                RuntimeCommand::ContextSearch(params::<super::context::SearchContext>(value)?)
+            }
+            "context.release" => RuntimeCommand::ContextRelease {
+                context_ref: params::<ContextRef>(value)?.context_ref,
+            },
             "session.history" => {
                 let p: History = params(value)?;
                 RuntimeCommand::History {
@@ -262,18 +283,29 @@ fn decode(bytes: &[u8]) -> (Option<String>, Result<RuntimeCommand, RuntimeError>
             },
             "task.send" => {
                 let p: SendTask = params(value)?;
-                RuntimeCommand::Send {
-                    session_id: p.session_id,
-                    message: UserMessage {
-                        text: p.message.text,
-                        images: p
-                            .message
-                            .images
-                            .into_iter()
-                            .map(|i| ImageAttachment::new(i.name, i.data_url))
-                            .collect(),
-                        context: p.context,
-                    },
+                let message = UserMessage {
+                    text: p.message.text,
+                    images: p
+                        .message
+                        .images
+                        .into_iter()
+                        .map(|i| ImageAttachment::new(i.name, i.data_url))
+                        .collect(),
+                    context: p.context,
+                };
+                if p.context_sources.is_empty() {
+                    RuntimeCommand::Send {
+                        session_id: p.session_id,
+                        message,
+                    }
+                } else {
+                    RuntimeCommand::SendWithOptions {
+                        session_id: p.session_id,
+                        message,
+                        options: SendOptions {
+                            context_sources: p.context_sources,
+                        },
+                    }
                 }
             }
             "task.status" => {
@@ -518,6 +550,18 @@ async fn deliver(
                 },
             )
             .await;
+        }
+        RuntimeReply::ContextOpened(value) => {
+            reply(&output, &id, value).await;
+        }
+        RuntimeReply::ContextRead(value) => {
+            reply(&output, &id, value).await;
+        }
+        RuntimeReply::ContextSearch(value) => {
+            reply(&output, &id, value).await;
+        }
+        RuntimeReply::ContextReleased { released } => {
+            reply(&output, &id, json!({"released":released})).await;
         }
         RuntimeReply::History(value) => {
             reply(&output, &id, value).await;

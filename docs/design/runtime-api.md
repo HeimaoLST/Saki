@@ -1047,3 +1047,16 @@ history_required 时，桥在 Finished 前读取服务完整历史并发送同�
 此前 journal 文件依赖 File 关闭释放锁。复制描述符（包括 fork 到 exec 之间的继承）仍存活时，这个所有权结束边界不成立；Conversation 和 ConfigurationLock 两条路径均由受控 try_clone 夹具确定性复现同类错误（2 RED）。当前以同一 JournalLock 所有权 guard 在退出时显式 unlock，创建／恢复和配置检查失败路径也覆盖在该作用域内；列表的短期探测锁在读取完成后显式解除。不会解开其他 open-file-description 的新持有者，不改变真实持锁期间的排他、journal 字节或原有恢复重试契约。
 
 同一两项夹具修正后2 GREEN；它们还检查旧复制描述符关闭不会解除新持有者的锁。原 Linux 失败没有捕获当时持有者身份，因此这里说明确定性复现机制，不冒称直接抓到了那次 fork。最终完整门禁、实际 binary 消费与精确 SHA 在 PR131/#103 另行记录，不将 dfe/527 旧运行冒记为这一生产修正的验收。
+
+
+## #62 P1：只读上下文资源
+
+更新日期：2026-10-24。结论分级：实现候选，当前验收见 #62。
+
+已实现 `context.open/read/search/release` 的 typed 服务命令与 stdio v1 分派，两端使用同一资源表/有界 reader/投影和搜索；没有第二条 journal parser 或模型循环。`runtime.capabilities.context_access` 返回当前视图与有效资源/结果/扫描限额，methods 仅列已经实现的读取方法。完整 DTO 和错误契约见 [Session context access](session-context-access.md)，不在这里维护另一份副本。
+
+保留 `RuntimeCommand::Send { session_id, message }`；typed 入口可用 `SendWithOptions { session_id, message, options: SendOptions { context_sources } }`。stdio 的可选 params.context_sources 默认空，已有 params.context 文本资料保持原含义；没有选项时仍走原 Send。工具范围由实际接纳的 task 固定，自身 session 加显式来源，父 task 收尾自动释放所创建引用；调用方不向工具传 parent_task_id。正常 drain 期间保留状态/精确取消/引用释放控制，新的业务任务仍拒绝。
+
+公共消费设计 ACK：GUI [6385369882](https://github.com/HeimaoLST/Saki/issues/137#issuecomment-6385369882)、TUI [6385416198](https://github.com/HeimaoLST/Saki/issues/137#issuecomment-6385416198)，固定设计 acafa10。终端 context 展示估算也补入显式选中的真实上下文工具定义；默认四工具不变。Rust 新增 enum 变体仍需同步穷举分派，不能把旧 Send 构造方式保留当作所有外部 Rust 源码穷举匹配均兼容；仓库内 stdio 和终端桥已同步。
+
+P2 #135、P3 #136 分开推进：request/analysis/analyze_context 尚未宣告可用，P1 证据不替代真实缓存或监督质量验收。回滚可撤销新增方法/显式工具；旧 session 数据格式和原方法保持。

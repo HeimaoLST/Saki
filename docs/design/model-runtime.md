@@ -116,3 +116,14 @@ compact 仍由 Conversation 处理。摘要 transcript 使用公共历史表示�
 空闲目标可切换，已接纳目标返回 busy；另一个 session 运行不把本目标误判 busy。同版本竞争返回 config_conflict，有效值未改变不增加 revision。成功应用清除旧 usage 校准，后续正常 usage 会重新建立 baseline。降低预算沿用唯一 compact，summary/generation 都用新模型；失败保留上下文，不偷偷更换模型。
 
 含不透明 ProviderItem/provider_data 时首版拒绝改变模型，返回 continuation_not_supported 并保持文件和内存；同 API 不被当作原生续接兼容证明。跨连接、prompt/tool 更新和 schema 2 是 #106，GUI/TUI 选择控件不在此 Runtime PR。
+
+
+## #62 实跑发现的 Chat 原生 null 续接（2026-10-24）
+
+实现候选：Chat 的 `reasoning_content` 明确区分字段缺失、原生 null、空字符串和真实文本。JSON/SSE 经同一适配器保留观测值到 `provider_data`，再经 journal 序列化恢复；缺失字段不补造数据。null 不表示编造推理文字，也不产生可见空推理内容。原生标记使同一 assistant turn 的 content 和 tool_calls 连同 reasoning_content 一起编码，避免拆成丢失续接字段的两个 assistant 消息。
+
+实际失败证据：固定 dcd8975 / `deepseek/deepseek-flash` / Magpie3425，A 一轮和 B 第一轮 HTTP200，B 工具续接 HTTP400。B 原始 SSE 13 个 reasoning_content 均为 null，旧 Option<String> 将它们与字段缺失混同，续接请求没有该字段。原始请求/SSE/终态留在 `/private/tmp/saki-context-62/live-p1-corrected/`。固定失败请求只还原观测到的单一 assistant turn 并保留 null，单次上游诊断返回 HTTP200；没有修改 thinking、伪造文本或自动重试。
+
+依据：[DeepSeek thinking 工具续接](https://api-docs.deepseek.com/guides/thinking_mode/)要求保留原生 reasoning_content，[Chat API](https://api-docs.deepseek.com/api/create-chat-completion/)声明其可为 null。与历史缺少失败 wire 的 caller-context+read 400 区分：本次只证明明确捕获的 native-null 条件，不能宣称所有网关/协议/历史400全面根治。JSON 与 SSE 的既有续接回归扩展 native-null，保留确定性 RED/GREEN；真实完整工具链与最终门禁以 #62/PR139 记录为准。
+
+这一有界兼容修正因 P1 实跑失败提前纳入 #62；#135 的结构化失败、缓存用量和独立分析仍单独实施。

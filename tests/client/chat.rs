@@ -587,22 +587,25 @@ async fn async_callback_backpressure_holds_chat_deltas_until_released() {
 #[tokio::test]
 async fn reasoning_continuation_survives_json_sse_and_serialized_context() {
     for streaming in [false, true] {
-        for reasoning in ["inspect file\nthen answer", ""] {
+        for reasoning in [Some("inspect file\nthen answer"), Some(""), None] {
             let tool = json!({"id":"read-1", "type":"function", "function":{"name":"read", "arguments":"{}"}});
             let (kind, body) = if streaming {
-                let cut = reasoning.len() / 2;
+                let (first, second) = reasoning
+                    .map(|text| {
+                        let cut = text.len() / 2;
+                        (json!(&text[..cut]), json!(&text[cut..]))
+                    })
+                    .unwrap_or((Value::Null, Value::Null));
                 (
                     "text/event-stream",
                     format!(
                         "{}{}{}data: [DONE]\n\n",
+                        sse(json!({"id":"r", "choices":[{"delta":{"reasoning_content": first}}]})),
                         sse(
-                            json!({"id":"r", "choices":[{"delta":{"reasoning_content": &reasoning[..cut]}}]})
+                            json!({"id":"r", "choices":[{"delta":{"reasoning_content": second, "content":"checking", "tool_calls":[{"index":0,"id":"read-1","function":{"name":"read","arguments":"{}"}}]}}]})
                         ),
                         sse(
-                            json!({"id":"r", "choices":[{"delta":{"reasoning_content": &reasoning[cut..], "content":"checking", "tool_calls":[{"index":0,"id":"read-1","function":{"name":"read","arguments":"{}"}}]}}]})
-                        ),
-                        sse(
-                            json!({"id":"r", "choices":[{"delta":{},"finish_reason":"tool_calls"}]})
+                            json!({"id":"r", "choices":[{"delta":{"reasoning_content":null},"finish_reason":"tool_calls"}]})
                         )
                     ),
                 )
@@ -624,7 +627,7 @@ async fn reasoning_continuation_survives_json_sse_and_serialized_context() {
                 .unwrap();
             server.await.unwrap();
             if streaming {
-                assert_eq!(deltas, reasoning);
+                assert_eq!(deltas, reasoning.unwrap_or_default());
             }
             let mut input = vec![user("read")];
             for item in response.output {

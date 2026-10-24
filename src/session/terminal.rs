@@ -529,6 +529,11 @@ fn context_for_display(replay: &Replay, config: &ConfigView) -> Result<AgentEven
     );
     registry.retain_names(&config.tool_selection.builtin);
     let mut tools = registry.list_definition();
+    tools.extend(
+        crate::tools::context::definitions()
+            .into_iter()
+            .filter(|definition| config.tool_selection.builtin.contains(&definition.name)),
+    );
     tools.extend(config.tool_schemas.iter().map(|(name, schema)| {
         crate::protocol::ToolDefinition {
             name: name.clone(),

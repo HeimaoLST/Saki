@@ -1,6 +1,6 @@
 # Builtin tools：第一版实现契约
 
-更新日期：2026-10-19。主要参考 Pi 的四工具与输出处理、Codex 的执行生命周期；第三方研究见 [Builtin tools](../research/systems/builtin-tools.md)。本版范围是当前 agent loop 的工具执行，不引入恢复、归档、输出文件清理、TTL、磁盘配额、后台会话或主动取消。
+更新日期：2026-10-24。主要参考 Pi 的四工具与输出处理、Codex 的执行生命周期；第三方研究见 [Builtin tools](../research/systems/builtin-tools.md)。本节四个文件工具的范围是当前 agent loop 的工具执行，不引入归档、输出文件清理或后台会话；上下文资源的生命周期另见下节。
 
 ## 注册与执行环境
 
@@ -11,6 +11,14 @@
 ToolDefinition／ToolType 已归入[公共协议](../../src/protocol/mod.rs)；registry 只负责将声明与 handler 关联并执行。Responses 原生工具声明由[客户端](../../src/client/responses.rs)转换，详见[模型调用分层](model-runtime.md)。
 
 主程序使用启动目录作为 cwd，输出目录为已有 session 目录内的 `tool-output/`。该目录在第一次需要保存大输出时创建。
+
+## 显式上下文读取工具（#62 P1）
+
+实现候选：`open_context`、`read_context`、`search_context` 是同一 Runtime context 服务的任务包装，定义和 handler 在 [context tools](../../src/tools/context.rs)，资源/投影/分页在 [session context](../../src/session/context.rs)。它们只通过 `tool_selection.builtin` 显式启用；可用目录 `builtin_names` 与兼容默认集合 `default_builtin_names` 已分开，旧 session 默认仍只有四工具。
+
+`task.send.context_sources` 是独立执行选项，缺省空；实际 task 固定可读自身 session 和这些明确 ID。它不进入 `UserMessage.context` 或系统提示词，不从联系人/浏览选择推导权限。工具的 open/read/search 都校验同一 task 范围，资源在 task 结束时释放，Drop/取消期间未完成的读取不能发布孤儿引用。
+
+读取返回完整 UTF-8 字节边界和来源定位，按完整紧凑 JSON 计量，工具最终结果再检查 50 KiB；不裁剪结构化 JSON。详细视图、分页、错误与容量契约唯一记录在 [上下文访问方案](session-context-access.md)。P1 只有 history/working 及读取三工具；request、analyze_context 和 analysis 方法由 #135 实施，尚未宣告可用。
 
 ## 工具接口
 

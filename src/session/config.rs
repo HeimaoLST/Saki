@@ -188,7 +188,7 @@ pub use crate::tools::builtin_names;
 
 pub fn default_tool_selection() -> ToolSelection {
     ToolSelection {
-        builtin: builtin_names()
+        builtin: crate::tools::default_builtin_names()
             .iter()
             .map(|name| (*name).to_owned())
             .collect(),
