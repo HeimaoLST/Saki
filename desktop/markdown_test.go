@@ -21,6 +21,12 @@ func readerTestView(source *string, streaming *bool, options *markdownReaderOpti
 	}
 }
 
+var readerFourColumnSource = "# 宽表\n\n" +
+	"| 名称 | 说明 | 标记 | 状态 |\n" +
+	"| --- | --- | --- | --- |\n" +
+	"| 中文长内容需要换行显示 | " + strings.Repeat("abcdefghij", 12) + " | **重点** | [链接](https://example.com/table) |\n" +
+	"| 第二行 | 短内容 | `code` | 完成 |\n"
+
 const readerRichSource = "# 阅读笔记\n\n正文和**重点**，以及[文档](https://example.com/docs)与[危险](javascript:alert(1))。\n\n" +
 	"> 引用文字\n\n行内 `code` 结束。\n\n" +
 	"- 第一项\n- 第二项\n\n" +
@@ -298,6 +304,82 @@ func TestMarkdownReaderCopiesEachCodeBlockOwnPayload(t *testing.T) {
 	}
 }
 
+func TestMarkdownReaderFourColumnTableWrapsWithoutHorizontalScroll(t *testing.T) {
+	source := readerFourColumnSource
+	headers := []string{"名称", "说明", "标记", "状态"}
+	body := []string{
+		"中文长内容需要换行显示",
+		strings.Repeat("abcdefghij", 12),
+		"**重点**",
+		"[链接](https://example.com/table)",
+		"第二行",
+		"短内容",
+		"`code`",
+		"完成",
+	}
+	cells := append(append([]string{}, headers...), body...)
+	narrowHeights, wideHeights := map[string]float32{}, map[string]float32{}
+	for _, width := range []int{340, 720} {
+		streaming := true
+		options := markdownReaderOptions{CopyLabel: "Copy message"}
+		dark := false
+		tr := ui.NewTester(readerTestView(&source, &streaming, &options, &dark), width, 760)
+
+		checkCells := func(when string) {
+			t.Helper()
+			if !tr.HasText("Table · plain text") {
+				t.Fatalf("%dx%d %s: plain-text table label is missing: %q", width, 760, when, tr.Texts())
+			}
+			for _, want := range cells {
+				bounds, ok := tr.Find(want)
+				if !ok {
+					t.Fatalf("%dx%d %s: cell %q is missing: %q", width, 760, when, want, tr.Texts())
+				}
+				if bounds.X < 0 || bounds.X+bounds.W > float32(width) {
+					t.Fatalf("%dx%d %s: cell %q bounds %+v leave the window", width, 760, when, want, bounds)
+				}
+				if when == "final" {
+					if width == 340 {
+						narrowHeights[want] = bounds.H
+					} else {
+						wideHeights[want] = bounds.H
+					}
+				}
+			}
+		}
+		checkCells("streamed")
+		streaming = false
+		tr.Frame()
+		checkCells("final")
+
+		if err := tr.Click("Copy message"); err != nil {
+			t.Fatal(err)
+		}
+		if got := tr.Clipboard(); got != source {
+			t.Fatalf("%dx%d full copy = %q, want exact source", width, 760, got)
+		}
+
+		first, ok := tr.Find(cells[0])
+		if !ok {
+			t.Fatal("first cell is not visible")
+		}
+		tr.ClickAt(first.X+2, first.Y+first.H/2)
+		tr.Command("selectAll")
+		tr.Command("copy")
+		copied := tr.Clipboard()
+		for _, want := range cells {
+			if !strings.Contains(copied, want) {
+				t.Fatalf("%dx%d selection dropped %q: %q", width, 760, want, copied)
+			}
+		}
+	}
+	for _, want := range []string{body[0], body[1]} {
+		if narrowHeights[want] <= wideHeights[want] {
+			t.Fatalf("cell %q wrapped height %v at 340 px is not greater than %v at 720 px", want, narrowHeights[want], wideHeights[want])
+		}
+	}
+}
+
 func TestMarkdownReaderSelectionSurvivesStreamAppendAndCopiesCurrentSource(t *testing.T) {
 	source := "First paragraph here.\n\nSecond one is being"
 	streaming := true
@@ -352,7 +434,7 @@ func TestMarkdownReaderScreenshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	long := strings.Repeat("abcdefghij", 24)
-	source := readerRichSource + "\n```\n" + long + "\n```\n"
+	source := readerFourColumnSource + "\n```\n" + long + "\n```\n"
 	streaming := false
 	options := markdownReaderOptions{CopyLabel: "Copy message"}
 	for _, size := range []struct {

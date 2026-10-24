@@ -7,6 +7,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
+	"github.com/egoist/mygo/ui/markdown/parser"
 )
 
 // markdownReaderOptions configures markdownReader. The source is the only
@@ -91,6 +92,13 @@ func markdownReader(c *ui.Context, source string, options markdownReaderOptions)
 		st.opts.CodeBlock = func(c *ui.Context, b *markdown.CodeBlockView) {
 			markdownReaderCodeBlock(c, b, st)
 		}
+		st.opts.Block = func(c *ui.Context, d *parser.Document, i int) bool {
+			if d.Block(i).Kind != parser.Table {
+				return false
+			}
+			markdownReaderTable(c, d, i, markdownReaderTheme(c, st.opts.Theme))
+			return true
+		}
 	}
 	st.opts.Theme = options.Theme
 
@@ -145,6 +153,70 @@ func markdownReaderCodeBlock(c *ui.Context, b *markdown.CodeBlockView, st *markd
 			st.copyButton(c, c.Now(), accessible, "Copy", b.Code, st.codeFeedbackFor(b.Index), th)
 		})
 		b.Body(c)
+	})
+}
+
+// markdownReaderTable wraps a parsed table into the available width instead of
+// the pinned renderer's horizontal scroll. Rows, headers, alignment and every
+// cell stay, with raw cell source so Markdown syntax and link destinations are
+// still inspectable. The visible label says plain text: the pinned inline
+// renderer is unexported, and reimplementing it here would be a second
+// renderer.
+func markdownReaderTable(c *ui.Context, d *parser.Document, i int, th markdown.Theme) {
+	b := d.Block(i)
+	padX, padY := th.TableCellPadding[0]*th.FontSize, th.TableCellPadding[1]*th.FontSize
+	wrap := ui.Column(c).FillWidth().AlignSelf(ui.Stretch)
+	wrap.Children(func() {
+		ui.Text(c, "Table · plain text").FontSize(th.FontSize * 0.8).TextColor(th.Muted).Unselectable()
+		table := ui.Column(c).FillWidth().Border(1, th.TableBorder).Radius(th.FontSize * 0.3).Clip().Role(ui.RoleTable).Label("Table, wrapped plain text")
+		table.Children(func() {
+			n := 0
+			for r := range d.Children(i) {
+				row := d.Block(r)
+				rowEl := ui.Row(c).FillWidth().AlignItems(ui.Stretch).Role(ui.RoleRow)
+				if row.Header {
+					rowEl.Background(th.TableHeader)
+				} else if n%2 == 1 && th.TableStripe.A > 0 {
+					rowEl.Background(th.TableStripe)
+				}
+				if n > 0 {
+					rowEl.BorderWidth(1, 0, 0, 0).BorderColor(th.TableBorder)
+				}
+				header := row.Header
+				rowEl.Children(func() {
+					k := 0
+					cellAt := func(cell, index int) {
+						role := ui.RoleCell
+						weight := 0
+						if header {
+							role = ui.RoleColumnHeader
+							weight = th.StrongWeight
+						}
+						box := ui.Column(c).Grow(1).Basis(0).Shrink(1).MinWidth(0).Padding(padY, padX).Role(role)
+						if index > 0 {
+							box.BorderWidth(0, 0, 0, 1).BorderColor(th.TableBorder)
+						}
+						cellBlock := d.Block(cell)
+						text := d.Source()[cellBlock.Start:cellBlock.End]
+						align := ui.Start
+						switch b.Align[index] {
+						case parser.AlignCenter:
+							align = ui.Center
+						case parser.AlignRight:
+							align = ui.End
+						}
+						box.Children(func() {
+							ui.Text(c, text).FontSize(th.FontSize).LineHeight(th.LineHeight).TextColor(th.Text).FontWeight(weight).TextAlign(align)
+						})
+					}
+					for cell := range d.Children(r) {
+						cellAt(cell, k)
+						k++
+					}
+				})
+				n++
+			}
+		})
 	})
 }
 
