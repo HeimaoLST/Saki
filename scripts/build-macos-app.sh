@@ -50,6 +50,7 @@ SOURCE_SHA=$(git rev-parse HEAD)
 CI_EVENT_SHA=${GITHUB_SHA:-$SOURCE_SHA}
 REF=${GITHUB_REF:-$(git symbolic-ref -q HEAD || echo detached)}
 RUN_URL=${RUN_URL:-}
+RUNNER_LABEL=${RUNNER_LABEL:-local}
 APP_NAME=Saki
 APP="$OUT/$APP_NAME.app"
 ZIP="$OUT/$APP_NAME.app.zip"
@@ -203,7 +204,7 @@ manifest = {
     "dirty": False,
     "run_url": os.environ["RUN_URL"],
     "runner": {
-        "label": "macos-15",
+        "label": os.environ.get("RUNNER_LABEL", "local"),
         "arch": platform.machine(),
         "os": platform.platform(),
         "image_os": os.environ.get("ImageOS", "unknown"),

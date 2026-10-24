@@ -252,6 +252,7 @@ jobs:
         shell: bash
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUNNER_LABEL: macos-15
         run: |
           set -o pipefail
           OUT="$RUNNER_TEMP/saki-macos-candidate"
