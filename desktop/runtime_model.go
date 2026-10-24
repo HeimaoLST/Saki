@@ -46,7 +46,7 @@ func newRuntimeApp() (*appModel, error) {
 		if workspace == "" {
 			workspace = workDir
 		}
-		a.contacts = append(a.contacts, &contact{
+		ct := &contact{
 			ID:           stored.ID,
 			Name:         stored.Name,
 			Role:         stored.Role,
@@ -57,7 +57,12 @@ func newRuntimeApp() (*appModel, error) {
 			Draft:        stored.Draft,
 			Status:       statusReady,
 			WorkLabel:    "Preparing a reply",
-		})
+		}
+		ct.Issues = issuesForStoredContact(store.state.Issues, ct.ID)
+		if issue := ct.selectedIssue(); issue != nil {
+			ct.SelectedIssueID = issue.ID
+		}
+		a.contacts = append(a.contacts, ct)
 	}
 	for i, ct := range a.contacts {
 		if ct.ID == store.state.Selected {

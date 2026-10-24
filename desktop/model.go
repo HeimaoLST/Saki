@@ -86,6 +86,8 @@ type contact struct {
 	replyIndex         int
 	list               ui.ListState
 	Works              []*workItem
+	Issues             []*productIssue
+	SelectedIssueID    string
 	UnlinkedTools      []*workTool
 	StopRequestedTasks map[string]bool
 
@@ -137,6 +139,11 @@ type appModel struct {
 	focusComposer   bool
 	settingsDraft   profileDraft
 	settingsError   bool
+
+	issueFormOpen     bool
+	issueGoal         string
+	issueRequirements string
+	issueFormError    string
 
 	// Runtime mode. demo keeps the local fixture path for tests/screenshots;
 	// the shipped app is runtime-backed.
