@@ -25,6 +25,15 @@ const (
 	msgActivity
 )
 
+type sendState int
+
+const (
+	sendIdle sendState = iota
+	sendSubmitting
+	sendAccepted
+	sendUnknown
+)
+
 type historyEntry struct {
 	ID   string
 	Date string
@@ -44,6 +53,19 @@ type message struct {
 	Retry       bool
 	RetryDone   bool
 	Expanded    bool
+
+	// Runtime-backed display identity. Key is stable for a journal record
+	// item (offset+index) or a live (task,item/call) tuple.
+	Key        string
+	TaskID     string
+	MessageID  string
+	ItemID     string
+	CallID     string
+	ToolName   string
+	ToolArgs   string
+	ToolOutput string
+	History    bool
+	Streaming  bool
 }
 
 type contact struct {
@@ -63,13 +85,30 @@ type contact struct {
 	Draft        string
 	replyIndex   int
 	list         ui.ListState
+
+	// Runtime-backed state. Empty SessionID means the contact has no runtime
+	// session yet; it is created lazily before the first task.send.
+	SessionID      string
+	Loaded         bool
+	LoadErr        string
+	Unavailable    string
+	ActiveTaskID   string
+	LastTaskID     string
+	SendState      sendState
+	SendError      string
+	SubmittedDraft string
+	SubmittedRev   int
+	draftRev       int
+	HistoryDirty   bool
+	StatusDetail   string
+	historyGen     int
+	pendingEvents  []runtimeEventEnvelope
 }
 
 type viewMode int
 
 const (
 	viewChat viewMode = iota
-	viewAdd
 	viewHistory
 )
 
@@ -86,13 +125,28 @@ type appModel struct {
 	screen   viewMode
 	aux      string // "", "sources", "settings"
 
-	auxMessage    int
-	add           profileDraft
-	addNameError  bool
-	settingsDraft profileDraft
-	settingsError bool
-	historyQuery  string
-	highlight     string
+	auxMessage      int
+	defaultContactN int
+	focusComposer   bool
+	settingsDraft   profileDraft
+	settingsError   bool
+
+	// Runtime mode. demo keeps the local fixture path for tests/screenshots;
+	// the shipped app is runtime-backed.
+	demo            bool
+	store           *contactStore
+	rt              *runtimeClient
+	runtimeStatus   string
+	runtimeErr      string
+	workDir         string
+	sessionDir      string
+	storePath       string
+	uiHook          func(func()) // test seam for deterministic UI-thread ordering
+	requestQuit     func()       // set by main to mygo.App.Quit
+	quitReady       bool
+	shutdownStarted bool
+	historyQuery    string
+	highlight       string
 
 	seq int
 	win *mygo.Window
@@ -217,11 +271,20 @@ func (a *appModel) selectContact(i int) {
 	if i < 0 || i >= len(a.contacts) || i == a.selected {
 		return
 	}
+	if !a.demo {
+		a.persist()
+	}
 	a.contacts[i].Unread = 0
 	a.selected = i
 	a.screen = viewChat
 	a.aux = ""
 	a.highlight = ""
+	if !a.demo {
+		ct := a.contacts[i]
+		if ct.SessionID != "" && (!ct.Loaded || ct.HistoryDirty) && ct.ActiveTaskID == "" {
+			a.reloadContactByID(ct.ID)
+		}
+	}
 }
 
 func (a *appModel) snippet(c *contact) string {
@@ -261,42 +324,27 @@ func (a *appModel) statusLabel(c *contact) string {
 	}
 }
 
-func (a *appModel) openAdd() {
-	a.screen = viewAdd
-	a.aux = ""
-	a.add = profileDraft{}
-	a.addNameError = false
-}
-
-func (a *appModel) cancelAdd() {
-	a.screen = viewChat
-	a.addNameError = false
-}
-
-func (a *appModel) createContact() bool {
-	name := strings.TrimSpace(a.add.Name)
-	if name == "" {
-		a.addNameError = true
-		return false
+// addDefaultContact creates and selects a ready contact with a usable
+// default name, then asks the composer to take focus once.
+func (a *appModel) addDefaultContact() {
+	if !a.demo {
+		a.addRuntimeContact()
+		return
 	}
 	a.seq++
+	a.defaultContactN++
 	c := &contact{
-		ID:           fmt.Sprintf("contact-%d", a.seq),
-		Name:         name,
-		Role:         "New contact",
-		Purpose:      strings.TrimSpace(a.add.Purpose),
-		Instructions: strings.TrimSpace(a.add.Instructions),
-		Workspace:    strings.TrimSpace(a.add.Workspace),
-		Status:       statusReady,
-		WorkLabel:    "Preparing a reply",
+		ID:        fmt.Sprintf("contact-%d", a.seq),
+		Name:      fmt.Sprintf("New contact %d", a.defaultContactN),
+		Role:      "Assistant",
+		Status:    statusReady,
+		WorkLabel: "Preparing a reply",
 	}
 	a.contacts = append(a.contacts, c)
 	a.selected = len(a.contacts) - 1
 	a.screen = viewChat
 	a.aux = ""
-	a.add = profileDraft{}
-	a.addNameError = false
-	return true
+	a.focusComposer = true
 }
 
 func (a *appModel) openSettings() {
@@ -314,11 +362,17 @@ func (a *appModel) saveSettings() bool {
 	}
 	c := a.selectedContact()
 	c.Name = name
-	c.Purpose = strings.TrimSpace(a.settingsDraft.Purpose)
-	c.Instructions = strings.TrimSpace(a.settingsDraft.Instructions)
-	c.Workspace = strings.TrimSpace(a.settingsDraft.Workspace)
+	// Once a runtime session exists (or its first create is in flight), the
+	// profile was already used for session.create and cannot be hot-applied.
+	// Keep the stored values unchanged and only update the product name.
+	if !a.profileLocked(c) {
+		c.Purpose = strings.TrimSpace(a.settingsDraft.Purpose)
+		c.Instructions = strings.TrimSpace(a.settingsDraft.Instructions)
+		c.Workspace = strings.TrimSpace(a.settingsDraft.Workspace)
+	}
 	a.aux = ""
 	a.settingsError = false
+	a.persist()
 	return true
 }
 
@@ -364,6 +418,17 @@ func (a *appModel) historyMatches() []historyEntry {
 
 func (a *appModel) viewInConversation(entryID string) {
 	c := a.selectedContact()
+	// Real history entries are already in the transcript under stable
+	// offset+item keys; do not duplicate them through the demo reveal list.
+	for i, m := range c.Messages {
+		if m.Key != entryID {
+			continue
+		}
+		a.highlight = entryID
+		a.screen = viewChat
+		a.scrollTo = len(a.revealedEntries()) + i
+		return
+	}
 	found := false
 	for _, id := range c.Revealed {
 		if id == entryID {
@@ -425,7 +490,13 @@ func (a *appModel) sourceEntries(messageID int) []historyEntry {
 
 func (a *appModel) send(ct *contact, text string) bool {
 	text = strings.TrimSpace(text)
-	if text == "" || ct.Status == statusWorking {
+	if text == "" {
+		return false
+	}
+	if !a.demo {
+		return a.sendRuntime(ct, text)
+	}
+	if ct.Status == statusWorking {
 		return false
 	}
 	a.seq++
@@ -448,7 +519,9 @@ func (a *appModel) sendCurrent() bool {
 	if !a.send(ct, text) {
 		return false
 	}
-	ct.Draft = ""
+	if a.demo {
+		ct.Draft = ""
+	}
 	return true
 }
 

@@ -1,6 +1,6 @@
-// Saki desktop native design preview: a MyGo native-UI shell for the
-// accepted contact interface. This is a design prototype, not the native
-// runtime; model replies, statuses and history are local demo data.
+// Saki desktop: a MyGo native-UI shell that talks to the Saki runtime over
+// its stdio v1 JSONL boundary. The local fixture remains only for tests and
+// screenshots; the shipped app uses the real runtime.
 package main
 
 import (
@@ -22,13 +22,24 @@ var avatarPNG []byte
 var avatarBMP *ui.Bitmap
 
 func main() {
-	a, err := newApp()
+	a, err := newRuntimeApp()
 	if err != nil {
-		log.Fatal(err)
+		a = newUnavailableApp(err)
 	}
+	if err := loadAvatar(); err != nil {
+		log.Printf("default avatar unavailable: %v", err)
+	}
+	a.requestQuit = mygo.App.Quit
+	mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
+		if a.quitReady {
+			return
+		}
+		e.PreventDefault()
+		a.beginShutdown()
+	})
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title:     "Saki — Design preview",
+			Title:     "Saki",
 			Width:     1040,
 			Height:    720,
 			MinWidth:  960,
@@ -36,18 +47,36 @@ func main() {
 			Content:   ui.View(a.view),
 		})
 		a.win = win
-		a.startSeeded()
+		win.OnClose(func(e *mygo.CloseEvent) {
+			if a.quitReady {
+				return
+			}
+			e.PreventDefault()
+			a.beginShutdown()
+		})
+		a.startRuntime()
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func newApp() (*appModel, error) {
+func loadAvatar() error {
 	bmp, err := ui.DecodeBitmap(avatarPNG)
 	if err != nil {
-		return nil, fmt.Errorf("decode default avatar: %w", err)
+		return fmt.Errorf("decode default avatar: %w", err)
 	}
 	avatarBMP = bmp
-	return seededApp(), nil
+	return nil
+}
+
+// newApp is the local fixture used by tests and preview screenshots. The
+// shipped main path uses newRuntimeApp.
+func newApp() (*appModel, error) {
+	if err := loadAvatar(); err != nil {
+		return nil, err
+	}
+	a := seededApp()
+	a.demo = true
+	return a, nil
 }

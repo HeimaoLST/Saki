@@ -39,15 +39,15 @@ func roseTheme(dark bool) *ui.Theme {
 	t.SurfacePressed = ui.Hex("#f2e9e1")
 	t.Border = ui.Hex("#dfdad9")
 	t.Text = ui.Hex("#575279")
-	t.TextMuted = ui.Hex("#6e6a86")
+	t.TextMuted = ui.Hex("#64607b")
 	t.Accent = ui.Hex("#d7827e")
 	t.AccentHover = ui.Hex("#e09a96")
 	t.AccentPressed = ui.Hex("#c56f6b")
 	t.AccentText = ui.Hex("#191724")
 	t.Selection = ui.Hex("#f2e9e1")
 	t.Focus = ui.Hex("#907aa9")
-	t.Danger = ui.Hex("#b4637a")
-	t.Warning = ui.Hex("#ea9d34")
+	t.Danger = ui.Hex("#9c4a62")
+	t.Warning = ui.Hex("#985900")
 	t.Success = ui.Hex("#286983") // Dawn pine: readable links and Working
 	return t
 }

@@ -16,7 +16,12 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
     ));
     entries.push((
         false,
-        "In picker: Enter open; n new; r rename; Esc close".to_owned(),
+        "In picker: Enter open; n new; r rename; / search; Esc close".to_owned(),
+    ));
+    entries.push((
+        false,
+        "In picker search: type to filter; Up/Down select; Enter open; Esc clears, Esc again closes"
+            .to_owned(),
     ));
     if let Some(session) = &app.session {
         entries.push((false, format!("Title: {}", session.title)));
@@ -77,16 +82,18 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
     entries.extend([
         (
             false,
-            "Tab  Switch input / records; Esc  Return to input or close log".to_owned(),
-        ),
-        (
-            false,
-            "Ctrl+C  Copy selected text; otherwise close help/log, save and clear draft, or exit if empty"
+            "Tab  Switch input / records; Esc  Close search/help/log or clear selection first"
                 .to_owned(),
         ),
         (
             false,
-            "An exit request during a task waits for it to finish".to_owned(),
+            "Esc while running  Interrupt the task after local views close; the draft is kept"
+                .to_owned(),
+        ),
+        (
+            false,
+            "Ctrl+C  Copy selection, else close help/log, save and clear draft, or request exit; it never interrupts a task, and exit waits for it"
+                .to_owned(),
         ),
         (true, "Input".to_owned()),
         (
@@ -108,6 +115,23 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         ),
         (
             false,
+            "Ctrl+R  Search input history; Enter inserts without sending; Esc/Ctrl+C keeps the draft"
+                .to_owned(),
+        ),
+        (
+            false,
+            "In history search: Ctrl+R/Up  Older match; Down  Newer match".to_owned(),
+        ),
+        (
+            false,
+            "Tab  Complete a path token; Up/Down choose, Enter/Tab insert, Esc dismiss".to_owned(),
+        ),
+        (
+            false,
+            "Ctrl+G  Edit the draft in $VISUAL/$EDITOR; returns without sending".to_owned(),
+        ),
+        (
+            false,
             "Ctrl+B/F  Move by character; Ctrl/Alt+Left/Right, Alt+B/F  Move by word".to_owned(),
         ),
         (
@@ -125,13 +149,18 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         ),
         (
             false,
+            "Alt+U / Alt+R  Undo/redo the draft; consecutive typing is one step".to_owned(),
+        ),
+        (
+            false,
             "Ctrl+H/D  Delete previous/next character; Ctrl+D on empty input exits".to_owned(),
         ),
         (true, "Records".to_owned()),
         (false, "Click Thought  Show or hide reasoning".to_owned()),
         (
             false,
-            "Drag  Select visible text; release to copy to the clipboard".to_owned(),
+            "Drag  Select conversation text; hold at the top/bottom edge to keep scrolling; release copies"
+                .to_owned(),
         ),
         (
             false,
@@ -140,6 +169,14 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         (
             false,
             "Wheel / PgUp/PgDn  Scroll; Alt+Up/Down  Scroll from any focus".to_owned(),
+        ),
+        (
+            false,
+            "Ctrl+Shift+Up/Down  Jump to previous/next user message".to_owned(),
+        ),
+        (
+            false,
+            "F3  Search rendered transcript; Enter/F3 next, Shift+F3/Up prev; Esc closes".to_owned(),
         ),
         (
             false,

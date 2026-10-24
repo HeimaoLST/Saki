@@ -8,19 +8,38 @@
 //!           cargo run --locked --example growth_experiment -- --real --run-id <id> \
 //!           --model <name> --base-url <url>'`
 
+// The experiment imports only a subset of each module via `#[path]`, so unused
+// items are expected. `not(test)` guards the expectation because the cfg(test)
+// build also loads those modules' own test suites, which use more of the API.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "example uses a subset via #[path]")
+)]
 #[path = "../src/agent"]
 mod agent {
     pub mod conversation;
     pub mod journal;
     pub mod message;
 }
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "example uses a subset via #[path]")
+)]
 #[path = "../src/client/mod.rs"]
 mod client;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "example uses a subset via #[path]")
+)]
 #[path = "../src/protocol/mod.rs"]
 mod protocol;
 
 // Reuse the existing tool protocol by path, re-exported so
 // Reuse the registry while keeping tool execution outside the protocol module.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "example uses a subset via #[path]")
+)]
 #[path = "../src/tools/tool_registry.rs"]
 mod tool_registry_impl;
 mod tools {
@@ -28,6 +47,12 @@ mod tools {
         pub use crate::tool_registry_impl::*;
     }
 }
+
+// Second crate root: the cfg(test) build loads tests/client/{mod,stream}.rs via
+// the imported modules, and those refer to `crate::test_support`.
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod test_support;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
@@ -39,7 +64,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use agent::conversation::Conversation;
-use client::ResponsesClient;
+use client::{ClientConfig, ResponsesClient, config::ModelApi};
 use protocol::{ModelRequest, ModelResponse, OutputItem, OutputText, ToolDefinition, ToolType};
 use tools::tool_registry::{Tool, ToolCall, ToolError, ToolRegistry};
 
@@ -279,6 +304,7 @@ enum Backend {
         client: ResponsesClient,
         model: String,
     },
+    #[cfg_attr(not(test), expect(dead_code, reason = "constructed only in cfg(test)"))]
     Scripted(Mutex<VecDeque<ModelResponse>>),
 }
 
@@ -428,6 +454,12 @@ fn first_action(calls: &[RecordedCall]) -> String {
     }
 }
 
+// One CallOutcome per model call; keeping `Response` inline avoids boxing with
+// no measured benefit.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one per model call; boxing adds no benefit"
+)]
 enum CallOutcome {
     Response {
         resp: ModelResponse,
@@ -1297,10 +1329,20 @@ async fn main() -> anyhow::Result<()> {
         .cloned()
         .or_else(|| std::env::var("SAKI_BASE_URL").ok());
 
-    let mut client = ResponsesClient::new()?.with_timeout(Duration::from_secs(60));
-    if let Some(url) = base_url {
-        client = client.with_base_url(url);
-    }
+    // The harness records Responses request bodies and its own request shape;
+    // a Chat configuration cannot be represented here.
+    let config = ClientConfig::from_env()?;
+    anyhow::ensure!(
+        config.api() == ModelApi::Responses,
+        "growth_experiment speaks {}; SAKI_API={} is not supported by this harness",
+        ModelApi::Responses.as_str(),
+        config.api().as_str()
+    );
+    let config = match base_url {
+        Some(url) => ClientConfig::new(config.api(), config.api_key().to_owned(), url),
+        None => config,
+    };
+    let client = ResponsesClient::from_config(&config)?.with_timeout(Duration::from_secs(60));
     let backend = Backend::Real { client, model };
     let base_dir = PathBuf::from(format!("examples/growth_experiment_artifacts/{run_id}"));
     prepare_artifacts(&base_dir)?;

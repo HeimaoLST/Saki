@@ -1,12 +1,13 @@
 use super::*;
-use crate::client::ResponsesClient;
+use crate::client::{ModelClient, ResponsesClient};
 use crate::protocol::{ModelRequest, OutputItem};
 use serde_json::json;
+use std::time::Duration;
 use tokio::{io::AsyncWriteExt, net::TcpListener, sync::oneshot};
 
-#[path = "../support/mod.rs"]
-mod support;
-use support::{completed, read_request, requests, scripted_http, scripted_stream, sse};
+use crate::test_support::{
+    completed, read_request, requests, scripted_http, scripted_server, scripted_stream, sse,
+};
 
 #[tokio::test]
 async fn deltas_arrive_before_completion_across_byte_boundaries() {
@@ -24,9 +25,7 @@ async fn deltas_arrive_before_completion_across_byte_boundaries() {
         let (mut socket, _) = listener.accept().await.unwrap();
         let request = read_request(&mut socket).await;
         socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").await.unwrap();
-        let first = format!(
-            ": heartbeat\r\n\r\ndata: {{\"type\":\"response.created\"}}\r\n\r\nevent: response.output_text.delta\r\ndata: {{\"type\":\"response.output_text.delta\",\r\ndata: \"item_id\":\"message\",\"delta\":\"你好 🌱\"}}\r\n\r\n"
-        );
+        let first = ": heartbeat\r\n\r\ndata: {\"type\":\"response.created\"}\r\n\r\nevent: response.output_text.delta\r\ndata: {\"type\":\"response.output_text.delta\",\r\ndata: \"item_id\":\"message\",\"delta\":\"你好 🌱\"}\r\n\r\n";
         // Every UTF-8 byte is in a separate HTTP chunk, independent of TCP coalescing.
         for byte in first.bytes() {
             socket
@@ -151,7 +150,7 @@ async fn streaming_reuses_http_retry_and_overflow_rules_and_accepts_json_gateway
     assert_eq!(sent[0], sent[1]);
     assert_eq!(sent[0]["stream"], true);
 
-    let (client, server) = scripted_http(vec![(400, support::overflow())]).await;
+    let (client, server) = scripted_http(vec![(400, crate::test_support::overflow())]).await;
     let error = client
         .respond_stream(ModelRequest::new("test".to_owned(), &[], vec![]), |_| {})
         .await
@@ -179,4 +178,149 @@ async fn streaming_reuses_http_retry_and_overflow_rules_and_accepts_json_gateway
             .is_context_overflow()
     );
     assert_eq!(requests(server).await.len(), 1);
+}
+
+#[tokio::test]
+async fn async_callback_backpressure_holds_the_next_delta_until_released() {
+    use futures_util::FutureExt;
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let body = sse(json!({"type":"response.output_text.delta","item_id":"message","delta":"Hel"}))
+        + &sse(json!({"type":"response.output_text.delta","item_id":"message","delta":"lo"}))
+        + &sse(json!({"type":"response.completed","response":completed("Hello")}));
+    let (client, server) = scripted_stream(vec![body]).await;
+    let (seen_tx, seen_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen_events = Arc::new(Mutex::new(Vec::new()));
+    let mut gate = Some(release_rx);
+    let mut notify = Some(seen_tx);
+    let task_calls = calls.clone();
+    let task_events = seen_events.clone();
+    let task = tokio::spawn(async move {
+        client
+            .respond_stream_async(
+                ModelRequest::new("test".to_owned(), &[], vec![]),
+                move |event| {
+                    task_calls.fetch_add(1, Ordering::SeqCst);
+                    task_events.lock().unwrap().push(event.clone());
+                    let gate = gate.take();
+                    let notify = notify.take();
+                    async move {
+                        if let Some(notify) = notify {
+                            let _ = notify.send(());
+                        }
+                        if let Some(gate) = gate {
+                            let _ = gate.await;
+                        }
+                    }
+                    .boxed()
+                },
+            )
+            .await
+    });
+    seen_rx.await.unwrap();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the decoder must not deliver another delta while the first callback is gated"
+    );
+    release_tx.send(()).unwrap();
+    let response = task.await.unwrap().unwrap();
+    let _ = requests(server).await;
+    let events = seen_events.lock().unwrap();
+    assert_eq!(
+        events.as_slice(),
+        &[
+            ModelStreamEvent::TextDelta {
+                item_id: "message".to_owned(),
+                delta: "Hel".to_owned()
+            },
+            ModelStreamEvent::TextDelta {
+                item_id: "message".to_owned(),
+                delta: "lo".to_owned()
+            }
+        ]
+    );
+    assert!(
+        matches!(&response.output[0], OutputItem::Message { content, .. } if content[0].text == "Hello")
+    );
+}
+
+#[tokio::test]
+async fn sse_body_over_the_response_byte_limit_fails_before_completion() {
+    // Many frames keep the test fast while the same byte counter bounds one
+    // huge single frame in production; the cap is checked while reading.
+    let event = sse(json!({
+        "type": "response.output_text.delta",
+        "item_id": "message",
+        "delta": "x".repeat(64 * 1024)
+    }));
+    let mut body =
+        String::with_capacity(crate::client::transport::MAX_RESPONSE_BYTES + event.len());
+    while body.len() <= crate::client::transport::MAX_RESPONSE_BYTES {
+        body.push_str(&event);
+    }
+    let (base_url, _server) =
+        scripted_server(vec![(200, "text/event-stream", body.into_bytes())]).await;
+    let client = ModelClient::Responses(
+        ResponsesClient::for_test(base_url).with_timeout(Duration::from_secs(30)),
+    );
+    let error = client
+        .respond_stream_async(ModelRequest::new("test".to_owned(), &[], vec![]), |_| {
+            std::future::ready(())
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("exceeded"),
+        "expected a byte-limit error, got: {error:#}"
+    );
+}
+
+#[tokio::test]
+async fn json_fallback_over_the_response_byte_limit_fails() {
+    let oversized = "x".repeat(crate::client::transport::MAX_RESPONSE_BYTES);
+    let (client, server) = scripted_http(vec![(200, completed(&oversized))]).await;
+    let error = client
+        .respond_stream_async(ModelRequest::new("test".to_owned(), &[], vec![]), |_| {
+            std::future::ready(())
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("exceeded"),
+        "expected a byte-limit error, got: {error:#}"
+    );
+    let _ = requests(server).await;
+}
+
+#[tokio::test]
+async fn single_sse_frame_over_the_transport_limit_is_bounded() {
+    use eventsource_stream::Eventsource;
+    use futures_util::StreamExt;
+
+    let frame = sse(json!({
+        "type": "response.output_text.delta",
+        "item_id": "message",
+        "delta": "x".repeat(4096)
+    }));
+    let (base_url, _server) =
+        scripted_server(vec![(200, "text/event-stream", frame.into_bytes())]).await;
+    let response = reqwest::Client::new()
+        .post(base_url)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    let mut events =
+        crate::client::transport::limited_body_stream_with_limit(response, 1024).eventsource();
+    let error = events.next().await.unwrap().unwrap_err();
+    assert!(
+        format!("{error:#}").contains("exceeded"),
+        "expected a single-frame byte-limit error, got: {error:#}"
+    );
 }

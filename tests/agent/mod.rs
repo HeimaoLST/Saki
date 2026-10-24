@@ -12,12 +12,11 @@ use crate::{
 };
 use serde_json::{Value, json};
 
-#[path = "../support/mod.rs"]
-mod support;
-
 mod cancellation;
 
-use support::{Journal, completed, overflow, requests, scripted_http};
+use crate::test_support::{
+    Journal, completed, overflow, requests, scripted_http, scripted_server, sse,
+};
 
 fn conversation() -> Conversation {
     Conversation::new("Preserve project ion-42.".to_owned())
@@ -101,19 +100,19 @@ async fn streamed_tool_calls_execute_once_after_completion_and_continue_with_ful
         json!({"type":"reasoning","id":"r","status":"completed","content":[],"encrypted_content":"opaque"}),
         json!({"type":"function_call","id":"f","status":"completed","call_id":"c","name":"lookup","arguments":"{}"}),
     ]);
-    let (client, server) = support::scripted_stream(vec![
-        support::sse(json!({"type":"response.reasoning_text.delta","item_id":"r","delta":"Inspect fixture."}))
-        + &support::sse(json!({"type":"response.output_item.done","item":{"type":"reasoning","id":"r"}}))
-        + &support::sse(
+    let (client, server) = crate::test_support::scripted_stream(vec![
+        crate::test_support::sse(json!({"type":"response.reasoning_text.delta","item_id":"r","delta":"Inspect fixture."}))
+        + &crate::test_support::sse(json!({"type":"response.output_item.done","item":{"type":"reasoning","id":"r"}}))
+        + &crate::test_support::sse(
             json!({"type":"response.output_text.delta","item_id":"message","delta":"Checking."}),
-        ) + &support::sse(
+        ) + &crate::test_support::sse(
             json!({"type":"response.function_call_arguments.delta","item_id":"f","delta":"{"}),
-        ) + &support::sse(
+        ) + &crate::test_support::sse(
             json!({"type":"response.function_call_arguments.delta","item_id":"f","delta":"}"}),
-        ) + &support::sse(json!({"type":"response.completed","response":first})),
-        support::sse(
+        ) + &crate::test_support::sse(json!({"type":"response.completed","response":first})),
+        crate::test_support::sse(
             json!({"type":"response.output_text.delta","item_id":"message","delta":"Result: 37"}),
-        ) + &support::sse(json!({"type":"response.completed","response":completed("Result: 37")})),
+        ) + &crate::test_support::sse(json!({"type":"response.completed","response":completed("Result: 37")})),
     ])
     .await;
     let journal = Journal::new();
@@ -192,14 +191,16 @@ async fn streamed_tool_calls_execute_once_after_completion_and_continue_with_ful
 async fn a_failed_stream_keeps_partial_display_out_of_context_and_accepts_the_next_turn() {
     for ending in [
         String::new(),
-        support::sse(json!({"type":"error","code":"context_length_exceeded","message":"too long"})),
+        crate::test_support::sse(
+            json!({"type":"error","code":"context_length_exceeded","message":"too long"}),
+        ),
     ] {
-        let (client, server) = support::scripted_stream(vec![
-            support::sse(json!({"type":"response.output_text.delta","item_id":"message","delta":"UNCOMMITTED"}))
-                + &support::sse(json!({"type":"response.function_call_arguments.delta","item_id":"f","delta":"{"}))
-                + &support::sse(json!({"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"f","status":"completed","call_id":"c","name":"lookup","arguments":"{}"}}))
+        let (client, server) = crate::test_support::scripted_stream(vec![
+            crate::test_support::sse(json!({"type":"response.output_text.delta","item_id":"message","delta":"UNCOMMITTED"}))
+                + &crate::test_support::sse(json!({"type":"response.function_call_arguments.delta","item_id":"f","delta":"{"}))
+                + &crate::test_support::sse(json!({"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"f","status":"completed","call_id":"c","name":"lookup","arguments":"{}"}}))
                 + &ending,
-            support::sse(json!({"type":"response.completed","response":completed("Recovered")})),
+            crate::test_support::sse(json!({"type":"response.completed","response":completed("Recovered")})),
         ]).await;
         let (events_tx, mut events_rx) = event_channels();
         let agent =
@@ -243,10 +244,10 @@ async fn a_failed_stream_keeps_partial_display_out_of_context_and_accepts_the_ne
 
 #[tokio::test]
 async fn in_band_overflow_before_output_compacts_once_and_retries_the_stream() {
-    let (client, server) = support::scripted_bodies(vec![
-        (200, "text/event-stream", support::sse(json!({"type":"response.failed","response":{"error":{"code":"context_length_exceeded","message":"too long"}}})).into_bytes()),
+    let (client, server) = crate::test_support::scripted_bodies(vec![
+        (200, "text/event-stream", crate::test_support::sse(json!({"type":"response.failed","response":{"error":{"code":"context_length_exceeded","message":"too long"}}})).into_bytes()),
         (200, "application/json", serde_json::to_vec(&completed("Preserve project ion-42")).unwrap()),
-        (200, "text/event-stream", support::sse(json!({"type":"response.completed","response":completed("Recovered")})).into_bytes()),
+        (200, "text/event-stream", crate::test_support::sse(json!({"type":"response.completed","response":completed("Recovered")})).into_bytes()),
     ]).await;
     let mut agent = Agent::new(client, ToolRegistry::new(), previous_history());
     agent.handle_user_message("Continue").await.unwrap();
@@ -612,7 +613,14 @@ async fn events_follow_response_output_order_and_route_tool_results_by_call_id()
     assert_eq!(
         drain_events(&mut receiver)
             .into_iter()
-            .filter(|event| !matches!(event, AgentEvent::ContextUpdated { .. }))
+            .filter(|event| {
+                !matches!(
+                    event,
+                    AgentEvent::ContextUpdated { .. }
+                        | AgentEvent::TaskStarted { .. }
+                        | AgentEvent::ModelRequestStarted { .. }
+                )
+            })
             .collect::<Vec<_>>(),
         vec![
             AgentEvent::ResponseText {
@@ -944,6 +952,7 @@ async fn mixed_text_and_image_message_serializes_as_input_parts() {
             crate::agent::message::ImageAttachment::new("a.png", "data:image/png;base64,AAAA"),
             crate::agent::message::ImageAttachment::new("b.jpg", "data:image/jpeg;base64,BBBB"),
         ],
+        context: Vec::new(),
     };
     agent.handle_user_message(message).await.unwrap();
     let sent = requests(server).await;
@@ -971,6 +980,7 @@ async fn image_only_message_has_no_text_part_and_text_stays_a_string() {
                 "a.png",
                 "data:image/png;base64,AAAA",
             )],
+            context: Vec::new(),
         })
         .await
         .unwrap();
@@ -1053,4 +1063,151 @@ async fn a_pre_cancelled_turn_never_calls_the_model_or_a_tool() {
         "no request should reach the model"
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn chat_completions_complete_a_tool_turn_and_a_follow_up() {
+    let executions = Arc::new(AtomicUsize::new(0));
+    let counter = executions.clone();
+    let mut tools = ToolRegistry::new();
+    tools.registry(Tool {
+        definition: ToolDefinition {
+            tool_type: ToolType::Function,
+            name: "lookup".into(),
+            description: "Read fixture".into(),
+            parameters: json!({"type":"object","properties":{}}),
+        },
+        handler: Arc::new(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(json!({"result":37})) })
+        }),
+    });
+    // The tool call's arguments arrive in fragments; only the completed call
+    // may reach the tool registry.
+    let tool_turn = sse(json!({
+        "id": "c1",
+        "choices": [{"delta": {"role": "assistant", "content": "Checking."}}]
+    })) + &sse(json!({
+        "id": "c1",
+        "choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1",
+            "function": {"name": "lookup", "arguments": "{\"qu"}}]}}]
+    })) + &sse(json!({
+        "id": "c1",
+        "choices": [{"delta": {"tool_calls": [{"index": 0,
+            "function": {"arguments": "ery\":\"ion-42\"}"}}]}}]
+    })) + &sse(json!({
+        "id": "c1",
+        "choices": [{"delta": {}, "finish_reason": "tool_calls"}]
+    })) + "data: [DONE]\n\n";
+    let answer_turn = sse(json!({
+        "id": "c2",
+        "choices": [{"delta": {"content": "Result: 37"}}]
+    })) + &sse(json!({
+        "id": "c2",
+        "choices": [{"delta": {}, "finish_reason": "stop"}]
+    })) + "data: [DONE]\n\n";
+    let (base_url, server) = scripted_server(vec![
+        (200, "text/event-stream", tool_turn.into_bytes()),
+        (200, "text/event-stream", answer_turn.into_bytes()),
+    ])
+    .await;
+    let client = crate::client::ModelClient::ChatCompletions(
+        crate::client::ChatCompletionsClient::for_test(base_url),
+    );
+    let mut agent = Agent::new(client, tools, conversation()).with_model("test".to_owned());
+    agent
+        .handle_user_message("Look it up".to_owned())
+        .await
+        .unwrap();
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+    let sent = requests(server).await;
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0]["messages"][0]["role"], "system");
+    assert_eq!(sent[0]["stream_options"]["include_usage"], true);
+    let messages = sent[1]["messages"].as_array().unwrap();
+    let assistant = messages
+        .iter()
+        .find(|message| message["role"] == "assistant" && message.get("tool_calls").is_some())
+        .expect("assistant tool call must be sent back");
+    assert_eq!(assistant["tool_calls"][0]["id"], "call_1");
+    assert_eq!(assistant["tool_calls"][0]["function"]["name"], "lookup");
+    assert_eq!(
+        assistant["tool_calls"][0]["function"]["arguments"],
+        "{\"query\":\"ion-42\"}"
+    );
+    let tool = messages
+        .iter()
+        .find(|message| message["role"] == "tool")
+        .expect("tool result must follow the assistant call");
+    assert_eq!(tool["tool_call_id"], "call_1");
+    assert!(tool["content"].as_str().unwrap().contains("\"result\":37"));
+}
+
+#[tokio::test]
+async fn handle_task_keeps_caller_ids_in_events_and_journal() {
+    let journal = Journal::new();
+    let (client, server) = scripted_http(vec![(200, completed("done"))]).await;
+    let (sender, mut receiver) = event_channels();
+    let mut agent = Agent::new(
+        client,
+        ToolRegistry::new(),
+        conversation().with_history_file(&journal.0).unwrap(),
+    )
+    .with_events(sender);
+
+    agent
+        .handle_task(
+            "hello".into(),
+            "task-caller-fixed".to_owned(),
+            "message-caller-fixed".to_owned(),
+        )
+        .await
+        .unwrap();
+    let _ = requests(server).await;
+
+    let events = drain_events(&mut receiver);
+    let started = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                AgentEvent::TaskStarted { task_id, message_id }
+                    if task_id == "task-caller-fixed"
+                        && message_id.as_deref() == Some("message-caller-fixed")
+            )
+        })
+        .expect("the persisted start boundary must be emitted with caller ids");
+    let request = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                AgentEvent::ModelRequestStarted {
+                    purpose: ModelRequestPurpose::Generation
+                }
+            )
+        })
+        .expect("a generation request event must precede the model call");
+    assert!(
+        started < request,
+        "TaskStarted must precede the model request"
+    );
+    assert!(
+        !events.iter().any(is_terminal),
+        "the Agent must not emit worker-owned terminal events"
+    );
+
+    let records = journal.records();
+    let started_record = records
+        .iter()
+        .find(|record| record["type"] == "task_started")
+        .expect("TaskStarted must be journaled");
+    assert_eq!(started_record["task_id"], "task-caller-fixed");
+    assert_eq!(started_record["message_id"], "message-caller-fixed");
+    let finished_record = records
+        .iter()
+        .find(|record| record["type"] == "task_finished")
+        .expect("TaskFinished must be journaled");
+    assert_eq!(finished_record["task_id"], "task-caller-fixed");
+    assert_eq!(finished_record["status"], "completed");
 }

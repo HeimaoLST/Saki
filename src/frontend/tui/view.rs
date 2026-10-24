@@ -23,6 +23,7 @@ use crate::frontend::tui::state::{
 };
 use crate::frontend::tui::textwrap::wrap_bytes;
 use crate::frontend::tui::theme;
+use crate::frontend::tui::transcript_search;
 
 /// Draws the whole screen. Only the records needed to fill the transcript
 /// viewport are laid out, so long history does not build one big buffer.
@@ -33,16 +34,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, editor: &Editor) {
         (editor.layout(area.width as usize).lines.len() + editor.images().len()).clamp(1, 5) as u16;
     let feedback_height = u16::from(app.status.is_some() || app.feedback.is_some());
     let activity_height = u16::from(area.height > 4);
+    let search_height = u16::from(app.transcript_search.is_some());
     let help_height = if app.help_open {
         let available = area
             .height
-            .saturating_sub(input_height + 2 + feedback_height + activity_height);
+            .saturating_sub(input_height + 2 + feedback_height + activity_height + search_height);
         available.saturating_sub(u16::from(available > 1)).min(14)
     } else {
         0
     };
     let chunks = Layout::vertical([
         Constraint::Min(0),
+        Constraint::Length(search_height),
         Constraint::Length(help_height),
         Constraint::Length(activity_height),
         Constraint::Length(input_height + 1),
@@ -56,18 +59,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, editor: &Editor) {
     } else {
         draw_transcript(frame, app, chunks[0]);
     }
-    app.help_area = chunks[1];
+    if search_height > 0 {
+        transcript_search::draw(frame, app, chunks[1]);
+    }
+    app.help_area = chunks[2];
     if app.help_open {
-        help::draw(frame, app, chunks[1]);
+        help::draw(frame, app, chunks[2]);
     }
     if activity_height > 0 {
         frame.render_widget(
             Paragraph::new(activity_line(app, editor, area.width as usize)),
-            chunks[2],
+            chunks[3],
         );
     }
-    app.input_area = chunks[3];
-    draw_input(frame, app, editor, chunks[3]);
+    app.input_area = chunks[4];
+    draw_input(frame, app, editor, chunks[4]);
     if let Some(message) = app
         .feedback
         .as_ref()
@@ -76,10 +82,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, editor: &Editor) {
     {
         frame.render_widget(
             Paragraph::new(message).style(Style::default().fg(theme.accent)),
-            chunks[4],
+            chunks[5],
         );
     }
-    draw_status(frame, app, editor, chunks[5], activity_height > 0);
+    draw_status(frame, app, editor, chunks[6], activity_height > 0);
     let viewport: Vec<(RowKey, u16)> = app
         .transcript_rows
         .iter()
@@ -240,7 +246,12 @@ fn draw_input(frame: &mut Frame, app: &mut App, editor: &Editor, area: Rect) {
     );
     // The input cursor is only shown when the input actually owns the focus and
     // no log sub-view is open.
-    if height > 0 && app.focus == Focus::Input && app.log_view.is_none() && !app.help_open {
+    if height > 0
+        && app.focus == Focus::Input
+        && app.log_view.is_none()
+        && !app.help_open
+        && app.transcript_search.is_none()
+    {
         let x = inner.x + (layout.cursor_cell as u16).min(inner.width.saturating_sub(1));
         let y = inner.y + (cursor_display - start) as u16;
         frame.set_cursor_position((x, y));
@@ -285,28 +296,29 @@ fn activity_line(app: &App, editor: &Editor, width: usize) -> Line<'static> {
             " · New output",
             Style::default().fg(theme.accent),
         ));
-    } else if app.running && app.follow && !app.quit_after_turn {
-        if let Some(Record::Tool {
+    } else if app.running
+        && app.follow
+        && !app.quit_after_turn
+        && let Some(Record::Tool {
             name,
             arguments,
             output: None,
             ..
         }) = app.records.last()
-        {
-            let headline = tool_headline(name, arguments, app.working_directory.as_deref());
-            let detail = headline.lines().next().unwrap_or("");
-            let available = width.saturating_sub(spans.iter().map(Span::width).sum());
-            if available >= name.width() + 3 {
-                let activity = if detail.width() + 3 <= available {
-                    detail
-                } else {
-                    name
-                };
-                spans.push(Span::styled(
-                    format!(" · {activity}"),
-                    Style::default().fg(theme.secondary),
-                ));
-            }
+    {
+        let headline = tool_headline(name, arguments, app.working_directory.as_deref());
+        let detail = headline.lines().next().unwrap_or("");
+        let available = width.saturating_sub(spans.iter().map(Span::width).sum());
+        if available >= name.width() + 3 {
+            let activity = if detail.width() + 3 <= available {
+                detail
+            } else {
+                name
+            };
+            spans.push(Span::styled(
+                format!(" · {activity}"),
+                Style::default().fg(theme.secondary),
+            ));
         }
     }
     Line::from(spans)
@@ -1013,8 +1025,7 @@ pub fn focus_transcript(app: &mut App) {
             .unwrap_or(app.selected);
         keys.iter()
             .copied()
-            .filter(|key| *key <= target)
-            .next_back()
+            .rfind(|key| *key <= target)
             .unwrap_or(last)
     };
 }
@@ -1122,13 +1133,13 @@ fn normalize_anchor_key(app: &App, keys: &[usize], anchor: Anchor) -> Anchor {
     if keys.contains(&anchor.record) {
         return anchor;
     }
-    if let Some(marker) = app.visible_activity_for(anchor.record) {
-        if keys.contains(&marker) {
-            return Anchor {
-                record: marker,
-                offset: 0,
-            };
-        }
+    if let Some(marker) = app.visible_activity_for(anchor.record)
+        && keys.contains(&marker)
+    {
+        return Anchor {
+            record: marker,
+            offset: 0,
+        };
     }
     let key = keys
         .iter()
@@ -1145,14 +1156,13 @@ fn normalize_anchor_key(app: &App, keys: &[usize], anchor: Anchor) -> Anchor {
 /// Resolves the exact row the anchored viewport starts at. The width-keyed
 /// visual anchor wins while valid; source offsets remain the reflow fallback.
 fn anchored_start(app: &mut App, keys: &[usize], width: usize) -> (usize, usize) {
-    if let Some(visual) = app.visual_anchor {
-        if visual.width == width {
-            if let Some(position) = keys.iter().position(|key| *key == visual.key.record) {
-                let layout = record_layout(app, visual.key.record, width);
-                if visual.key.line < layout.len() {
-                    return (position, visual.key.line);
-                }
-            }
+    if let Some(visual) = app.visual_anchor
+        && visual.width == width
+        && let Some(position) = keys.iter().position(|key| *key == visual.key.record)
+    {
+        let layout = record_layout(app, visual.key.record, width);
+        if visual.key.line < layout.len() {
+            return (position, visual.key.line);
         }
     }
     let anchor = normalize_anchor_key(
@@ -1180,14 +1190,14 @@ fn anchored_start(app: &mut App, keys: &[usize], width: usize) -> (usize, usize)
 
 /// Exact top visible row for the current follow/anchored state at `width`.
 fn current_top_row(app: &mut App, width: usize) -> Option<RowKey> {
-    if let Some(visual) = app.visual_anchor {
-        if visual.width == width {
-            let keys = app.visible_record_keys();
-            if keys.contains(&visual.key.record) {
-                let layout = record_layout(app, visual.key.record, width);
-                if visual.key.line < layout.len() {
-                    return Some(visual.key);
-                }
+    if let Some(visual) = app.visual_anchor
+        && visual.width == width
+    {
+        let keys = app.visible_record_keys();
+        if keys.contains(&visual.key.record) {
+            let layout = record_layout(app, visual.key.record, width);
+            if visual.key.line < layout.len() {
+                return Some(visual.key);
             }
         }
     }
@@ -1355,6 +1365,105 @@ pub fn page_down(app: &mut App, page: usize) {
     });
 }
 
+/// Visible user-message boundaries as `(display position, record)`. This only
+/// walks the existing display order; historical User layouts are not built.
+fn user_positions(app: &App) -> Vec<(usize, usize)> {
+    app.visible_record_keys()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, record)| matches!(app.records.get(*record), Some(Record::User { .. })))
+        .collect()
+}
+
+/// First content row of the current user record, resolved only while the top
+/// record itself is a User (previous navigation needs its boundary line).
+fn current_user_start(app: &mut App, current: RowKey, width: usize) -> Option<usize> {
+    if !matches!(app.records.get(current.record), Some(Record::User { .. })) {
+        return None;
+    }
+    record_layout(app, current.record, width)
+        .iter()
+        .position(|visual| !is_blank_line(visual))
+}
+
+/// Jumps to a user boundary, resolving its first content row once.
+fn jump_to_user(app: &mut App, record: usize, width: usize) {
+    let layout = record_layout(app, record, width);
+    let line = layout
+        .iter()
+        .position(|visual| !is_blank_line(visual))
+        .unwrap_or(0);
+    let offset = layout.get(line).map_or(0, |visual| visual.source_start);
+    app.follow = false;
+    app.visual_anchor = Some(VisualAnchor {
+        key: RowKey { record, line },
+        width,
+    });
+    app.anchor = Some(Anchor { record, offset });
+}
+
+/// Jumps the viewport to the previous real user-message boundary. From inside
+/// a long user message it returns that message's start; from its first content
+/// row it moves to the prior user message.
+pub fn previous_user(app: &mut App) {
+    if app.records.is_empty() {
+        app.notify("No messages yet.".to_owned());
+        return;
+    }
+    let width = app.last_width.max(1);
+    let Some(current) = current_top_row(app, width) else {
+        app.notify("No earlier message.".to_owned());
+        return;
+    };
+    let keys = app.visible_record_keys();
+    let Some(position) = keys.iter().position(|key| *key == current.record) else {
+        app.notify("No earlier message.".to_owned());
+        return;
+    };
+    if let Some(start) = current_user_start(app, current, width)
+        && start < current.line
+    {
+        jump_to_user(app, current.record, width);
+        return;
+    }
+    let target = user_positions(app)
+        .into_iter()
+        .rev()
+        .find(|(start_position, _)| *start_position < position)
+        .map(|(_, record)| record);
+    match target {
+        Some(record) => jump_to_user(app, record, width),
+        None => app.notify("Already at the first message.".to_owned()),
+    }
+}
+
+/// Jumps the viewport to the next real user-message boundary after the current
+/// top record.
+pub fn next_user(app: &mut App) {
+    if app.records.is_empty() {
+        app.notify("No messages yet.".to_owned());
+        return;
+    }
+    let width = app.last_width.max(1);
+    let Some(current) = current_top_row(app, width) else {
+        app.notify("No later message.".to_owned());
+        return;
+    };
+    let keys = app.visible_record_keys();
+    let Some(position) = keys.iter().position(|key| *key == current.record) else {
+        app.notify("No later message.".to_owned());
+        return;
+    };
+    let target = user_positions(app)
+        .into_iter()
+        .find(|(start_position, _)| *start_position > position)
+        .map(|(_, record)| record);
+    match target {
+        Some(record) => jump_to_user(app, record, width),
+        None => app.notify("Already at the latest message.".to_owned()),
+    }
+}
+
 fn push_visual(
     out: &mut Vec<VisualLine>,
     text: &str,
@@ -1509,6 +1618,9 @@ fn bounded_json(value: &Value) -> String {
 /// Projects the visible transcript lines for the current anchor/follow state.
 pub fn visible_lines(app: &mut App, width: usize, height: usize) -> Vec<Line<'static>> {
     app.disclosure_buttons.clear();
+    if app.transcript_search.is_some() {
+        transcript_search::refresh(app, width);
+    }
     if app.records.is_empty() {
         app.transcript_rows.clear();
         return vec![Line::from(Span::styled(
@@ -1559,6 +1671,18 @@ pub fn visible_lines(app: &mut App, width: usize, height: usize) -> Vec<Line<'st
         }
     }
     let area = app.transcript_area;
+    if app.transcript_search.is_some() {
+        for (key, line, visual) in &mut visible {
+            transcript_search::highlight_line(
+                app,
+                RowKey {
+                    record: *key,
+                    line: *line,
+                },
+                &mut visual.line,
+            );
+        }
+    }
     app.transcript_rows = visible
         .iter()
         .enumerate()

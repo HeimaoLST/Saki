@@ -1,6 +1,6 @@
 # SAKI 文档
 
-更新日期：2026-10-13。
+更新日期：2026-10-20。
 
 产品目标：让 SAKI 通过持续积累经验和修正行为，在长期使用中更好用，减少用户重复指导与纠正的负担。研究目标：理解怎样让经历持久地影响判断和行动，并验证这种变化能否改善任务结果与长期协作体验。用户已授权开展第一轮实验，由另一个 agent 负责实现和执行、主 agent 指导与验收；独立 pilot 的两轮真实结果已复核，包含一轮 bearer 配置偏差和一轮修正运行；主 Agent 尚未接入成长机制。
 
@@ -53,7 +53,7 @@ src/
 | `research/systems/` | [Model runtime](research/systems/model-runtime.md) | Pi 的公共类型、模型目录、API 适配与流式调用边界；SAKI 分层建议 |
 | `research/systems/` | [Builtin tools](research/systems/builtin-tools.md) | Pi／Codex／OpenCode／Claude Code 的工具设计、输出与进程管理，以及首批工具提案 |
 | `research/systems/` | [Terminal UI](research/systems/terminal-ui.md) | 布局、滚动、主题与 Rust 组件选择；含发布版本核对和兼容性小样 |
-| `research/systems/` | [Terminal presentation](research/systems/terminal-presentation.md) | Pi／Codex 发布源码中的消息、活动、推理、Markdown、主题与状态栏技巧 |
+| `research/systems/` | [Terminal presentation](research/systems/terminal-presentation.md) | Pi／Codex／OpenCode 发布源码的消息、活动、推理、Markdown、主题与状态栏技巧，以及固定版本的四系统 TUI 能力矩阵 |
 | `research/learning/` | [Evidence and beliefs](research/learning/evidence-and-beliefs.md) | 来源、归因、矛盾与判断修正 |
 | `research/evaluation/` | [History to behavior](research/evaluation/history-to-behavior.md) | 如何评价记忆对行动的影响，已有评测的限制 |
 | `design/` | [Conversation compaction](design/conversation-compaction.md) | 自动触发、容量与 usage、工具边界、日志和验收 |
@@ -64,7 +64,9 @@ src/
 | `design/` | [Multimodal input](design/multimodal-input.md) | 图片附件、剪贴板／路径输入、消息契约及图片压缩 |
 | `design/` | [Session management](design/session-management.md) | 持久会话、JSONL 恢复、会话选择器、中断语义与核心边界 |
 | `design/` | [Desktop contacts](design/desktop.md) | contact 交互设计、Rose Pine 视觉、浏览器示意与可运行 MyGo 原生设计预览 |
+| `design/` | [CI governance](design/ci.md) | Runtime／TUI／GUI 的 GitHub Actions 门禁、责任矩阵、工具链与失败修复约定 |
 | `requirements/` | [Agent runtime requirements](requirements/agent-runtime.md) | 多 session 重叠执行、可观察执行事实、contact 边界与历史检索的 runtime 需求交接（未实施） |
+| `requirements/` | [MVP requirements](requirements/mvp.md) | 两端 MVP（TUI + GUI）的长期产品目标、行为边界，以及工程候选／首批真实试用／稳定发布的证据矩阵 |
 | `design/` | [Local command system](design/command-system.md) | 本地命令解析、会话操作复用、输入边界、TUI 补全与验收 |
 | `design/` | [Experience to behavior](design/experience-to-behavior.md) | 最小闭环的架构提案与未决问题 |
 | `experiments/` | [History dependence](experiments/history-dependence.md) | 对照实验协议与预算；独立 pilot 已完成真实运行 |

@@ -282,12 +282,9 @@ fn tool_status_classifies_failures() {
         view::tool_status(Some(&json!({"exit_code": 0}))),
         ("✓", false)
     );
-    assert_eq!(view::tool_status(Some(&json!({"exit_code": 7}))).1, true);
-    assert_eq!(view::tool_status(Some(&json!({"timed_out": true}))).1, true);
-    assert_eq!(
-        view::tool_status(Some(&json!({"error": "not found"}))).1,
-        true
-    );
+    assert!(view::tool_status(Some(&json!({"exit_code": 7}))).1);
+    assert!(view::tool_status(Some(&json!({"timed_out": true}))).1);
+    assert!(view::tool_status(Some(&json!({"error": "not found"}))).1);
 }
 
 #[test]
@@ -321,7 +318,7 @@ fn enter_sends_the_draft_when_idle() {
         outcome.send.map(|message| message.text),
         Some("hello".to_owned())
     );
-    assert!(editor.is_empty());
+    assert_eq!(editor.text(), "hello", "draft remains until Accepted");
 }
 
 #[test]
@@ -560,7 +557,7 @@ fn y_key_copies_the_selected_source() {
 
 #[test]
 fn exit_code_null_is_a_failure() {
-    assert_eq!(view::tool_status(Some(&json!({"exit_code": null}))).1, true);
+    assert!(view::tool_status(Some(&json!({"exit_code": null}))).1);
 }
 
 #[test]
@@ -1334,3 +1331,369 @@ mod selection;
 mod sessions;
 
 mod commands;
+
+fn user_record(text: &str) -> Record {
+    Record::User {
+        text: text.to_owned(),
+        images: Vec::new(),
+    }
+}
+
+fn ctrl_shift(code: KeyCode) -> KeyEvent {
+    key_with(code, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+}
+
+fn feedback(app: &App) -> &str {
+    app.feedback
+        .as_ref()
+        .map(|(message, _)| message.as_str())
+        .unwrap_or("")
+}
+
+fn long_user_text(prefix: &str) -> String {
+    (0..20)
+        .map(|index| format!("{prefix} line {index} alpha beta gamma delta"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn message_navigation_reports_empty_first_and_latest() {
+    let mut app = App::new();
+    app.last_width = 40;
+    app.last_height = 4;
+    let mut editor = Editor::new();
+    handle_key(&mut app, &mut editor, ctrl_shift(KeyCode::Up));
+    assert_eq!(feedback(&app), "No messages yet.");
+    handle_key(&mut app, &mut editor, ctrl_shift(KeyCode::Down));
+    assert_eq!(feedback(&app), "No messages yet.");
+
+    app.push(user_record("only"));
+    app.push(assistant("answer"));
+    app.last_width = 40;
+    app.last_height = 4;
+    app.follow = false;
+    app.anchor = Some(Anchor {
+        record: 0,
+        offset: 0,
+    });
+    handle_key(&mut app, &mut editor, ctrl_shift(KeyCode::Up));
+    assert_eq!(app.anchor.unwrap().record, 0);
+    assert_eq!(feedback(&app), "Already at the first message.");
+    handle_key(&mut app, &mut editor, ctrl_shift(KeyCode::Down));
+    assert_eq!(app.anchor.unwrap().record, 0);
+    assert_eq!(feedback(&app), "Already at the latest message.");
+}
+
+#[test]
+fn ctrl_shift_jumps_only_between_real_user_messages() {
+    let mut app = App::new();
+    app.push(user_record("first question"));
+    app.push(assistant("first answer"));
+    app.push(tool("c1"));
+    app.push(assistant("tool follow-up"));
+    app.push(user_record("second question"));
+    app.push(tool("c2"));
+    app.last_width = 60;
+    app.last_height = 6;
+    app.follow = false;
+    app.anchor = Some(Anchor {
+        record: 0,
+        offset: 0,
+    });
+    let mut editor = Editor::new();
+
+    handle_key(&mut app, &mut editor, ctrl_shift(KeyCode::Down));
+    assert_eq!(
+        app.anchor,
+        Some(Anchor {
+            record: 4,
+            offset: 0
+        }),
+        "next skips assistant and tool records"
+    );
+    assert!(!app.follow, "an actual jump stops follow");
+
+    handle_key(&mut app, &mut editor, ctrl_shift(KeyCode::Up));
+    assert_eq!(
+        app.anchor,
+        Some(Anchor {
+            record: 0,
+            offset: 0
+        }),
+        "previous returns to the prior real user boundary"
+    );
+}
+
+#[test]
+fn previous_inside_a_long_user_returns_its_start_then_the_prior_user() {
+    let mut app = App::new();
+    app.push(user_record("prior question"));
+    app.push(user_record(&long_user_text("current")));
+    app.last_width = 24;
+    app.last_height = 5;
+    app.follow = false;
+    let layout = view::record_layout(&mut app, 1, 24);
+    let start = layout
+        .iter()
+        .position(|visual| !visual.line.to_string().trim().is_empty())
+        .expect("content row");
+    let inside = start + 4;
+    app.anchor = Some(Anchor {
+        record: 1,
+        offset: layout[inside].source_start,
+    });
+    let mut editor = Editor::new();
+
+    handle_key(&mut app, &mut editor, ctrl_shift(KeyCode::Up));
+    assert_eq!(app.anchor.unwrap().record, 1, "stays in the same message");
+    assert_eq!(
+        app.anchor.unwrap().offset,
+        0,
+        "returns to the message start"
+    );
+    assert_eq!(
+        app.visual_anchor.map(|visual| visual.key),
+        Some(crate::frontend::tui::selection::RowKey {
+            record: 1,
+            line: start,
+        }),
+        "the first content row is the boundary, not the padding row"
+    );
+
+    handle_key(&mut app, &mut editor, ctrl_shift(KeyCode::Up));
+    assert_eq!(
+        app.anchor.unwrap().record,
+        0,
+        "from the first content row, previous selects the prior user"
+    );
+}
+
+#[test]
+fn next_from_inside_a_long_user_selects_the_following_user() {
+    let mut app = App::new();
+    app.push(user_record("prior question"));
+    app.push(user_record(&long_user_text("current")));
+    app.push(assistant("answer"));
+    app.push(user_record("following question"));
+    app.last_width = 24;
+    app.last_height = 5;
+    app.follow = false;
+    let layout = view::record_layout(&mut app, 1, 24);
+    app.anchor = Some(Anchor {
+        record: 1,
+        offset: layout[5].source_start,
+    });
+    let mut editor = Editor::new();
+
+    handle_key(&mut app, &mut editor, ctrl_shift(KeyCode::Down));
+    assert_eq!(app.anchor.unwrap().record, 3);
+    assert_eq!(app.anchor.unwrap().offset, 0);
+}
+
+#[test]
+fn message_jumps_keep_draft_cursor_images_and_focus() {
+    let mut app = App::new();
+    app.push(user_record("one"));
+    app.push(assistant("answer"));
+    app.push(user_record("two"));
+    app.last_width = 40;
+    app.last_height = 4;
+    let mut editor = Editor::new();
+    editor.insert_str("draft\nlines");
+    editor.move_visual_up(40);
+    editor.insert_image(crate::agent::message::ImageAttachment::new(
+        "a.png",
+        "data:image/png;base64,AA",
+    ));
+    let text = editor.text();
+    let cursor = editor.cursor();
+    let images = editor.images().len();
+    app.focus = Focus::Input;
+
+    handle_key(&mut app, &mut editor, ctrl_shift(KeyCode::Down));
+    handle_key(&mut app, &mut editor, ctrl_shift(KeyCode::Up));
+    assert_eq!(editor.text(), text);
+    assert_eq!(editor.cursor(), cursor);
+    assert_eq!(editor.images().len(), images);
+    assert_eq!(app.focus, Focus::Input);
+}
+
+#[test]
+fn user_jump_anchor_survives_reflow_and_new_output() {
+    let mut app = App::new();
+    app.push(user_record("first marker alpha beta gamma delta epsilon"));
+    app.push(assistant("answer one"));
+    app.push(user_record("second marker zeta eta theta iota kappa"));
+    app.push(assistant("answer two"));
+    app.last_width = 30;
+    app.last_height = 4;
+    app.follow = false;
+    app.anchor = Some(Anchor {
+        record: 0,
+        offset: 0,
+    });
+    let mut editor = Editor::new();
+    handle_key(&mut app, &mut editor, ctrl_shift(KeyCode::Down));
+    assert_eq!(app.anchor.unwrap().record, 2);
+
+    for width in [14usize, 40] {
+        let lines = view::visible_lines(&mut app, width, 4);
+        let joined = lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let flat = joined.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flat.contains("second"), "width {width}: {joined}");
+    }
+
+    app.apply_event(AgentEvent::ResponseText {
+        item_id: "late".to_owned(),
+        text: "late output".to_owned(),
+    });
+    assert!(!app.follow);
+    assert_eq!(
+        app.anchor,
+        Some(Anchor {
+            record: 2,
+            offset: 0
+        })
+    );
+    let lines = view::visible_lines(&mut app, 30, 4);
+    let joined = lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let flat = joined.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("second marker"), "{joined}");
+}
+
+#[test]
+fn user_jump_anchor_survives_activity_collapse() {
+    let mut app = App::new();
+    app.push(user_record("first question"));
+    app.push(Record::Activity {
+        end: Some(4),
+        expanded: true,
+        failed: false,
+        interrupted: false,
+        manual: true,
+    });
+    app.push(tool("c1"));
+    app.push(tool("c2"));
+    app.push(user_record("second question"));
+    app.last_width = 40;
+    app.last_height = 4;
+    app.follow = false;
+    app.anchor = Some(Anchor {
+        record: 0,
+        offset: 0,
+    });
+    let mut editor = Editor::new();
+    handle_key(&mut app, &mut editor, ctrl_shift(KeyCode::Down));
+    assert_eq!(app.anchor.unwrap().record, 4);
+
+    assert!(app.toggle_record(1));
+    assert!(!app.activity_expanded(1));
+    let keys = app.visible_record_keys();
+    assert!(keys.contains(&4));
+    assert!(!keys.contains(&2));
+    let lines = view::visible_lines(&mut app, 40, 4);
+    let joined = lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("second question"), "{joined}");
+    assert_eq!(
+        app.anchor,
+        Some(Anchor {
+            record: 4,
+            offset: 0
+        })
+    );
+}
+
+#[test]
+fn message_navigation_requires_ctrl_and_shift() {
+    let mut app = App::new();
+    app.push(user_record("one"));
+    app.push(assistant("answer"));
+    app.push(user_record("two"));
+    app.last_width = 40;
+    app.last_height = 4;
+    app.follow = false;
+    app.anchor = Some(Anchor {
+        record: 0,
+        offset: 0,
+    });
+    let mut editor = Editor::new();
+    editor.insert_str("line1\nline2");
+
+    handle_key(
+        &mut app,
+        &mut editor,
+        key_with(KeyCode::Down, KeyModifiers::CONTROL),
+    );
+    assert_eq!(
+        app.anchor,
+        Some(Anchor {
+            record: 0,
+            offset: 0
+        }),
+        "Ctrl without Shift must not navigate"
+    );
+    handle_key(
+        &mut app,
+        &mut editor,
+        key_with(KeyCode::Down, KeyModifiers::SHIFT),
+    );
+    assert_eq!(
+        app.anchor,
+        Some(Anchor {
+            record: 0,
+            offset: 0
+        }),
+        "Shift without Ctrl must not navigate"
+    );
+
+    let before = editor.cursor();
+    handle_key(&mut app, &mut editor, key(KeyCode::Up));
+    assert_ne!(
+        editor.cursor(),
+        before,
+        "plain Up still moves the input cursor"
+    );
+    assert_eq!(
+        app.anchor,
+        Some(Anchor {
+            record: 0,
+            offset: 0
+        })
+    );
+
+    app.anchor = Some(Anchor {
+        record: 1,
+        offset: 0,
+    });
+    handle_key(
+        &mut app,
+        &mut editor,
+        key_with(KeyCode::Up, KeyModifiers::ALT),
+    );
+    assert_eq!(
+        app.anchor.map(|anchor| anchor.record),
+        Some(0),
+        "Alt+Up still scrolls one line instead of jumping to a message"
+    );
+}
+
+mod transcript_search_tests;
+
+mod path_completion_tests;
+
+mod external_editor_tests;
+
+mod code_highlight_tests;

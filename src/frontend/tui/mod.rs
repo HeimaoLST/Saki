@@ -1,10 +1,13 @@
+pub mod code_highlight;
 pub mod commands;
 pub mod editor;
+pub mod external_editor;
 pub mod help;
 pub mod history;
 pub mod log;
 pub mod markdown;
 pub mod markdown_layout;
+pub mod path_completion;
 pub mod selection;
 pub mod sessions;
 pub mod state;
@@ -12,6 +15,7 @@ pub mod terminal;
 pub mod terminal_input;
 pub mod textwrap;
 pub mod theme;
+pub mod transcript_search;
 pub mod view;
 
 use std::path::PathBuf;
@@ -19,11 +23,12 @@ use std::path::PathBuf;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::Sender;
 
 use crate::agent::message::{self, ImageAttachment, UserMessage};
 use crate::command::{self, Command, ParsedInput};
-use crate::session::{SessionCommand, SessionEvent};
+use crate::frontend::session_requests::{PendingRequest, RequestSendError, SessionRequests};
+use crate::session::{SessionCommand, SessionEvent, SessionEventReceiver, SessionRequest};
 use editor::Editor;
 use state::{App, Focus};
 use terminal_input::Input;
@@ -33,8 +38,8 @@ use terminal_input::Input;
 /// It consumes session snapshots and tagged Agent events through the channels
 /// the worker provides. It never holds the agent, conversation or tools.
 pub async fn run(
-    input: UnboundedSender<SessionCommand>,
-    mut events: UnboundedReceiver<SessionEvent>,
+    input: Sender<SessionRequest>,
+    mut events: SessionEventReceiver,
 ) -> anyhow::Result<()> {
     // Theme selection happens once; App.theme is the only rendered state.
     // Manual settings never send queries or subscribe to scheme notifications.
@@ -46,17 +51,29 @@ pub async fn run(
     sessions.pending = true;
     let mut editor = Editor::new();
     let mut commands = commands::Commands::default();
+    let mut requests = SessionRequests::new(input);
+    let mut external_edit: Option<ExternalEdit> = None;
+    let mut events_closed = false;
 
     loop {
-        commands.sync(&app, &editor);
-        session.draw(|frame| {
-            view::draw(frame, &mut app, &editor);
-            if sessions.picker.is_none() && !sessions.pending {
-                commands.draw(frame, &app);
-            }
-            sessions.draw(frame, app.theme);
-        })?;
-        if app.should_quit() {
+        if external_edit.is_none() {
+            commands.sync(&app, &editor);
+            session.draw(|frame| {
+                view::draw(frame, &mut app, &editor);
+                if sessions.picker.is_none() && !sessions.pending {
+                    if !app.history.searching() && !transcript_search::active(&app) {
+                        commands.draw(frame, &app);
+                        path_completion::draw(frame, &app);
+                    }
+                    history::draw(frame, &app);
+                }
+                sessions.draw(frame, app.theme);
+            })?;
+        }
+        if events_closed && external_edit.is_none() {
+            break;
+        }
+        if app.should_quit() && external_edit.is_none() {
             break;
         }
         let feedback_deadline = app
@@ -68,49 +85,157 @@ pub async fn run(
             .edge_deadline()
             .map(tokio::time::Instant::from_std);
         tokio::select! {
-            maybe = session.next_input() => {
+            result = async {
+                match external_edit.as_mut() {
+                    Some((receiver, _, _)) => receiver.await,
+                    None => std::future::pending().await,
+                }
+            }, if external_edit.is_some() => {
+                let (_, guard, target) = external_edit.take().unwrap();
+                let resumed = session.resume_external();
+                drop(guard);
+                resumed?;
+                match result {
+                    Ok(Ok(text)) => {
+                        if app
+                            .session
+                            .as_ref()
+                            .is_some_and(|active| active.id == target)
+                        {
+                            editor.replace_text(&text);
+                        } else {
+                            sessions.replace_cached_text(&target, &text);
+                        }
+                    }
+                    Ok(Err(message)) => app.notify(message),
+                    Err(_) => app.notify("External editor stopped before returning.".to_owned()),
+                }
+                if events_closed || app.should_quit() {
+                    break;
+                }
+            }
+            maybe = session.next_input(), if external_edit.is_none() => {
                 let (copy, notify_copy) = match maybe {
                     Ok(Some(Input::Event(Event::Key(key)))) => {
                         let (handled, command) = sessions.key(&mut app, key);
-                        if let Some(command) = command { if input.send(command).is_err() { break; } }
+                        if sessions.picker.is_some() || sessions.pending {
+                            transcript_search::cancel(&mut app);
+                            path_completion::cancel(&mut app);
+                        }
+                        if let Some(command) = command
+                            && let Err(error) =
+                                requests.try_send(command, PendingRequest::Control)
+                        {
+                            sessions.pending = false;
+                            if request_failed(
+                                &mut app,
+                                error,
+                                "Session command queue is full; try again.",
+                            ) {
+                                return Ok(());
+                            }
+                        }
                         if handled {
-                            // A picker/cancel key must also stop any background
-                            // edge-scroll timer.
+                            // A picker key ends any local history search and
+                            // stops background edge scrolling.
+                            app.history.cancel_search();
                             app.text_selection.clear();
                             continue;
                         }
-                        if commands.key(&mut editor, key) {
+                        if !app.history.searching()
+                            && !transcript_search::active(&app)
+                            && !path_completion::active(&app)
+                            && commands.key(&mut editor, key)
+                        {
                             app.text_selection.clear();
                             continue;
                         }
                         let outcome = handle_key(&mut app, &mut editor, key);
-                        if let Some(command) = outcome.command {
-                            if let Some(request) = commands.dispatch(command, &mut app, &mut editor, &mut sessions) {
-                                if input.send(request).is_err() { break; }
+                        if let Some(command) = outcome.command
+                            && let Some((_command, request)) =
+                                commands.dispatch(command, &mut app, &mut editor, &mut sessions)
+                            && let Err(error) = requests.try_send(
+                                request,
+                                PendingRequest::Command {
+                                    draft: editor.text(),
+                                    session_id: app.session.as_ref().map(|s| s.id.clone()),
+                                },
+                            )
+                        {
+                            sessions.pending = false;
+                            if request_failed(&mut app, error, "Command queue is full; draft kept.")
+                            {
+                                return Ok(());
                             }
+                        }
+                        if app.help_open {
+                            app.history.cancel_search();
                         }
                         if outcome.cancel {
-                            if let Some(metadata) = &app.session {
-                                app.cancelling = true;
-                                app.status = None;
+                            if let Some(association) = sessions.current_association() {
                                 let command = SessionCommand::Cancel {
-                                    session_id: metadata.id.clone(),
+                                    session_id: association.session_id.clone(),
+                                    task_id: association.task_id.clone(),
                                 };
-                                if input.send(command).is_err() {
-                                    break;
+                                let pending = PendingRequest::Cancel {
+                                    session_id: association.session_id,
+                                    task_id: association.task_id,
+                                };
+                                match requests.try_send(command, pending) {
+                                    Ok(_) => {
+                                        app.cancelling = true;
+                                        app.status = None;
+                                    }
+                                    Err(error) => {
+                                        if request_failed(
+                                            &mut app,
+                                            error,
+                                            "Cancel queue is full; task still running.",
+                                        ) {
+                                            return Ok(());
+                                        }
+                                    }
                                 }
+                            } else {
+                                app.notify("No running task to cancel.".to_owned());
                             }
-                        }
-                        if let Some(message) = outcome.send {
+                        } else if let Some(message) = outcome.send {
                             let Some(metadata) = &app.session else { continue; };
-                            let command = SessionCommand::Send { session_id: metadata.id.clone(), message: message.clone() };
-                            app.submit(message);
-                            if input.send(command).is_err() {
-                                break;
+                            if requests.has_pending_send(&metadata.id) {
+                                app.notify("A message is already pending for this session.".to_owned());
+                            } else {
+                                let command = SessionCommand::Send {
+                                    session_id: metadata.id.clone(),
+                                    message: message.clone(),
+                                };
+                                let pending = PendingRequest::Send {
+                                    session_id: metadata.id.clone(),
+                                    message,
+                                };
+                                match requests.try_send(command, pending) {
+                                    Ok(_) => app.status = Some("Sending…".to_owned()),
+                                    Err(error) => {
+                                        if request_failed(
+                                            &mut app,
+                                            error,
+                                            "Send queue is full; draft kept.",
+                                        ) {
+                                            return Ok(());
+                                        }
+                                    }
+                                }
                             }
                         }
                         if outcome.paste_clipboard {
                             handle_clipboard(&mut app, &mut editor);
+                        }
+                        if outcome.external_editor {
+                            start_external_editor(
+                                &mut session,
+                                &mut app,
+                                &editor,
+                                &mut external_edit,
+                            );
                         }
                         if outcome.quit {
                             break;
@@ -132,15 +257,39 @@ pub async fn run(
                             app.text_selection.clear();
                             continue;
                         }
-                        if commands.mouse(&mut editor, mouse) {
+                        if !app.history.searching()
+                            && !transcript_search::active(&app)
+                            && !path_completion::active(&app)
+                            && commands.mouse(&mut editor, mouse)
+                        {
                             app.text_selection.clear();
                             continue;
                         }
                         let position = ratatui::layout::Position::new(mouse.column, mouse.row);
                         if mouse.kind == MouseEventKind::Down(MouseButton::Left) && app.session_button_area.contains(position) {
+                            // The global session picker closes any local search
+                            // first so a switched session never caches it.
+                            app.history.cancel_search();
+                            transcript_search::cancel(&mut app);
+                            path_completion::cancel(&mut app);
                             app.text_selection.clear();
                             sessions.pending = true;
-                            if input.send(SessionCommand::List).is_err() { break; }
+                            if let Err(error) =
+                                requests.try_send(SessionCommand::List, PendingRequest::Control)
+                            {
+                                sessions.pending = false;
+                                if request_failed(
+                                    &mut app,
+                                    error,
+                                    "Session command queue is full; try again.",
+                                ) {
+                                    return Ok(());
+                                }
+                            }
+                            continue;
+                        }
+                        if path_completion::active(&app) {
+                            app.text_selection.clear();
                             continue;
                         }
                         (handle_mouse(&mut app, mouse), false)
@@ -167,23 +316,143 @@ pub async fn run(
                     }
                 }
             }
-            maybe = events.recv() => {
-                match maybe {
-                    Some(event) => {
-                        commands.before_event(&mut editor, &event);
-                        sessions.apply_event(&mut app, &mut editor, event);
-                        // Coalesce bursts into one redraw without starving terminal input.
-                        for _ in 0..127 {
-                            match events.try_recv() {
-                                Ok(event) => {
-                                    commands.before_event(&mut editor, &event);
-                                    sessions.apply_event(&mut app, &mut editor, event);
+            packet = events.recv(), if !events_closed => {
+                let packet: crate::session::SessionEventPacket = match packet {
+                    Some(packet) => packet,
+                    None => {
+                        if external_edit.is_some() {
+                            events_closed = true;
+                            continue;
+                        }
+                        break;
+                    }
+                };
+                let request_id = packet.request_id;
+                let resolution = request_id.and_then(|id| requests.take(id));
+                let mut handled = false;
+                match resolution {
+                    Some(PendingRequest::Send { .. }) => {
+                        let session_id = match &resolution {
+                            Some(PendingRequest::Send { session_id, .. }) => session_id,
+                            _ => unreachable!(),
+                        };
+                        match &packet.event {
+                        SessionEvent::Accepted => {
+                            if let Some(association) = packet.association.clone() {
+                                if let Some(PendingRequest::Send { message, .. }) = &resolution {
+                                    sessions.accept_send(&mut app, &mut editor, association, message);
                                 }
-                                Err(_) => break,
+                            } else {
+                                sessions.notify_for(
+                                    &mut app,
+                                    session_id.as_str(),
+                                    "Send accepted without task association.".to_owned(),
+                                );
+                            }
+                            if app
+                                .session
+                                .as_ref()
+                                .is_some_and(|active| active.id == *session_id)
+                            {
+                                app.status = None;
+                            }
+                            handled = true;
+                        }
+                        SessionEvent::Error { operation, error } => {
+                            if app
+                                .session
+                                .as_ref()
+                                .is_some_and(|active| active.id == *session_id)
+                            {
+                                app.status = None;
+                            }
+                            sessions.notify_for(
+                                &mut app,
+                                session_id.as_str(),
+                                format!("{}: {}", operation, error.message),
+                            );
+                            handled = true;
+                        }
+                        _ => {}
+                        }
+                    }
+                    Some(PendingRequest::Command {
+                        draft,
+                        session_id,
+                    }) => {
+                        sessions.pending = false;
+                        match &packet.event {
+                            SessionEvent::Error { operation, error } => {
+                                let message = format!("{}: {}", operation, error.message);
+                                if let Some(session_id) = session_id {
+                                    sessions.notify_for(&mut app, session_id.as_str(), message);
+                                } else {
+                                    app.notify(message);
+                                }
+                                handled = true;
+                            }
+                            _ => {
+                                let target_current = session_id.as_ref().is_none_or(|session_id| {
+                                    app
+                                        .session
+                                        .as_ref()
+                                        .is_some_and(|active| active.id == *session_id)
+                                });
+                                if target_current {
+                                    if editor.text() == draft {
+                                        editor.reset();
+                                    }
+                                } else if let Some(session_id) = session_id {
+                                    sessions.reset_cached_editor_if(session_id.as_str(), draft.as_str());
+                                }
                             }
                         }
                     }
-                    None => break,
+                    Some(PendingRequest::Control) => {
+                        sessions.pending = false;
+                        if let SessionEvent::Error { operation, error } = &packet.event {
+                            app.notify(format!("{}: {}", operation, error.message));
+                            handled = true;
+                        }
+                    }
+                    Some(PendingRequest::Cancel {
+                        session_id,
+                        task_id,
+                    }) => match &packet.event {
+                        SessionEvent::Cancelled { status } => {
+                            let current = sessions.current_association();
+                            let matches = current.as_ref().is_some_and(|current| {
+                                current.session_id == session_id && current.task_id == task_id
+                            });
+                            if matches && *status == "not_running" {
+                                app.cancelling = false;
+                                app.notify("No running task to cancel.".to_owned());
+                            }
+                            handled = true;
+                        }
+                        SessionEvent::Error { operation, error } => {
+                            let current = sessions.current_association();
+                            let matches = current.as_ref().is_some_and(|current| {
+                                current.session_id == session_id && current.task_id == task_id
+                            });
+                            if matches {
+                                app.cancelling = false;
+                            }
+                            sessions.notify_for(
+                                &mut app,
+                                session_id.as_str(),
+                                format!("{}: {}", operation, error.message),
+                            );
+                            handled = true;
+                        }
+                        _ => {}
+                    },
+                    None => {}
+                }
+                if !handled {
+                    let association = packet.association.clone();
+                    let event = packet.event;
+                    sessions.apply_event_with_association(&mut app, &mut editor, event, association);
                 }
             }
             _ = tokio::time::sleep_until(feedback_deadline.unwrap_or_else(tokio::time::Instant::now)), if feedback_deadline.is_some() => {
@@ -197,6 +466,15 @@ pub async fn run(
     Ok(())
 }
 
+fn request_failed(app: &mut App, error: RequestSendError, full_message: &str) -> bool {
+    match error {
+        RequestSendError::Full => app.notify(full_message.to_owned()),
+        RequestSendError::Closed => app.notify("Session output is closed.".to_owned()),
+    }
+    matches!(error, RequestSendError::Closed)
+}
+
+#[derive(Default)]
 pub struct KeyOutcome {
     pub send: Option<UserMessage>,
     pub command: Option<Command>,
@@ -206,6 +484,7 @@ pub struct KeyOutcome {
     /// Esc intent while the agent is running; the run loop sends Cancel.
     pub cancel: bool,
     pub quit: bool,
+    pub external_editor: bool,
 }
 
 /// Maps one key event to state changes. Kept free of terminal I/O so it can be
@@ -219,6 +498,7 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
         paste_clipboard: false,
         cancel: false,
         quit: false,
+        external_editor: false,
     };
     if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
         return outcome;
@@ -228,12 +508,44 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     let had_selection = app.text_selection.active();
 
-    if ctrl && matches!(key.code, KeyCode::Char('c' | 'C')) {
-        if let Some(text) = app.text_selection.text() {
-            outcome.copy = Some(text);
-            app.text_selection.clear();
-            return outcome;
+    // A rendered-transcript search is modal: it owns every key (Esc/Ctrl+C
+    // close it before any cancel/clear), and only Ctrl+V reaches clipboard IO.
+    if transcript_search::active(app) {
+        return transcript_search_key(app, key);
+    }
+
+    // The path popup owns only its navigation/confirm keys; any other key
+    // dismisses it and continues through the normal map (typing edits normally).
+    if path_completion::active(app) {
+        let plain = !ctrl && !alt;
+        match key.code {
+            KeyCode::Esc if plain => {
+                path_completion::cancel(app);
+                return outcome;
+            }
+            KeyCode::Up if plain => {
+                path_completion::move_selection(app, false);
+                return outcome;
+            }
+            KeyCode::Down if plain => {
+                path_completion::move_selection(app, true);
+                return outcome;
+            }
+            KeyCode::Tab | KeyCode::Enter if plain => {
+                path_completion::confirm(app, editor);
+                return outcome;
+            }
+            _ => path_completion::cancel(app),
         }
+    }
+
+    if ctrl
+        && matches!(key.code, KeyCode::Char('c' | 'C'))
+        && let Some(text) = app.text_selection.text()
+    {
+        outcome.copy = Some(text);
+        app.text_selection.clear();
+        return outcome;
     }
     app.text_selection.clear();
 
@@ -245,6 +557,18 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
         app.focus = Focus::Input;
         outcome.paste_clipboard = true;
         return outcome;
+    }
+
+    // A local prompt-history search is modal in the input focus: it consumes
+    // every key (Esc/Ctrl+C included), so the hidden composer is never edited.
+    if app.history.searching() && app.focus == Focus::Input {
+        // F1 is global help: it closes the search first.
+        if key.code == KeyCode::F(1) && !ctrl && !alt {
+            app.history.cancel_search();
+            app.toggle_help();
+            return outcome;
+        }
+        return history_search_key(app, editor, key);
     }
 
     if key.code == KeyCode::F(1) && !ctrl && !alt {
@@ -332,6 +656,30 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
         return outcome;
     }
 
+    // F3 opens rendered-transcript search; Ctrl+F stays character-right.
+    if !ctrl && !alt && key.code == KeyCode::F(3) {
+        path_completion::cancel(app);
+        transcript_search::open(app);
+        return outcome;
+    }
+
+    // Ctrl+Shift+Up/Down jumps between real user-message boundaries. Both
+    // modifiers are required so plain/Alt line scrolling and editor movement
+    // stay untouched, and local overlays/log keep precedence above.
+    if ctrl && shift {
+        match key.code {
+            KeyCode::Up => {
+                view::previous_user(app);
+                return outcome;
+            }
+            KeyCode::Down => {
+                view::next_user(app);
+                return outcome;
+            }
+            _ => {}
+        }
+    }
+
     if key.code == KeyCode::Esc && !ctrl && !alt {
         // Local UI first: Esc clears an active selection before agent work.
         if had_selection {
@@ -359,6 +707,9 @@ pub fn handle_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutco
             return outcome;
         }
         KeyCode::Tab => {
+            if app.focus == Focus::Input && path_completion::tab(app, editor) {
+                return outcome;
+            }
             match app.focus {
                 Focus::Input => view::focus_transcript(app),
                 Focus::Transcript => app.focus = Focus::Input,
@@ -403,10 +754,14 @@ fn input_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutcome {
         paste_clipboard: false,
         cancel: false,
         quit: false,
+        external_editor: false,
     };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    if app.history.searching() {
+        return history_search_key(app, editor, key);
+    }
     match key.code {
         KeyCode::Enter if alt || shift => editor.insert_newline(),
         KeyCode::Enter => {
@@ -414,7 +769,7 @@ fn input_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutcome {
                 match command::parse(&editor.text(), !editor.images().is_empty()) {
                     Ok(ParsedInput::Command(command)) => outcome.command = Some(command),
                     Ok(ParsedInput::Message(text)) if !app.running => {
-                        let mut message = editor.take();
+                        let mut message = editor.draft_message();
                         message.text = text;
                         outcome.send = Some(message);
                     }
@@ -448,6 +803,14 @@ fn input_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutcome {
         KeyCode::Char('h') if ctrl => editor.backspace(),
         KeyCode::Char('p') if ctrl => navigate_or_move(app, editor, false),
         KeyCode::Char('n') if ctrl => navigate_or_move(app, editor, true),
+        KeyCode::Char('r') if ctrl => app.history.open_or_older(),
+        KeyCode::Char('g') if ctrl => outcome.external_editor = true,
+        KeyCode::Char('u') if alt => {
+            editor.undo();
+        }
+        KeyCode::Char('r') if alt => {
+            editor.redo();
+        }
         KeyCode::Left if ctrl || alt => editor.move_word_left(),
         KeyCode::Right if ctrl || alt => editor.move_word_right(),
         KeyCode::Left => editor.move_left(),
@@ -461,7 +824,7 @@ fn input_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutcome {
         KeyCode::Home => editor.home(),
         KeyCode::End => editor.end(),
         // Alt and Ctrl letters are shortcuts; they must not be inserted.
-        KeyCode::Char(character) if !ctrl && !alt => editor.insert_str(&character.to_string()),
+        KeyCode::Char(character) if !ctrl && !alt => editor.insert_typed(character),
         _ => {}
     }
     outcome
@@ -503,6 +866,58 @@ fn navigate_or_move(app: &mut App, editor: &mut Editor, forward: bool) {
     }
 }
 
+/// Local prompt-history search keys. The composer draft is untouched here;
+/// Enter clones the chosen entry into the editor and never sends. Esc and
+/// Ctrl+C cancel and leave the draft and ordinary navigation unchanged.
+fn history_search_key(app: &mut App, editor: &mut Editor, key: KeyEvent) -> KeyOutcome {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    match key.code {
+        KeyCode::Esc => app.history.cancel_search(),
+        KeyCode::Char('c') if ctrl => app.history.cancel_search(),
+        KeyCode::Char('r') if ctrl => app.history.move_older(),
+        KeyCode::Up => app.history.move_older(),
+        KeyCode::Char('p') if ctrl => app.history.move_older(),
+        KeyCode::Down => app.history.move_newer(),
+        KeyCode::Char('n') if ctrl => app.history.move_newer(),
+        KeyCode::Backspace => app.history.query_backspace(),
+        KeyCode::Enter => {
+            if let Some(entry) = app.history.accept_search() {
+                editor.set_draft(entry);
+            }
+        }
+        KeyCode::Char(character) if !ctrl && !alt => app.history.query_push(character),
+        _ => {}
+    }
+    KeyOutcome::default()
+}
+
+/// Modal rendered-transcript search key map. The composer and its history are
+/// never edited here; Ctrl+V only requests clipboard IO for query text.
+fn transcript_search_key(app: &mut App, key: KeyEvent) -> KeyOutcome {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    let mut outcome = KeyOutcome::default();
+    match key.code {
+        KeyCode::Esc => transcript_search::cancel(app),
+        KeyCode::Char('c') if ctrl => transcript_search::cancel(app),
+        KeyCode::Char('v') if ctrl => outcome.paste_clipboard = true,
+        KeyCode::F(1) if !ctrl && !alt => {
+            transcript_search::cancel(app);
+            app.toggle_help();
+        }
+        KeyCode::F(3) => transcript_search::step(app, !shift),
+        KeyCode::Enter | KeyCode::Down => transcript_search::step(app, true),
+        KeyCode::Up => transcript_search::step(app, false),
+        KeyCode::Backspace => transcript_search::backspace(app),
+        KeyCode::Char('h') if ctrl => transcript_search::backspace(app),
+        KeyCode::Char(character) if !ctrl && !alt => transcript_search::push_char(app, character),
+        _ => {}
+    }
+    outcome
+}
+
 /// Ctrl+C: close the log sub-view first, else save and clear a non-empty draft
 /// (even while busy, without requesting exit), else use the shared exit path.
 fn handle_ctrl_c(app: &mut App, editor: &mut Editor) -> bool {
@@ -511,7 +926,7 @@ fn handle_ctrl_c(app: &mut App, editor: &mut Editor) -> bool {
         return false;
     }
     if !editor.is_empty() {
-        app.history.push(editor.take());
+        app.history.push(editor.clear_for_history());
         app.focus = Focus::Input;
         app.status = None;
         return false;
@@ -535,6 +950,28 @@ fn exit_or_wait(app: &mut App) -> bool {
 /// Dragging copies visible text; navigation never edits the draft or its focus.
 /// Returns text for the event loop to write to the clipboard.
 pub fn handle_mouse(app: &mut App, mouse: MouseEvent) -> Option<String> {
+    if transcript_search::active(app) {
+        let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && app.help_button_area.contains(position)
+        {
+            transcript_search::cancel(app);
+            app.toggle_help();
+        }
+        return None;
+    }
+    // A keyboard-owned history search consumes ordinary mouse events; only a
+    // Help click is global and closes the search first.
+    if app.history.searching() {
+        let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && app.help_button_area.contains(position)
+        {
+            app.history.cancel_search();
+            app.toggle_help();
+        }
+        return None;
+    }
     let position = ratatui::layout::Position::new(mouse.column, mouse.row);
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
         app.text_selection.clear();
@@ -675,11 +1112,20 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
 /// A failed explicit image path keeps the original paste as editable text and
 /// never clears existing attachments.
 fn handle_paste_text(app: &mut App, editor: &mut Editor, text: &str) {
+    if transcript_search::active(app) {
+        transcript_search::push_str(app, text);
+        return;
+    }
     app.help_open = false;
     if app.log_view.is_some() {
         log::close(app);
     }
     app.focus = Focus::Input;
+    // Paste during search edits only the query; the hidden draft is untouched.
+    if app.history.searching() {
+        app.history.query_paste(text);
+        return;
+    }
     match message::classify_image_paste(text, |path| path.is_file()) {
         Some(paste) => {
             if let Err(error) = attach_image(app, editor, paste) {
@@ -688,6 +1134,69 @@ fn handle_paste_text(app: &mut App, editor: &mut Editor, text: &str) {
             }
         }
         None => editor.insert_str(text),
+    }
+}
+
+/// Ctrl+G: suspend the same terminal, run the configured editor with the draft
+/// in a temp file, restore the terminal, then load changed UTF-8 text as one
+/// undoable edit. Failures only notify and leave the exact draft/cursor/history.
+type ExternalEdit = (
+    tokio::sync::oneshot::Receiver<Result<String, String>>,
+    Option<external_editor::SigintGuard>,
+    String,
+);
+
+fn start_external_editor(
+    session: &mut terminal::TerminalSession,
+    app: &mut App,
+    editor: &Editor,
+    external_edit: &mut Option<ExternalEdit>,
+) {
+    if external_edit.is_some() {
+        return;
+    }
+    let launch = match external_editor::from_env() {
+        Ok(launch) => launch,
+        Err(message) => {
+            app.notify(message);
+            return;
+        }
+    };
+    let Some(session_id) = app.session.as_ref().map(|session| session.id.clone()) else {
+        app.notify("Session is not ready. Draft kept.".to_owned());
+        return;
+    };
+    let guard = match external_editor::SigintGuard::install() {
+        Ok(guard) => guard,
+        Err(message) => {
+            app.notify(message);
+            return;
+        }
+    };
+    if let Err(error) = session.suspend_external() {
+        let _ = session.resume_external();
+        drop(guard);
+        app.notify(format!(
+            "External editor could not suspend the terminal: {error}"
+        ));
+        return;
+    }
+    let original = editor.text();
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let result = external_editor::edit(&launch, &original);
+        let _ = sender.send(result);
+    });
+    *external_edit = Some((receiver, Some(guard), session_id));
+}
+
+#[cfg(test)]
+fn load_external_text(app: &mut App, editor: &mut Editor, result: Result<String, String>) {
+    match result {
+        Ok(text) => {
+            editor.replace_text(&text);
+        }
+        Err(message) => app.notify(message),
     }
 }
 
@@ -701,6 +1210,30 @@ fn handle_clipboard(app: &mut App, editor: &mut Editor) {
             return;
         }
     };
+    // While a transcript search is open, text paste edits only the query and
+    // an image clipboard is reported without touching the preserved draft.
+    if transcript_search::active(app) {
+        match clipboard.get_image() {
+            Ok(_) => app.notify("Close transcript search before attaching an image.".to_owned()),
+            Err(_) => match clipboard.get_text() {
+                Ok(text) => transcript_search::push_str(app, &text),
+                Err(error) => app.notify(format!("Clipboard read failed: {error}")),
+            },
+        }
+        return;
+    }
+    // While searching, text paste edits only the query and an image clipboard
+    // is reported without touching the preserved draft or history images.
+    if app.history.searching() {
+        match clipboard.get_image() {
+            Ok(_) => app.notify("Close history search before attaching an image.".to_owned()),
+            Err(_) => match clipboard.get_text() {
+                Ok(text) => app.history.query_paste(&text),
+                Err(error) => app.notify(format!("Clipboard read failed: {error}")),
+            },
+        }
+        return;
+    }
     match clipboard.get_image() {
         Ok(image) => match encode_clipboard_png(&image) {
             Ok(bytes) => {
@@ -742,10 +1275,10 @@ fn attach_image(app: &mut App, editor: &mut Editor, path: PathBuf) -> Result<(),
 /// opened relative to the user's home directory.
 fn expand_home(path: &std::path::Path) -> PathBuf {
     let text = path.to_string_lossy();
-    if let Some(rest) = text.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
+    if let Some(rest) = text.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(rest);
     }
     path.to_path_buf()
 }

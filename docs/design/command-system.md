@@ -1,6 +1,6 @@
 # Local command system
 
-Updated: 2026-10-13. Status: implemented for TUI and console. Persistent session operations are reused; no new model/tool loop is introduced.
+Updated: 2026-10-23. Status: implemented for TUI and console. Persistent session operations are reused; no new model/tool loop is introduced.
 
 ## Boundary
 
@@ -9,14 +9,17 @@ A local command is user input addressed to the host application. It is not a mod
 ```text
 Composer / console input
   -> classify and parse
-     -> ordinary message -> SessionCommand::Send -> Agent
+     -> ordinary message -> SessionRequest{request_id, Send} -> Runtime
      -> local command -> application handler
-                        -> existing session operation or frontend action
+                        -> SessionRequest{request_id, session operation}
+     <- SessionEventPacket{event, association, request_id}
+        Accepted (send) / Opened / Listed / Renamed / TitleUpdated / Error
+        Agent (full session/task/message) / Finished (unique terminal)
 ```
 
-Parsing must happen before the frontend removes the draft, appends a visible user message, or marks the Agent as running. Successful local commands do not enter Conversation/history.jsonl as user messages. Session operations can still create their normal metadata/history changes.
+Parsing must happen before the frontend removes the draft, appends a visible user message, or marks the Agent as running. A submitted message is not removed or displayed as running until the Runtime `Accepted` reply carries its full association. Successful local commands do not enter Conversation/history.jsonl as user messages. Session operations can still create their normal metadata/history changes.
 
-The parser accepts text and returns a typed intent or an argument error. It does not import Ratatui, access the filesystem, call a model, execute shell commands, or hold an Agent. Session lifecycle and persistence remain in [SessionManager](../../src/session/mod.rs) and [SessionStore](../../src/session/store.rs).
+The parser accepts text and returns a typed intent or an argument error. It does not import Ratatui, access the filesystem, call a model, execute shell commands, or hold an Agent. Session lifecycle and persistence remain in the Runtime/service ([runtime.rs](../../src/session/runtime.rs), [store.rs](../../src/session/store.rs)); the terminal manager only adapts request IDs and packets.
 
 ## Initial vocabulary
 
@@ -49,15 +52,15 @@ These rules are covered by parser and frontend behavior tests. A root filename c
 
 Keep a small static definition list for command name, description and usage. Help and completion read this list so their supported vocabulary stays consistent. A straightforward typed enum and match-based dispatcher are sufficient; no dynamic plugin registry is needed.
 
-Session actions use existing SessionCommand variants. Frontend actions such as showing help are applied by the host. Agent, Conversation, client, protocol and tools do not need to understand slash syntax.
+Session actions use host-assigned monotonic `request_id` values on the bounded `SessionRequest` channel. Replies are matched by `request_id`; Agent/Finished events are matched by the packet’s full `(session_id, task_id, message_id)` association. Frontend actions such as help are applied by the host. Agent, Conversation, client, protocol and tools do not understand slash syntax.
 
-While a job is running:
+While another session is running:
 
-- `/help`, `/sessions`, and `/rename` remain usable.
-- `/new`, `/resume`, and ordinary model messages report Busy and retain the draft.
-- Command feedback does not emit TurnCompleted/TurnFailed for the active Agent job.
+- `/help`, `/sessions`, `/rename`, `/new`, and `/resume` remain locally usable; viewing/creating/switching B does not cancel A.
+- An ordinary message to a session with an active task (or full Runtime capacity) is rejected with the Runtime’s verified `busy` code/reason; the exact draft text/images/cursor stays editable and is not auto-retried. Explicit retry is another Send.
+- Command/Agent feedback never fabricates a second terminal; only `Finished` finalizes the task. Cancel acknowledgment (`requested`/`already_requested`/`not_running`) is not a terminal.
 
-The TUI command draft is consumed after its matching successful session response, rather than when it is merely sent. A parse error, Busy response, missing session, or failed rename preserves it. The plain console echoes rejected input with `Input kept:` so it can be retried; it does not provide a TUI draft editor. Opening a session through `/new` or `/resume` must consume the command text before caching the old session's remaining frontend state; otherwise returning to the old session could restore the already executed command as an unsent draft.
+The TUI command draft is consumed only after its matching `request_id` successful response and only if the draft still equals the dispatched snapshot. A parse error, busy response, missing session, failed rename, or a draft changed/switched after dispatch preserves the current editor. The plain console echoes rejected input with `Input kept:` so it can be retried; it does not auto-requeue. Opening a session through `/new` or `/resume` consumes the command text before caching the old session state; otherwise returning could restore an executed command as an unsent draft.
 
 ## TUI
 
@@ -74,17 +77,22 @@ Descriptions and usage are shown on demand. No permanent keyboard legend or comm
 ## Implementation and validation
 
 - [Command module](../../src/command/mod.rs): pure text classification, argument validation, one static vocabulary, and translation to typed session requests.
-- [TUI commands](../../src/frontend/tui/commands.rs): completion presentation, pending command state, Busy feedback, and acknowledgement-driven draft consumption.
-- [TUI submission](../../src/frontend/tui/mod.rs): classification before `Editor::take`, visible user records, or Agent execution.
-- [Console](../../src/frontend/console.rs): local commands remain usable while a job runs; piped ordinary messages are drained sequentially before EOF closes the worker input.
-- [Session manager](../../src/session/mod.rs): automatic title notifications use `TitleUpdated`, while explicit rename responses use `Renamed`. A delayed automatic title notification cannot acknowledge `/rename`, clear its draft, or unlock pending input.
+- [Session requests](../../src/frontend/session_requests.rs): host request IDs, bounded `try_send`, pending-send/command/cancel ownership.
+- [TUI commands](../../src/frontend/tui/commands.rs): completion presentation and command dispatch; no eager draft consumption.
+- [TUI submission](../../src/frontend/tui/mod.rs): classification before `Accepted`, visible user records, or Agent execution; per-session projections route associated packets.
+- [Console](../../src/frontend/console.rs): bounded request/event consumption, current-task Ctrl-C cancel, associated HistoryRestored append-only repair, and piped EOF draining.
+- [Runtime service](../../src/session/runtime.rs): authoritative sessions, task IDs/message IDs, unique Finished terminal, cancellation and title jobs. `TitleUpdated` remains non-acknowledging; `Renamed` is the explicit rename response.
 
 Help and completion read the same definitions. Product feedback remains English. The command layer adds no API calls, database, plugin system, permanent footer legend, or persistence format.
 
-All-target regression passed: **197 main tests + 40 experiment tests**. New behavior tests live in [parser tests](../../tests/command/mod.rs), [TUI command tests](../../tests/tui/commands.rs), and [console tests](../../tests/console/mod.rs). They cover literal paths, multiline and slash escapes, invalid arguments, attachments, Busy state, successful/failed acknowledgements, automatic-title races, outgoing-session draft caching, keyboard/mouse completion, command dispatch during jobs, and EOF draining.
+Validation status: the `7f87e44` checkpoint passed 596 main + 70 support tests with 0 failed/11 ignored; its earlier parallel Runtime title failure is preserved as issue evidence. Runtime `8f7831a` then added the explicit MetadataLock unlock correction with controlled duplicated-descriptor RED/GREEN coverage, not a consumer-side title change. The joint fixed candidate `527b402e69fcdf76e5a4f84eb906a233788f0f31` has a Runtime author report of **606 main + 70 support tests, 0 failed, 12 ignored** and exact CI `39832826642` green. Raw failures and the withdrawn native-candidate attempt remain issue evidence; they are not erased or rewritten. This is joint-candidate validation, not completed `dev` integration.
 
-The actual binary was also exercised with a local mock Responses server and an isolated PTY decoded as a terminal screen. Console and TUI local commands made **zero model requests**. `/new`, `/sessions`, `/resume`, `/rename`, `/help`, invalid-input preservation, completion, literal `//help`, multiline paste, saved history, and clean exit passed. Exactly two model requests were made for the two deliberate ordinary messages, and only those messages created task records.
+New behavior tests live in [parser tests](../../tests/command/mod.rs), [TUI command tests](../../tests/tui/commands.rs), [TUI session projections](../../tests/tui/sessions.rs), and [console tests](../../tests/console/mod.rs). They cover literal paths, multiline/slash escapes, attachments/cursor retention, bounded request rejection, full task/message association guards, A-running/B-view isolation, unique Finished, associated HistoryRestored canonical repair, targeted cancel acknowledgment (not terminal), automatic-title races, outgoing-session draft caching, keyboard/mouse completion, dispatch during jobs, and EOF draining. Handoff and evidence index: [#109](https://github.com/HeimaoLST/Saki/issues/109).
 
-Evidence: `/var/folders/_x/4s504vvn6zv5vz36ktpbwl480000gn/T/saki-commands-1o8o4iu8/report.json`. The same directory contains `terminal.ansi` and `console.txt`. These checks used mock model responses and did not change the user's existing tmux panes or clipboard.
+Actual joint-candidate PTY validation on the fixed `527b402` build: 28/28 checks across five scoped scenarios (new/explicit resume/rename/title, A-running/B-view, TUI cancel, console active-cancel→one interrupted→help→idle SIGINT, editor), plus a separate idle-SIGINT-with-open-stdin exit. The historical `7f87e44` checkpoint is distinguished from this current candidate validation. Raw failed artifacts remain in the issue handoff; they are not deleted.
 
-Remaining scope: argument/session-ID completion, aliases, persistent command history, plugins, model switching, manual compact, and cancellation commands.
+2026-10-23 Runtime consumer facts: terminal requests are bounded `SessionRequest{request_id, command}` with host IDs and `try_send`; replies are matched by request_id and task events by full `(session_id,task_id,message_id)`. Send is committed/displayed only on `Accepted`; rejection retains the exact editor draft and creates no User/Activity/running record. Console Ctrl-C cancels only the current observed task with its exact session/task and its acknowledgment is not terminal. Console `HistoryRestored` appends the authoritative canonical body for the associated task without replaying that task’s terminal; the one ensuing `Finished` reports status/error/persistence/history_required. No second protocol, parser, or unbounded queue is used.
+
+Console shutdown semantics (#109): production keeps the single unchanged Tokio stdin source; the host `main`/`app` owns post-app drain and invokes `shutdown_background` only after the manager, actor, prepared operations and forwarders drain. An idle SIGINT with stdin still open therefore exits without requiring EOF/Enter. The console run loop and task association logic are unchanged. See [main.rs](../../src/main.rs), [app.rs](../../src/app.rs), [session terminal](../../src/session/terminal.rs), and [runtime API](runtime-api.md); no second stdin reader/thread or input framework is introduced. Ctrl+C acknowledgement is never treated as a terminal.
+
+Remaining scope: argument/session-ID completion, aliases, persistent command history, plugins, model switching, manual compact, and background/offscreen cancellation UI.

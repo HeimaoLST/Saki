@@ -1,10 +1,14 @@
+use crate::session::host::HostConfig;
 use std::io::IsTerminal;
 
 use tokio::sync::mpsc;
 
 use crate::{
     agent::conversation::CompactionConfig,
-    client::ResponsesClient,
+    client::{
+        ClientConfig,
+        connections::{Connection, ConnectionRegistry},
+    },
     frontend::{console, tui},
     model::catalog,
     session::{SYSTEM_PROMPT, SessionManager, store::SessionStore},
@@ -16,11 +20,31 @@ use crate::{
 /// This module wires channels and lifecycle only; it contains no model/tool loop
 /// and no terminal drawing.
 pub async fn run() -> anyhow::Result<()> {
-    let mut client = ResponsesClient::new()?;
-    if let Ok(base_url) = std::env::var("SAKI_BASE_URL") {
-        client = client.with_base_url(base_url);
-    }
-    let model = std::env::var("SAKI_MODEL").unwrap_or_else(|_| "deepseek-v4.1-flash".to_owned());
+    // Assembly boundary: the protocol, key and base URL are read once here and
+    // injected explicitly; nothing below reads them again.
+    let cwd = std::env::current_dir()?.canonicalize()?;
+    let (connections, capacity, tools) = if let Some(path) = std::env::var_os("SAKI_RUNTIME_CONFIG")
+    {
+        let path = std::path::PathBuf::from(path).canonicalize()?;
+        let config = HostConfig::load(&path)?;
+        let connections = config.build_connections(|name| std::env::var(name).ok())?;
+        let tools = config.build_tools(
+            path.parent().expect("config has a parent directory"),
+            |name| std::env::var(name).ok(),
+        )?;
+        (connections, config.max_active_tasks, Some(tools))
+    } else {
+        let config = ClientConfig::from_env()?;
+        let model = std::env::var("SAKI_MODEL").unwrap_or_else(|_| "deepseek-v4.1-flash".into());
+        let connection = Connection::new("default".into(), config, model)?;
+        let connections = ConnectionRegistry::new("default".into(), vec![connection])?;
+        let capacity =
+            std::env::var("SAKI_MAX_ACTIVE_TASKS").map_or(Ok(1), |value| value.parse::<usize>())?;
+        (connections, capacity, None)
+    };
+    let client = connections.default().client().clone();
+    let model = connections.default().default_model().to_owned();
+    let mut loaded_catalog = None;
     let mut config = match std::env::var("SAKI_CONTEXT_TOKENS") {
         Ok(value) => CompactionConfig::new(value.parse()?),
         Err(_) => {
@@ -29,9 +53,13 @@ pub async fn run() -> anyhow::Result<()> {
                 match catalog::ModelCatalog::load(std::path::Path::new(".saki/cache/models.json"))
                     .await
                 {
-                    Ok(catalog) => catalog
-                        .limits(&model_id)
-                        .ok_or_else(|| anyhow::anyhow!("no unique model match for {model_id}")),
+                    Ok(catalog) => {
+                        let limits = catalog
+                            .limits(&model_id)
+                            .ok_or_else(|| anyhow::anyhow!("no unique model match for {model_id}"));
+                        loaded_catalog = Some(catalog);
+                        limits
+                    }
                     Err(error) => Err(error),
                 };
             let mut config = CompactionConfig::new(catalog::DEFAULT_CONTEXT_TOKENS);
@@ -59,23 +87,31 @@ pub async fn run() -> anyhow::Result<()> {
     if let Ok(value) = std::env::var("SAKI_COMPACT_SUMMARY_TOKENS") {
         config.max_summary_tokens = value.parse()?;
     }
-    let cwd = std::env::current_dir()?.canonicalize()?;
+    crate::agent::conversation::Conversation::new(SYSTEM_PROMPT.into())
+        .with_compaction_config(config)?;
     let root = std::env::var_os("SAKI_SESSION_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| cwd.join(".saki/sessions"));
     let store = SessionStore::new(root)?;
-    let session_id = match std::env::var("SAKI_SESSION").ok().filter(|id| id != "new") {
-        // Explicit `new` (or no value at all) starts a fresh session; plain
-        // startup never resumes stored history. An explicit ID is opened below
-        // and fails loudly when it is missing or locked.
-        Some(id) => id,
-        None => store.create(&cwd, &model, SYSTEM_PROMPT, config)?,
-    };
-    let loaded = store.open(&session_id)?;
-    let manager = SessionManager::new(store, client, loaded, cwd, model, config)?;
+    let runtime = crate::session::runtime::Runtime::new(store, client, cwd, model, config)
+        .with_connections(connections)
+        .with_tool_sources(tools)
+        .with_max_active_tasks(capacity)?
+        .with_catalog(loaded_catalog);
+    if std::env::args().skip(1).any(|arg| arg == "--stdio") {
+        #[cfg(unix)]
+        let output = crate::session::stdio::NativeStdout::new()?;
+        #[cfg(not(unix))]
+        let output = tokio::io::stdout();
+        return runtime
+            .run(tokio::io::BufReader::new(tokio::io::stdin()), output)
+            .await;
+    }
+    let initial_session = std::env::var("SAKI_SESSION").ok().filter(|id| id != "new");
+    let manager = SessionManager::from_runtime(runtime, initial_session);
 
-    let (events_tx, events_rx) = mpsc::unbounded_channel();
-    let (input_tx, input_rx) = mpsc::unbounded_channel();
+    let (events_tx, events_rx) = manager.event_channel();
+    let (input_tx, input_rx) = mpsc::channel(32);
     let worker = tokio::spawn(manager.run(input_rx, events_tx));
 
     // One choice point for the terminal front end. Both front ends connect to
@@ -95,7 +131,7 @@ pub async fn run() -> anyhow::Result<()> {
         Frontend::Tui => tui::run(input_tx, events_rx).await,
     };
     let worker_result = worker.await;
-    worker_result?;
+    worker_result??;
     frontend_result?;
     Ok(())
 }

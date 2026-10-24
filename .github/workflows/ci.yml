@@ -1,0 +1,230 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [dev, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust 1.99.0
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.99.0
+          rustc --version
+          cargo --version
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-1.99.0-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-1.99.0-
+
+      - name: Runtime + TUI formatting
+        run: cargo fmt --all -- --check
+
+      - name: Runtime + TUI clippy (all targets, warnings denied)
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Runtime + TUI tests (unit, integration, examples)
+        run: cargo test --locked --all-targets
+
+      - name: TUI real-PTY terminal lifecycle fixture
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1 | tee "$RUNNER_TEMP/tui-pty.log"
+          grep -q "test result: ok. 1 passed; 0 failed" "$RUNNER_TEMP/tui-pty.log"
+
+      - name: Set up Python 3.12 for stdio self-test
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Build Saki binary for stdio self-test
+        run: cargo build --locked --bin Saki
+
+      - name: Runtime stdio cross-process self-test
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki 2>&1 | tee "$RUNNER_TEMP/runtime-stdio-self-test.log"
+
+      - name: Set up Go for GUI runtime integration
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: desktop/go.mod
+          cache: true
+          cache-dependency-path: desktop/go.sum
+
+      - name: GUI runtime process integration (real Rust binary)
+        shell: bash
+        timeout-minutes: 5
+        working-directory: desktop
+        env:
+          SAKI_TEST_RUNTIME_BIN: ${{ github.workspace }}/target/debug/Saki
+          CGO_ENABLED: "0"
+        run: |
+          set -o pipefail
+          go test -run '^(TestRuntimeProcessIntegration|TestGUIAppRuntimeFlow|TestGUIFirstCreateUsesProfileSnapshot|TestGUIAppPersistsMappingBeforeSend|TestGUIAppSaveFailureStopsBeforeSend)$' -count=1 -v . 2>&1 | tee "$RUNNER_TEMP/gui-runtime-integration.log"
+          for test in TestRuntimeProcessIntegration TestGUIAppRuntimeFlow TestGUIFirstCreateUsesProfileSnapshot TestGUIAppPersistsMappingBeforeSend TestGUIAppSaveFailureStopsBeforeSend; do
+            if ! grep -Fq -- "--- PASS: $test " "$RUNNER_TEMP/gui-runtime-integration.log"; then
+              echo "::error::missing PASS for $test (skip, empty, or not run)"
+              exit 1
+            fi
+          done
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### Rust gate (Runtime + TUI, shared crate)"
+            echo ""
+            echo "- \`cargo fmt --all -- --check\`"
+            echo "- \`cargo clippy --locked --all-targets -- -D warnings\`"
+            echo "- \`cargo test --locked --all-targets\` (unit, integration, example targets)"
+            echo "- \`pty_panic_restores_terminal\` (real PTY fixture; step asserts the named fixture passed)"
+            echo "- \`cargo build --locked --bin Saki\` + \`python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki\` (real cross-process stdio smoke; no external provider)"
+            echo "- \`SAKI_TEST_RUNTIME_BIN=\$GITHUB_WORKSPACE/target/debug/Saki go test -run '^(TestRuntimeProcessIntegration|TestGUIAppRuntimeFlow|TestGUIFirstCreateUsesProfileSnapshot|TestGUIAppPersistsMappingBeforeSend|TestGUIAppSaveFailureStopsBeforeSend)$' -count=1 -v .\` in desktop (five existing offline GUI→Rust tests; each must PASS, not skip/empty)"
+            echo ""
+            echo "Runtime and TUI share this crate; this job is the required gate for both lines."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  gui:
+    name: gui
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go from desktop/go.mod
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: desktop/go.mod
+          cache: true
+          cache-dependency-path: desktop/go.sum
+
+      - name: GUI formatting
+        working-directory: desktop
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt required for:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: GUI vet
+        working-directory: desktop
+        run: CGO_ENABLED=0 go vet ./...
+
+      - name: GUI tests
+        working-directory: desktop
+        run: CGO_ENABLED=0 go test ./... -count=1
+
+      - name: GUI build
+        working-directory: desktop
+        run: CGO_ENABLED=0 go build -o "$RUNNER_TEMP/saki-desktop" .
+
+      - name: Headless preview images
+        working-directory: desktop
+        env:
+          SAKI_PREVIEW_DIR: ${{ runner.temp }}/desktop-previews
+        run: |
+          mkdir -p "$SAKI_PREVIEW_DIR"
+          CGO_ENABLED=0 go test -run TestPreviewImages -count=1 .
+
+      - name: Upload headless previews
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-headless-previews
+          path: ${{ runner.temp }}/desktop-previews/*.png
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### GUI gate (desktop Go module)"
+            echo ""
+            echo "- \`gofmt -l .\` (must be empty)"
+            echo "- \`go vet ./...\`"
+            echo "- \`go test ./... -count=1\`"
+            echo "- \`go build\`"
+            echo "- headless \`ui.Tester\` previews uploaded as artifact"
+            echo ""
+            echo "This is a headless design-preview gate; real macOS window/IME is not covered."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  python:
+    name: python
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Collaboration-check regression tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/test_collaboration_check.py 2>&1 | tee "$RUNNER_TEMP/python-collaboration-tests.log"
+          grep -Eq '^Ran [1-9][0-9]* tests? in ' "$RUNNER_TEMP/python-collaboration-tests.log"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### Python gate (collaboration checker)"
+            echo ""
+            echo "- \`python3 scripts/test_collaboration_check.py\` (stdlib unittest)"
+            echo "- Non-zero test count is asserted; an empty suite cannot pass silently."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  ci-required:
+    name: ci-required
+    if: always()
+    needs: [rust, gui, python]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require rust, gui and python success
+        env:
+          RUST_RESULT: ${{ needs.rust.result }}
+          GUI_RESULT: ${{ needs.gui.result }}
+          PYTHON_RESULT: ${{ needs.python.result }}
+        run: |
+          echo "rust=$RUST_RESULT gui=$GUI_RESULT python=$PYTHON_RESULT"
+          if [ "$RUST_RESULT" != "success" ] || [ "$GUI_RESULT" != "success" ] || [ "$PYTHON_RESULT" != "success" ]; then
+            echo "::error::Required CI jobs must all succeed; cancelled, failed and skipped are not success."
+            exit 1
+          fi

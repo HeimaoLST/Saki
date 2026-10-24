@@ -54,7 +54,7 @@ impl ModelServer {
         let handle = tokio::spawn(async move {
             for step in steps {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let request = support::read_request(&mut socket).await;
+                let request = crate::test_support::read_request(&mut socket).await;
                 let _ = sender.send(request);
                 match step {
                     Step::Json(body) => write_json_status(&mut socket, &body, 200).await,
@@ -91,8 +91,8 @@ impl ModelServer {
         }
     }
 
-    fn client(&self) -> crate::client::ResponsesClient {
-        crate::client::ResponsesClient::for_test(format!("http://{}/v1", self.address))
+    fn client(&self) -> crate::client::ModelClient {
+        crate::client::ModelClient::for_test(format!("http://{}/v1", self.address))
     }
 
     async fn next_request(&mut self, timeout: Duration) -> Value {

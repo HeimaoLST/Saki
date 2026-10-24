@@ -1,17 +1,24 @@
 use std::{collections::HashMap, fs, path::Path, time::Duration};
 
 use anyhow::{Result, ensure};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const CATALOG_URL: &str = "https://models.dev/catalog.json";
 pub const DEFAULT_CONTEXT_TOKENS: usize = 256 * 1024;
 const SYNC_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ModelLimits {
     pub context: usize,
     pub input: Option<usize>,
     pub output: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CatalogEntry {
+    pub id: String,
+    pub name: Option<String>,
+    pub limits: ModelLimits,
 }
 
 #[derive(Deserialize)]
@@ -27,7 +34,9 @@ struct Provider {
 
 #[derive(Deserialize)]
 pub struct ModelCatalog {
+    #[serde(default)]
     providers: HashMap<String, Provider>,
+    #[serde(default)]
     models: HashMap<String, Model>,
 }
 
@@ -40,7 +49,7 @@ impl ModelCatalog {
 
     async fn load_from(cache_path: &Path, url: &str, max_age: Duration) -> Result<Self> {
         let cached = match fs::read(cache_path) {
-            Ok(bytes) => Self::parse(&bytes).ok(),
+            Ok(bytes) => Self::from_snapshot(&bytes).ok(),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(error.into()),
         };
@@ -70,7 +79,7 @@ impl ModelCatalog {
                 .error_for_status()?
                 .bytes()
                 .await?;
-            let catalog = Self::parse(&bytes)?;
+            let catalog = Self::from_snapshot(&bytes)?;
             if let Some(parent) = cache_path
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty())
@@ -104,6 +113,47 @@ impl ModelCatalog {
         Ok(catalog)
     }
 
+    /// Build a catalog from an already-loaded snapshot. This never calls
+    /// `load()` and never performs network I/O.
+    pub fn from_snapshot(bytes: &[u8]) -> Result<Self> {
+        Self::parse(bytes)
+    }
+
+    /// Stable, deduplicated model entries from both providers and root models.
+    /// Provider entries win over a same-ID root entry, matching `limits()`.
+    pub fn entries(&self) -> Vec<CatalogEntry> {
+        let mut entries: HashMap<String, CatalogEntry> = HashMap::new();
+        for (provider_id, provider) in &self.providers {
+            for (model_id, model) in &provider.models {
+                if model.limit.context == 0 {
+                    continue;
+                }
+                let id = format!("{provider_id}/{model_id}");
+                entries.insert(
+                    id.clone(),
+                    CatalogEntry {
+                        id,
+                        name: model.name.clone(),
+                        limits: model.limit,
+                    },
+                );
+            }
+        }
+        for (id, model) in &self.models {
+            if model.limit.context == 0 {
+                continue;
+            }
+            entries.entry(id.clone()).or_insert_with(|| CatalogEntry {
+                id: id.clone(),
+                name: model.name.clone(),
+                limits: model.limit,
+            });
+        }
+        let mut entries: Vec<_> = entries.into_values().collect();
+        entries.sort_by(|left, right| left.id.cmp(&right.id));
+        entries
+    }
+
     /// Prefer exact provider/model or canonical IDs, then a unique model name.
     pub fn limits(&self, requested: &str) -> Option<ModelLimits> {
         if let Some((provider, model_id)) = requested.split_once('/') {
@@ -111,21 +161,25 @@ impl ModelCatalog {
                 .providers
                 .get(provider)
                 .and_then(|provider| provider.models.get(model_id))
+                && model.limit.context > 0
             {
-                if model.limit.context > 0 {
-                    return Some(model.limit);
-                }
-            }
-            if let Some(model) = self.models.get(model_id) {
-                if model.limit.context > 0 {
-                    return Some(model.limit);
-                }
-            }
-        }
-        if let Some(model) = self.models.get(requested) {
-            if model.limit.context > 0 {
                 return Some(model.limit);
             }
+            if let Some(model) = self.models.get(requested)
+                && model.limit.context > 0
+            {
+                return Some(model.limit);
+            }
+            if let Some(model) = self.models.get(model_id)
+                && model.limit.context > 0
+            {
+                return Some(model.limit);
+            }
+        }
+        if let Some(model) = self.models.get(requested)
+            && model.limit.context > 0
+        {
+            return Some(model.limit);
         }
         let name = requested.rsplit('/').next().unwrap_or(requested);
         let mut matches = self.models.iter().filter(|(id, model)| {

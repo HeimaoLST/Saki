@@ -186,6 +186,7 @@ fn truncated_image_failure_keeps_the_existing_draft_and_attachments() {
 fn user_message_history_keeps_attachments_across_recall() {
     let mut app = App::new();
     let message = UserMessage {
+        context: Vec::new(),
         text: "text".to_owned(),
         images: vec![image("history.png")],
     };

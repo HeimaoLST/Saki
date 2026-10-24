@@ -152,6 +152,13 @@ pub struct App {
     pub theme: Theme,
     /// Per-process input history (submitted + Ctrl+C-cleared drafts).
     pub history: InputHistory,
+    /// Active rendered-transcript search, or `None` when closed.
+    pub transcript_search: Option<crate::frontend::tui::transcript_search::TranscriptSearch>,
+    /// Active path-completion popup, or `None` when closed.
+    pub path_completion: Option<crate::frontend::tui::path_completion::PathCompletion>,
+    /// Monotonic record/projection revision; bumped whenever rendered content,
+    /// expansion or projection changes so search never trusts a rebuilt cache.
+    pub transcript_revision: u64,
     /// Last drawn input content width, used by visual line navigation.
     pub input_width: usize,
     /// Last drawn transcript size, used for paging math.
@@ -164,6 +171,8 @@ pub struct App {
     pub disclosure_press: Option<usize>,
     /// Index of the open Activity marker for the task in progress.
     task_marker: Option<usize>,
+    /// First record index belonging to the current task's display projection.
+    task_record_start: Option<usize>,
     /// Record indices of every Activity marker, in creation order.
     activity_markers: Vec<usize>,
 }
@@ -200,6 +209,9 @@ impl App {
             quit_after_turn: false,
             theme: Theme::fallback(),
             history: InputHistory::new(),
+            transcript_search: None,
+            path_completion: None,
+            transcript_revision: 0,
             input_width: 80,
             last_width: 80,
             last_height: 24,
@@ -208,6 +220,7 @@ impl App {
             disclosure_buttons: Vec::new(),
             disclosure_press: None,
             task_marker: None,
+            task_record_start: None,
             activity_markers: Vec::new(),
         }
     }
@@ -356,25 +369,25 @@ impl App {
         // belong to a new task, never to the interrupted one. The boundary is
         // taken before the synthetic status error so that record stays visible
         // outside the group.
-        if let Some(index) = marker {
-            if matches!(
+        if let Some(index) = marker
+            && matches!(
                 app.records.get(index),
                 Some(Record::Activity { end: None, .. })
-            ) {
-                let end = app.records.len();
-                if let Record::Activity {
-                    end: slot,
-                    expanded,
-                    failed,
-                    interrupted,
-                    ..
-                } = &mut app.records[index]
-                {
-                    *slot = Some(end);
-                    *failed = true;
-                    *interrupted = true;
-                    *expanded = true;
-                }
+            )
+        {
+            let end = app.records.len();
+            if let Record::Activity {
+                end: slot,
+                expanded,
+                failed,
+                interrupted,
+                ..
+            } = &mut app.records[index]
+            {
+                *slot = Some(end);
+                *failed = true;
+                *interrupted = true;
+                *expanded = true;
             }
         }
         if matches!(replay.status, TaskStatus::Interrupted | TaskStatus::Unknown)
@@ -396,6 +409,21 @@ impl App {
         }
         self.records.push(record);
         self.layouts.push(None);
+        self.bump_transcript_revision();
+    }
+
+    fn bump_transcript_revision(&mut self) {
+        self.transcript_revision = self.transcript_revision.wrapping_add(1);
+    }
+
+    /// One boundary for record-content invalidation: layout cache, selection
+    /// mapping and the search revision always move together.
+    fn invalidate_record(&mut self, index: usize) {
+        if index < self.layouts.len() {
+            self.layouts[index] = None;
+        }
+        self.text_selection.invalidate_record(index);
+        self.bump_transcript_revision();
     }
 
     fn push_open_activity(&mut self) {
@@ -414,6 +442,8 @@ impl App {
     /// is retained and every later record keeps its identity.
     pub fn submit(&mut self, message: impl Into<UserMessage>) {
         let message = message.into();
+        self.response_records.clear();
+        self.task_record_start = Some(self.records.len());
         self.history.push(message.clone());
         self.push(Record::User {
             text: message.text,
@@ -431,6 +461,7 @@ impl App {
             AgentEvent::Reasoning { .. } | AgentEvent::ReasoningDelta { .. }
         );
         match event {
+            AgentEvent::TaskStarted { .. } | AgentEvent::ModelRequestStarted { .. } => {}
             AgentEvent::ContextUpdated {
                 model,
                 context_tokens,
@@ -458,8 +489,7 @@ impl App {
                     {
                         text.push_str(&delta);
                     }
-                    self.layouts[index] = None;
-                    self.text_selection.invalidate_record(index);
+                    self.invalidate_record(index);
                 } else {
                     let index = self.records.len();
                     self.push(if reasoning {
@@ -483,8 +513,7 @@ impl App {
                             // Encrypted-only final reasoning must not erase streamed text.
                             if !reasoning || !text.is_empty() {
                                 *stored = text;
-                                self.layouts[index] = None;
-                                self.text_selection.invalidate_record(index);
+                                self.invalidate_record(index);
                             }
                         }
                         _ => unreachable!(),
@@ -528,8 +557,11 @@ impl App {
                 if !self.follow || self.log_view.is_some() {
                     self.unread_output = true;
                 }
-                let existing = self.records.iter().rposition(|record| {
-                    matches!(record, Record::Tool { call_id: id, output: None, .. } if *id == call_id)
+                let start = self.task_record_start.unwrap_or(0);
+                let existing = self.records.iter().enumerate().rev().find_map(|(index, record)| {
+                    (index >= start
+                        && matches!(record, Record::Tool { call_id: id, output: None, .. } if *id == call_id))
+                        .then_some(index)
                 });
                 match existing {
                     // Prefer the most recent unfinished record with this
@@ -538,8 +570,7 @@ impl App {
                         if let Record::Tool { output: slot, .. } = &mut self.records[index] {
                             *slot = Some(output);
                         }
-                        self.layouts[index] = None;
-                        self.text_selection.invalidate_record(index);
+                        self.invalidate_record(index);
                     }
                     None => self.push(Record::Tool {
                         call_id,
@@ -591,17 +622,17 @@ impl App {
             auto_collapse,
             ..
         } = &mut self.records[index]
+            && *auto_collapse
         {
-            if *auto_collapse {
-                if !reading {
-                    *expanded = false;
-                    self.text_selection.invalidate_record(index);
-                }
-                // Completion and user toggles consume the automatic transition once.
-                *auto_collapse = false;
-                self.layouts[index] = None;
+            if !reading {
+                *expanded = false;
+                self.text_selection.invalidate_record(index);
             }
+            // Completion and user toggles consume the automatic transition once.
+            *auto_collapse = false;
+            self.layouts[index] = None;
         }
+        self.bump_transcript_revision();
     }
 
     fn finish_turn(&mut self, completed: bool) {
@@ -638,8 +669,10 @@ impl App {
                     self.layouts[index] = None;
                 }
             }
+            self.bump_transcript_revision();
         }
         self.response_records.clear();
+        self.task_record_start = None;
         self.running = false;
         self.cancelling = false;
         self.status = None;
@@ -662,11 +695,13 @@ impl App {
                 *expanded = true;
             }
             self.layouts[marker] = None;
+            self.bump_transcript_revision();
         }
         self.push(Record::Error {
             message: "Interrupted.".to_owned(),
         });
         self.response_records.clear();
+        self.task_record_start = None;
         self.running = false;
         self.cancelling = false;
         self.status = None;
@@ -755,10 +790,10 @@ impl App {
 
     /// Moves a stale selection out of a collapsed Activity onto its marker.
     pub fn normalize_selection(&mut self) {
-        if let Some(marker) = self.visible_activity_for(self.selected) {
-            if !self.activity_expanded(marker) {
-                self.selected = marker;
-            }
+        if let Some(marker) = self.visible_activity_for(self.selected)
+            && !self.activity_expanded(marker)
+        {
+            self.selected = marker;
         }
     }
 
@@ -769,13 +804,13 @@ impl App {
             return;
         };
         let mut record = anchor.record;
-        if let Some(marker) = self.visible_activity_for(record) {
-            if !self.activity_expanded(marker) {
-                record = marker;
-                self.anchor = Some(Anchor { record, offset: 0 });
-                self.visual_anchor = None;
-                return;
-            }
+        if let Some(marker) = self.visible_activity_for(record)
+            && !self.activity_expanded(marker)
+        {
+            record = marker;
+            self.anchor = Some(Anchor { record, offset: 0 });
+            self.visual_anchor = None;
+            return;
         }
         let hidden = matches!(self.records.get(record), Some(Record::Activity { .. }))
             && !self.activity_visible(record);
@@ -883,7 +918,7 @@ impl App {
     }
 
     pub fn toggle_record(&mut self, index: usize) -> bool {
-        match self.records.get_mut(index) {
+        let toggled = match self.records.get_mut(index) {
             Some(Record::Activity {
                 expanded, manual, ..
             }) => {
@@ -905,6 +940,10 @@ impl App {
                 true
             }
             _ => false,
+        };
+        if toggled {
+            self.bump_transcript_revision();
         }
+        toggled
     }
 }

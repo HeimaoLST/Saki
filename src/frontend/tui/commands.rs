@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     command::{self, Command, Definition},
-    session::{SessionCommand, SessionEvent},
+    session::SessionCommand,
 };
 
 #[derive(Default)]
@@ -28,17 +28,22 @@ pub struct Commands {
     pending: Option<Command>,
     area: Rect,
     first_visible: usize,
+    /// False while transcript search owns input; the hidden composer must not
+    /// complete or navigate through a stale popup.
+    enabled: bool,
 }
 
 impl Commands {
     pub fn sync(&mut self, app: &App, editor: &Editor) {
+        self.enabled = app.transcript_search.is_none();
         let text = editor.text();
         if text != self.prefix {
             self.prefix = text;
             self.selected = 0;
             self.dismissed = false;
         }
-        self.candidates = if !self.dismissed
+        self.candidates = if self.enabled
+            && !self.dismissed
             && !app.help_open
             && app.log_view.is_none()
             && app.focus == Focus::Input
@@ -54,6 +59,9 @@ impl Commands {
     }
 
     pub fn key(&mut self, editor: &mut Editor, key: KeyEvent) -> bool {
+        if !self.enabled {
+            return false;
+        }
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
             || self.candidates.is_empty()
             || key
@@ -89,15 +97,9 @@ impl Commands {
         app: &mut App,
         editor: &mut Editor,
         sessions: &mut Sessions,
-    ) -> Option<SessionCommand> {
-        if command.needs_idle() && app.running {
-            app.notify(
-                "Agent is busy. Draft kept; wait for the current task to finish.".to_owned(),
-            );
-            return None;
-        }
+    ) -> Option<(Command, SessionCommand)> {
         if command == Command::Help {
-            editor.clear();
+            editor.reset();
             app.help_open = true;
             app.help_scroll = 0;
             app.text_selection.clear();
@@ -108,29 +110,16 @@ impl Commands {
             app.notify("Session is not ready. Draft kept.".to_owned());
             return None;
         };
-        let request = command.request(&metadata.id);
-        self.pending = Some(command);
+        let request = command.request(&metadata.id)?;
         self.candidates.clear();
         sessions.pending = true;
-        request
-    }
-
-    /// Clear a successful command before Session UI caches the outgoing draft.
-    /// Errors retain it; unrelated Agent events are never acknowledgements.
-    pub fn before_event(&mut self, editor: &mut Editor, event: &SessionEvent) {
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|command| command.acknowledged_by(event))
-        {
-            editor.clear();
-            self.pending = None;
-        } else if matches!(event, SessionEvent::Error { .. }) {
-            self.pending = None;
-        }
+        Some((command, request))
     }
 
     pub fn mouse(&mut self, editor: &mut Editor, mouse: MouseEvent) -> bool {
+        if !self.enabled {
+            return false;
+        }
         if self.candidates.is_empty() || !self.area.contains(Position::new(mouse.column, mouse.row))
         {
             return false;
@@ -157,6 +146,9 @@ impl Commands {
     }
 
     pub fn draw(&mut self, frame: &mut Frame, app: &App) {
+        if app.transcript_search.is_some() {
+            return;
+        }
         if self.candidates.is_empty() {
             return;
         }

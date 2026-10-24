@@ -63,7 +63,7 @@ Session 承载一段工作的上下文与历史；一次任务执行有自己的
 
 | 范围 | 当前状态 |
 | --- | --- |
-| 模型调用 | 已实现 Responses 协议适配、流式文本／推理事件、usage 与错误处理；当前使用具体的 `ResponsesClient` |
+| 模型调用 | 统一 `ModelClient` 支持 Responses（默认）与 Chat Completions；共用模型／工具循环，具体能力与限制见[模型调用分层](docs/design/model-runtime.md) |
 | 工具执行 | 已实现工具注册与调用，默认提供 `read`、`bash`、`edit`、`write`，支持有界输出与大输出落盘 |
 | 工作上下文 | 已实现 usage 校准、自动 compact、有限超限恢复及 checkpoint |
 | 会话 | 已实现 JSONL 历史、显式恢复、新建／切换／重命名；当前一个 `SessionManager` 同时执行一个任务 |
@@ -74,21 +74,30 @@ Session 承载一段工作的上下文与历史；一次任务执行有自己的
 
 ## 运行终端展示
 
-准备支持 Rust 2024 edition 的 Rust 工具链，以及支持 Responses 协议的模型服务。模型服务需提供所用场景需要的工具调用能力；图片输入还需要相应的图片处理能力。
+准备支持 Rust 2024 edition 的 Rust 工具链，以及支持所选 Responses 或 Chat Completions 协议的模型服务。模型服务需提供所用场景需要的 function tools 能力；图片输入还受具体协议与模型支持限制。
 
 在项目根目录创建 `.env`，将下面的占位值替换为实际配置：
 
 ```dotenv
 API_KEY=your-api-key
+SAKI_API=openai-responses
 SAKI_BASE_URL=https://your-provider.example/v1
 SAKI_MODEL=your-model-id
 ```
 
-`SAKI_BASE_URL` 是 API 基础地址，客户端会在其后追加 `/responses`。也可以直接通过进程环境变量配置。
+`SAKI_API` 默认是 `openai-responses`，也可选择 `openai-chat-completions`；未知值会在发请求前报错。`SAKI_BASE_URL` 是 API 基础地址，按所选协议追加 `/responses` 或 `/chat/completions`。配置也可直接通过进程环境变量提供。
 
 ```sh
 cargo run
 ```
+
+例如使用 Chat Completions，保留上述 `API_KEY`、`SAKI_BASE_URL` 与 `SAKI_MODEL`，只切换协议：
+
+```sh
+SAKI_API=openai-chat-completions cargo run
+```
+
+Chat 首版支持文字和 function tools，不支持图片输入、Responses 续接数据或厂商专用 reasoning 扩展；已有会话不支持跨协议恢复，API 不匹配时明确拒绝。DeepSeek thinking 的 Chat 多轮工具续接已观察到不支持，不宣称所有兼容厂商都可用。完整能力、已实测组合与失败边界见[模型调用分层](docs/design/model-runtime.md)，恢复契约见[会话管理](docs/design/session-management.md)。
 
 stdin 与 stdout 都是终端时默认使用 TUI；管道与重定向自动使用 console。也可显式选择纯文本展示：
 
