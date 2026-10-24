@@ -247,13 +247,19 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 			if status == "" {
 				status = issueExecutionUnknown
 			}
-			if status == issueExecutionPending {
+			detail := execution.Detail
+			switch {
+			case status == issueExecutionPending:
 				status = issueExecutionUnknown
+				detail = "No trusted Runtime task association was recorded; reload before rerunning."
+			case execution.TaskID == "" && (status == issueExecutionAccepted || status == issueExecutionRunning):
+				status = issueExecutionUnknown
+				detail = "No trusted Runtime task association was recorded; reload before rerunning."
 			}
 			issue.Executions = append(issue.Executions, &issueExecution{
 				ID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID,
 				MessageID: execution.MessageID, Prompt: execution.Prompt,
-				Status: status, Detail: execution.Detail,
+				Status: status, Detail: detail,
 			})
 		}
 		out = append(out, issue)
@@ -300,6 +306,7 @@ func (a *appModel) runIssue(issueID string) bool {
 		return false
 	}
 	if !a.sendRuntimeForIssue(ct, prompt, execution.ID) {
+		ct.pendingIssueExecution = ""
 		execution.Status = issueExecutionNotDispatched
 		execution.Detail = ct.SendError
 		if execution.Detail == "" {

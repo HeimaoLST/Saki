@@ -305,17 +305,25 @@ func (a *appModel) contactByID(id string) *contact {
 	return nil
 }
 
+func (a *appModel) leaveIssueFormForSwitch() bool {
+	if !a.issueFormOpen {
+		return true
+	}
+	if strings.TrimSpace(a.issueGoal) != "" || strings.TrimSpace(a.issueRequirements) != "" {
+		a.issueFormError = "Finish or cancel the current issue form before switching contacts."
+		return false
+	}
+	a.issueFormOpen = false
+	a.issueFormError = ""
+	return true
+}
+
 func (a *appModel) selectContact(i int) {
 	if i < 0 || i >= len(a.contacts) || i == a.selected {
 		return
 	}
-	if a.issueFormOpen {
-		if strings.TrimSpace(a.issueGoal) != "" || strings.TrimSpace(a.issueRequirements) != "" {
-			a.issueFormError = "Finish or cancel the current issue form before switching contacts."
-			return
-		}
-		a.issueFormOpen = false
-		a.issueFormError = ""
+	if !a.leaveIssueFormForSwitch() {
+		return
 	}
 	if !a.demo {
 		a.persist()
@@ -376,6 +384,9 @@ func (a *appModel) statusLabel(c *contact) string {
 // addDefaultContact creates and selects a ready contact with a usable
 // default name, then asks the composer to take focus once.
 func (a *appModel) addDefaultContact() {
+	if !a.leaveIssueFormForSwitch() {
+		return
+	}
 	if !a.demo {
 		a.addRuntimeContact()
 		return

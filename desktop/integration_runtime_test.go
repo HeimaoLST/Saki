@@ -1233,3 +1233,76 @@ func TestGUIAppSaveFailureStopsBeforeSend(t *testing.T) {
 	}
 	h.shutdown(t)
 }
+
+func TestGUIAppRejectedComposerSendKeepsInFlightIssueAssociation(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startGUIHarness(t, binary, provider, "saki-issue-inflight-141")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	manual := make(chan func(), 8)
+	var issueID, executionID string
+	h.pump.do(func() {
+		if !h.app.createIssue("In-flight issue", "Keep the association while mapping is paused.") {
+			t.Fatalf("createIssue failed: %s", h.app.issueFormError)
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		ct.Draft = "ordinary composer attempt"
+		h.app.uiHook = func(fn func()) { manual <- fn }
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue failed: %s", h.app.issueFormError)
+		}
+	})
+	var mapping func()
+	select {
+	case mapping = <-manual:
+	case <-time.After(15 * time.Second):
+		t.Fatal("session mapping callback did not arrive")
+	}
+	if provider.count() != 0 {
+		t.Fatalf("provider received a task before mapping persisted: %d", provider.count())
+	}
+	var pending string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if len(ct.Issues) != 1 || len(ct.Issues[0].Executions) != 1 {
+			t.Fatalf("in-flight issue state = %+v", ct.Issues)
+		}
+		executionID = ct.Issues[0].Executions[0].ID
+		if !h.app.sendCurrent() {
+			// expected: the in-flight task rejects a normal composer send
+		}
+		pending = ct.pendingIssueExecution
+	})
+	if pending != executionID {
+		t.Fatalf("rejected normal send consumed in-flight association: pending=%q want=%q", pending, executionID)
+	}
+	h.pump.do(func() {
+		h.app.uiHook = func(fn func()) { h.pump.q <- fn }
+		mapping()
+	})
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		if len(ct.Issues) != 1 || len(ct.Issues[0].Executions) != 1 {
+			return false
+		}
+		return ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty &&
+			ct.Issues[0].Executions[0].Status == issueExecutionCompleted
+	})
+	ct := h.app.selectedContact()
+	execution := ct.Issues[0].Executions[0]
+	if execution.TaskID == "" || ct.pendingIssueExecution != "" || execution.ID != executionID {
+		t.Fatalf("accepted task lost its issue attribution: %+v pending=%q", execution, ct.pendingIssueExecution)
+	}
+	if len(ct.Issues[0].Executions) != 1 || ct.Issues[0].Status != issueStatusOpen || ct.Draft != "ordinary composer attempt" {
+		t.Fatalf("issue/draft after in-flight rejection = %+v / %q", ct.Issues[0], ct.Draft)
+	}
+	if provider.count() != 1 {
+		t.Fatalf("in-flight issue produced %d provider requests, want 1", provider.count())
+	}
+	h.shutdown(t)
+}

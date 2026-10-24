@@ -98,6 +98,8 @@ func TestPreviewIssueStates(t *testing.T) {
 		write("issue-results", 1040, 720, dark)
 		write("issue-results", 1380, 900, dark)
 		write("issue-results", 320, 640, dark)
+		write("issue-results", 320, 900, dark)
+		write("issue-results", 360, 800, dark)
 		write("issue-form", 960, 640, dark)
 		write("issue-working", 1040, 720, dark)
 		write("issue-unknown", 320, 640, dark)

@@ -152,14 +152,26 @@ func TestStoreRejectsIssueWithoutValidContact(t *testing.T) {
 	}
 }
 
-func TestPendingIssueExecutionIsNotInheritedByNormalSend(t *testing.T) {
-	ct := &contact{ID: "c1", pendingIssueExecution: "exec-old"}
-	a := &appModel{contacts: []*contact{ct}}
-	if a.sendRuntime(ct, "ordinary chat") {
-		t.Fatal("send without a runtime must fail")
+func TestPendingIssueAssociationSurvivesRejectedNormalSend(t *testing.T) {
+	ct := &contact{ID: "c1", SendState: sendSubmitting, pendingIssueExecution: "exec-in-flight"}
+	a := &appModel{contacts: []*contact{ct}, runtimeStatus: runtimeStateReady, rt: &runtimeClient{}}
+	if _, ok := a.claimRuntimeSend(ct, ""); ok {
+		t.Fatal("normal send was admitted during an in-flight task")
+	}
+	if ct.pendingIssueExecution != "exec-in-flight" {
+		t.Fatalf("rejected normal send consumed in-flight association: %q", ct.pendingIssueExecution)
+	}
+}
+
+func TestAdmittedNormalSendClearsStaleIssueAssociation(t *testing.T) {
+	ct := &contact{ID: "c1", pendingIssueExecution: "exec-old-failed"}
+	a := &appModel{contacts: []*contact{ct}, runtimeStatus: runtimeStateReady, rt: &runtimeClient{}}
+	previous, ok := a.claimRuntimeSend(ct, "")
+	if !ok || previous != "exec-old-failed" {
+		t.Fatalf("normal send was not admitted: ok=%v previous=%q", ok, previous)
 	}
 	if ct.pendingIssueExecution != "" {
-		t.Fatalf("normal send inherited issue execution: %q", ct.pendingIssueExecution)
+		t.Fatalf("admitted normal send kept stale issue association: %q", ct.pendingIssueExecution)
 	}
 }
 
@@ -394,5 +406,36 @@ func TestIssueFormCancelReturnsFocusToNewIssue(t *testing.T) {
 	tr.Frame()
 	if a.issueFormOpen || !tr.Focused("New issue") {
 		t.Fatal("cancel did not close the issue form and return focus")
+	}
+}
+
+func TestRestoredNonterminalExecutionWithoutTaskIsUnknown(t *testing.T) {
+	for _, status := range []string{issueExecutionPending, issueExecutionAccepted, issueExecutionRunning} {
+		issues := issuesForStoredContact([]storedIssue{{
+			ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusOpen,
+			Executions: []storedIssueExecution{{ID: "e1", Prompt: "work", Status: status}},
+		}}, "c1")
+		execution := issues[0].Executions[0]
+		if execution.Status != issueExecutionUnknown || issueRunBlocked(issues[0]) == "" {
+			t.Fatalf("%s without task restored as %q", status, execution.Status)
+		}
+	}
+	issues := issuesForStoredContact([]storedIssue{{
+		ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusOpen,
+		Executions: []storedIssueExecution{{ID: "e1", TaskID: "t1", Prompt: "work", Status: issueExecutionRunning}},
+	}}, "c1")
+	if issues[0].Executions[0].Status != issueExecutionRunning || issueRunBlocked(issues[0]) == "" {
+		t.Fatalf("associated running execution lost its task identity: %+v", issues[0].Executions[0])
+	}
+}
+
+func TestIssueFormCannotLeakIntoNewContact(t *testing.T) {
+	a := testApp(t)
+	a.issueFormOpen = true
+	a.issueGoal = "only for the current contact"
+	before := len(a.contacts)
+	a.addDefaultContact()
+	if len(a.contacts) != before || !strings.Contains(a.issueFormError, "switching contacts") {
+		t.Fatalf("add contact leaked issue form: contacts=%d error=%q", len(a.contacts), a.issueFormError)
 	}
 }

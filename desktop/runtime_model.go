@@ -995,13 +995,21 @@ func (a *appModel) sendRuntime(ct *contact, text string) bool {
 	return a.sendRuntimeForIssue(ct, text, "")
 }
 
-func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID string) bool {
-	ct.pendingIssueExecution = issueExecutionID
+func (a *appModel) claimRuntimeSend(ct *contact, issueExecutionID string) (string, bool) {
 	if reason := a.canSend(ct); reason != "" {
 		ct.SendError = reason
-		if issueExecutionID != "" {
-			ct.pendingIssueExecution = ""
-		}
+		// A rejected send must not consume or replace an in-flight issue
+		// association; only an admitted dispatch may change it.
+		return "", false
+	}
+	previous := ct.pendingIssueExecution
+	ct.pendingIssueExecution = issueExecutionID
+	return previous, true
+}
+
+func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID string) bool {
+	previousExecution, ok := a.claimRuntimeSend(ct, issueExecutionID)
+	if !ok {
 		return false
 	}
 	contactID := ct.ID
@@ -1016,9 +1024,7 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 	if err := a.persist(); err != nil {
 		ct.SendState = sendIdle
 		ct.SendError = "Could not save this contact; the message was not sent. " + err.Error()
-		if issueExecutionID != "" {
-			ct.pendingIssueExecution = ""
-		}
+		ct.pendingIssueExecution = previousExecution
 		return false
 	}
 	go a.submitTask(contactID, sessionID, text, workspace, system)
@@ -1230,6 +1236,9 @@ func (a *appModel) profileLocked(ct *contact) bool {
 }
 
 func (a *appModel) addRuntimeContact() {
+	if !a.leaveIssueFormForSwitch() {
+		return
+	}
 	c := &contact{
 		ID:        newContactID(),
 		Name:      fmt.Sprintf("New contact %d", len(a.contacts)+1),
