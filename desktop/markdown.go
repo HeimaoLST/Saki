@@ -117,11 +117,7 @@ type markdownReaderStateKey struct{}
 
 func markdownReaderCodeBlock(c *ui.Context, b *markdown.CodeBlockView, st *markdownReaderState) {
 	th := markdownReaderTheme(c, st.opts.Theme)
-	fs := th.FontSize
-	if fs == 0 {
-		fs = 14
-	}
-	em := func(v float32) float32 { return v * fs }
+	em := func(v float32) float32 { return v * th.FontSize }
 
 	box := ui.Column(c).
 		Direction(ui.LeftToRight).
@@ -153,9 +149,6 @@ func markdownReaderCodeBlock(c *ui.Context, b *markdown.CodeBlockView, st *markd
 }
 
 func (st *markdownReaderState) codeFeedbackFor(index int) *readerCopyFeedback {
-	if st.codeFeedback == nil {
-		st.codeFeedback = map[int]*readerCopyFeedback{}
-	}
 	fb := st.codeFeedback[index]
 	if fb == nil {
 		fb = &readerCopyFeedback{}

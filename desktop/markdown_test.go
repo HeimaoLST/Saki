@@ -22,6 +22,7 @@ func readerTestView(source *string, streaming *bool, options *markdownReaderOpti
 }
 
 const readerRichSource = "# 阅读笔记\n\n正文和**重点**，以及[文档](https://example.com/docs)与[危险](javascript:alert(1))。\n\n" +
+	"> 引用文字\n\n行内 `code` 结束。\n\n" +
 	"- 第一项\n- 第二项\n\n" +
 	"| 名称 | 值 |\n| --- | --- |\n| 语言 | 中文 |\n\n" +
 	"![图](https://example.com/x.png)\n\n" +
@@ -32,7 +33,7 @@ func TestMarkdownReaderRendersIntoRichLayoutInBothThemes(t *testing.T) {
 		source, streaming := readerRichSource, false
 		options := markdownReaderOptions{CopyLabel: "Copy message"}
 		tr := ui.NewTester(readerTestView(&source, &streaming, &options, &dark), 760, 1000)
-		for _, want := range []string{"阅读笔记", "正文和重点", "第一项", "第二项", "名称", "中文", "图", "func main() {", "go", "Copy message"} {
+		for _, want := range []string{"阅读笔记", "正文和重点", "引用文字", "行内 code 结束。", "第一项", "第二项", "名称", "中文", "图", "func main() {", "go", "Copy message"} {
 			if !tr.HasText(want) {
 				t.Fatalf("dark=%v: no %q in %q", dark, want, tr.Texts())
 			}
@@ -243,15 +244,96 @@ func TestMarkdownReaderWrapsLongCodeAtNarrowWidth(t *testing.T) {
 	streaming := false
 	options := markdownReaderOptions{CopyLabel: "Copy message"}
 	dark := false
-	tr := ui.NewTester(readerTestView(&source, &streaming, &options, &dark), 340, 760)
-	if !tr.HasText("宽度") || !tr.HasText("tail") {
-		t.Fatalf("long wrapped code is missing in %q", tr.Texts())
+	narrow := ui.NewTester(readerTestView(&source, &streaming, &options, &dark), 340, 760)
+	wide := ui.NewTester(readerTestView(&source, &streaming, &options, &dark), 1200, 760)
+	within, ok := narrow.Find(long)
+	if !ok {
+		t.Fatalf("exact code label is not visible at 340 px: %q", narrow.Texts())
+	}
+	unwrapped, ok := wide.Find(long)
+	if !ok {
+		t.Fatalf("exact code label is not visible at 1200 px: %q", wide.Texts())
+	}
+	if within.X < 0 || within.X+within.W > 340 {
+		t.Fatalf("wrapped code bounds %+v leave the 340 px window", within)
+	}
+	if within.H <= unwrapped.H {
+		t.Fatalf("wrapped height %v is not greater than one-line height %v", within.H, unwrapped.H)
+	}
+	if within.W >= unwrapped.W {
+		t.Fatalf("wrapped width %v is not narrower than unwrapped width %v", within.W, unwrapped.W)
+	}
+	if err := narrow.Click("Copy code"); err != nil {
+		t.Fatal(err)
+	}
+	if got := narrow.Clipboard(); got != long+"\n" {
+		t.Fatalf("wrapped code copy = %q, want %q", got, long+"\n")
+	}
+}
+
+func TestMarkdownReaderCopiesEachCodeBlockOwnPayload(t *testing.T) {
+	source := "```go\nfirst\n```\n\n```js\nsecond\n```\n"
+	streaming := false
+	options := markdownReaderOptions{CopyLabel: "Copy message"}
+	dark := false
+	tr := ui.NewTester(readerTestView(&source, &streaming, &options, &dark), 600, 600)
+	first, ok := tr.Find("Copy code")
+	if !ok {
+		t.Fatalf("first code control is not visible: %q", tr.Texts())
 	}
 	if err := tr.Click("Copy code"); err != nil {
 		t.Fatal(err)
 	}
-	if got := tr.Clipboard(); got != long+"\n" {
-		t.Fatalf("wrapped code copy = %q, want %q", got, long+"\n")
+	if got := tr.Clipboard(); got != "first\n" {
+		t.Fatalf("first code copy = %q", got)
+	}
+
+	js, ok := tr.Find("js")
+	if !ok {
+		t.Fatalf("second code block is not visible: %q", tr.Texts())
+	}
+	tr.ClickAt(first.X+first.W/2, js.Y+js.H/2)
+	if got := tr.Clipboard(); got != "second\n" {
+		t.Fatalf("second code copy = %q, want its own payload", got)
+	}
+}
+
+func TestMarkdownReaderSelectionSurvivesStreamAppendAndCopiesCurrentSource(t *testing.T) {
+	source := "First paragraph here.\n\nSecond one is being"
+	streaming := true
+	options := markdownReaderOptions{CopyLabel: "Copy message"}
+	dark := false
+	tr := ui.NewTester(readerTestView(&source, &streaming, &options, &dark), 620, 500)
+	r, ok := tr.Find("First paragraph here.")
+	if !ok {
+		t.Fatalf("first paragraph is not visible: %q", tr.Texts())
+	}
+	tr.ClickAt(r.X+2, r.Y+r.H/2)
+	tr.Command("selectAll")
+	tr.Command("copy")
+	selected := tr.Clipboard()
+	if !strings.Contains(selected, "First paragraph here.") {
+		t.Fatalf("initial selection copied %q", selected)
+	}
+	if tr.Focused("Copy message") {
+		t.Fatal("selecting the stream stole focus to the full-copy control")
+	}
+
+	source += " written, word by word."
+	tr.Frame()
+	if tr.Focused("Copy message") {
+		t.Fatal("appending to the stream stole focus to the full-copy control")
+	}
+	tr.Command("copy")
+	if got := tr.Clipboard(); got != selected {
+		t.Fatalf("selection after append copied %q, want the original selection %q", got, selected)
+	}
+
+	if err := tr.Click("Copy message"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != source {
+		t.Fatalf("full-source copy after append = %q, want current source %q", got, source)
 	}
 }
 
@@ -269,7 +351,7 @@ func TestMarkdownReaderScreenshot(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	long := strings.Repeat("long-token-", 30)
+	long := strings.Repeat("abcdefghij", 24)
 	source := readerRichSource + "\n```\n" + long + "\n```\n"
 	streaming := false
 	options := markdownReaderOptions{CopyLabel: "Copy message"}
