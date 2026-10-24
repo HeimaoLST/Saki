@@ -257,6 +257,10 @@ impl Agent {
         self
     }
 
+    pub(crate) fn tool_registry_mut(&mut self) -> &mut ToolRegistry {
+        &mut self.tool_registry
+    }
+
     pub(crate) fn replace_tools(&mut self, registry: ToolRegistry) {
         self.tool_registry = registry;
     }

@@ -88,6 +88,14 @@ Listing scans session journals and reads metadata, then sorts by recent activity
 
 Tool-output files remain session-local dependencies of the history. No cleanup, deletion, export, automatic workspace relocation, or attachment migration is introduced.
 
+## Immutable context resources (#62 P1)
+
+Implementation candidate (2026-10-24): the Runtime exposes journal-derived `history` and compacted `working` resources through `context.open/read/search/release`. Reading does not load an Agent, acquire its journal write lock, repair a torn tail, or start model/MCP execution. The resource captures a fixed file prefix; an ongoing append or compaction cannot alter an existing reference. This is separate from the mutable UI history projection and from the most recent actual model request.
+
+The shared journal decoder/reducer has a bounded prefix entry point. The resource table reserves capacity before reading/decoding/projecting, including conservative structural and clone allowances, and rejects excess work rather than allocating first. It currently permits one preparation reader, up to 32 references, a 256 MiB accounting budget and a 64 MiB source ceiling; effective values and the ten-minute idle TTL are returned in capabilities. Accounting estimates are not a claim to measure allocator RSS. Read/search work runs outside the actor control loop; task cancellation and reference release retain their own lifecycle.
+
+Full contract and phased status: [Session context access](session-context-access.md). Textual source positions belong to their particular reference, and the `working` view is rebuilt from the committed journal, rather than invented from streamed deltas or guessed request configuration. Request snapshots and independent model analysis remain #135, with actual consumer/cache/quality evidence in #136.
+
 ## Replay and compact
 
 One journal pass returns two outputs:
