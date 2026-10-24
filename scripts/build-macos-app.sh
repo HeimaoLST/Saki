@@ -136,7 +136,8 @@ echo "== validate paths, architecture and Info.plist =="
 test "$(uname -m)" = "arm64"
 test "$(go env GOOS)" = "darwin"
 test "$(go env GOARCH)" = "arm64"
-rustc -vV | grep -q '^host: aarch64-apple-darwin$'
+RUSTC_HOST=$(rustc -vV | sed -n 's/^host: //p')
+test "$RUSTC_HOST" = "aarch64-apple-darwin"
 test "$(lipo -archs "$APP/Contents/MacOS/Saki")" = "arm64"
 test "$(lipo -archs "$APP/Contents/MacOS/Saki-runtime")" = "arm64"
 grep -q 'Mach-O 64-bit executable arm64' "$VALIDATION_LOG"
@@ -145,8 +146,9 @@ test "$(plutil -extract CFBundleExecutable raw "$APP/Contents/Info.plist")" = "S
 test "$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")" = "$APP_VERSION"
 test "$(plutil -extract CFBundleVersion raw "$APP/Contents/Info.plist")" = "1"
 test "$(plutil -extract LSMinimumSystemVersion raw "$APP/Contents/Info.plist")" = "11.0"
-go version -m "$APP/Contents/MacOS/Saki" | grep -q "vcs.revision=$SOURCE_SHA"
-go version -m "$APP/Contents/MacOS/Saki" | grep -q 'vcs.modified=false'
+go version -m "$APP/Contents/MacOS/Saki" > "$OUT/gui-buildinfo.txt"
+grep -q "vcs.revision=$SOURCE_SHA" "$OUT/gui-buildinfo.txt"
+grep -q 'vcs.modified=false' "$OUT/gui-buildinfo.txt"
 test -x "$APP/Contents/MacOS/Saki"
 test -x "$APP/Contents/MacOS/Saki-runtime"
 
