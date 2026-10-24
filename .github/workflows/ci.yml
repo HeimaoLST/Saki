@@ -210,21 +210,97 @@ jobs:
             echo "- Non-zero test count is asserted; an empty suite cannot pass silently."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  macos-app:
+    name: macos-app
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install Rust 1.99.0
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal
+          rustup default 1.99.0
+          rustc --version
+
+      - name: Cache Rust release build
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-1.99.0-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-1.99.0-
+
+      - name: Set up Go from desktop/go.mod
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: desktop/go.mod
+          cache: true
+          cache-dependency-path: desktop/go.sum
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Build, sign and verify macOS candidate
+        shell: bash
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -o pipefail
+          OUT="$RUNNER_TEMP/saki-macos-candidate"
+          mkdir -p "$OUT"
+          bash scripts/build-macos-app.sh "$OUT" 2>&1 | tee "$OUT/build.log"
+
+      - name: Upload macOS candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: saki-macos-arm64-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/saki-macos-candidate/Saki.app.zip
+            ${{ runner.temp }}/saki-macos-candidate/manifest.json
+            ${{ runner.temp }}/saki-macos-candidate/SHA256SUMS
+            ${{ runner.temp }}/saki-macos-candidate/build.log
+            ${{ runner.temp }}/saki-macos-candidate/codesign.log
+            ${{ runner.temp }}/saki-macos-candidate/validation.log
+            ${{ runner.temp }}/saki-macos-candidate/helper-smoke.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### macOS candidate (arm64, ad-hoc)"
+            echo ""
+            echo "- Standard \`macos-15\` runner; arm64 checked by \`uname -m\`, \`file\` and \`lipo\`."
+            echo "- **Engineering candidate only**: current dev does not include #141/#126/#132 product work; this is not Nagi MVP completion."
+            echo "- Artifact: \`Saki.app.zip\` + manifest + SHA256SUMS + build/codesign/validation/helper-smoke logs."
+            echo "- No Finder launch, real window/IME, Gatekeeper/notarization, external provider or user-trial claim."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   ci-required:
     name: ci-required
     if: always()
-    needs: [rust, gui, python]
+    needs: [rust, gui, python, macos-app]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require rust, gui and python success
+      - name: Require rust, gui, python and macos-app success
         env:
           RUST_RESULT: ${{ needs.rust.result }}
           GUI_RESULT: ${{ needs.gui.result }}
           PYTHON_RESULT: ${{ needs.python.result }}
+          MACOS_RESULT: ${{ needs.macos-app.result }}
         run: |
-          echo "rust=$RUST_RESULT gui=$GUI_RESULT python=$PYTHON_RESULT"
-          if [ "$RUST_RESULT" != "success" ] || [ "$GUI_RESULT" != "success" ] || [ "$PYTHON_RESULT" != "success" ]; then
+          echo "rust=$RUST_RESULT gui=$GUI_RESULT python=$PYTHON_RESULT macos-app=$MACOS_RESULT"
+          if [ "$RUST_RESULT" != "success" ] || [ "$GUI_RESULT" != "success" ] || [ "$PYTHON_RESULT" != "success" ] || [ "$MACOS_RESULT" != "success" ]; then
             echo "::error::Required CI jobs must all succeed; cancelled, failed and skipped are not success."
             exit 1
           fi
