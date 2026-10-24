@@ -264,6 +264,7 @@ jobs:
         with:
           name: saki-macos-arm64-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
+            ${{ runner.temp }}/saki-macos-candidate/Saki.app
             ${{ runner.temp }}/saki-macos-candidate/Saki.app.zip
             ${{ runner.temp }}/saki-macos-candidate/manifest.json
             ${{ runner.temp }}/saki-macos-candidate/SHA256SUMS
