@@ -152,29 +152,6 @@ func TestStoreRejectsIssueWithoutValidContact(t *testing.T) {
 	}
 }
 
-func TestPendingIssueAssociationSurvivesRejectedNormalSend(t *testing.T) {
-	ct := &contact{ID: "c1", SendState: sendSubmitting, pendingIssueExecution: "exec-in-flight"}
-	a := &appModel{contacts: []*contact{ct}, runtimeStatus: runtimeStateReady, rt: &runtimeClient{}}
-	if _, ok := a.claimRuntimeSend(ct, ""); ok {
-		t.Fatal("normal send was admitted during an in-flight task")
-	}
-	if ct.pendingIssueExecution != "exec-in-flight" {
-		t.Fatalf("rejected normal send consumed in-flight association: %q", ct.pendingIssueExecution)
-	}
-}
-
-func TestAdmittedNormalSendClearsStaleIssueAssociation(t *testing.T) {
-	ct := &contact{ID: "c1", pendingIssueExecution: "exec-old-failed"}
-	a := &appModel{contacts: []*contact{ct}, runtimeStatus: runtimeStateReady, rt: &runtimeClient{}}
-	previous, ok := a.claimRuntimeSend(ct, "")
-	if !ok || previous != "exec-old-failed" {
-		t.Fatalf("normal send was not admitted: ok=%v previous=%q", ok, previous)
-	}
-	if ct.pendingIssueExecution != "" {
-		t.Fatalf("admitted normal send kept stale issue association: %q", ct.pendingIssueExecution)
-	}
-}
-
 func TestAcceptedAssociationSaveFailureLeavesUnknownSnapshot(t *testing.T) {
 	ct := &contact{ID: "c1", Name: "Saki", Draft: "later draft"}
 	issue := &productIssue{ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusOpen}

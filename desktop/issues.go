@@ -339,23 +339,6 @@ func (a *appModel) showIssueWork(issueID, taskID string) {
 	a.workspaceOpen = true
 }
 
-func (a *appModel) updateIssueExecutionForTask(ct *contact, taskID string, status string, detail string) {
-	execution := ct.executionByTask(taskID)
-	if execution == nil {
-		return
-	}
-	execution.Status = status
-	execution.Detail = detail
-	for _, issue := range ct.Issues {
-		for _, candidate := range issue.Executions {
-			if candidate == execution {
-				issue.UpdatedAt = nowMillis()
-				return
-			}
-		}
-	}
-}
-
 func (a *appModel) updatePendingIssueExecution(ct *contact, status, message string) {
 	if ct.pendingIssueExecution == "" {
 		return

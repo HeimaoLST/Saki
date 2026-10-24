@@ -995,23 +995,15 @@ func (a *appModel) sendRuntime(ct *contact, text string) bool {
 	return a.sendRuntimeForIssue(ct, text, "")
 }
 
-func (a *appModel) claimRuntimeSend(ct *contact, issueExecutionID string) (string, bool) {
+func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID string) bool {
 	if reason := a.canSend(ct); reason != "" {
 		ct.SendError = reason
 		// A rejected send must not consume or replace an in-flight issue
 		// association; only an admitted dispatch may change it.
-		return "", false
-	}
-	previous := ct.pendingIssueExecution
-	ct.pendingIssueExecution = issueExecutionID
-	return previous, true
-}
-
-func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID string) bool {
-	previousExecution, ok := a.claimRuntimeSend(ct, issueExecutionID)
-	if !ok {
 		return false
 	}
+	previousExecution := ct.pendingIssueExecution
+	ct.pendingIssueExecution = issueExecutionID
 	contactID := ct.ID
 	sessionID := ct.SessionID
 	workspace := ct.Workspace
