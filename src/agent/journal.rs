@@ -1,8 +1,9 @@
 use std::{
     collections::HashSet,
     fs::File,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::Path,
+    sync::atomic::{AtomicBool, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -164,29 +165,9 @@ pub fn read(file: &File, path: &Path) -> Result<Replay> {
         }
         line_number += 1;
         let terminated = bytes.last() == Some(&b'\n');
-        // Parse JSON before the envelope so an unsupported version or schema
-        // at EOF cannot be mistaken for a torn write.
-        let value: serde_json::Value = match serde_json::from_slice(&bytes) {
-            Ok(value) => value,
-            Err(error) if !terminated && error.is_eof() => break,
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("{}:{line_number}: invalid journal record", path.display())
-                });
-            }
+        let Some(envelope) = decode_line(&bytes, path, line_number, terminated)? else {
+            break;
         };
-        let envelope: Envelope = serde_json::from_value(value).with_context(|| {
-            format!(
-                "{}:{line_number}: unsupported journal format",
-                path.display()
-            )
-        })?;
-        ensure!(
-            envelope.schema_version == 1,
-            "{}:{line_number}: unsupported schema version {}",
-            path.display(),
-            envelope.schema_version
-        );
         state.apply(
             envelope.record,
             envelope.timestamp_ms,
@@ -196,6 +177,252 @@ pub fn read(file: &File, path: &Path) -> Result<Replay> {
         state.replay.needs_newline = !terminated;
     }
     state.finish(&path.display().to_string())
+}
+
+/// Reads a fixed prefix of the journal under the explicit `max_memory`
+/// estimate. Reads start at byte zero and stop at `end`, even if the file
+/// grows while this call is running. Only a torn final record is ignored,
+/// using the same decoder and reducer as [`read`].
+///
+/// The estimate is checked before JSON decoding and again before the reducer
+/// clones a Messages record into `history`/`context`. It includes the read
+/// buffer, string bytes, structural nodes/punctuation, temporary Value and
+/// the retained typed records. `accounted_bytes` is the conservative peak of
+/// this estimate; it is not a claim that arbitrary allocator overhead is
+/// measured exactly. The caller reserves `max_memory` before this call.
+pub(crate) fn read_bounded(
+    file: &File,
+    path: &Path,
+    end: u64,
+    max_memory: usize,
+    cancel: &AtomicBool,
+) -> Result<BoundedReplay> {
+    if cancelled(cancel) {
+        return Err(ReadCancelled.into());
+    }
+    let mut reader = BufReader::new(file.try_clone()?);
+    reader.seek(SeekFrom::Start(0))?;
+    let mut reader = reader.take(end);
+    let mut state = ReplayState::new();
+    let mut line = Vec::new();
+    let mut line_number = 0usize;
+    let mut retained = 0usize;
+    let mut peak = READER_OVERHEAD_BYTES;
+    loop {
+        if cancelled(cancel) {
+            return Err(ReadCancelled.into());
+        }
+        line.clear();
+        let Some((count, terminated)) =
+            read_record(&mut reader, &mut line, max_memory, retained, cancel)?
+        else {
+            break;
+        };
+        line_number += 1;
+        let footprint = json_footprint(&line);
+        let observed = line_peak(retained, line.capacity(), footprint);
+        if observed > max_memory {
+            return Err(BudgetExceeded.into());
+        }
+        peak = peak.max(observed);
+        let Some(envelope) = decode_line(&line, path, line_number, terminated)? else {
+            break;
+        };
+        if cancelled(cancel) {
+            return Err(ReadCancelled.into());
+        }
+        let increment = retained_record_bytes(footprint);
+        if READER_OVERHEAD_BYTES
+            .saturating_add(retained.saturating_mul(2))
+            .saturating_add(increment)
+            > max_memory
+        {
+            return Err(BudgetExceeded.into());
+        }
+        state.apply(
+            envelope.record,
+            envelope.timestamp_ms,
+            &format!("{}:{line_number}", path.display()),
+        )?;
+        retained = retained.saturating_add(increment);
+        state.replay.valid_bytes += count as u64;
+        state.replay.needs_newline = !terminated;
+        peak = peak.max(
+            READER_OVERHEAD_BYTES
+                .saturating_add(retained)
+                .saturating_add(line.capacity()),
+        );
+    }
+    let replay = state.finish(&path.display().to_string())?;
+    Ok(BoundedReplay {
+        replay,
+        accounted_bytes: peak,
+    })
+}
+
+const READER_OVERHEAD_BYTES: usize = 16 * 1024;
+const LINE_OVERHEAD_BYTES: usize = 256;
+// Explicit pre-decode allocation estimate: one structural token outside a
+// JSON string is charged for Value/Map/Vec/typed-record overhead, and every
+// string is charged its raw bytes plus fixed per-string overhead. This is
+// deliberately conservative for ProviderItem/native nested JSON, but is an
+// estimate rather than a formal allocator upper bound.
+const VALUE_NODE_BYTES: usize = 128;
+const STRING_OVERHEAD_BYTES: usize = 64;
+const CLONE_COPIES: usize = 2;
+
+#[derive(Debug, thiserror::Error)]
+#[error("journal replay cancelled")]
+pub(crate) struct ReadCancelled;
+
+#[derive(Debug, thiserror::Error)]
+#[error("journal replay memory budget exceeded")]
+pub(crate) struct BudgetExceeded;
+
+#[derive(Debug)]
+pub(crate) struct BoundedReplay {
+    pub(crate) replay: Replay,
+    pub(crate) accounted_bytes: usize,
+}
+
+fn cancelled(cancel: &AtomicBool) -> bool {
+    cancel.load(Ordering::Relaxed)
+}
+
+#[derive(Clone, Copy)]
+struct JsonFootprint {
+    string_bytes: usize,
+    structural_tokens: usize,
+    strings: usize,
+}
+
+fn json_footprint(bytes: &[u8]) -> JsonFootprint {
+    let mut footprint = JsonFootprint {
+        string_bytes: 0,
+        structural_tokens: 0,
+        strings: 0,
+    };
+    let mut in_string = false;
+    let mut escaped = false;
+    for &byte in bytes {
+        if in_string {
+            footprint.string_bytes = footprint.string_bytes.saturating_add(1);
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+                footprint.strings = footprint.strings.saturating_add(1);
+            }
+        } else if byte == b'"' {
+            in_string = true;
+        } else if !byte.is_ascii_whitespace() {
+            // Braces, brackets, colons, commas, numbers and literals all
+            // allocate or contribute to a Value/Map/Vec or typed record.
+            footprint.structural_tokens = footprint.structural_tokens.saturating_add(1);
+        }
+    }
+    footprint
+}
+
+fn parse_estimate(footprint: JsonFootprint) -> usize {
+    footprint
+        .string_bytes
+        .saturating_add(footprint.structural_tokens.saturating_mul(VALUE_NODE_BYTES))
+        .saturating_add(footprint.strings.saturating_mul(STRING_OVERHEAD_BYTES))
+}
+
+fn retained_record_bytes(footprint: JsonFootprint) -> usize {
+    // A Messages record is retained in history and cloned into context; use
+    // two copies plus fixed container/header overhead. Other record kinds are
+    // charged the same conservative amount.
+    parse_estimate(footprint)
+        .saturating_mul(CLONE_COPIES)
+        .saturating_add(LINE_OVERHEAD_BYTES)
+}
+
+fn line_peak(retained: usize, capacity: usize, footprint: JsonFootprint) -> usize {
+    // Compaction can clone the kept context before dropping the old one; vector
+    // growth can also temporarily retain both allocations.
+    READER_OVERHEAD_BYTES
+        .saturating_add(retained.saturating_mul(2))
+        .saturating_add(capacity)
+        .saturating_add(parse_estimate(footprint))
+        .saturating_add(retained_record_bytes(footprint))
+}
+
+fn read_record<R: BufRead>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+    max_memory: usize,
+    retained: usize,
+    cancel: &AtomicBool,
+) -> Result<Option<(usize, bool)>> {
+    loop {
+        if cancelled(cancel) {
+            return Err(ReadCancelled.into());
+        }
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            if line.is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some((line.len(), false)));
+        }
+        let take = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(available.len(), |index| index + 1);
+        let projected = line.len().saturating_add(take);
+        let available_memory = max_memory
+            .saturating_sub(READER_OVERHEAD_BYTES)
+            .saturating_sub(retained);
+        if projected > available_memory {
+            return Err(BudgetExceeded.into());
+        }
+        if line.capacity() < projected {
+            line.try_reserve_exact(projected - line.len())
+                .map_err(|_| BudgetExceeded)?;
+        }
+        line.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        if line.last() == Some(&b'\n') {
+            return Ok(Some((line.len(), true)));
+        }
+    }
+}
+
+fn decode_line(
+    bytes: &[u8],
+    path: &Path,
+    line_number: usize,
+    terminated: bool,
+) -> Result<Option<Envelope>> {
+    // Parse JSON before the envelope so an unsupported version or schema at
+    // EOF cannot be mistaken for a torn write.
+    let value: serde_json::Value = match serde_json::from_slice(bytes) {
+        Ok(value) => value,
+        Err(error) if !terminated && error.is_eof() => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("{}:{line_number}: invalid journal record", path.display())
+            });
+        }
+    };
+    let envelope: Envelope = serde_json::from_value(value).with_context(|| {
+        format!(
+            "{}:{line_number}: unsupported journal format",
+            path.display()
+        )
+    })?;
+    ensure!(
+        envelope.schema_version == 1,
+        "{}:{line_number}: unsupported schema version {}",
+        path.display(),
+        envelope.schema_version
+    );
+    Ok(Some(envelope))
 }
 
 /// Replays decoded journal records through the same reducer as [`read`].
@@ -403,3 +630,7 @@ pub(crate) mod fault {
 #[cfg(test)]
 #[path = "../../tests/agent/journal.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/agent/journal_context.rs"]
+mod context_tests;
