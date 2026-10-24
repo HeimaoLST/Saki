@@ -1,8 +1,8 @@
 # 两端工程 MVP：TUI + GUI 验证同一 Runtime
 
-更新日期：2026-10-24。
+更新日期：2026-10-25。
 状态：**#50 阶段性的工程需求与验收边界**。完整 GUI 定义和目标流程以 [Nagi 产品定义与需求](desktop.md) 为准；本文保留此前两端可运行验证的范围，不将旧单执行限制作为最终产品要求，也不因定义更新宣告本阶段或完整产品已经完成。
-当前交付重点已转为 [Nagi 首个可用 MVP](desktop.md#首个可用-mvp-的交付边界)，由 [#140](https://github.com/HeimaoLST/Saki/issues/140) 统筹；本文不作为与 Nagi 并行扩展两端功能的排期授权。
+当前交付重点已转为 [Nagi 完整 MVP](desktop.md#首个可用-mvp-的交付边界)，由 [#140](https://github.com/HeimaoLST/Saki/issues/140) 统筹；2026-10-25 完整基本功能标准与验收以该文档 MVP-01–MVP-12 为准；本文保留原 #50 的工程历史，不作为产品已完成声明，也不作为与 Nagi 并行扩展两端功能的排期授权。
 历史事实基线：`dev@8bffd85`。实时任务、依赖与完成状态以 [#50](https://github.com/HeimaoLST/Saki/issues/50) 及各执行 issue 为准；本文不维护任务表或完成计数。
 
 ## 用户价值与范围

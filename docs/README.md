@@ -1,10 +1,12 @@
 # SAKI 文档
 
-更新日期：2026-10-24。
+更新日期：2026-10-25。
 
 Saki 提供可被不同应用复用的 Agent Runtime。Nagi（GUI 暂定名）提供开源的联系人式自主工作台，TUI 侧重用户直接指导执行。三个产品共享运行基础，GUI/TUI 围绕同一工作协作是待实现和验证的产品目标。
 
 GUI 的权威产品定义、概念和行为需求在 [Nagi 产品定义与需求](requirements/desktop.md)；视觉与交互在 [Desktop workbench](design/desktop-workbench.md)；已实现行为与验收证据在 [Desktop](design/desktop.md)。联系人、事项、对话和执行会话的关系以产品需求为准，既有单会话映射只表示阶段实现。成长与人格属于独立研究，不替代当前产品定义，也不是联系人式产品的前置。
+
+Nagi MVP 的基本功能、边界与 MVP-01–MVP-12 验收见 [完整 MVP 交付定义](requirements/desktop.md#首个可用-mvp-的交付边界)；开发 agent 从 [roadmap 总入口 #140](https://github.com/HeimaoLST/Saki/issues/140) 获取阶段、依赖和具体 issue，组合候选/真实试用记录见 [#156](https://github.com/HeimaoLST/Saki/issues/156)。候选 PR 和阶段验收不表示完整产品已交付。
 
 ## 源码结构
 
