@@ -129,11 +129,15 @@ pub fn now_ms() -> Result<u64> {
 }
 
 pub fn new_id() -> Result<String> {
-    Ok(format!(
-        "{}-{}",
+    Ok(new_id_at(
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
-        std::process::id()
     ))
+}
+
+fn new_id_at(timestamp: u128) -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+    format!("{timestamp}-{}-{sequence}", std::process::id())
 }
 
 pub fn write(file: &mut File, record: &JournalRecord) -> Result<()> {

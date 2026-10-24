@@ -310,3 +310,26 @@ fn empty_source_with_no_read_budget_is_rejected_before_replay() {
     let error = read_bounded_file(&file, 0, 0, &AtomicBool::new(false)).unwrap_err();
     assert!(error.is::<BudgetExceeded>());
 }
+
+#[test]
+fn ids_remain_unique_when_parallel_calls_observe_the_same_clock_tick() {
+    let gate = std::sync::Arc::new(std::sync::Barrier::new(8));
+    let jobs: Vec<_> = (0..8)
+        .map(|_| {
+            let gate = gate.clone();
+            std::thread::spawn(move || {
+                gate.wait();
+                (0..64).map(|_| new_id_at(123456789)).collect::<Vec<_>>()
+            })
+        })
+        .collect();
+    let ids: std::collections::HashSet<_> = jobs
+        .into_iter()
+        .flat_map(|job| job.join().unwrap())
+        .collect();
+    assert_eq!(ids.len(), 512);
+    assert!(
+        ids.iter()
+            .all(|id| std::path::Path::new(id).components().count() == 1)
+    );
+}

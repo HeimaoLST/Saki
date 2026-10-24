@@ -88,6 +88,8 @@ Listing scans session journals and reads metadata, then sorts by recent activity
 
 Tool-output files remain session-local dependencies of the history. No cleanup, deletion, export, automatic workspace relocation, or attachment migration is introduced.
 
+Session, task, message and context identifiers are opaque strings. New IDs include a process-local sequence so parallel calls in the same clock tick cannot collide; existing IDs remain valid without renaming or migrating stored directories. The generator is covered by a fixed-timestamp concurrent regression, rather than relying on wall-clock timing.
+
 ## Immutable context resources (#62 P1)
 
 Implementation candidate (2026-10-24): the Runtime exposes journal-derived `history` and compacted `working` resources through `context.open/read/search/release`. Reading does not load an Agent, acquire its journal write lock, repair a torn tail, or start model/MCP execution. The resource captures a fixed file prefix; an ongoing append or compaction cannot alter an existing reference. This is separate from the mutable UI history projection and from the most recent actual model request.
