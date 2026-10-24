@@ -262,8 +262,10 @@ fn encode_messages(input: &[InputItem]) -> anyhow::Result<Vec<Value>> {
                 provider_data: Some(data),
                 ..
             } if data.api == API => {
-                let text = data.value["reasoning_content"]
-                    .as_str()
+                let text = data
+                    .value
+                    .get("reasoning_content")
+                    .filter(|value| value.is_string() || value.is_null())
                     .ok_or_else(|| anyhow::anyhow!("invalid {API} reasoning continuation"))?;
                 flush_assistant(&mut messages, &mut calls, &mut reasoning);
                 reasoning =
@@ -282,11 +284,15 @@ fn encode_messages(input: &[InputItem]) -> anyhow::Result<Vec<Value>> {
     Ok(messages)
 }
 
-fn reasoning_output(response_id: &str, text: String) -> OutputItem {
+fn reasoning_output(response_id: &str, text: Option<String>) -> OutputItem {
     OutputItem::Reasoning {
         id: format!("{response_id}-reasoning"),
         status: "completed".to_owned(),
-        content: vec![ReasoningText { text: text.clone() }],
+        content: text
+            .as_ref()
+            .map(|text| ReasoningText { text: text.clone() })
+            .into_iter()
+            .collect(),
         provider_data: Some(ProviderData {
             api: API.to_owned(),
             value: json!({"reasoning_content": text}),
@@ -302,6 +308,14 @@ where
     T: Default + Deserialize<'de>,
 {
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+// Native null is an observed continuation field, distinct from an absent field.
+// Keeping its presence also groups content and tool calls from that same turn.
+fn present_nullable_string<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 fn arguments_text(arguments: Option<Value>) -> String {
@@ -326,7 +340,7 @@ fn completed(finish: Option<&str>) -> anyhow::Result<()> {
 fn output_from_message(
     response_id: &str,
     content: Option<String>,
-    reasoning_content: Option<String>,
+    reasoning_content: Option<Option<String>>,
     tool_calls: Vec<ChatToolCall>,
 ) -> Vec<OutputItem> {
     let mut output = Vec::new();
@@ -371,7 +385,8 @@ struct ChatChoice {
 #[derive(Deserialize)]
 struct ChatMessage {
     content: Option<String>,
-    reasoning_content: Option<String>,
+    #[serde(default, deserialize_with = "present_nullable_string")]
+    reasoning_content: Option<Option<String>>,
     #[serde(default, deserialize_with = "absent_or_null")]
     tool_calls: Vec<ChatToolCall>,
 }
@@ -455,7 +470,8 @@ struct StreamChoice {
 #[derive(Deserialize, Default)]
 struct StreamDelta {
     content: Option<String>,
-    reasoning_content: Option<String>,
+    #[serde(default, deserialize_with = "present_nullable_string")]
+    reasoning_content: Option<Option<String>>,
     #[serde(default)]
     tool_calls: Vec<ToolCallDelta>,
 }
@@ -487,7 +503,7 @@ struct StreamState {
     model: Option<String>,
     text: String,
     text_seen: bool,
-    reasoning: Option<String>,
+    reasoning: Option<Option<String>>,
     calls: Vec<PartialCall>,
     finish: Option<String>,
     usage: Option<ChatUsage>,
@@ -522,15 +538,24 @@ impl StreamState {
             if let Some(reason) = choice.finish_reason {
                 self.finish = Some(reason);
             }
-            if let Some(delta) = choice.delta.reasoning_content {
-                self.reasoning.get_or_insert_default().push_str(&delta);
-                if !delta.is_empty() {
-                    on_event(ModelStreamEvent::ReasoningDelta {
-                        item_id: format!("{}-reasoning", self.id),
-                        delta,
-                    })
-                    .await;
+            match choice.delta.reasoning_content {
+                Some(Some(delta)) => {
+                    self.reasoning
+                        .get_or_insert(None)
+                        .get_or_insert_default()
+                        .push_str(&delta);
+                    if !delta.is_empty() {
+                        on_event(ModelStreamEvent::ReasoningDelta {
+                            item_id: format!("{}-reasoning", self.id),
+                            delta,
+                        })
+                        .await;
+                    }
                 }
+                Some(None) => {
+                    self.reasoning.get_or_insert(None);
+                }
+                None => {}
             }
             if let Some(content) = choice.delta.content.filter(|text| !text.is_empty()) {
                 self.text.push_str(&content);

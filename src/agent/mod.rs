@@ -558,11 +558,13 @@ impl Agent {
                             .iter()
                             .map(|part| part.text.as_str())
                             .collect::<String>();
-                        self.emit(AgentEvent::Reasoning {
-                            item_id: id,
-                            text: thinking_text,
-                        })
-                        .await;
+                        if !thinking_text.is_empty() {
+                            self.emit(AgentEvent::Reasoning {
+                                item_id: id,
+                                text: thinking_text,
+                            })
+                            .await;
+                        }
                         self.conversation.add_reasoning(content, provider_data);
                     }
                     OutputItem::ToolCall {
