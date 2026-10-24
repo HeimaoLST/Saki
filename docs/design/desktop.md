@@ -517,12 +517,12 @@ type resolvedTheme struct {
 
 ## #141 产品事项与执行关联（实现事实，2026-10-24）
 
-代码基线：`9d98765`（上一片模型/store 为 `e0749fe`，派发/结果接线为 `4e63ef8`）。本段是实现事实，不是原生窗口验收；原生窗口/IME 仍由 GUI 主责实例或人工在 macOS 上复核。
+代码基线：`9de72fd`（上一片模型/store 为 `e0749fe`，派发/结果接线为 `4e63ef8`/`9d98765`；本轮仅收紧准入并删除未用代码）。本段是实现事实，不是原生窗口验收；原生窗口/IME 仍由 GUI 主责实例或人工在 macOS 上复核。
 
 - **显式事项**：`productIssue` 是 GUI 自己的产品对象，包含稳定 issue ID、`ContactID`、原始 Goal/Requirements、开放状态、显式 Evidence 与时间戳；`issueExecution` 是一次真实 Runtime 关联，记录 execution ID、SessionID、TaskID、MessageID、发送时的 prompt、状态与错误摘要。普通聊天不会自动创建事项；只有 workspace 的 New issue/Save issue 会创建。
 - **存储**：contact store 升到 v2，在原有 contact/session/draft 字段旁增量保存 issues；v1 文件仍可读取并原样保留 contact/session/draft，首次保存后写回 v2。加载时校验 issue ID 非空且唯一、`ContactID` 非空且对应当前 store 中的 contact；空/未知 ContactID 报错，不再把同一 issue 归给所有联系人。旧 store 恢复、原子保存失败与重复/孤儿 ID 有确定性测试。v2 是单向升级：旧 app 不能读取 v2；回滚必须保留原 v1 文件/备份，且不要让旧包继续写 v2 文件。
 - **保存顺序**：New issue 先写入 store，成功后才关闭表单并清空 Goal/Requirements；保存失败回滚追加项、恢复原选择、保留表单文字并显示错误。Run issue 在派发前先持久化 execution 快照（已有 SessionID 也先写入）；预派发保存失败不调用 Runtime，移除临时 execution，普通 composer 不变。
-- **执行状态**：`pending`（仅进程内、派发前）→ `accepted` → `running` → `completed`/`failed`/`interrupted`；另有 `not_dispatched`（确认未发出，可明确再 Run）与 `rejected`（Runtime 明确拒绝，可明确再 Run）。Runtime 的 `completed` 只映射到 execution 状态，不改变事项为完成；事项保持 Open，直到有用户显式提供的 Evidence。
+- **执行状态**：`pending`（仅进程内、派发前）→ `accepted` → `running` → `completed`/`failed`/`interrupted`；另有 `not_dispatched`（确认未发出，可明确再 Run）与 `rejected`（Runtime 明确拒绝，可明确再 Run）。Runtime 的 `completed` 只映射到 execution 状态，不改变事项为完成；本阶段事项始终 Open，尚无 Evidence/关闭入口，完成状态保持未核实。
 - **在途身份**：发送身份只在 `canSend` 准入成功后写入/替换；busy 被拒的普通 composer 发送不会清空在途事项的 `pendingIssueExecution`。只有被接纳的普通发送才清掉旧失败残留，接纳的事项发送才能把 association 挂回。mapping callback 被暂停时，普通 Send 被拒后恢复 mapping，最终 TaskID/SessionID 仍精确归属原事项；真实 Runtime 测试覆盖。
 - **未知与重启**：Accepted 后关联保存失败时显示 unknown，保留已接受的 task/message 关联快照和 later draft，不自动重发；重启后 `pending` 一律显示 unknown；无 TaskID 的 accepted/running 也转 unknown；有真实 TaskID 的 accepted/running 仅由 Runtime history/task 关联恢复，缺失 history 时转 unknown。unknown/active execution 阻止 Run，不凭 prompt 猜测 TaskID；`not_dispatched`/`rejected` 允许用户再次显式 Run。
 - **结果可读性**：workspace 的 execution 行优先展示该 TaskID 的真实 assistant 消息片段；没有助手消息是正常的 P5 场景，显示中性的 “No assistant message was recorded … Use View execution” 提示，工具输出只作为 “tool output only” 辅助，不足以宣称阶段结果。`View result` 只定位属于当前事项的 TaskID，展示该次 work/tool details；旧事项不会把另一事项的 current work 当作自己的结果。选中事项与 result 的归属标签固定为 `Run N … · <issue goal>`；执行行只保留一份 Runtime 状态，不再重复 Work 状态。
