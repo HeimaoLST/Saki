@@ -514,3 +514,23 @@ type resolvedTheme struct {
 ## 当前不做
 
 多 agent 协作、shared memory、同宿主后台并行执行、原始推理链展示、contact 级模型/provider/key 设置（deferred）、附件、头像 picker／上传／contact 级头像设置（same-family 集合以后再评估）。Stop／取消已实现，只按 `(session,task)` 生效。主题编辑器、主题商城/下载/同步、主题热重载、自绘 titlebar 不在当前承诺；#92 只交付设计，A/B 功能另立任务。
+
+## #141 产品事项与执行关联（实现事实，2026-10-24）
+
+代码基线：`9d98765`（上一片模型/store 为 `e0749fe`，派发/结果接线为 `4e63ef8`）。本段是实现事实，不是原生窗口验收；原生窗口/IME 仍由 GUI 主责实例或人工在 macOS 上复核。
+
+- **显式事项**：`productIssue` 是 GUI 自己的产品对象，包含稳定 issue ID、`ContactID`、原始 Goal/Requirements、开放状态、显式 Evidence 与时间戳；`issueExecution` 是一次真实 Runtime 关联，记录 execution ID、SessionID、TaskID、MessageID、发送时的 prompt、状态与错误摘要。普通聊天不会自动创建事项；只有 workspace 的 New issue/Save issue 会创建。
+- **存储**：contact store 升到 v2，在原有 contact/session/draft 字段旁增量保存 issues；v1 文件仍可读取并原样保留 contact/session/draft，首次保存后写回 v2。加载时校验 issue ID 非空且唯一、`ContactID` 非空且对应当前 store 中的 contact；空/未知 ContactID 报错，不再把同一 issue 归给所有联系人。旧 store 恢复、原子保存失败与重复/孤儿 ID 有确定性测试。v2 是单向升级：旧 app 不能读取 v2；回滚必须保留原 v1 文件/备份，且不要让旧包继续写 v2 文件。
+- **保存顺序**：New issue 先写入 store，成功后才关闭表单并清空 Goal/Requirements；保存失败回滚追加项、恢复原选择、保留表单文字并显示错误。Run issue 在派发前先持久化 execution 快照（已有 SessionID 也先写入）；预派发保存失败不调用 Runtime，移除临时 execution，普通 composer 不变。
+- **执行状态**：`pending`（仅进程内、派发前）→ `accepted` → `running` → `completed`/`failed`/`interrupted`；另有 `not_dispatched`（确认未发出，可明确再 Run）与 `rejected`（Runtime 明确拒绝，可明确再 Run）。Runtime 的 `completed` 只映射到 execution 状态，不改变事项为完成；事项保持 Open，直到有用户显式提供的 Evidence。
+- **在途身份**：发送身份只在 `canSend` 准入成功后写入/替换；busy 被拒的普通 composer 发送不会清空在途事项的 `pendingIssueExecution`。只有被接纳的普通发送才清掉旧失败残留，接纳的事项发送才能把 association 挂回。mapping callback 被暂停时，普通 Send 被拒后恢复 mapping，最终 TaskID/SessionID 仍精确归属原事项；真实 Runtime 测试覆盖。
+- **未知与重启**：Accepted 后关联保存失败时显示 unknown，保留已接受的 task/message 关联快照和 later draft，不自动重发；重启后 `pending` 一律显示 unknown；无 TaskID 的 accepted/running 也转 unknown；有真实 TaskID 的 accepted/running 仅由 Runtime history/task 关联恢复，缺失 history 时转 unknown。unknown/active execution 阻止 Run，不凭 prompt 猜测 TaskID；`not_dispatched`/`rejected` 允许用户再次显式 Run。
+- **结果可读性**：workspace 的 execution 行优先展示该 TaskID 的真实 assistant 消息片段；没有助手消息是正常的 P5 场景，显示中性的 “No assistant message was recorded … Use View execution” 提示，工具输出只作为 “tool output only” 辅助，不足以宣称阶段结果。`View result` 只定位属于当前事项的 TaskID，展示该次 work/tool details；旧事项不会把另一事项的 current work 当作自己的结果。选中事项与 result 的归属标签固定为 `Run N … · <issue goal>`；执行行只保留一份 Runtime 状态，不再重复 Work 状态。
+- **事项边界**：原需求显示为 “Original requirements · unverified”，Completion 只说明证据未记录；“Runtime completed” 仅表示一次执行结束，不等于事项要求已满足。本阶段所有事项都保持 Open，没有自动满足或自动关闭判定；只完成显式事项/执行关联这一子集，不宣称 P6 全量完成，也不包含 P3 并行、P4 补充/采纳、看板或后台能力。
+- **窄屏与键盘**：open issues 使用纵向列表，不横向撑宽；320/360 是 headless 工作面板宽度测试，work overlay 收窄到窗口宽度，结果卡、两轮执行与无工具结果均可读，无横向滚动；它不表示原生应用最小宽度，原生最小仍为 720。New issue 打开聚焦 Goal，Cancel/保存后回到 New issue；未保存 Goal/Requirements 时切换联系人（或 Add contact）被拒绝，内容不串到另一联系人。
+- **验证证据（代码 `9d98765`）**：
+  - `SAKI_TEST_RUNTIME_BIN=/private/tmp/saki-gui-141/runtime-target/debug/Saki CGO_ENABLED=0 go test -race ./... -count=1 -v`：110 PASS / 0 FAIL / 5 SKIP，12.865s；5 个 SKIP 均为在线 smoke 或未设置 `SAKI_PREVIEW_DIR` 的 headless preview。
+  - 九个既有真实 Runtime 用例全部 PASS；#141 新增 `TestGUIAppIssueExecutionsPersistAndRestart`、`TestGUIAppIssueSaveFailureStopsBeforeDispatch`、`TestGUIAppIssueStopKeepsItemAndExecution`、`TestGUIAppRejectedComposerSendKeepsInFlightIssueAssociation` 也全部 PASS（同一 race 运行）。
+  - Rust 二进制 sha256 `3553a52c…`（`cargo build --locked --bin Saki`，独立 target `/private/tmp/saki-gui-141/runtime-target`）；desktop native build sha256 `690ec1d6…`；`go vet ./...` 通过。
+  - headless MyGo Tester 截图在 `/private/tmp/saki-gui-141/previews/`：light/dark 960×640、1040×720、1380×900、900×640 overlay、320×640/320×900、360×800，以及 issue form 960×640、working/unknown；包含两个事项、两轮执行、无工具/无助手消息结果。它们不是 macOS 原生窗口截图；320 仅作为工作面板宽度测试。
+- **限制**：当前没有“写入完成证据/关闭事项”的 UI；unknown execution 需要重新加载或另建事项，未提供强行解决入口；未验证原生 CUA（`Sky native pipe startup failed` 由父级记录），不把 headless 截图写成 native PASS。事项执行失败/完成都不会自动满足或关闭事项，这是本阶段的明确产品边界。
