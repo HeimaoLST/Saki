@@ -390,9 +390,9 @@ func issueExecutionStatusFromWork(state workState) string {
 
 func issueRequirementsSummary(issue *productIssue) string {
 	if strings.TrimSpace(issue.Requirements) == "" {
-		return "No requirements recorded. Completion is unverified."
+		return "No requirements recorded."
 	}
-	return issue.Requirements + "\n\nRequirements are unverified; a completed Runtime task is not item completion."
+	return issue.Requirements
 }
 
 func unresolvedExecution(execution *issueExecution) bool {

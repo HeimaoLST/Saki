@@ -366,6 +366,7 @@ func (a *appModel) issueSection(c *ui.Context, t *ui.Theme, ct *contact) {
 				ui.Spacer(c)
 				ui.Text(c, "Open").FontSize(11).TextColor(t.Warning)
 			})
+			ui.Text(c, "Original requirements · unverified").FontSize(11).FontWeight(500).TextColor(t.TextMuted)
 			ui.Text(c, issueRequirementsSummary(issue)).FontSize(11).LineHeight(1.45).TextColor(t.TextMuted)
 			ui.Text(c, "Completion: "+issueEvidenceText(issue)).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 			for index, execution := range issue.Executions {
@@ -375,10 +376,6 @@ func (a *appModel) issueSection(c *ui.Context, t *ui.Theme, ct *contact) {
 				ui.Column(c).Padding(8).Radius(8).Background(t.Surface).Gap(2).Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Children(func() {
 						ui.Text(c, fmt.Sprintf("Run %d · %s", index+1, issueExecutionLabel(execution))).FontSize(11).TextColor(t.TextMuted)
-						ui.Spacer(c)
-						if w != nil {
-							ui.Text(c, workStateLabel(w)).FontSize(11).TextColor(t.TextMuted)
-						}
 					})
 					if execution.Detail != "" {
 						ui.Text(c, execution.Detail).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
@@ -399,12 +396,12 @@ func (a *appModel) issueSection(c *ui.Context, t *ui.Theme, ct *contact) {
 							}
 							ui.Text(c, lead+toolTitleFor(last.Name, last.Args)+" · "+toolOutputSummary(last.Output)).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted).MaxLines(3)
 						case execution.Status == issueExecutionCompleted:
-							ui.Text(c, "Runtime completed; no assistant message was recorded for this run.").FontSize(11).LineHeight(1.4).TextColor(t.Warning)
+							ui.Text(c, "No assistant message was recorded for this run. Use View execution to inspect its tool activity.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 						}
 					}
 					if w != nil {
 						label := "View result"
-						if resultText == "" && len(w.Tools) == 0 {
+						if resultText == "" {
 							label = "View execution"
 						}
 						ui.Button(c, label).FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {

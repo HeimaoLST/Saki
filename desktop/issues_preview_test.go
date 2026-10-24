@@ -81,6 +81,9 @@ func TestPreviewIssueStates(t *testing.T) {
 	if dir == "" {
 		t.Skip("set SAKI_PREVIEW_DIR to write issue/workbench previews")
 	}
+	if err := loadAvatar(); err != nil {
+		t.Fatal(err)
+	}
 	write := func(scene string, width, height int, dark bool) {
 		theme := "light"
 		if dark {
@@ -95,8 +98,10 @@ func TestPreviewIssueStates(t *testing.T) {
 			fmt.Sprintf("headless-%s-%s-%dx%d.png", theme, scene, width, height)), tr.Image())
 	}
 	for _, dark := range []bool{false, true} {
+		write("issue-results", 960, 640, dark)
 		write("issue-results", 1040, 720, dark)
 		write("issue-results", 1380, 900, dark)
+		write("issue-results", 900, 640, dark)
 		write("issue-results", 320, 640, dark)
 		write("issue-results", 320, 900, dark)
 		write("issue-results", 360, 800, dark)
