@@ -1,0 +1,255 @@
+package main
+
+import (
+	"errors"
+	"strconv"
+	"time"
+
+	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/markdown"
+)
+
+// markdownReaderOptions configures markdownReader. The source is the only
+// content it reads: no app, contact or runtime state is involved.
+type markdownReaderOptions struct {
+	// Streaming shows source as a reply still being written.
+	Streaming bool
+	// CopyLabel is the visible and accessible label of the full-source
+	// copy control, as "Copy message" or "Copy received".
+	CopyLabel string
+	// CopyText writes text and reports whether it stuck. When nil,
+	// markdownReader writes the native clipboard on the UI thread and
+	// reads it back.
+	CopyText func(text string) error
+	// OnCopyResult receives every full-source and code-copy result.
+	OnCopyResult func(err error)
+	// Theme overrides the Markdown foreground roles, as the workspace
+	// surface requires.
+	Theme *markdown.Theme
+}
+
+var errClipboardReadback = errors.New("clipboard readback did not match")
+
+const (
+	readerCopiedFor     = 2 * time.Second
+	readerCopyFailedFor = 4 * time.Second
+)
+
+type markdownReaderState struct {
+	opts markdown.Options
+
+	copyText     func(string) error
+	onCopyResult func(error)
+	streaming    bool
+
+	sourceFeedback readerCopyFeedback
+	codeFeedback   map[int]*readerCopyFeedback
+
+	ready bool
+}
+
+type readerCopyFeedback struct {
+	at  time.Time
+	err error
+}
+
+func (f *readerCopyFeedback) show(now time.Time) (visible, failed bool) {
+	if f.at.IsZero() {
+		return false, false
+	}
+	d := readerCopiedFor
+	if f.err != nil {
+		d = readerCopyFailedFor
+	}
+	if now.Sub(f.at) >= d {
+		return false, false
+	}
+	return true, f.err != nil
+}
+
+// markdownReader shows source as finished or streaming Markdown with one
+// copy control for the exact source and one per code block. It reuses the
+// pinned Markdown view, so selection, links, parsing and streaming keep
+// their established behavior.
+//
+//	markdownReader(c, msg.text, markdownReaderOptions{
+//		Streaming: !msg.done,
+//		CopyLabel: "Copy message",
+//	})
+func markdownReader(c *ui.Context, source string, options markdownReaderOptions) ui.Element {
+	root := ui.Column(c).AlignSelf(ui.Stretch)
+	st := ui.Local(root, markdownReaderStateKey{}, func() markdownReaderState {
+		return markdownReaderState{codeFeedback: map[int]*readerCopyFeedback{}}
+	})
+	st.copyText = options.CopyText
+	st.onCopyResult = options.OnCopyResult
+	st.streaming = options.Streaming
+	if !st.ready {
+		st.ready = true
+		st.opts.WrapCode = true
+		st.opts.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
+		st.opts.CodeBlock = func(c *ui.Context, b *markdown.CodeBlockView) {
+			markdownReaderCodeBlock(c, b, st)
+		}
+	}
+	st.opts.Theme = options.Theme
+
+	label := options.CopyLabel
+	if label == "" {
+		label = "Copy message"
+	}
+
+	root.Children(func() {
+		ui.Row(c).AlignSelf(ui.Stretch).AlignItems(ui.Center).Key("source-copy").Children(func() {
+			ui.Spacer(c)
+			st.copyButton(c, c.Now(), label, label, func() string { return source }, &st.sourceFeedback, markdownReaderTheme(c, options.Theme))
+		})
+		if options.Streaming {
+			markdown.Stream(c, source, &st.opts)
+		} else {
+			markdown.View(c, source, &st.opts)
+		}
+	})
+	return root
+}
+
+type markdownReaderStateKey struct{}
+
+func markdownReaderCodeBlock(c *ui.Context, b *markdown.CodeBlockView, st *markdownReaderState) {
+	th := markdownReaderTheme(c, st.opts.Theme)
+	fs := th.FontSize
+	if fs == 0 {
+		fs = 14
+	}
+	em := func(v float32) float32 { return v * fs }
+
+	box := ui.Column(c).
+		Direction(ui.LeftToRight).
+		Background(th.CodeBlockBackground).
+		Border(1, th.CodeBlockBorder).
+		Radius(th.CodeBlockRadius).
+		AlignSelf(ui.Stretch).
+		Clip().
+		Key("code-" + strconv.Itoa(b.Index))
+	box.Role(ui.RoleGroup).Label("Code")
+	box.Children(func() {
+		head := ui.Row(c).AlignItems(ui.Center).Padding(em(0.35), em(0.4), 0, em(th.CodeBlockPadding)).Key("code-head")
+		head.Children(func() {
+			if b.Language != "" {
+				ui.Text(c, b.Language).FontSize(em(0.8)).TextColor(th.Muted).Unselectable()
+			}
+			ui.Spacer(c)
+			accessible := "Copy code"
+			if st.streaming && b.Open {
+				accessible = "Copy received code"
+			}
+			// b.Code returns the fenced block's content without its fences,
+			// with each line ending in LF as CommonMark normalizes it. The
+			// full-source control still copies the original source bytes.
+			st.copyButton(c, c.Now(), accessible, "Copy", b.Code, st.codeFeedbackFor(b.Index), th)
+		})
+		b.Body(c)
+	})
+}
+
+func (st *markdownReaderState) codeFeedbackFor(index int) *readerCopyFeedback {
+	if st.codeFeedback == nil {
+		st.codeFeedback = map[int]*readerCopyFeedback{}
+	}
+	fb := st.codeFeedback[index]
+	if fb == nil {
+		fb = &readerCopyFeedback{}
+		st.codeFeedback[index] = fb
+	}
+	return fb
+}
+
+func (st *markdownReaderState) copyButton(c *ui.Context, now time.Time, accessible, idle string, text func() string, fb *readerCopyFeedback, th markdown.Theme) ui.Element {
+	row := ui.Row(c).Shrink(0).Key("copy-button")
+	row.Children(func() {
+		visible := idle
+		color := th.Muted
+		if visibleNow, failed := fb.show(now); visibleNow {
+			if failed {
+				visible = "Copy failed"
+				color = c.Theme().Danger
+			} else {
+				visible = "Copied"
+				color = c.Theme().Success
+			}
+		}
+		btn := ui.ButtonBase(c).Label(accessible)
+		btn.Padding(3, 7).Radius(5)
+		if btn.Hovered() {
+			btn.Background(th.Text.Alpha(0.07))
+		}
+		if fb.err != nil {
+			if visibleNow, failed := fb.show(now); visibleNow && failed {
+				btn.Tooltip(fb.err.Error())
+			}
+		}
+		btn.Children(func() {
+			ui.Text(c, visible).FontSize(12).TextColor(color)
+		})
+		if btn.Clicked() {
+			fb.at = now
+			fb.err = st.performCopy(c, text())
+			if st.onCopyResult != nil {
+				st.onCopyResult(fb.err)
+			}
+			if fb.err != nil {
+				c.After(readerCopyFailedFor)
+			} else {
+				c.After(readerCopiedFor)
+			}
+		}
+	})
+	return row
+}
+
+func (st *markdownReaderState) performCopy(c *ui.Context, text string) error {
+	if st.copyText != nil {
+		return st.copyText(text)
+	}
+	return writeClipboardText(text, c.Services().WriteClipboard, c.Services().ReadClipboard)
+}
+
+func writeClipboardText(text string, write func(string), read func() string) error {
+	write(text)
+	if read() != text {
+		return errClipboardReadback
+	}
+	return nil
+}
+
+// markdownReaderTheme resolves only the roles this reader draws itself:
+// the code frame and its header. The Markdown view resolves its own full
+// theme from the same override.
+func markdownReaderTheme(c *ui.Context, override *markdown.Theme) markdown.Theme {
+	th := *markdown.DefaultTheme(c.Theme())
+	if override == nil {
+		return th
+	}
+	if override.FontSize != 0 {
+		th.FontSize = override.FontSize
+	}
+	if override.Text != (markdown.Color{}) {
+		th.Text = override.Text
+	}
+	if override.Muted != (markdown.Color{}) {
+		th.Muted = override.Muted
+	}
+	if override.CodeBlockBackground != (markdown.Color{}) {
+		th.CodeBlockBackground = override.CodeBlockBackground
+	}
+	if override.CodeBlockBorder != (markdown.Color{}) {
+		th.CodeBlockBorder = override.CodeBlockBorder
+	}
+	if override.CodeBlockRadius != 0 {
+		th.CodeBlockRadius = override.CodeBlockRadius
+	}
+	if override.CodeBlockPadding != 0 {
+		th.CodeBlockPadding = override.CodeBlockPadding
+	}
+	return th
+}
