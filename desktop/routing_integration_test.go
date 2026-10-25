@@ -4,6 +4,10 @@ package main
 // no online model or credentials are used.
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
@@ -15,7 +19,12 @@ import (
 
 func startRoutingHarness(t *testing.T, binary string, provider *providerFixture, maxTasks int) *guiHarness {
 	t.Helper()
-	server := httptest.NewServer(provider.handler(t, "nagi-118"))
+	return startRoutingHarnessWithHandler(t, binary, provider.handler(t, "nagi-118"), maxTasks)
+}
+
+func startRoutingHarnessWithHandler(t *testing.T, binary string, handler http.Handler, maxTasks int) *guiHarness {
+	t.Helper()
+	server := httptest.NewServer(handler)
 	root := t.TempDir()
 	t.Setenv("SAKI_GUI_STORE", filepath.Join(root, "gui", "contacts.json"))
 	t.Setenv("SAKI_GUI_WORKDIR", root)
@@ -32,7 +41,7 @@ func startRoutingHarness(t *testing.T, binary string, provider *providerFixture,
 		t.Fatal(err)
 	}
 	pump := newUIPump(t, app)
-	h := &guiHarness{app: app, pump: pump, provider: provider, root: root}
+	h := &guiHarness{app: app, pump: pump, root: root}
 	app.startRuntime()
 	pump.wait(func() bool {
 		return app.runtimeStatus == runtimeStateReady && app.runtimeCapabilitiesLoaded &&
@@ -49,6 +58,88 @@ func startRoutingHarness(t *testing.T, binary string, provider *providerFixture,
 		pump.close()
 	})
 	return h
+}
+
+type gatedProvider struct {
+	keys       []string
+	gates      map[string]chan struct{}
+	gateOnce   map[string]*sync.Once
+	arrived    map[string]chan struct{}
+	arriveOnce map[string]*sync.Once
+	mu         sync.Mutex
+	requests   int
+	bodies     []string
+}
+
+func newGatedProvider(keys ...string) *gatedProvider {
+	p := &gatedProvider{
+		keys: keys, gates: map[string]chan struct{}{}, gateOnce: map[string]*sync.Once{},
+		arrived: map[string]chan struct{}{}, arriveOnce: map[string]*sync.Once{},
+	}
+	for _, key := range keys {
+		p.gates[key] = make(chan struct{})
+		p.gateOnce[key] = &sync.Once{}
+		p.arrived[key] = make(chan struct{})
+		p.arriveOnce[key] = &sync.Once{}
+	}
+	return p
+}
+
+func (p *gatedProvider) release(key string) {
+	if once := p.gateOnce[key]; once != nil {
+		once.Do(func() { close(p.gates[key]) })
+	}
+}
+
+func (p *gatedProvider) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.requests
+}
+
+func (p *gatedProvider) body(index int) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if index < 0 || index >= len(p.bodies) {
+		return ""
+	}
+	return p.bodies[index]
+}
+
+func (p *gatedProvider) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		key := ""
+		for _, candidate := range p.keys {
+			if strings.Contains(string(body), candidate) {
+				key = candidate
+				break
+			}
+		}
+		p.mu.Lock()
+		index := p.requests
+		p.requests++
+		p.bodies = append(p.bodies, string(body))
+		p.mu.Unlock()
+		if key != "" {
+			p.arriveOnce[key].Do(func() { close(p.arrived[key]) })
+			<-p.gates[key]
+		}
+		text := "gated result"
+		if key != "" {
+			text = key + " result"
+		}
+		data, _ := json.Marshal(map[string]any{
+			"id": fmt.Sprintf("gated-%d", index), "status": "completed",
+			"output": []any{map[string]any{
+				"type": "message", "id": fmt.Sprintf("gated-message-%d", index), "status": "completed",
+				"role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": text}},
+			}},
+		})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}
 }
 
 func TestIndependentIssueWorkAndConversationCapacityTwo(t *testing.T) {
@@ -294,16 +385,13 @@ func containsText(values []string, needle string) bool {
 
 func TestStoppingIssueWorkDoesNotStopConversation(t *testing.T) {
 	binary := requireRuntimeBinary(t)
-	hold := make(chan struct{})
-	var releaseOnce sync.Once
-	release := func() { releaseOnce.Do(func() { close(hold) }) }
-	defer release()
-	arrived := make(chan struct{})
-	provider := &providerFixture{ToolFirst: false, Hold: hold, Arrived: arrived}
-	h := startRoutingHarness(t, binary, provider, 2)
+	provider := newGatedProvider("gate-A", "gate-B")
+	defer provider.release("gate-A")
+	defer provider.release("gate-B")
+	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 2)
 	var issueID string
 	h.pump.do(func() {
-		if !h.app.createIssue("Issue stop", "Stop only this work.") {
+		if !h.app.createIssue("gate-A issue", "Stop only A.") {
 			t.Fatalf("createIssue: %s", h.app.issueFormError)
 		}
 		issueID = h.app.selectedContact().SelectedIssueID
@@ -312,9 +400,9 @@ func TestStoppingIssueWorkDoesNotStopConversation(t *testing.T) {
 		}
 	})
 	select {
-	case <-arrived:
+	case <-provider.arrived["gate-A"]:
 	case <-time.After(15 * time.Second):
-		t.Fatal("provider did not receive issue")
+		t.Fatal("provider did not receive A")
 	}
 	h.pump.wait(func() bool {
 		ct := h.app.selectedContact()
@@ -323,25 +411,41 @@ func TestStoppingIssueWorkDoesNotStopConversation(t *testing.T) {
 	})
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
-		ct.Draft = "B before stop"
+		ct.Draft = "gate-B conversation"
 		if !h.app.sendCurrent() {
 			t.Fatalf("conversation B rejected: %s", ct.SendError)
 		}
 	})
+	select {
+	case <-provider.arrived["gate-B"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive B while A was active")
+	}
 	h.pump.wait(func() bool {
 		ct := h.app.selectedContact()
-		return ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty
+		issue := ct.issueByID(issueID)
+		return ct.ActiveTaskID != "" && issue != nil && issue.Work.ActiveTaskID != ""
 	})
+	var workSession string
+	h.pump.do(func() { workSession = h.app.selectedContact().issueByID(issueID).Work.SessionID })
+	if status, err := h.app.rt.cancelTask(workSession, "wrong-task-id"); err != nil || status != "not_running" {
+		t.Fatalf("wrong task cancel = %q / %v", status, err)
+	}
 	h.pump.do(func() {
-		issue := h.app.selectedContact().issueByID(issueID)
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
 		if issue.Work.ActiveTaskID == "" {
-			t.Fatal("issue work finished before cancel")
+			t.Fatal("issue A was not active before stop")
 		}
 		if !h.app.cancelIssue(issueID) {
 			t.Fatal("cancelIssue did not accept the active issue")
 		}
 	})
-	release()
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.SendError == "Cancellation requested"
+	})
+	provider.release("gate-A")
 	h.pump.wait(func() bool {
 		ct := h.app.selectedContact()
 		issue := ct.issueByID(issueID)
@@ -349,25 +453,22 @@ func TestStoppingIssueWorkDoesNotStopConversation(t *testing.T) {
 			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted
 	})
 	ct := h.app.selectedContact()
-	issue := ct.issueByID(issueID)
-	if issue.Status != issueStatusOpen {
-		t.Fatalf("stop closed the issue: %+v", issue)
+	if ct.ActiveTaskID == "" || containsText(contactMessageTextsForWork(ct.issueByID(issueID)), "gate-B") {
+		t.Fatalf("stopping A stopped/leaked B: active=%q work=%+v", ct.ActiveTaskID, ct.issueByID(issueID).Work)
 	}
-	if !containsText(contactMessageTexts(ct), "nagi-118 answer") {
-		t.Fatal("conversation B answer disappeared after stopping A")
-	}
-	h.pump.do(func() {
-		ct := h.app.selectedContact()
-		ct.Draft = "B after stop"
-		if !h.app.sendCurrent() {
-			t.Fatalf("conversation B did not run after A stopped: %s", ct.SendError)
-		}
-	})
+	provider.release("gate-B")
 	h.pump.wait(func() bool {
 		ct := h.app.selectedContact()
 		return ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty &&
-			containsText(contactMessageTexts(ct), "B after stop")
+			containsText(contactMessageTexts(ct), "gate-B result")
 	})
+	issue := ct.issueByID(issueID)
+	if issue.Status != issueStatusOpen || containsText(contactMessageTextsForWork(issue), "gate-B result") {
+		t.Fatalf("B result leaked into A or A closed: %+v", issue)
+	}
+	if provider.count() != 2 {
+		t.Fatalf("provider requests = %d, want 2", provider.count())
+	}
 	h.shutdown(t)
 }
 
@@ -680,4 +781,116 @@ func TestLateIssueTaskTerminalDoesNotReplaceCurrentWork(t *testing.T) {
 	if issue.Executions[0].Status != issueExecutionCompleted || issue.Executions[1].Status != issueExecutionRunning {
 		t.Fatalf("late terminal rewrote executions: %+v", issue.Executions)
 	}
+}
+
+func TestRuntimeErrorReasonIsDecoded(t *testing.T) {
+	var err runtimeError
+	if err := json.Unmarshal([]byte(`{"code":"busy","message":"runtime task capacity is full","reason":"capacity_exceeded"}`), &err); err != nil {
+		t.Fatal(err)
+	}
+	if err.Code != "busy" || err.Reason != "capacity_exceeded" || !strings.Contains(runtimeMessage(&err), "capacity_exceeded") {
+		t.Fatalf("runtime reason DTO = %+v / %q", err, runtimeMessage(&err))
+	}
+}
+
+func TestCapacityThreeRunsTwoIssuesOnTwoContactsIndependently(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := newGatedProvider("cap3-A", "cap3-C")
+	defer provider.release("cap3-A")
+	defer provider.release("cap3-C")
+	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 3)
+	var issueA, issueC string
+	h.pump.do(func() {
+		if !h.app.createIssue("cap3-A issue", "A work.") {
+			t.Fatalf("create A: %s", h.app.issueFormError)
+		}
+		issueA = h.app.selectedContact().SelectedIssueID
+		if !h.app.runIssue(issueA) {
+			t.Fatalf("run A: %s", h.app.issueFormError)
+		}
+	})
+	select {
+	case <-provider.arrived["cap3-A"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive A")
+	}
+	h.pump.do(func() {
+		h.app.addDefaultContact()
+		if !h.app.createIssue("cap3-C issue", "C work.") {
+			t.Fatalf("create C: %s", h.app.issueFormError)
+		}
+		issueC = h.app.selectedContact().SelectedIssueID
+		if !h.app.runIssue(issueC) {
+			t.Fatalf("run C: %s", h.app.issueFormError)
+		}
+	})
+	select {
+	case <-provider.arrived["cap3-C"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive C while A was active")
+	}
+	var sessionA, sessionC string
+	h.snapshot(func() {
+		a, c := h.app.contacts[0], h.app.contacts[1]
+		issueAObj, issueCObj := a.issueByID(issueA), c.issueByID(issueC)
+		sessionA, sessionC = issueAObj.Work.SessionID, issueCObj.Work.SessionID
+		if sessionA == "" || sessionC == "" || sessionA == sessionC {
+			t.Fatalf("work sessions = %q / %q", sessionA, sessionC)
+		}
+	})
+	provider.release("cap3-A")
+	h.pump.wait(func() bool {
+		a := h.app.contacts[0]
+		issue := a.issueByID(issueA)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
+	})
+	h.snapshot(func() {
+		c := h.app.contacts[1]
+		issue := c.issueByID(issueC)
+		if issue.Work.ActiveTaskID == "" {
+			t.Fatal("A completion released/stopped C")
+		}
+		if containsText(contactMessageTextsForWork(issue), "cap3-A result") {
+			t.Fatalf("A result appeared in C work: %+v", issue.Work.Messages)
+		}
+	})
+	provider.release("cap3-C")
+	h.pump.wait(func() bool {
+		c := h.app.contacts[1]
+		issue := c.issueByID(issueC)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
+	})
+	h.snapshot(func() {
+		a, c := h.app.contacts[0], h.app.contacts[1]
+		issueAObj, issueCObj := a.issueByID(issueA), c.issueByID(issueC)
+		if containsText(contactMessageTextsForWork(issueAObj), "cap3-C result") ||
+			containsText(contactMessageTextsForWork(issueCObj), "cap3-A result") {
+			t.Fatalf("issue results crossed: A=%+v C=%+v", issueAObj.Work.Messages, issueCObj.Work.Messages)
+		}
+		if !containsText(contactMessageTextsForWork(issueAObj), "cap3-A result") ||
+			!containsText(contactMessageTextsForWork(issueCObj), "cap3-C result") {
+			t.Fatalf("issue results missing: A=%+v C=%+v", issueAObj.Work.Messages, issueCObj.Work.Messages)
+		}
+	})
+	pagesA, _, err := h.app.historyAll(sessionA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pagesC, _, err := h.app.historyAll(sessionC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	textA, textC := historyTexts(pagesA), historyTexts(pagesC)
+	if containsText(textA, "cap3-C result") || containsText(textC, "cap3-A result") {
+		t.Fatalf("runtime issue histories crossed: A=%v C=%v", textA, textC)
+	}
+	if !containsText(textA, "cap3-A result") || !containsText(textC, "cap3-C result") {
+		t.Fatalf("runtime issue histories missing results: A=%v C=%v", textA, textC)
+	}
+	if provider.count() != 2 {
+		t.Fatalf("provider requests = %d, want 2", provider.count())
+	}
+	h.shutdown(t)
 }
