@@ -60,7 +60,7 @@ func TestRailShowsIssueWorkAttentionWithoutChatUnread(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	if !tr.HasText("Work attention") {
+	if !tr.HasText("Attention") {
 		t.Fatalf("rail did not surface issue-work failure: %v", tr.Texts())
 	}
 	if ct.Unread != 2 {

@@ -86,7 +86,7 @@ func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
 			if notice.Text != "" {
 				line = "Issue running"
 				if notice.Attention {
-					line = "Work attention"
+					line = "Attention"
 					color = t.Warning
 				} else {
 					color = t.Success
