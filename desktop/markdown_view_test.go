@@ -111,9 +111,11 @@ func TestAppUserMessageStaysLiteralAndCopiesRaw(t *testing.T) {
 
 func TestAppHistoryAndSourcesRenderAndCopyMarkdown(t *testing.T) {
 	a, ct := appReadingTestApp(t)
+	assistantHistory := "## 历史标题\n\n- 条目\n\n```go\n\tx := 1\n```"
+	userHistory := "# 用户原文"
 	ct.History = []historyEntry{
-		{ID: "h1", Date: "Oct 1", From: "contact", Text: "## 历史标题\n\n- 条目\n\n```go\n\tx := 1\n```"},
-		{ID: "h2", Date: "Oct 1", From: "me", Text: "# 用户原文"},
+		{ID: "h2", Date: "Oct 1", From: "me", Text: userHistory},
+		{ID: "h1", Date: "Oct 1", From: "contact", Text: assistantHistory},
 	}
 	ct.Messages = []*message{{ID: 1, Kind: msgContact, Text: "answer", Sources: []string{"h1", "h2"}}}
 	a.openHistory()
@@ -128,6 +130,12 @@ func TestAppHistoryAndSourcesRenderAndCopyMarkdown(t *testing.T) {
 	if !tr.HasText("Copy history message") {
 		t.Fatalf("history copy control missing: %q", tr.Texts())
 	}
+	if err := tr.Click("Copy history message"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != assistantHistory {
+		t.Fatalf("history copy = %q, want the assistant source %q", got, assistantHistory)
+	}
 
 	a.backToChat()
 	a.openSources(1)
@@ -141,8 +149,8 @@ func TestAppHistoryAndSourcesRenderAndCopyMarkdown(t *testing.T) {
 	if err := tr.Click("Copy source message"); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := tr.Clipboard(), ct.History[0].Text; got != want {
-		t.Fatalf("source copy = %q, want %q", got, want)
+	if got := tr.Clipboard(); got != assistantHistory {
+		t.Fatalf("source copy = %q, want %q", got, assistantHistory)
 	}
 }
 
@@ -174,7 +182,7 @@ func TestAppToolDetailsShowAndCopyCompleteReceivedOutput(t *testing.T) {
 	if !tr.HasText("Preview ·") {
 		t.Fatalf("collapsed tool summary is not labeled as a preview: %q", tr.Texts())
 	}
-	if err := tr.Click("Copy full output"); err != nil {
+	if err := tr.Click("Copy received output"); err != nil {
 		t.Fatal(err)
 	}
 	if got := tr.Clipboard(); got != output {
@@ -187,8 +195,24 @@ func TestAppToolDetailsShowAndCopyCompleteReceivedOutput(t *testing.T) {
 	if !tr.HasText("# plain tail marker") {
 		t.Fatalf("expanded tool detail lost the received tail: %q", tr.Texts())
 	}
-	if tr.HasText("Copy full output") || tr.HasText("Copy code") {
-		t.Fatalf("expanded tool detail claims a non-plain or duplicate copy surface: %q", tr.Texts())
+	if tr.HasText("Copy code") {
+		t.Fatalf("expanded tool detail was parsed as Markdown: %q", tr.Texts())
+	}
+	for i := 0; i < 8; i++ {
+		tr.Scroll(860, 400, 0, 2000)
+		tr.Frame()
+	}
+	tr.Press(760, 690)
+	tr.Move(1000, 690)
+	tr.Release(1000, 690)
+	tr.SetClipboard("")
+	tr.Command("copy")
+	if got := tr.Clipboard(); !strings.Contains(got, "tail marker") {
+		t.Fatalf("scrolled tool Details did not expose the received tail: %q", got)
+	}
+	for i := 0; i < 8; i++ {
+		tr.Scroll(860, 400, 0, -2000)
+		tr.Frame()
 	}
 	if err := tr.Click("Copy received output"); err != nil {
 		t.Fatal(err)
@@ -316,20 +340,59 @@ func TestAppChatScrollUpSurvivesStreamAppendAndBackToLatest(t *testing.T) {
 	if !ct.list.AtEnd() || tr.HasText("Back to latest") {
 		t.Fatal("Back to latest did not resume following")
 	}
+	if !tr.Focused("Composer for Saki") {
+		t.Fatal("Back to latest did not return meaningful focus to the composer")
+	}
+	a.applyEvent(ct, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
+		Event: &runtimeEvent{Type: "response_text_delta", ItemID: "a1", Delta: " after back"},
+	})
+	tr.Frame()
+	if !ct.list.AtEnd() || !tr.Focused("Composer for Saki") {
+		t.Fatal("following/focus did not persist after returning to the latest")
+	}
+
+	tr.Scroll(500, 300, 0, -4000)
+	tr.Frame()
+	if ct.list.AtEnd() || !tr.HasText("Back to latest") {
+		t.Fatal("second scroll-up did not expose Back to latest for keyboard use")
+	}
+	tr.Key(ui.Shift, ui.KeyTab)
+	if !tr.Focused("Back to latest") {
+		t.Fatal("Back to latest is not reachable by keyboard")
+	}
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if !ct.list.AtEnd() || !tr.Focused("Composer for Saki") {
+		t.Fatal("keyboard activation of Back to latest did not resume following with composer focus")
+	}
 }
 
 func TestAppWorkspaceResultSummaryIsPreview(t *testing.T) {
 	a, ct := workspaceTestApp(t)
+	longResult := strings.Repeat("result-line ", 40) + "tail-marker"
 	ct.Issues = []*productIssue{{ID: "i1", ContactID: "saki", Goal: "First issue", Status: issueStatusOpen, Executions: []*issueExecution{{ID: "e1", TaskID: "t1", Status: issueExecutionCompleted}}}}
 	ct.SelectedIssueID = "i1"
 	ct.Works = []*workItem{{TaskID: "t1", MessageID: "m1", State: workCompleted, Prompt: "prompt"}}
-	ct.Messages = []*message{{ID: 1, Kind: msgContact, TaskID: "t1", MessageID: "m1", Text: "# Full result body"}}
+	ct.Messages = []*message{{ID: 1, Kind: msgContact, TaskID: "t1", MessageID: "m1", Text: longResult}}
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	if !tr.HasText("Result preview: # Full result body") {
-		t.Fatalf("workspace result summary is not an honest preview: %q", tr.Texts())
+	preview := ""
+	for _, text := range tr.Texts() {
+		if strings.HasPrefix(text, "Result preview: ") {
+			preview = strings.TrimPrefix(text, "Result preview: ")
+		}
 	}
-	if tr.HasText("Result: # Full result body") {
+	if preview == "" {
+		t.Fatalf("workspace result summary is not labeled as a preview: %q", tr.Texts())
+	}
+	if strings.Contains(preview, "tail-marker") {
+		t.Fatalf("preview leaked the >300-char result tail: %q", preview)
+	}
+	if !strings.HasSuffix(preview, "…") || len([]rune(preview)) != 301 {
+		t.Fatalf("preview does not honor the 300-char limit: %q (%d runes)", preview, len([]rune(preview)))
+	}
+	if tr.HasText("Result: " + longResult) {
 		t.Fatalf("workspace result summary claims to be the full result: %q", tr.Texts())
 	}
 }

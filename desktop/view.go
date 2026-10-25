@@ -243,11 +243,15 @@ func (a *appModel) chat(c *ui.Context, t *ui.Theme) {
 			})
 		}
 		if len(items) > 0 && !ct.list.AtEnd() {
-			ui.Row(c).Justify(ui.Center).Children(func() {
-				ui.Button(c, "Back to latest").FontSize(12).Padding(4, 10).OnClick(func() { ct.list.ScrollToEnd() })
+			ui.Row(c).Key("back-to-latest").Justify(ui.Center).Children(func() {
+				back := ui.Button(c, "Back to latest").FontSize(12).Padding(4, 10)
+				back.OnClick(func() {
+					ct.list.ScrollToEnd()
+					a.focusComposer = true
+				})
 			})
 		}
-		ui.Row(c).Justify(ui.Center).Children(func() {
+		ui.Row(c).Key("composer").Justify(ui.Center).Children(func() {
 			ui.Column(c).WidthPercent(86).MaxWidth(760).Children(func() {
 				a.composer(c, t)
 			})

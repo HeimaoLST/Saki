@@ -511,7 +511,7 @@ func TestWorkPanelRendersToolDetailsWithoutInference(t *testing.T) {
 	if tr.HasText("Delivered file") || tr.HasText("artifact") {
 		t.Fatal("tool output must not be inferred as a delivered file")
 	}
-	if err := tr.Click("Copy full output"); err != nil {
+	if err := tr.Click("Copy received output"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(tr.Clipboard(), "first heading") {

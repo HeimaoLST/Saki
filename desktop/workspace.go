@@ -535,11 +535,11 @@ func (a *appModel) toolCalls(c *ui.Context, t *ui.Theme, tools []*workTool) {
 					}
 					ui.Text(c, summary).FontSize(11).LineHeight(1.4).MaxLines(4).TextColor(t.TextMuted).Grow(1)
 					if !call.Expanded {
-						ui.Button(c, "Copy full output").FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+						ui.Button(c, "Copy received output").FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
 							if err := writeClipboardText(call.Output, c.Services().WriteClipboard, c.Services().ReadClipboard); err != nil {
 								c.Toast("Copy failed: " + err.Error())
 							} else {
-								c.Toast("Copied full tool output")
+								c.Toast("Copied received output")
 							}
 						})
 					}
