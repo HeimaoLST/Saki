@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const contactStoreVersion = 1
+const contactStoreVersion = 2
 
 type storedContact struct {
 	ID           string `json:"id"`
@@ -29,10 +29,33 @@ type storedContact struct {
 	UpdatedAt    int64  `json:"updated_at,omitempty"`
 }
 
+type storedIssueExecution struct {
+	ID        string `json:"id"`
+	SessionID string `json:"session_id,omitempty"`
+	TaskID    string `json:"task_id,omitempty"`
+	MessageID string `json:"message_id,omitempty"`
+	Prompt    string `json:"prompt,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+}
+
+type storedIssue struct {
+	ID           string                 `json:"id"`
+	ContactID    string                 `json:"contact_id"`
+	Goal         string                 `json:"goal"`
+	Requirements string                 `json:"requirements,omitempty"`
+	Status       string                 `json:"status,omitempty"`
+	Evidence     string                 `json:"evidence,omitempty"`
+	CreatedAt    int64                  `json:"created_at,omitempty"`
+	UpdatedAt    int64                  `json:"updated_at,omitempty"`
+	Executions   []storedIssueExecution `json:"executions,omitempty"`
+}
+
 type storedState struct {
 	Version  int             `json:"version"`
 	Selected string          `json:"selected,omitempty"`
 	Contacts []storedContact `json:"contacts"`
+	Issues   []storedIssue   `json:"issues,omitempty"`
 }
 
 type contactStore struct {
@@ -61,7 +84,7 @@ func openContactStore(path, defaultWorkspace string) (*contactStore, error) {
 		if err := json.Unmarshal(data, &store.state); err != nil {
 			return nil, fmt.Errorf("contact store %s is not readable: %w", path, err)
 		}
-		if store.state.Version != contactStoreVersion {
+		if store.state.Version != 1 && store.state.Version != contactStoreVersion {
 			return nil, fmt.Errorf("contact store %s has unsupported version %d", path, store.state.Version)
 		}
 		if len(store.state.Contacts) == 0 {
@@ -73,6 +96,16 @@ func openContactStore(path, defaultWorkspace string) (*contactStore, error) {
 				return nil, fmt.Errorf("contact store %s has an empty or duplicate contact id", path)
 			}
 			seen[contact.ID] = true
+		}
+		seenIssues := map[string]bool{}
+		for _, issue := range store.state.Issues {
+			if issue.ID == "" || seenIssues[issue.ID] {
+				return nil, fmt.Errorf("contact store %s has an empty or duplicate issue id", path)
+			}
+			if issue.ContactID == "" || !seen[issue.ContactID] {
+				return nil, fmt.Errorf("contact store %s issue %s has an unknown contact id", path, issue.ID)
+			}
+			seenIssues[issue.ID] = true
 		}
 		if !seen[store.state.Selected] {
 			store.state.Selected = store.state.Contacts[0].ID
@@ -153,6 +186,21 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 			Draft:        c.Draft,
 			UpdatedAt:    nowMillis(),
 		})
+		for _, issue := range c.Issues {
+			stored := storedIssue{
+				ID: issue.ID, ContactID: issue.ContactID, Goal: issue.Goal,
+				Requirements: issue.Requirements, Status: issue.Status,
+				Evidence: issue.Evidence, CreatedAt: issue.CreatedAt, UpdatedAt: issue.UpdatedAt,
+			}
+			for _, execution := range issue.Executions {
+				stored.Executions = append(stored.Executions, storedIssueExecution{
+					ID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID,
+					MessageID: execution.MessageID, Prompt: execution.Prompt,
+					Status: execution.Status, Detail: execution.Detail,
+				})
+			}
+			s.state.Issues = append(s.state.Issues, stored)
+		}
 	}
 	if !s.hasContact(selected) && len(contacts) > 0 {
 		s.state.Selected = contacts[0].ID

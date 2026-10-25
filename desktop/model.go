@@ -69,25 +69,29 @@ type message struct {
 }
 
 type contact struct {
-	ID                 string
-	Name               string
-	Role               string
-	Purpose            string
-	Instructions       string
-	Workspace          string
-	Status             contactStatus
-	Unread             int
-	Work               string
-	WorkLabel          string
-	Messages           []*message
-	History            []historyEntry
-	Revealed           []string
-	Draft              string
-	replyIndex         int
-	list               ui.ListState
-	Works              []*workItem
-	UnlinkedTools      []*workTool
-	StopRequestedTasks map[string]bool
+	ID                    string
+	Name                  string
+	Role                  string
+	Purpose               string
+	Instructions          string
+	Workspace             string
+	Status                contactStatus
+	Unread                int
+	Work                  string
+	WorkLabel             string
+	Messages              []*message
+	History               []historyEntry
+	Revealed              []string
+	Draft                 string
+	replyIndex            int
+	list                  ui.ListState
+	Works                 []*workItem
+	Issues                []*productIssue
+	SelectedIssueID       string
+	SelectedWorkTaskID    string
+	UnlinkedTools         []*workTool
+	StopRequestedTasks    map[string]bool
+	pendingIssueExecution string
 
 	// Runtime-backed state. Empty SessionID means the contact has no runtime
 	// session yet; it is created lazily before the first task.send.
@@ -137,6 +141,13 @@ type appModel struct {
 	focusComposer   bool
 	settingsDraft   profileDraft
 	settingsError   bool
+
+	issueFormOpen     bool
+	issueGoal         string
+	issueRequirements string
+	issueFormError    string
+	focusIssueGoal    bool
+	focusIssueNew     bool
 
 	// Runtime mode. demo keeps the local fixture path for tests/screenshots;
 	// the shipped app is runtime-backed.
@@ -294,8 +305,24 @@ func (a *appModel) contactByID(id string) *contact {
 	return nil
 }
 
+func (a *appModel) leaveIssueFormForSwitch() bool {
+	if !a.issueFormOpen {
+		return true
+	}
+	if strings.TrimSpace(a.issueGoal) != "" || strings.TrimSpace(a.issueRequirements) != "" {
+		a.issueFormError = "Finish or cancel the current issue form before switching contacts."
+		return false
+	}
+	a.issueFormOpen = false
+	a.issueFormError = ""
+	return true
+}
+
 func (a *appModel) selectContact(i int) {
 	if i < 0 || i >= len(a.contacts) || i == a.selected {
+		return
+	}
+	if !a.leaveIssueFormForSwitch() {
 		return
 	}
 	if !a.demo {
@@ -357,6 +384,9 @@ func (a *appModel) statusLabel(c *contact) string {
 // addDefaultContact creates and selects a ready contact with a usable
 // default name, then asks the composer to take focus once.
 func (a *appModel) addDefaultContact() {
+	if !a.leaveIssueFormForSwitch() {
+		return
+	}
 	if !a.demo {
 		a.addRuntimeContact()
 		return

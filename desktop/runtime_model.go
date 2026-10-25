@@ -46,7 +46,7 @@ func newRuntimeApp() (*appModel, error) {
 		if workspace == "" {
 			workspace = workDir
 		}
-		a.contacts = append(a.contacts, &contact{
+		ct := &contact{
 			ID:           stored.ID,
 			Name:         stored.Name,
 			Role:         stored.Role,
@@ -57,7 +57,12 @@ func newRuntimeApp() (*appModel, error) {
 			Draft:        stored.Draft,
 			Status:       statusReady,
 			WorkLabel:    "Preparing a reply",
-		})
+		}
+		ct.Issues = issuesForStoredContact(store.state.Issues, ct.ID)
+		if issue := ct.selectedIssue(); issue != nil {
+			ct.SelectedIssueID = issue.ID
+		}
+		a.contacts = append(a.contacts, ct)
 	}
 	for i, ct := range a.contacts {
 		if ct.ID == store.state.Selected {
@@ -659,6 +664,18 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 	ct.Messages = messages
 	ct.History = entries
 	ct.Works = works
+	for _, issue := range ct.Issues {
+		for _, execution := range issue.Executions {
+			if w := workFor(ct, execution.TaskID); w != nil {
+				execution.Status = issueExecutionStatusFromWork(w.State)
+				execution.Detail = w.Detail
+			} else if execution.Status == issueExecutionPending ||
+				execution.Status == issueExecutionAccepted || execution.Status == issueExecutionRunning {
+				execution.Status = issueExecutionUnknown
+				execution.Detail = "No trusted Runtime task history was found for this execution; reload before rerunning."
+			}
+		}
+	}
 	ct.HistoryDirty = false
 	ct.Loaded = true
 	ct.Status = statusFromString(status)
@@ -799,6 +816,10 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 		if w := a.ensureWork(ct, event.TaskID, event.MessageID); w != nil {
 			w.State = workRunning
 		}
+		if execution := ct.executionByTask(event.TaskID); execution != nil {
+			execution.Status = issueExecutionRunning
+			execution.Detail = ""
+		}
 	case "model_request_started":
 		if payload.Purpose == "compaction" {
 			ct.Work = "Compacting context"
@@ -870,6 +891,11 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 			w.State = workStateFromTask(payload.Status)
 			w.Detail = ct.StatusDetail
 		}
+		if execution := ct.executionByTask(event.TaskID); execution != nil {
+			execution.Status = issueExecutionStatusFromWork(workStateFromTask(payload.Status))
+			execution.Detail = ct.StatusDetail
+		}
+		_ = a.persist()
 		a.reloadContactByID(ct.ID)
 	}
 }
@@ -966,10 +992,18 @@ func (a *appModel) canSend(ct *contact) string {
 }
 
 func (a *appModel) sendRuntime(ct *contact, text string) bool {
+	return a.sendRuntimeForIssue(ct, text, "")
+}
+
+func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID string) bool {
 	if reason := a.canSend(ct); reason != "" {
 		ct.SendError = reason
+		// A rejected send must not consume or replace an in-flight issue
+		// association; only an admitted dispatch may change it.
 		return false
 	}
+	previousExecution := ct.pendingIssueExecution
+	ct.pendingIssueExecution = issueExecutionID
 	contactID := ct.ID
 	sessionID := ct.SessionID
 	workspace := ct.Workspace
@@ -982,6 +1016,7 @@ func (a *appModel) sendRuntime(ct *contact, text string) bool {
 	if err := a.persist(); err != nil {
 		ct.SendState = sendIdle
 		ct.SendError = "Could not save this contact; the message was not sent. " + err.Error()
+		ct.pendingIssueExecution = previousExecution
 		return false
 	}
 	go a.submitTask(contactID, sessionID, text, workspace, system)
@@ -1008,6 +1043,9 @@ func (a *appModel) submitTask(contactID, sessionID, text, workspace, system stri
 			ct.SessionID = sessionID
 			ct.Loaded = true
 			ct.SessionState = session.State
+			if _, execution := ct.executionByID(ct.pendingIssueExecution); execution != nil {
+				execution.SessionID = sessionID
+			}
 			if session.Metadata != nil {
 				ct.SessionWorkingDir = session.Metadata.WorkingDirectory
 				ct.SessionModel = session.Metadata.Model
@@ -1040,11 +1078,22 @@ func (a *appModel) acceptTask(ct *contact, text string, result runtimeSendResult
 	ct.LastTaskID = result.TaskID
 	ct.SendState = sendAccepted
 	ct.SendError = ""
+	issueSend := ct.pendingIssueExecution != ""
 	if w := a.ensureWork(ct, result.TaskID, result.MessageID); w != nil {
 		w.State = workAccepted
 		w.Prompt = text
 	}
-	if ct.draftRev == ct.SubmittedRev && strings.TrimSpace(ct.Draft) == strings.TrimSpace(text) {
+	_, execution := ct.executionByID(ct.pendingIssueExecution)
+	if execution != nil {
+		execution.SessionID = ct.SessionID
+		execution.TaskID = result.TaskID
+		execution.MessageID = result.MessageID
+		execution.Status = issueExecutionAccepted
+		execution.Detail = ""
+		ct.SelectedWorkTaskID = result.TaskID
+		ct.pendingIssueExecution = ""
+	}
+	if !issueSend && ct.draftRev == ct.SubmittedRev && strings.TrimSpace(ct.Draft) == strings.TrimSpace(text) {
 		ct.Draft = ""
 	}
 	ct.Messages = append(ct.Messages, &message{
@@ -1056,7 +1105,13 @@ func (a *appModel) acceptTask(ct *contact, text string, result runtimeSendResult
 	for _, event := range pending {
 		a.applyEvent(ct, event)
 	}
-	a.persist()
+	if err := a.persist(); err != nil {
+		if execution != nil {
+			execution.Status = issueExecutionUnknown
+			execution.Detail = "Task was accepted, but its issue association could not be saved: " + err.Error()
+		}
+		ct.SendError = "Task accepted, but its issue association could not be saved; reload before retrying."
+	}
 }
 
 func (a *appModel) failSubmit(contactID string, err error, submitted bool) {
@@ -1069,15 +1124,21 @@ func (a *appModel) failSubmit(contactID string, err error, submitted bool) {
 		if confirmedReject(err) {
 			ct.SendState = sendIdle
 			ct.SendError = runtimeMessage(err)
+			a.updatePendingIssueExecution(ct, issueExecutionRejected, ct.SendError)
+			_ = a.persist()
 			return
 		}
 		ct.SendError = runtimeMessage(err)
 		if submitted {
 			ct.SendState = sendUnknown
 			ct.SendError = "Delivery not confirmed (" + ct.SendError + "). Reload to check before sending again."
+			a.updatePendingIssueExecution(ct, issueExecutionUnknown, ct.SendError)
+			_ = a.persist()
 			return
 		}
 		ct.SendState = sendIdle
+		a.updatePendingIssueExecution(ct, issueExecutionNotDispatched, ct.SendError)
+		_ = a.persist()
 	})
 }
 
@@ -1167,6 +1228,9 @@ func (a *appModel) profileLocked(ct *contact) bool {
 }
 
 func (a *appModel) addRuntimeContact() {
+	if !a.leaveIssueFormForSwitch() {
+		return
+	}
 	c := &contact{
 		ID:        newContactID(),
 		Name:      fmt.Sprintf("New contact %d", len(a.contacts)+1),
