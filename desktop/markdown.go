@@ -13,6 +13,8 @@ import (
 // markdownReaderOptions configures markdownReader. The source is the only
 // content it reads: no app, contact or runtime state is involved.
 type markdownReaderOptions struct {
+	// PlainText shows source literally and never parses it as Markdown.
+	PlainText bool
 	// Streaming shows source as a reply still being written.
 	Streaming bool
 	// CopyLabel is the visible and accessible label of the full-source
@@ -112,9 +114,12 @@ func markdownReader(c *ui.Context, source string, options markdownReaderOptions)
 			ui.Spacer(c)
 			st.copyButton(c, c.Now(), label, label, func() string { return source }, &st.sourceFeedback, markdownReaderTheme(c, options.Theme))
 		})
-		if options.Streaming {
+		switch {
+		case options.PlainText:
+			ui.Text(c, source).Selectable()
+		case options.Streaming:
 			markdown.Stream(c, source, &st.opts)
-		} else {
+		default:
 			markdown.View(c, source, &st.opts)
 		}
 	})
@@ -165,15 +170,15 @@ func markdownReaderCodeBlock(c *ui.Context, b *markdown.CodeBlockView, st *markd
 func markdownReaderTable(c *ui.Context, d *parser.Document, i int, th markdown.Theme) {
 	b := d.Block(i)
 	padX, padY := th.TableCellPadding[0]*th.FontSize, th.TableCellPadding[1]*th.FontSize
-	wrap := ui.Column(c).FillWidth().AlignSelf(ui.Stretch)
+	wrap := ui.Column(c).AlignSelf(ui.Stretch)
 	wrap.Children(func() {
 		ui.Text(c, "Table · plain text").FontSize(th.FontSize * 0.8).TextColor(th.Muted).Unselectable()
-		table := ui.Column(c).FillWidth().Border(1, th.TableBorder).Radius(th.FontSize * 0.3).Clip().Role(ui.RoleTable).Label("Table, wrapped plain text")
+		table := ui.Column(c).AlignSelf(ui.Stretch).Border(1, th.TableBorder).Radius(th.FontSize * 0.3).Clip().Role(ui.RoleTable).Label("Table, wrapped plain text")
 		table.Children(func() {
 			n := 0
 			for r := range d.Children(i) {
 				row := d.Block(r)
-				rowEl := ui.Row(c).FillWidth().AlignItems(ui.Stretch).Role(ui.RoleRow)
+				rowEl := ui.Row(c).AlignSelf(ui.Stretch).AlignItems(ui.Stretch).Role(ui.RoleRow)
 				if row.Header {
 					rowEl.Background(th.TableHeader)
 				} else if n%2 == 1 && th.TableStripe.A > 0 {
