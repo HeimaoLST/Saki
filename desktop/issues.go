@@ -46,6 +46,7 @@ type issueWorkSession struct {
 	pendingEvents      []runtimeEventEnvelope
 	pendingExecutionID string
 	historyGen         int
+	HistoryDirty       bool
 }
 
 // issueExecution is the persisted association for one attempt on an issue.
@@ -308,9 +309,9 @@ func (a *appModel) runIssue(issueID string) bool {
 		a.issueFormError = reason
 		return false
 	}
-	if reason := a.canSend(ct); reason != "" {
+	if reason := a.canStartIssue(ct, issue); reason != "" {
 		a.issueFormError = reason
-		ct.SendError = reason
+		issue.Work.SendError = reason
 		return false
 	}
 	prompt := issuePrompt(issue)
@@ -321,22 +322,26 @@ func (a *appModel) runIssue(issueID string) bool {
 	ct.SelectedIssueID = issue.ID
 	ct.SelectedWorkTaskID = ""
 	execution := &issueExecution{
-		ID: newIssueExecutionID(), SessionID: ct.SessionID, Prompt: prompt, Status: issueExecutionPending,
+		ID: newIssueExecutionID(), SessionID: issue.WorkSessionID, Prompt: prompt, Status: issueExecutionPending,
 	}
 	issue.Executions = append(issue.Executions, execution)
 	issue.UpdatedAt = nowMillis()
-	ct.pendingIssueExecution = execution.ID
+	previousSend, previousPending := issue.Work.SendState, issue.Work.pendingExecutionID
+	issue.Work.SendState = sendSubmitting
+	issue.Work.SendError = ""
+	issue.Work.pendingExecutionID = execution.ID
 	a.issueFormError = ""
 	if err := a.persist(); err != nil {
 		issue.Executions = issue.Executions[:len(issue.Executions)-1]
-		ct.pendingIssueExecution = ""
+		issue.Work.SendState, issue.Work.pendingExecutionID = previousSend, previousPending
 		a.issueFormError = "Could not save the issue execution: " + err.Error()
 		return false
 	}
-	if !a.sendRuntimeForIssue(ct, prompt, execution.ID) {
-		ct.pendingIssueExecution = ""
+	if !a.startIssueTask(ct, issue, execution, prompt) {
+		issue.Work.SendState = sendIdle
+		issue.Work.pendingExecutionID = ""
 		execution.Status = issueExecutionNotDispatched
-		execution.Detail = ct.SendError
+		execution.Detail = issue.Work.SendError
 		if execution.Detail == "" {
 			execution.Detail = "The task was not dispatched."
 		}

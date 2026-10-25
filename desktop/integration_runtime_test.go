@@ -821,8 +821,10 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 			if len(ct.Issues) != 1 {
 				return false
 			}
-			exec := ct.Issues[0].Executions
-			return ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty &&
+			issue := ct.Issues[0]
+			exec := issue.Executions
+			return issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+				issue.Work.Loaded && ct.ActiveTaskID == "" && ct.SendState == sendIdle &&
 				len(exec) > 0 && exec[len(exec)-1].Status == issueExecutionCompleted
 		})
 	}
@@ -854,8 +856,11 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 		if ct.Draft != prompt {
 			t.Fatalf("issue run consumed a composer draft equal to its prompt: %q", ct.Draft)
 		}
-		if issue.Executions[0].SessionID != ct.SessionID || issue.Executions[1].SessionID != ct.SessionID {
-			t.Fatalf("execution session mapping = %+v / %q", issue.Executions, ct.SessionID)
+		if issue.Work.SessionID == "" || issue.Work.SessionID == ct.SessionID {
+			t.Fatalf("issue work session was not independent: work=%q conversation=%q", issue.Work.SessionID, ct.SessionID)
+		}
+		if issue.Executions[0].SessionID != issue.Work.SessionID || issue.Executions[1].SessionID != issue.Work.SessionID {
+			t.Fatalf("execution session mapping = %+v / work=%q", issue.Executions, issue.Work.SessionID)
 		}
 	})
 	if provider.count() != 2 {
@@ -871,7 +876,7 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 	}()
 	h2.pump.wait(func() bool {
 		ct := h2.app.contacts[0]
-		return ct.Loaded && len(ct.Issues) == 1 && len(ct.Issues[0].Executions) == 2
+		return len(ct.Issues) == 1 && ct.Issues[0].Work.Loaded && len(ct.Issues[0].Executions) == 2
 	})
 	h2.snapshot(func() {
 		ct := h2.app.contacts[0]
@@ -955,13 +960,18 @@ func TestGUIAppIssueStopKeepsItemAndExecution(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("issue provider did not receive first request")
 	}
-	h.pump.wait(func() bool { return h.app.selectedContact().ActiveTaskID != "" })
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID != ""
+	})
 	stopping := false
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
 		ct.Draft = "later issue draft"
 		h.app.cancelSelected()
-		w := ct.activeWork()
+		issue := ct.issueByID(issueID)
+		w := workFor(ct, issue.Work.ActiveTaskID)
 		stopping = w != nil && w.State == workStopping
 	})
 	if !stopping {
@@ -970,11 +980,12 @@ func TestGUIAppIssueStopKeepsItemAndExecution(t *testing.T) {
 	}
 	h.pump.wait(func() bool {
 		ct := h.app.selectedContact()
-		if ct.ActiveTaskID != "" || ct.SendState != sendIdle || ct.HistoryDirty {
+		if ct.ActiveTaskID != "" || ct.SendState != sendIdle {
 			return false
 		}
 		issue := ct.issueByID(issueID)
-		return issue != nil && len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted
 	})
 	ct := h.app.selectedContact()
 	issue := ct.issueByID(issueID)
@@ -1276,7 +1287,7 @@ func TestGUIAppRejectedComposerSendKeepsInFlightIssueAssociation(t *testing.T) {
 		if !h.app.sendCurrent() {
 			// expected: the in-flight task rejects a normal composer send
 		}
-		pending = ct.pendingIssueExecution
+		pending = ct.Issues[0].Work.pendingExecutionID
 	})
 	if pending != executionID {
 		t.Fatalf("rejected normal send consumed in-flight association: pending=%q want=%q", pending, executionID)
@@ -1290,13 +1301,15 @@ func TestGUIAppRejectedComposerSendKeepsInFlightIssueAssociation(t *testing.T) {
 		if len(ct.Issues) != 1 || len(ct.Issues[0].Executions) != 1 {
 			return false
 		}
-		return ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty &&
-			ct.Issues[0].Executions[0].Status == issueExecutionCompleted
+		issue := ct.Issues[0]
+		return issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle && issue.Work.Loaded &&
+			ct.ActiveTaskID == "" && ct.SendState == sendIdle &&
+			issue.Executions[0].Status == issueExecutionCompleted
 	})
 	ct := h.app.selectedContact()
 	execution := ct.Issues[0].Executions[0]
-	if execution.TaskID == "" || ct.pendingIssueExecution != "" || execution.ID != executionID {
-		t.Fatalf("accepted task lost its issue attribution: %+v pending=%q", execution, ct.pendingIssueExecution)
+	if execution.TaskID == "" || ct.Issues[0].Work.pendingExecutionID != "" || execution.ID != executionID {
+		t.Fatalf("accepted task lost its issue attribution: %+v pending=%q", execution, ct.Issues[0].Work.pendingExecutionID)
 	}
 	if len(ct.Issues[0].Executions) != 1 || ct.Issues[0].Status != issueStatusOpen || ct.Draft != "ordinary composer attempt" {
 		t.Fatalf("issue/draft after in-flight rejection = %+v / %q", ct.Issues[0], ct.Draft)

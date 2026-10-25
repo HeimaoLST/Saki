@@ -32,6 +32,7 @@ type runtimeError struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
 	SessionID string `json:"session_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 func (e *runtimeError) Error() string {
@@ -48,6 +49,14 @@ type runtimeReady struct {
 	Version int    `json:"version"`
 	Type    string `json:"type"`
 	API     string `json:"api"`
+}
+
+type runtimeCapabilities struct {
+	ProtocolVersion int      `json:"protocol_version"`
+	StorageSchemas  []int    `json:"storage_schemas"`
+	Methods         []string `json:"methods"`
+	MaxActiveTasks  int      `json:"max_active_tasks"`
+	AutomaticTitles bool     `json:"automatic_titles"`
 }
 
 type runtimeMetadata struct {
@@ -551,6 +560,14 @@ func (c *runtimeClient) loadSession(sessionID string) (runtimeSession, error) {
 		return runtimeSession{}, errors.New("runtime returned a session without session_id")
 	}
 	return session, nil
+}
+
+func (c *runtimeClient) capabilities() (runtimeCapabilities, error) {
+	var result runtimeCapabilities
+	if err := c.call("runtime.capabilities", map[string]any{}, &result, runtimeControlTimeout); err != nil {
+		return runtimeCapabilities{}, err
+	}
+	return result, nil
 }
 
 func (c *runtimeClient) sessionStatus(sessionID string) (runtimeSession, error) {
