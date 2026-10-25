@@ -546,7 +546,7 @@ type resolvedTheme struct {
 
 ## #118 独立工作会话与事项 UI（实现事实，2026-10-25）
 
-代码来源：本分支 `agent/gui/118-independent-execution`；reader 精确提交 `75fdfc7` 的 merge 为 `79299b3`，UI/路由提交为 `3197849`，preview/组合测试提交为 `6702e6a`。本节只陈述 #118 阶段事实，不表示完整 MVP、#142/#153/#154 或全部 MVP 已完成。
+代码来源：本分支 `agent/gui/118-independent-execution`；reader 精确提交 `75fdfc7` 的 merge 为 `79299b3`，UI/路由与 rail 整理最终为 `c4779f9`（中间 UI 提交 `3197849`、preview `6702e6a`）。本节只陈述 #118 阶段事实，不表示完整 MVP、#142/#153/#154 或全部 MVP 已完成。
 
 - **数据**：contact store 升到 v3，`issue.work_session_id` 持久化事项工作会话；v1/v2 可读，旧程序对 v3 的版本检查会拒绝而不是静默覆盖。`contact.SessionID` 继续是持续对话；每个事项只保存一个 `WorkSessionID`，运行时代码不再另存 `Work.SessionID`。每个 `issueExecution.SessionID` 保留该次执行的真实 session；旧混合 session 的执行不迁移。
 - **路由**：事件按 `session_id` 先区分对话/事项工作，再按 task/message 归属；issue work 不写 `contact.ActiveTaskID`，不进入 contact.Messages，不增加聊天 unread。工作消息和工具结果进入 `issue.Work.Messages`/`ct.Works` 投影；重启分别恢复 contact 与 issue work 会话，历史投影互不覆盖。
