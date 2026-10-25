@@ -39,12 +39,13 @@ func main() {
 	})
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title:     "Saki",
-			Width:     1040,
-			Height:    720,
-			MinWidth:  960,
-			MinHeight: 640,
-			Content:   ui.View(a.view),
+			Title:         "Saki",
+			TitleBarStyle: mygo.TitleBarHiddenInset,
+			Width:         1040,
+			Height:        720,
+			MinWidth:      960,
+			MinHeight:     640,
+			Content:       ui.View(a.view),
 		})
 		a.win = win
 		win.OnClose(func(e *mygo.CloseEvent) {

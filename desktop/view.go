@@ -23,8 +23,8 @@ func (a *appModel) view(c *ui.Context) {
 // ---------- rail ----------
 
 func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
-	ui.Column(c).Width(220).FillHeight().Padding(12, 10).Gap(10).Background(t.Background).Children(func() {
-		ui.Text(c, "Saki").FontSize(14).FontWeight(600).TextColor(t.Text)
+	ui.Column(c).Width(220).FillHeight().Padding(0, 10, 12, 10).Gap(10).Background(t.Background).Children(func() {
+		ui.Row(c).FillWidth().Height(max(c.TitleBar().Height, 52)).DragWindow()
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 			ui.Text(c, "Contacts").FontSize(11).TextColor(t.TextMuted)
 			ui.Spacer(c)
@@ -114,7 +114,8 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 
 func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
-	ui.Row(c).Justify(ui.Center).Children(func() {
+	bar := c.TitleBar()
+	ui.Row(c).MinHeight(max(bar.Height, 52)).Padding(0, bar.Right, 0, 0).AlignItems(ui.Center).Justify(ui.Center).DragWindow().Children(func() {
 		ui.Row(c).WidthPercent(86).MaxWidth(760).Padding(8, 0).Gap(8).AlignItems(ui.Center).Children(func() {
 			a.avatarTile(c, t, 28)
 			ui.Column(c).Gap(1).Children(func() {
