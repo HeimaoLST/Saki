@@ -76,6 +76,16 @@ func issuePreviewApp(scene string) *appModel {
 		ct.Issues[0].Executions[1].Status = issueExecutionRunning
 		ct.Works[1].State = workRunning
 		ct.Works[1].Tools = []*workTool{{CallID: "read-2", Name: "read", Args: `{"path":"desktop/workspace.go"}`, Started: true, Finished: false}}
+	case "issue-dual":
+		ct.Issues[0].Work.ActiveTaskID = "task-1"
+		ct.Issues[0].Work.LastTaskID = "task-1"
+		ct.Issues[0].Work.SendState = sendAccepted
+		ct.Issues[0].Executions[0].Status = issueExecutionRunning
+		ct.ActiveTaskID = "task-3"
+		ct.LastTaskID = "task-3"
+		ct.SendState = sendAccepted
+		ct.Works[0].State = workRunning
+		ct.Works = append(ct.Works, &workItem{TaskID: "task-3", MessageID: "msg-3", Prompt: "Conversation B while A works", State: workRunning})
 	case "issue-form":
 		a.issueFormOpen = true
 		a.issueGoal = "Keep requirements attached to each run"
@@ -119,6 +129,9 @@ func TestPreviewIssueStates(t *testing.T) {
 		write("issue-results", 360, 800, dark)
 		write("issue-form", 960, 640, dark)
 		write("issue-working", 1040, 720, dark)
+		write("issue-dual", 960, 640, dark)
+		write("issue-dual", 1040, 720, dark)
+		write("issue-dual", 320, 900, dark)
 		write("issue-unknown", 320, 640, dark)
 	}
 }
