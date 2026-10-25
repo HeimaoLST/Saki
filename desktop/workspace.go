@@ -381,9 +381,9 @@ func (a *appModel) issueSection(c *ui.Context, t *ui.Theme, ct *contact) {
 						ui.Text(c, execution.Detail).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 					}
 					if resultText != "" {
-						label := "Result"
+						label := "Result preview"
 						if execution.Status == issueExecutionAccepted || execution.Status == issueExecutionRunning {
-							label = "Partial result"
+							label = "Partial result preview"
 						}
 						ui.Text(c, label+": "+truncate(resultText, 300)).FontSize(11).LineHeight(1.4).TextColor(t.Text).MaxLines(4)
 					} else if w != nil {
@@ -530,15 +530,24 @@ func (a *appModel) toolCalls(c *ui.Context, t *ui.Theme, tools []*workTool) {
 					label = "Hide"
 				}
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+					if summary != "" {
+						summary = "Preview · " + summary
+					}
 					ui.Text(c, summary).FontSize(11).LineHeight(1.4).MaxLines(4).TextColor(t.TextMuted).Grow(1)
-					ui.Button(c, "Copy").FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
-						c.WriteClipboard(call.Output)
-						c.Toast("Copied tool output")
-					})
+					if !call.Expanded {
+						ui.Button(c, "Copy received output").FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+							if err := writeClipboardText(call.Output, c.Services().WriteClipboard, c.Services().ReadClipboard); err != nil {
+								c.Toast("Copy failed: " + err.Error())
+							} else {
+								c.Toast("Copied received output")
+							}
+						})
+					}
 					ui.Button(c, label).FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { call.Expanded = !call.Expanded })
 				})
 				if call.Expanded {
-					ui.Text(c, truncate(call.Output, 6000)).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted).Selectable()
+					markdownReader(c, call.Output, markdownReaderOptions{PlainText: true, CopyLabel: "Copy received output"}).
+						FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 				}
 			} else if call.Started && !call.Finished {
 				ui.Text(c, "Tool is running.").FontSize(11).TextColor(t.TextMuted)
