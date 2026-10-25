@@ -496,3 +496,22 @@ func TestRuntimeExitMarksAllActiveIssueWorkUnknown(t *testing.T) {
 		t.Fatalf("conversation without active task was rewritten: %+v", ct)
 	}
 }
+
+func TestUnknownIssueExecutionCanBeConfirmedNotDispatched(t *testing.T) {
+	ct := &contact{ID: "c1", Name: "Saki"}
+	issue := &productIssue{ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusOpen}
+	execution := &issueExecution{ID: "e1", SessionID: "work", Prompt: "work", Status: issueExecutionUnknown}
+	issue.Executions = append(issue.Executions, execution)
+	ct.Issues = append(ct.Issues, issue)
+	ct.SelectedIssueID = issue.ID
+	a := &appModel{contacts: []*contact{ct}, selected: 0}
+	if !a.confirmIssueExecutionNotDispatched(issue.ID, execution.ID) {
+		t.Fatal("unknown execution without task id was not confirmable")
+	}
+	if execution.Status != issueExecutionNotDispatched || !strings.Contains(execution.Detail, "no task was dispatched") {
+		t.Fatalf("not-dispatched confirmation = %+v", execution)
+	}
+	if issueRunBlocked(issue) != "" {
+		t.Fatal("confirmed not-dispatched execution still blocks explicit retry")
+	}
+}

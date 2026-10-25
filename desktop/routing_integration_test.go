@@ -994,7 +994,11 @@ func TestQuitDrainsIssueAndConversationSessions(t *testing.T) {
 		}
 	})
 	provider.release("quit-B")
-	h.pump.wait(func() bool { return h.app.runtimeStatus == runtimeStateExited })
+	h.pump.wait(func() bool {
+		ct := h.app.contacts[0]
+		issue := ct.issueByID(issueID)
+		return h.app.runtimeStatus == runtimeStateExited && ct.ActiveTaskID == "" && issue.Work.ActiveTaskID == ""
+	})
 	h.snapshot(func() {
 		ct := h.app.selectedContact()
 		issue := ct.issueByID(issueID)

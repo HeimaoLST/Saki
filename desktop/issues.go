@@ -504,3 +504,27 @@ func (a *appModel) checkIssueExecution(contactID, issueID, executionID, sessionI
 		_ = a.persist()
 	})
 }
+
+// confirmIssueExecutionNotDispatched is the explicit user decision for a
+// pending/unknown execution with no trusted task ID. It records "no task was
+// dispatched" and never claims a result or retries the side effect.
+func (a *appModel) confirmIssueExecutionNotDispatched(issueID, executionID string) bool {
+	ct := a.selectedContact()
+	issue := ct.issueByID(issueID)
+	_, execution := ct.executionByID(executionID)
+	if issue == nil || execution == nil || execution.TaskID != "" {
+		return false
+	}
+	switch execution.Status {
+	case issueExecutionPending, issueExecutionUnknown:
+	default:
+		return false
+	}
+	execution.Status = issueExecutionNotDispatched
+	execution.Detail = "User confirmed that no task was dispatched; the execution remains available for an explicit retry."
+	issue.Work.SendState = sendIdle
+	issue.Work.SendError = ""
+	issue.Work.pendingExecutionID = ""
+	_ = a.persist()
+	return true
+}

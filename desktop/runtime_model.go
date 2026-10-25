@@ -634,7 +634,7 @@ func (a *appModel) restoreIssueWork(contactID, issueID, sessionID string) {
 }
 
 func (a *appModel) reloadIssueWorkByID(contactID, issueID string) {
-	if a.rt == nil {
+	if a.rt == nil || a.shutdownStarted || a.runtimeStatus == runtimeStateDraining || a.runtimeStatus == runtimeStateExited {
 		return
 	}
 	ct := a.contactByID(contactID)
@@ -712,7 +712,7 @@ func (a *appModel) reloadIssueWork(contactID, issueID, sessionID string, gen int
 }
 
 func (a *appModel) reloadContactByID(contactID string) {
-	if a.rt == nil {
+	if a.rt == nil || a.shutdownStarted || a.runtimeStatus == runtimeStateDraining || a.runtimeStatus == runtimeStateExited {
 		return
 	}
 	ct := a.contactByID(contactID)
