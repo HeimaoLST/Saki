@@ -534,3 +534,26 @@ type resolvedTheme struct {
   - Rust 二进制 sha256 `3553a52c…`（`cargo build --locked --bin Saki`，独立 target `/private/tmp/saki-gui-141/runtime-target`）；desktop native build sha256 `690ec1d6…`；`go vet ./...` 通过。
   - headless MyGo Tester 截图在 `/private/tmp/saki-gui-141/previews/`：light/dark 960×640、1040×720、1380×900、900×640 overlay、320×640/320×900、360×800，以及 issue form 960×640、working/unknown；包含两个事项、两轮执行、无工具/无助手消息结果。它们不是 macOS 原生窗口截图；320 仅作为工作面板宽度测试。
 - **限制**：当前没有“写入完成证据/关闭事项”的 UI；unknown execution 需要重新加载或另建事项，未提供强行解决入口；未验证原生 CUA（`Sky native pipe startup failed` 由父级记录），不把 headless 截图写成 native PASS。事项执行失败/完成都不会自动满足或关闭事项，这是本阶段的明确产品边界。
+
+## #113 Markdown 阅读与复制（实现事实，2026-10-25）
+
+代码来源：reader/Iris 分支提交 `75fdfc7400c223dcffd9bc86a9d7f02119f76393`，经 #118 分支普通 merge 合成为 `79299b3`；当前组合代码基线见下一节。此处记录实际写入的 reader 行为，不把 Markdown 组件扩称为完整 Nagi MVP。
+
+- 新增 `desktop/markdown.go`、`markdown_test.go`、`markdown_view_test.go`：`markdownReader` 只是 MyGo Markdown 组件的消费层，不复制 parser、不另造文档模型；保留完整源码复制、代码块复制、表格渲染、流式文本、选择与键盘行为。
+- 对话、历史、来源和工具详情通过该组件显示；用户文本保持 literal/plain-text 路径，工具输出只作为 received output 显示和复制，不推断交付文件或权威 diff。工具详情折叠时仍可复制完整 received output，展开后不重复第二个全文复制控件。
+- `view.go` 保留 Back to latest/FollowEnd 行为；键盘焦点、消息选择和复制反馈沿用 reader 的实现。`workspace_test.go` 新增 received-output copy 回归；本次 #118 UI 改动没有修改 parser，也没有把 reader 测试改写成 #118 路由测试。
+- 证据边界：reader 的 headless 测试与 #118 的 app/real-runtime 测试分开记录；原生窗口/输入法仍未由 #118 执行，不能把 headless 通过写成 native PASS。
+
+## #118 独立工作会话与事项 UI（实现事实，2026-10-25）
+
+代码来源：本分支 `agent/gui/118-independent-execution`；reader 精确提交 `75fdfc7` 的 merge 为 `79299b3`，UI/路由提交为 `3197849`，preview/组合测试提交为 `6702e6a`。本节只陈述 #118 阶段事实，不表示完整 MVP、#142/#153/#154 或全部 MVP 已完成。
+
+- **数据**：contact store 升到 v3，`issue.work_session_id` 持久化事项工作会话；v1/v2 可读，旧程序对 v3 的版本检查会拒绝而不是静默覆盖。`contact.SessionID` 继续是持续对话；每个事项只保存一个 `WorkSessionID`，运行时代码不再另存 `Work.SessionID`。每个 `issueExecution.SessionID` 保留该次执行的真实 session；旧混合 session 的执行不迁移。
+- **路由**：事件按 `session_id` 先区分对话/事项工作，再按 task/message 归属；issue work 不写 `contact.ActiveTaskID`，不进入 contact.Messages，不增加聊天 unread。工作消息和工具结果进入 `issue.Work.Messages`/`ct.Works` 投影；重启分别恢复 contact 与 issue work 会话，历史投影互不覆盖。
+- **容量**：启动后读取 `runtime.capabilities.max_active_tasks`，能力未加载/失败与真实 1 分开暴露（UI 显示未加载提示和 Retry capacity）；保守用 1，但不会宣称真实容量。工作准入最多占用 `n-1` 个槽，`max=1` 允许串行工作、`max=2` 保留一对话槽，`max=3` 已实测两事项并发；实际 Runtime busy 仍由 Runtime 拒绝，reason 保留在 DTO。
+- **发送/停止**：issue work 发送使用独立 work session，派发前保存；accepted 不恢复为草稿、不自动重发。右工作卡 `Stop issue task` 只取消当前事项的真实 task；composer `Stop conversation` 只取消对话 task，两者状态/标签分开。对话在另一事项工作时可发送（容量允许时）。
+- **恢复/核对**：`task.status` 核对、重启 history 核对、缺 TaskID 的显式“确认未派发”动作均可用；核对旧 execution 只更新该 execution 行，不清除/覆盖另一个 active task。错 issue 的 execution 不会被核对动作修改；不凭 prompt 猜测 ID、不自动重试。
+- **可见性**：`issueWorkNotice` 提供 rail/隐藏工作区的派生摘要和工作数；失败/未知即使没有聊天消息也能显示 `Work attention`，不增加聊天 unread。事项结果优先读取 `issue.Work.Messages`，旧 execution 按实际 SessionID/历史兜底。
+- **验证（当前代码承诺范围）**：`go test ./...`、`go vet ./...`、真实 Runtime 受控双 gate 的 A/B 会话隔离、对话/事项双在途 Stop、max1/max2/max3 容量、跨联系人/事项历史、profile admission snapshot、未知恢复、quit 多 session；最新完整 Go race 为 157 PASS / 0 FAIL / 7 SKIP（固定到合并后的工作树；具体 SHA 与日志由 #118 交付评论记录）。测试使用本地 fixture，不连接付费在线模型。
+- **UI 边界**：右工作卡只展示当前事项的真实 work；事项结果预览使用工作会话消息，不把聊天记录当工作结果。普通对话 composer 与事项 Stop 不共享控制路径。容量未知提示不会在真实 1 槽时出现。
+- **未包含/后续**：settings 模块（`5551b76` 主责）未接入本 PR；#142 补充递交、#153 生命周期、#154 对话协作不随本阶段扩称完成。原生 CUA/窗口/输入法仍由父级验证；`Sky native pipe startup failed` 不得被 headless 截图替代。完整 Nagi MVP 仍需后续 issue 与真实试用。
