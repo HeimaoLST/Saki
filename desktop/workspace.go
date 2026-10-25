@@ -211,10 +211,12 @@ func (a *appModel) workspaceContent(c *ui.Context, t *ui.Theme) {
 	issue := ct.selectedIssue()
 	var work *workItem
 	title := "Work"
+	issueActive := false
 	if issue != nil {
 		work, _ = ct.issueWork(issue)
 		title = "Issue result"
-		if work != nil && current != nil && work.TaskID == current.TaskID {
+		if work != nil && issue.Work.ActiveTaskID == work.TaskID {
+			issueActive = true
 			title = "Current issue run"
 		}
 	} else if current != nil {
@@ -253,14 +255,14 @@ func (a *appModel) workspaceContent(c *ui.Context, t *ui.Theme) {
 				ui.Divider(c)
 				if work != nil {
 					a.issueResultContext(c, t, issue, work)
-					a.workCard(c, t, work, current != nil && work.TaskID == current.TaskID)
+					a.workCard(c, t, work, issueActive, true)
 					a.workActivity(c, t, work)
 				} else {
 					a.issueWorkEmptyState(c, t, ct, issue)
 				}
 			} else if work != nil {
 				ui.Divider(c)
-				a.workCard(c, t, work, current != nil)
+				a.workCard(c, t, work, current != nil, false)
 				a.workActivity(c, t, work)
 			} else {
 				a.workEmptyState(c, t, ct)
@@ -274,7 +276,7 @@ func (ct *contact) issueWork(issue *productIssue) (*workItem, int) {
 	if issue == nil {
 		return nil, 0
 	}
-	for _, taskID := range []string{ct.SelectedWorkTaskID, ct.ActiveTaskID, ct.LastTaskID} {
+	for _, taskID := range []string{issue.Work.ActiveTaskID, ct.SelectedWorkTaskID, ct.ActiveTaskID, ct.LastTaskID} {
 		if !issueHasTask(issue, taskID) {
 			continue
 		}
@@ -296,6 +298,21 @@ func (ct *contact) resultTextForExecution(execution *issueExecution) string {
 	if execution == nil {
 		return ""
 	}
+	// New issue work messages live in the issue-owned session projection, not
+	// in the conversation transcript.
+	for _, issue := range ct.Issues {
+		for index := len(issue.Work.Messages) - 1; index >= 0; index-- {
+			m := issue.Work.Messages[index]
+			if m.Kind != msgContact || strings.TrimSpace(m.Text) == "" {
+				continue
+			}
+			if execution.TaskID != "" && m.TaskID == execution.TaskID {
+				return strings.TrimSpace(m.Text)
+			}
+		}
+	}
+	// Legacy executions used the conversation session; keep their actual
+	// history readable without migrating them.
 	for index := len(ct.Messages) - 1; index >= 0; index-- {
 		m := ct.Messages[index]
 		if m.Kind != msgContact || strings.TrimSpace(m.Text) == "" {
@@ -380,6 +397,24 @@ func (a *appModel) issueSection(c *ui.Context, t *ui.Theme, ct *contact) {
 					if execution.Detail != "" {
 						ui.Text(c, execution.Detail).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 					}
+					if execution.Status == issueExecutionUnknown || execution.Status == issueExecutionPending {
+						ui.Row(c).Gap(6).Children(func() {
+							if execution.TaskID != "" {
+								ui.Button(c, "Check execution").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+									a.reconcileIssueExecution(issue.ID, execution.ID)
+								})
+							} else {
+								ui.Button(c, "Check execution").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+									a.reconcileIssueExecution(issue.ID, execution.ID)
+								})
+								if issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle {
+									ui.Button(c, "Confirm not dispatched").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+										a.confirmIssueExecutionNotDispatched(issue.ID, execution.ID)
+									})
+								}
+							}
+						})
+					}
 					if resultText != "" {
 						label := "Result preview"
 						if execution.Status == issueExecutionAccepted || execution.Status == issueExecutionRunning {
@@ -410,7 +445,7 @@ func (a *appModel) issueSection(c *ui.Context, t *ui.Theme, ct *contact) {
 					}
 				})
 			}
-			reason := a.canSend(ct)
+			reason := a.canStartIssue(ct, issue)
 			if reason == "" {
 				reason = issueRunBlocked(issue)
 			}
@@ -418,6 +453,9 @@ func (a *appModel) issueSection(c *ui.Context, t *ui.Theme, ct *contact) {
 				ui.Button(c, "Run issue").FontSize(12).OnClick(func() { a.runIssue(issue.ID) })
 			} else {
 				ui.Text(c, "Run unavailable: "+reason).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+			}
+			if executionHasUnknownRecovery(issue) {
+				ui.Text(c, "Recovery is available for an execution without a trusted terminal state.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 			}
 		})
 	} else if !a.issueFormOpen {
@@ -457,17 +495,29 @@ func (a *appModel) workEmptyState(c *ui.Context, t *ui.Theme, ct *contact) {
 	ui.Text(c, "Work will appear here when "+ct.Name+" starts a task. Tool activity and results stay out of the conversation.").FontSize(12).LineHeight(1.45).TextColor(t.TextMuted)
 }
 
-func (a *appModel) workCard(c *ui.Context, t *ui.Theme, w *workItem, isCurrent bool) {
+func (a *appModel) workCard(c *ui.Context, t *ui.Theme, w *workItem, isCurrent, issueWork bool) {
 	ui.Column(c).Padding(14).Radius(13).Background(a.workTheme.WorkSurface).Gap(6).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			ui.Text(c, workStateLabel(w)).FontSize(12).FontWeight(600).TextColor(a.workStateColor(w.State))
 			ui.Spacer(c)
 			if isCurrent && (w.State == workAccepted || w.State == workRunning || w.State == workStopping) {
 				label := "Stop task"
+				if issueWork {
+					label = "Stop issue task"
+				}
 				if w.State == workStopping {
 					label = "Stopping…"
+					if issueWork {
+						label = "Stopping issue…"
+					}
 				}
-				stop := ui.Button(c, label).FontSize(12).OnClick(func() { a.cancelSelected() })
+				stop := ui.Button(c, label).FontSize(12).OnClick(func() {
+					if issueWork {
+						a.cancelWorkTask(a.selectedContact(), w.TaskID)
+					} else {
+						a.cancelSelected()
+					}
+				})
 				if w.State == workStopping {
 					stop.Disabled(true)
 				}
@@ -589,4 +639,21 @@ func (a *appModel) workActivitySummary(ct *contact) string {
 		return workStateLabel(w)
 	}
 	return ""
+}
+
+func executionHasUnknownRecovery(issue *productIssue) bool {
+	for _, execution := range issue.Executions {
+		if execution.Status == issueExecutionUnknown || execution.Status == issueExecutionPending {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *appModel) cancelWorkTask(ct *contact, taskID string) {
+	if issue, _ := ct.issueForTask(taskID); issue != nil && issue.Work.ActiveTaskID == taskID {
+		a.cancelIssue(issue.ID)
+		return
+	}
+	a.cancelSelected()
 }

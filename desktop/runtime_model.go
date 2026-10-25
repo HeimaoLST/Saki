@@ -458,6 +458,14 @@ func (a *appModel) capacityKnown() bool {
 	return a.demo || a.runtimeCapabilitiesLoaded
 }
 
+func (a *appModel) retryCapabilities() {
+	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
+		return
+	}
+	a.runtimeCapabilitiesErr = ""
+	go a.loadCapabilities()
+}
+
 func (a *appModel) maxActiveTasks() int {
 	if a.runtimeMaxActiveTasks > 0 {
 		return a.runtimeMaxActiveTasks

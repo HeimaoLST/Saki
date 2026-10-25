@@ -575,3 +575,24 @@ func (a *appModel) issueWorkNotice(ct *contact) issueWorkNotice {
 	}
 	return attention
 }
+
+func (ct *contact) issueForTask(taskID string) (*productIssue, *issueExecution) {
+	for _, issue := range ct.Issues {
+		for _, execution := range issue.Executions {
+			if execution.TaskID == taskID {
+				return issue, execution
+			}
+		}
+	}
+	return nil, nil
+}
+
+func issueWorkActiveCount(ct *contact) int {
+	count := 0
+	for _, issue := range ct.Issues {
+		if issue.Work.ActiveTaskID != "" || issue.Work.SendState == sendSubmitting || issue.Work.SendState == sendAccepted {
+			count++
+		}
+	}
+	return count
+}

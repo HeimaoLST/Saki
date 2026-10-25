@@ -73,13 +73,26 @@ func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
 			ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
 				ui.Text(c, ct.Name).FontSize(14).FontWeight(500).TextColor(t.Text)
 				ui.Spacer(c)
+				if workCount := issueWorkActiveCount(ct); workCount > 0 {
+					ui.Text(c, fmt.Sprintf("%d work", workCount)).FontSize(10).TextColor(t.TextMuted)
+				}
 				if ct.Unread > 0 {
 					ui.Text(c, fmt.Sprintf("%d", ct.Unread)).FontSize(11).TextColor(t.Warning)
 				}
 			})
 			line := a.snippet(ct)
 			color := t.TextMuted
-			if ct.Status != statusReady {
+			notice := a.issueWorkNotice(ct)
+			if notice.Text != "" {
+				line = "Issue running"
+				if notice.Attention {
+					line = "Work attention"
+					color = t.Warning
+				} else {
+					color = t.Success
+				}
+			}
+			if ct.Status != statusReady && notice.Text == "" {
 				status := a.statusLabel(ct)
 				detail := strings.TrimSpace(line)
 				if detail == status {
@@ -439,7 +452,22 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				a.sendCurrent()
 			}
 		})
+		if !a.demo && ct.ActiveTaskID != "" {
+			ui.Row(c).Justify(ui.End).Children(func() {
+				ui.Button(c, "Stop conversation").FontSize(11).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.Warning).OnClick(func() { a.cancelSelected() })
+			})
+		}
 		if !a.demo {
+			if !a.capacityKnown() {
+				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+					message := a.runtimeCapabilitiesErr
+					if message == "" {
+						message = "Runtime task capacity is not loaded; using the conservative single-slot behavior."
+					}
+					ui.Text(c, message).FontSize(11).LineHeight(1.4).TextColor(t.Warning).Grow(1)
+					ui.Button(c, "Retry capacity").FontSize(11).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.retryCapabilities() })
+				})
+			}
 			if reason := a.canSend(ct); strings.Contains(reason, "Another contact is working") {
 				ui.Text(c, reason).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 			}

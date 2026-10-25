@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func startRoutingHarness(t *testing.T, binary string, provider *providerFixture, maxTasks int) *guiHarness {
@@ -1140,6 +1142,118 @@ func TestLateCompletedExecutionCheckDoesNotClearNewActiveTask(t *testing.T) {
 		issue := h.app.selectedContact().issueByID(issueID)
 		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
 			len(issue.Executions) == 2 && issue.Executions[1].Status == issueExecutionCompleted
+	})
+	h.shutdown(t)
+}
+
+func TestIssueWorkStopButtonStopsIssueNotConversation(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := newGatedProvider("ui-stop-A", "ui-stop-B")
+	defer provider.release("ui-stop-A")
+	defer provider.release("ui-stop-B")
+	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 2)
+	var issueID string
+	h.pump.do(func() {
+		if !h.app.createIssue("ui-stop-A issue", "Stop issue only.") {
+			t.Fatalf("createIssue: %s", h.app.issueFormError)
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue: %s", h.app.issueFormError)
+		}
+	})
+	select {
+	case <-provider.arrived["ui-stop-A"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive A")
+	}
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "ui-stop-B conversation"
+		if !h.app.sendCurrent() {
+			t.Fatalf("conversation B rejected: %s", ct.SendError)
+		}
+	})
+	select {
+	case <-provider.arrived["ui-stop-B"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive B")
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		return ct.ActiveTaskID != "" && issue != nil && issue.Work.ActiveTaskID != ""
+	})
+	var issueTask string
+	var issueStopClicked, conversationStillActive bool
+	var issueClickErr error
+	h.pump.do(func() {
+		h.app.windowWidth = 1040
+		issue := h.app.selectedContact().issueByID(issueID)
+		issueTask = issue.Work.ActiveTaskID
+		tr := ui.NewTester(h.app.view, 1040, 720)
+		tr.Frame()
+		if _, ok := tr.Find("Stop issue task"); !ok {
+			issueClickErr = fmt.Errorf("Stop issue task control has no visible geometry")
+			return
+		}
+		if _, ok := tr.Find("Stop conversation"); !ok {
+			issueClickErr = fmt.Errorf("Stop conversation control has no visible geometry")
+			return
+		}
+		issueClickErr = tr.Click("Stop issue task")
+		if issueClickErr != nil {
+			return
+		}
+		tr.Frame()
+		ct := h.app.selectedContact()
+		work := workFor(ct, issueTask)
+		issueStopClicked = work != nil && (work.State == workStopping || work.StopRequested)
+		conversationStillActive = ct.ActiveTaskID != ""
+	})
+	if issueClickErr != nil {
+		t.Fatal(issueClickErr)
+	}
+	if !issueStopClicked || !conversationStillActive {
+		t.Fatalf("issue Stop did not target A while B stayed active: stopping=%v chatActive=%v", issueStopClicked, conversationStillActive)
+	}
+	provider.release("ui-stop-A")
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted
+	})
+	if h.app.selectedContact().ActiveTaskID == "" {
+		t.Fatal("issue stop also stopped/cleared conversation B before its Stop")
+	}
+	var conversationStopClicked bool
+	h.pump.do(func() {
+		h.app.windowWidth = 1040
+		tr := ui.NewTester(h.app.view, 1040, 720)
+		tr.Frame()
+		if _, ok := tr.Find("Stop conversation"); !ok {
+			issueClickErr = fmt.Errorf("Stop conversation control has no visible geometry")
+			return
+		}
+		issueClickErr = tr.Click("Stop conversation")
+		if issueClickErr != nil {
+			return
+		}
+		tr.Frame()
+		ct := h.app.selectedContact()
+		work := workFor(ct, ct.ActiveTaskID)
+		conversationStopClicked = work != nil && (work.State == workStopping || work.StopRequested)
+	})
+	if issueClickErr != nil {
+		t.Fatal(issueClickErr)
+	}
+	if !conversationStopClicked {
+		t.Fatal("conversation Stop did not target the conversation task")
+	}
+	provider.release("ui-stop-B")
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		return ct.ActiveTaskID == "" && ct.SendState == sendIdle
 	})
 	h.shutdown(t)
 }
