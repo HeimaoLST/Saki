@@ -15,7 +15,9 @@ import (
 	"time"
 )
 
-const contactStoreVersion = 2
+// v3 adds issue.work_session_id. v1/v2 remain readable here; older apps
+// reject v3, so they cannot load and silently save over the new field.
+const contactStoreVersion = 3
 
 type storedContact struct {
 	ID           string `json:"id"`
@@ -40,15 +42,16 @@ type storedIssueExecution struct {
 }
 
 type storedIssue struct {
-	ID           string                 `json:"id"`
-	ContactID    string                 `json:"contact_id"`
-	Goal         string                 `json:"goal"`
-	Requirements string                 `json:"requirements,omitempty"`
-	Status       string                 `json:"status,omitempty"`
-	Evidence     string                 `json:"evidence,omitempty"`
-	CreatedAt    int64                  `json:"created_at,omitempty"`
-	UpdatedAt    int64                  `json:"updated_at,omitempty"`
-	Executions   []storedIssueExecution `json:"executions,omitempty"`
+	ID            string                 `json:"id"`
+	ContactID     string                 `json:"contact_id"`
+	Goal          string                 `json:"goal"`
+	Requirements  string                 `json:"requirements,omitempty"`
+	Status        string                 `json:"status,omitempty"`
+	Evidence      string                 `json:"evidence,omitempty"`
+	CreatedAt     int64                  `json:"created_at,omitempty"`
+	UpdatedAt     int64                  `json:"updated_at,omitempty"`
+	WorkSessionID string                 `json:"work_session_id,omitempty"`
+	Executions    []storedIssueExecution `json:"executions,omitempty"`
 }
 
 type storedState struct {
@@ -84,7 +87,7 @@ func openContactStore(path, defaultWorkspace string) (*contactStore, error) {
 		if err := json.Unmarshal(data, &store.state); err != nil {
 			return nil, fmt.Errorf("contact store %s is not readable: %w", path, err)
 		}
-		if store.state.Version != 1 && store.state.Version != contactStoreVersion {
+		if store.state.Version != 1 && store.state.Version != 2 && store.state.Version != contactStoreVersion {
 			return nil, fmt.Errorf("contact store %s has unsupported version %d", path, store.state.Version)
 		}
 		if len(store.state.Contacts) == 0 {
@@ -191,6 +194,7 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 				ID: issue.ID, ContactID: issue.ContactID, Goal: issue.Goal,
 				Requirements: issue.Requirements, Status: issue.Status,
 				Evidence: issue.Evidence, CreatedAt: issue.CreatedAt, UpdatedAt: issue.UpdatedAt,
+				WorkSessionID: issue.WorkSessionID,
 			}
 			for _, execution := range issue.Executions {
 				stored.Executions = append(stored.Executions, storedIssueExecution{

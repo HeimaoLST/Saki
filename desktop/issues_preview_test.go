@@ -20,17 +20,19 @@ func issuePreviewApp(scene string) *appModel {
 		Issues: []*productIssue{
 			{
 				ID: "issue-1", ContactID: "saki", Goal: "Ship explicit product issues", Status: issueStatusOpen,
-				Requirements: "Persist the original goal and requirements.\nKeep every execution associated with this issue.",
+				Requirements:  "Persist the original goal and requirements.\nKeep every execution associated with this issue.",
+				WorkSessionID: "issue-preview-work-1",
 				Executions: []*issueExecution{
-					{ID: "exec-1", SessionID: "issue-preview-session", TaskID: "task-1", MessageID: "msg-1", Prompt: "Ship explicit product issues", Status: issueExecutionCompleted},
-					{ID: "exec-2", SessionID: "issue-preview-session", TaskID: "task-2", MessageID: "msg-2", Prompt: "Ship explicit product issues", Status: issueExecutionCompleted},
+					{ID: "exec-1", SessionID: "issue-preview-work-1", TaskID: "task-1", MessageID: "msg-1", Prompt: "Ship explicit product issues", Status: issueExecutionCompleted},
+					{ID: "exec-2", SessionID: "issue-preview-work-1", TaskID: "task-2", MessageID: "msg-2", Prompt: "Ship explicit product issues", Status: issueExecutionCompleted},
 				},
 			},
 			{
 				ID: "issue-2", ContactID: "saki", Goal: "Verify restart continuation", Status: issueStatusOpen,
-				Requirements: "Do not turn an accepted draft into a new task after restart.",
+				Requirements:  "Do not turn an accepted draft into a new task after restart.",
+				WorkSessionID: "issue-preview-work-2",
 				Executions: []*issueExecution{
-					{ID: "exec-3", SessionID: "issue-preview-session", TaskID: "task-3", MessageID: "msg-3", Prompt: "Verify restart continuation", Status: issueExecutionInterrupted},
+					{ID: "exec-3", SessionID: "issue-preview-work-2", TaskID: "task-3", MessageID: "msg-3", Prompt: "Verify restart continuation", Status: issueExecutionInterrupted},
 				},
 			},
 		},
@@ -51,25 +53,45 @@ func issuePreviewApp(scene string) *appModel {
 			{ID: 5, Kind: msgContact, TaskID: "task-3", MessageID: "msg-3", Text: "Interrupted before a terminal result was recorded."},
 		},
 	}
+	ct.Issues[0].Work.Loaded = true
+	ct.Issues[1].Work.Loaded = true
+	ct.Issues[0].Work.Messages = []*message{
+		{Key: "work-1-user", Kind: msgUser, TaskID: "task-1", Text: "Ship explicit product issues"},
+		{Key: "work-1-result", Kind: msgContact, TaskID: "task-1", Text: "Issue persistence and task associations are now visible; requirements remain unverified."},
+	}
+	ct.Issues[1].Work.Messages = []*message{
+		{Key: "work-2-user", Kind: msgUser, TaskID: "task-3", Text: "Verify restart continuation"},
+		{Key: "work-2-result", Kind: msgContact, TaskID: "task-3", Text: "Interrupted before a terminal result was recorded."},
+	}
 	a := &appModel{
 		demo: false, runtimeStatus: runtimeStateReady, rt: &runtimeClient{}, workspaceOpen: true,
 		windowWidth: 1040, scrollTo: -1, contacts: []*contact{ct}, selected: 0,
+		runtimeCapabilitiesLoaded: true, runtimeMaxActiveTasks: 2,
 	}
 	switch scene {
 	case "issue-working":
-		ct.Status = statusWorking
-		ct.ActiveTaskID = "task-2"
-		ct.LastTaskID = "task-2"
-		ct.SendState = sendAccepted
+		ct.Issues[0].Work.ActiveTaskID = "task-2"
+		ct.Issues[0].Work.LastTaskID = "task-2"
+		ct.Issues[0].Work.SendState = sendAccepted
 		ct.Issues[0].Executions[1].Status = issueExecutionRunning
 		ct.Works[1].State = workRunning
 		ct.Works[1].Tools = []*workTool{{CallID: "read-2", Name: "read", Args: `{"path":"desktop/workspace.go"}`, Started: true, Finished: false}}
+	case "issue-dual":
+		ct.Issues[0].Work.ActiveTaskID = "task-1"
+		ct.Issues[0].Work.LastTaskID = "task-1"
+		ct.Issues[0].Work.SendState = sendAccepted
+		ct.Issues[0].Executions[0].Status = issueExecutionRunning
+		ct.ActiveTaskID = "task-3"
+		ct.LastTaskID = "task-3"
+		ct.SendState = sendAccepted
+		ct.Works[0].State = workRunning
+		ct.Works = append(ct.Works, &workItem{TaskID: "task-3", MessageID: "msg-3", Prompt: "Conversation B while A works", State: workRunning})
 	case "issue-form":
 		a.issueFormOpen = true
 		a.issueGoal = "Keep requirements attached to each run"
 		a.issueRequirements = "Show the original requirement text and an explicit unverified completion state."
 	case "issue-unknown":
-		ct.Issues[1].Executions[0] = &issueExecution{ID: "exec-3", SessionID: "issue-preview-session", Prompt: "Verify restart continuation", Status: issueExecutionUnknown, Detail: "No trusted Runtime task history was found for this execution; reload before rerunning."}
+		ct.Issues[1].Executions[0] = &issueExecution{ID: "exec-3", SessionID: "issue-preview-work-2", Prompt: "Verify restart continuation", Status: issueExecutionUnknown, Detail: "No trusted Runtime task history was found for this execution; manually inspect or confirm not dispatched."}
 		ct.SelectedIssueID = "issue-2"
 		ct.Works = ct.Works[:1]
 	}
@@ -107,6 +129,9 @@ func TestPreviewIssueStates(t *testing.T) {
 		write("issue-results", 360, 800, dark)
 		write("issue-form", 960, 640, dark)
 		write("issue-working", 1040, 720, dark)
+		write("issue-dual", 960, 640, dark)
+		write("issue-dual", 1040, 720, dark)
+		write("issue-dual", 320, 900, dark)
 		write("issue-unknown", 320, 640, dark)
 	}
 }

@@ -73,13 +73,26 @@ func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
 			ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
 				ui.Text(c, ct.Name).FontSize(14).FontWeight(500).TextColor(t.Text)
 				ui.Spacer(c)
+				if workCount := issueWorkActiveCount(ct); workCount > 0 {
+					ui.Text(c, fmt.Sprintf("%d work", workCount)).FontSize(10).TextColor(t.TextMuted)
+				}
 				if ct.Unread > 0 {
 					ui.Text(c, fmt.Sprintf("%d", ct.Unread)).FontSize(11).TextColor(t.Warning)
 				}
 			})
 			line := a.snippet(ct)
 			color := t.TextMuted
-			if ct.Status != statusReady {
+			notice := a.issueWorkNotice(ct)
+			if notice.Text != "" {
+				line = "Issue running"
+				if notice.Attention {
+					line = "Attention"
+					color = t.Warning
+				} else {
+					color = t.Success
+				}
+			}
+			if ct.Status != statusReady && notice.Text == "" {
 				status := a.statusLabel(ct)
 				detail := strings.TrimSpace(line)
 				if detail == status {
@@ -242,7 +255,16 @@ func (a *appModel) chat(c *ui.Context, t *ui.Theme) {
 				}).FillHeight().WidthPercent(86).MaxWidth(760).Padding(16, 0).Gap(18)
 			})
 		}
-		ui.Row(c).Justify(ui.Center).Children(func() {
+		if len(items) > 0 && !ct.list.AtEnd() {
+			ui.Row(c).Key("back-to-latest").Justify(ui.Center).Children(func() {
+				back := ui.Button(c, "Back to latest").FontSize(12).Padding(4, 10)
+				back.OnClick(func() {
+					ct.list.ScrollToEnd()
+					a.focusComposer = true
+				})
+			})
+		}
+		ui.Row(c).Key("composer").Justify(ui.Center).Children(func() {
 			ui.Column(c).WidthPercent(86).MaxWidth(760).Children(func() {
 				a.composer(c, t)
 			})
@@ -258,16 +280,17 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 		bg = t.Selection
 	}
 	if e.From == "me" {
-		ui.Row(c).Justify(ui.End).Children(func() {
-			ui.Text(c, e.Text).FontSize(14).LineHeight(1.5).Padding(8, 12).Radius(12).Background(bg).TextColor(t.Text).MaxWidth(460)
+		ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
+			markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy message"}).
+				FontSize(14).LineHeight(1.5).Padding(8, 12).Radius(12).Background(bg).TextColor(t.Text).MaxWidth(460).MinWidth(0)
 		})
 		return
 	}
-	ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
+	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
 		a.avatarTile(c, t, 28)
-		ui.Column(c).MaxWidth(680).Padding(10, 14).Radius(14).Background(bg).Gap(4).Children(func() {
+		ui.Column(c).MaxWidth(680).MinWidth(0).Shrink(1).Padding(10, 14).Radius(14).Background(bg).Gap(4).Children(func() {
 			ui.Text(c, a.selectedContact().Name+"  "+e.Date).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
-			ui.Text(c, e.Text).FontSize(14).LineHeight(1.5).TextColor(t.Text)
+			markdownReader(c, e.Text, markdownReaderOptions{CopyLabel: "Copy message"})
 		})
 	})
 }
@@ -326,22 +349,23 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 			})
 		})
 	case msgUser:
-		ui.Row(c).Justify(ui.End).Children(func() {
-			ui.Column(c).MaxWidthPercent(80).Gap(2).Children(func() {
+		ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
+			ui.Column(c).MaxWidthPercent(80).MinWidth(0).Shrink(1).Gap(2).Children(func() {
 				if m.Key != "" && m.Key == a.highlight {
 					ui.Text(c, "Located in history").FontSize(11).TextColor(t.TextMuted)
 				}
-				ui.Text(c, m.Text).FontSize(14).LineHeight(1.55).Padding(10, 14).Radius(14).Background(a.workTheme.BubbleUser).TextColor(t.Text)
+				markdownReader(c, m.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy message"}).
+					FontSize(14).LineHeight(1.55).Padding(10, 14).Radius(14).Background(a.workTheme.BubbleUser).TextColor(t.Text)
 			})
 		})
 	default:
-		ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
+		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
 			a.avatarTile(c, t, 28)
-			ui.Column(c).MaxWidthPercent(80).Padding(10, 14).Radius(14).Background(t.SurfaceHover).Gap(4).Children(func() {
+			ui.Column(c).MaxWidthPercent(80).MinWidth(0).Shrink(1).Padding(10, 14).Radius(14).Background(t.SurfaceHover).Gap(4).Children(func() {
 				if m.Key != "" && m.Key == a.highlight {
 					ui.Text(c, "Located in history").FontSize(11).TextColor(t.TextMuted)
 				}
-				ui.Text(c, m.Text).FontSize(14).LineHeight(1.55).TextColor(t.Text)
+				markdownReader(c, m.Text, markdownReaderOptions{Streaming: m.Streaming, CopyLabel: "Copy message"})
 				if m.AlertTitle != "" {
 					a.alert(c, t, m)
 				}
@@ -428,7 +452,22 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				a.sendCurrent()
 			}
 		})
+		if !a.demo && ct.ActiveTaskID != "" {
+			ui.Row(c).Justify(ui.End).Children(func() {
+				ui.Button(c, "Stop conversation").FontSize(11).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.Warning).OnClick(func() { a.cancelSelected() })
+			})
+		}
 		if !a.demo {
+			if !a.capacityKnown() {
+				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+					message := a.runtimeCapabilitiesErr
+					if message == "" {
+						message = "Runtime task capacity is not loaded; using the conservative single-slot behavior."
+					}
+					ui.Text(c, message).FontSize(11).LineHeight(1.4).TextColor(t.Warning).Grow(1)
+					ui.Button(c, "Retry capacity").FontSize(11).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.retryCapabilities() })
+				})
+			}
 			if reason := a.canSend(ct); strings.Contains(reason, "Another contact is working") {
 				ui.Text(c, reason).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 			}
@@ -501,9 +540,13 @@ func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 					}
 					for _, e := range matches {
 						e := e
-						ui.Column(c).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
+						ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
 							ui.Text(c, e.Date+" · "+speakerLabel(ct, e)).FontSize(12).LineHeight(1.4).TextColor(t.Success)
-							ui.Text(c, e.Text).FontSize(14).LineHeight(1.5).TextColor(t.Text)
+							if e.From == "me" {
+								markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy history message"}).FontSize(14).LineHeight(1.5).TextColor(t.Text)
+							} else {
+								markdownReader(c, e.Text, markdownReaderOptions{CopyLabel: "Copy history message"})
+							}
 							ui.Row(c).Children(func() {
 								ui.Button(c, "View in conversation").FontSize(12).OnClick(func() { a.viewInConversation(e.ID) })
 							})
@@ -569,9 +612,13 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 	ui.Text(c, fmt.Sprintf("%d earlier messages from %s's history, cited in this reply.", len(entries), ct.Name)).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 	for _, e := range entries {
 		e := e
-		ui.Column(c).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
+		ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
 			ui.Text(c, e.Date+" · "+speakerLabel(ct, e)).FontSize(12).LineHeight(1.4).TextColor(t.Success)
-			ui.Text(c, e.Text).FontSize(14).LineHeight(1.5).TextColor(t.Text)
+			if e.From == "me" {
+				markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy source message"}).FontSize(14).LineHeight(1.5).TextColor(t.Text)
+			} else {
+				markdownReader(c, e.Text, markdownReaderOptions{CopyLabel: "Copy source message"})
+			}
 			ui.Row(c).Children(func() {
 				ui.Button(c, "View in conversation").FontSize(12).OnClick(func() { a.viewInConversation(e.ID) })
 			})

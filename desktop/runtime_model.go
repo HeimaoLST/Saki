@@ -221,6 +221,8 @@ func (a *appModel) startRuntime() {
 					a.runtimeAPI = ready.API
 					a.runtimeHandshake = true
 					a.restoreContacts()
+					a.restoreIssueWorks()
+					go a.loadCapabilities()
 				})
 			},
 			OnEvent: func(event runtimeEventEnvelope) {
@@ -261,6 +263,22 @@ func (a *appModel) protocolFailed(message string) {
 			ct.Status = statusAttention
 			ct.SendError = "Protocol failure; delivery not confirmed. Reload before sending again."
 		}
+		for _, issue := range ct.Issues {
+			if issue.Work.SendState == sendSubmitting || issue.Work.ActiveTaskID != "" || issue.Work.SendState == sendUnknown {
+				if w := workFor(ct, issue.Work.ActiveTaskID); w != nil {
+					w.State = workUnknown
+					w.Detail = "Protocol failure; result not confirmed."
+				}
+				issue.Work.SessionState = "unknown"
+				issue.Work.SendState = sendUnknown
+				issue.Work.SendError = "Protocol failure; delivery not confirmed. Reload before sending again."
+				if execution := ct.executionByTask(issue.Work.ActiveTaskID); execution != nil {
+					execution.Status = issueExecutionUnknown
+					execution.Detail = issue.Work.SendError
+				}
+				issue.Work.ActiveTaskID = ""
+			}
+		}
 	}
 }
 
@@ -277,6 +295,24 @@ func (a *appModel) clearActiveTasksAfterExit() {
 			ct.Status = statusAttention
 			ct.StatusDetail = "Connection lost before the task finished; reload to verify."
 			ct.SendError = "Delivery/result not confirmed. Reload before sending again."
+		}
+		for _, issue := range ct.Issues {
+			if issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle {
+				continue
+			}
+			issue.Work.SessionState = "unknown"
+			issue.Work.SendState = sendUnknown
+			issue.Work.SendError = "Delivery/result not confirmed. Reload before sending again."
+			if w := workFor(ct, issue.Work.ActiveTaskID); w != nil {
+				w.State = workUnknown
+				w.Detail = "Connection lost before the task finished; reload to verify."
+			}
+			execution := ct.executionByTask(issue.Work.ActiveTaskID)
+			if execution != nil {
+				execution.Status = issueExecutionUnknown
+				execution.Detail = issue.Work.SendError
+			}
+			issue.Work.ActiveTaskID = ""
 		}
 	}
 }
@@ -363,9 +399,21 @@ func (a *appModel) beginShutdown() {
 	}()
 }
 
+func (a *appModel) setUIHook(hook func(func())) {
+	a.uiHookMu.Lock()
+	a.uiHook = hook
+	a.uiHookMu.Unlock()
+}
+
+func (a *appModel) getUIHook() func(func()) {
+	a.uiHookMu.Lock()
+	defer a.uiHookMu.Unlock()
+	return a.uiHook
+}
+
 func (a *appModel) updateUI(fn func()) {
-	if a.uiHook != nil {
-		a.uiHook(fn)
+	if hook := a.getUIHook(); hook != nil {
+		hook(fn)
 		return
 	}
 	if a.win != nil {
@@ -382,6 +430,100 @@ func (a *appModel) contactBySession(sessionID string) *contact {
 		}
 	}
 	return nil
+}
+
+func (a *appModel) loadCapabilities() {
+	if a.rt == nil {
+		return
+	}
+	capabilities, err := a.rt.capabilities()
+	a.updateUI(func() {
+		if err != nil {
+			a.runtimeCapabilitiesLoaded = false
+			a.runtimeCapabilitiesErr = "Runtime capacity is not loaded: " + runtimeMessage(err) + ". The app uses the conservative single-slot behavior until it is retried."
+			return
+		}
+		if capabilities.MaxActiveTasks < 1 {
+			a.runtimeCapabilitiesLoaded = false
+			a.runtimeCapabilitiesErr = "Runtime returned an invalid task capacity; the app uses the conservative single-slot behavior."
+			return
+		}
+		a.runtimeMaxActiveTasks = capabilities.MaxActiveTasks
+		a.runtimeCapabilitiesLoaded = true
+		a.runtimeCapabilitiesErr = ""
+	})
+}
+
+func (a *appModel) capacityKnown() bool {
+	return a.demo || a.runtimeCapabilitiesLoaded
+}
+
+func (a *appModel) retryCapabilities() {
+	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
+		return
+	}
+	a.runtimeCapabilitiesErr = ""
+	go a.loadCapabilities()
+}
+
+func (a *appModel) maxActiveTasks() int {
+	if a.runtimeMaxActiveTasks > 0 {
+		return a.runtimeMaxActiveTasks
+	}
+	return 1
+}
+
+func (a *appModel) workTaskLimit() int {
+	if max := a.maxActiveTasks(); max > 1 {
+		return max - 1
+	}
+	return 1
+}
+
+func sessionBusy(send sendState, activeTaskID string) bool {
+	return activeTaskID != "" || send != sendIdle
+}
+
+func (a *appModel) activeTaskCount() int {
+	count := 0
+	for _, ct := range a.contacts {
+		if sessionBusy(ct.SendState, ct.ActiveTaskID) {
+			count++
+		}
+		for _, issue := range ct.Issues {
+			if issue.WorkSessionID != "" || sessionBusy(issue.Work.SendState, issue.Work.ActiveTaskID) {
+				if sessionBusy(issue.Work.SendState, issue.Work.ActiveTaskID) {
+					count++
+				}
+			}
+		}
+	}
+	return count
+}
+
+func (a *appModel) activeWorkTaskCount() int {
+	count := 0
+	for _, ct := range a.contacts {
+		for _, issue := range ct.Issues {
+			if sessionBusy(issue.Work.SendState, issue.Work.ActiveTaskID) {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func (a *appModel) restoreIssueWorks() {
+	for _, ct := range a.contacts {
+		for _, issue := range ct.Issues {
+			if issue.WorkSessionID == "" {
+				continue
+			}
+			contactID, issueID, sessionID := ct.ID, issue.ID, issue.WorkSessionID
+			issue.Work.Loaded = false
+			go a.restoreIssueWork(contactID, issueID, sessionID)
+		}
+	}
 }
 
 func (a *appModel) restoreContacts() {
@@ -456,8 +598,141 @@ func (a *appModel) restoreSession(contactID, sessionID string) {
 	})
 }
 
+func (a *appModel) restoreIssueWork(contactID, issueID, sessionID string) {
+	session, err := a.rt.loadSession(sessionID)
+	if err != nil {
+		a.updateUI(func() {
+			ct := a.contactByID(contactID)
+			if ct == nil {
+				return
+			}
+			issue := ct.issueByID(issueID)
+			if issue == nil || issue.WorkSessionID != sessionID {
+				return
+			}
+			issue.Work.Loaded = false
+			issue.Work.LoadErr = runtimeMessage(err)
+			issue.Work.SendError = runtimeMessage(err)
+		})
+		return
+	}
+	pages, status, err := a.historyAll(sessionID)
+	a.updateUI(func() {
+		ct := a.contactByID(contactID)
+		if ct == nil {
+			return
+		}
+		issue := ct.issueByID(issueID)
+		if issue == nil || issue.WorkSessionID != sessionID {
+			return
+		}
+		issue.Work.Loaded = err == nil
+		issue.Work.LoadErr = ""
+		issue.Work.SessionState = session.State
+		if err != nil {
+			issue.Work.LoadErr = runtimeMessage(err)
+			issue.Work.SendError = runtimeMessage(err)
+			return
+		}
+		a.applyIssueWorkHistory(ct, issue, pages, status)
+		if session.ActiveTask != nil {
+			issue.Work.ActiveTaskID = session.ActiveTask.TaskID
+			issue.Work.LastTaskID = session.ActiveTask.TaskID
+			issue.Work.SendState = sendAccepted
+			if w := a.ensureWork(ct, session.ActiveTask.TaskID, session.ActiveTask.MessageID); w != nil {
+				w.State = workRunning
+			}
+			if execution := ct.executionByTask(session.ActiveTask.TaskID); execution != nil {
+				execution.Status = issueExecutionRunning
+			}
+			return
+		}
+		issue.Work.ActiveTaskID = ""
+		issue.Work.SendState = sendIdle
+		issue.Work.SendError = ""
+	})
+}
+
+func (a *appModel) reloadIssueWorkByID(contactID, issueID string) {
+	if a.rt == nil || a.shutdownStarted || a.runtimeStatus == runtimeStateDraining || a.runtimeStatus == runtimeStateExited {
+		return
+	}
+	ct := a.contactByID(contactID)
+	if ct == nil {
+		return
+	}
+	issue := ct.issueByID(issueID)
+	if issue == nil || issue.WorkSessionID == "" {
+		return
+	}
+	issue.Work.historyGen++
+	gen := issue.Work.historyGen
+	sessionID := issue.WorkSessionID
+	go a.reloadIssueWork(contactID, issueID, sessionID, gen)
+}
+
+func (a *appModel) reloadIssueWork(contactID, issueID, sessionID string, gen int) {
+	session, err := a.rt.loadSession(sessionID)
+	if err != nil {
+		a.updateUI(func() {
+			ct := a.contactByID(contactID)
+			if ct == nil {
+				return
+			}
+			issue := ct.issueByID(issueID)
+			if issue == nil || issue.WorkSessionID != sessionID || issue.Work.historyGen != gen {
+				return
+			}
+			issue.Work.LoadErr = runtimeMessage(err)
+			issue.Work.SendError = runtimeMessage(err)
+		})
+		return
+	}
+	pages, status, err := a.historyAll(sessionID)
+	a.updateUI(func() {
+		ct := a.contactByID(contactID)
+		if ct == nil {
+			return
+		}
+		issue := ct.issueByID(issueID)
+		if issue == nil || issue.WorkSessionID != sessionID || issue.Work.historyGen != gen {
+			return
+		}
+		if err != nil {
+			issue.Work.LoadErr = runtimeMessage(err)
+			issue.Work.SendError = runtimeMessage(err)
+			return
+		}
+		issue.Work.SessionState = session.State
+		a.applyIssueWorkHistory(ct, issue, pages, status)
+		if session.ActiveTask != nil {
+			if issue.Work.SendState == sendSubmitting {
+				return
+			}
+			issue.Work.ActiveTaskID = session.ActiveTask.TaskID
+			issue.Work.LastTaskID = session.ActiveTask.TaskID
+			issue.Work.SendState = sendAccepted
+			issue.Work.SendError = ""
+			if w := a.ensureWork(ct, session.ActiveTask.TaskID, session.ActiveTask.MessageID); w != nil {
+				w.State = workRunning
+			}
+			if execution := ct.executionByTask(session.ActiveTask.TaskID); execution != nil {
+				execution.Status = issueExecutionRunning
+			}
+			return
+		}
+		if issue.Work.SendState == sendSubmitting {
+			return
+		}
+		issue.Work.ActiveTaskID = ""
+		issue.Work.SendState = sendIdle
+		issue.Work.SendError = ""
+		issue.Work.LoadErr = ""
+	})
+}
+
 func (a *appModel) reloadContactByID(contactID string) {
-	if a.rt == nil {
+	if a.rt == nil || a.shutdownStarted || a.runtimeStatus == runtimeStateDraining || a.runtimeStatus == runtimeStateExited {
 		return
 	}
 	ct := a.contactByID(contactID)
@@ -553,15 +828,18 @@ func (a *appModel) historyAll(sessionID string) ([]historyRecord, string, error)
 	return nil, "", errors.New("history pagination exceeded 1000 pages")
 }
 
-func (a *appModel) applyHistory(ct *contact, records []historyRecord, status string) {
-	var messages []*message
-	var entries []historyEntry
-	var works []*workItem
-	ct.UnlinkedTools = nil
+type historyProjection struct {
+	messages []*message
+	entries  []historyEntry
+	works    []*workItem
+	unlinked []*workTool
+	detail   string
+}
+
+func parseHistory(sessionID string, records []historyRecord, stopRequested map[string]bool) historyProjection {
+	projection := historyProjection{}
 	byTask := map[string]*workItem{}
 	taskID, messageID := "", ""
-	detail := ""
-
 	ensure := func(id, msgID string) *workItem {
 		if id == "" {
 			return nil
@@ -572,10 +850,22 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 			}
 			return w
 		}
-		w := &workItem{TaskID: id, MessageID: msgID, State: workUnknown, StopRequested: ct.StopRequestedTasks[id]}
+		w := &workItem{TaskID: id, MessageID: msgID, State: workUnknown, StopRequested: stopRequested[id]}
 		byTask[id] = w
-		works = append(works, w)
+		projection.works = append(projection.works, w)
 		return w
+	}
+	unlinked := func(callID string) *workTool {
+		if callID != "" {
+			for _, call := range projection.unlinked {
+				if call.CallID == callID {
+					return call
+				}
+			}
+		}
+		call := &workTool{CallID: callID}
+		projection.unlinked = append(projection.unlinked, call)
+		return call
 	}
 	for _, rec := range records {
 		switch rec.Record.Type {
@@ -597,12 +887,12 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 				w.State = workStateFromTask(rec.Record.Status)
 				w.Detail = historyWorkDetail(rec.Record.Status, rec.Record.Error)
 			}
-			detail = historyWorkDetail(rec.Record.Status, rec.Record.Error)
+			projection.detail = historyWorkDetail(rec.Record.Status, rec.Record.Error)
 			taskID, messageID = "", ""
 		case "messages":
 			w := ensure(taskID, messageID)
 			for index, item := range rec.Record.Items {
-				key := fmt.Sprintf("hist:%s:%d:%d", ct.SessionID, rec.Offset, index)
+				key := fmt.Sprintf("hist:%s:%d:%d", sessionID, rec.Offset, index)
 				timeLabel := formatMillis(rec.TimestampMS)
 				switch item.Type {
 				case "message":
@@ -622,14 +912,14 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 							w.Prompt = text
 						}
 					}
-					messages = append(messages, &message{
+					projection.messages = append(projection.messages, &message{
 						Key: key, Kind: kind, Text: text, Time: timeLabel,
 						TaskID: taskID, MessageID: messageID, History: true,
 					})
-					entries = append(entries, historyEntry{ID: key, Date: timeLabel, From: from, Text: text})
+					projection.entries = append(projection.entries, historyEntry{ID: key, Date: timeLabel, From: from, Text: text})
 				case "tool_call":
 					if w == nil {
-						call := unlinkedToolFor(ct, item.CallID)
+						call := unlinked(item.CallID)
 						call.Name = item.Name
 						call.Args = item.Arguments
 						call.Started = true
@@ -644,7 +934,7 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 					call.Started = true
 				case "tool_result":
 					if w == nil {
-						call := unlinkedToolFor(ct, item.CallID)
+						call := unlinked(item.CallID)
 						call.Output = item.Output
 						call.Finished = true
 						continue
@@ -661,11 +951,60 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 			}
 		}
 	}
-	ct.Messages = messages
-	ct.History = entries
-	ct.Works = works
+	return projection
+}
+
+// mergeWorks keeps work items from other runtime sessions (conversation vs an
+// issue work context) while replacing the projection for the session being
+// reloaded. A work item belongs to exactly one session.
+// mergeWorks keeps work items owned by a different runtime session while
+// replacing the projection for targetSession. Work items carry no session of
+// their own; ownership comes from the persisted issue execution TaskID and its
+// actual SessionID.
+func mergeWorks(ct *contact, existing, incoming []*workItem, targetSession string) []*workItem {
+	byTask := make(map[string]*workItem, len(incoming))
+	for _, work := range incoming {
+		byTask[work.TaskID] = work
+	}
+	owners := map[string]string{}
 	for _, issue := range ct.Issues {
 		for _, execution := range issue.Executions {
+			if execution.TaskID != "" && execution.SessionID != "" {
+				owners[execution.TaskID] = execution.SessionID
+			}
+		}
+	}
+	out := make([]*workItem, 0, len(existing)+len(incoming))
+	for _, work := range existing {
+		if _, ok := byTask[work.TaskID]; ok {
+			continue
+		}
+		owner := owners[work.TaskID]
+		switch {
+		case owner != "" && owner != targetSession:
+			out = append(out, work)
+		case owner == "" && targetSession != ct.SessionID:
+			out = append(out, work)
+		}
+	}
+	out = append(out, incoming...)
+	return out
+}
+
+func (a *appModel) applyHistory(ct *contact, records []historyRecord, status string) {
+	projection := parseHistory(ct.SessionID, records, ct.StopRequestedTasks)
+	ct.Messages = projection.messages
+	ct.History = projection.entries
+	ct.UnlinkedTools = projection.unlinked
+	ct.Works = mergeWorks(ct, ct.Works, projection.works, ct.SessionID)
+	for _, issue := range ct.Issues {
+		for _, execution := range issue.Executions {
+			// Only legacy executions that actually used the conversation
+			// session are reconciled here. New issue work sessions are
+			// reconciled by applyIssueWorkHistory.
+			if execution.SessionID != ct.SessionID {
+				continue
+			}
 			if w := workFor(ct, execution.TaskID); w != nil {
 				execution.Status = issueExecutionStatusFromWork(w.State)
 				execution.Detail = w.Detail
@@ -679,12 +1018,12 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 	ct.HistoryDirty = false
 	ct.Loaded = true
 	ct.Status = statusFromString(status)
-	ct.StatusDetail = detail
+	ct.StatusDetail = projection.detail
 	if ct.Status == statusAttention && ct.StatusDetail == "" {
 		ct.StatusDetail = "Previous task did not complete."
 	}
-	if len(works) > 0 {
-		ct.LastTaskID = works[len(works)-1].TaskID
+	if len(projection.works) > 0 {
+		ct.LastTaskID = projection.works[len(projection.works)-1].TaskID
 	}
 	if w := ct.activeWork(); w != nil {
 		if w.State == workUnknown || w.State == workAccepted {
@@ -694,6 +1033,30 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 	} else {
 		ct.Work = ""
 	}
+}
+
+func (a *appModel) applyIssueWorkHistory(ct *contact, issue *productIssue, records []historyRecord, status string) {
+	sessionID := issue.WorkSessionID
+	projection := parseHistory(sessionID, records, issue.Work.StopRequestedTasks)
+	issue.Work.Messages = projection.messages
+	issue.Work.UnlinkedTools = projection.unlinked
+	ct.Works = mergeWorks(ct, ct.Works, projection.works, sessionID)
+	for _, execution := range issue.Executions {
+		if execution.SessionID != sessionID {
+			continue
+		}
+		if w := workFor(ct, execution.TaskID); w != nil {
+			execution.Status = issueExecutionStatusFromWork(w.State)
+			execution.Detail = w.Detail
+		} else if execution.Status == issueExecutionPending ||
+			execution.Status == issueExecutionAccepted || execution.Status == issueExecutionRunning {
+			execution.Status = issueExecutionUnknown
+			execution.Detail = "No trusted Runtime task history was found for this execution; reload before rerunning."
+		}
+	}
+	issue.Work.Loaded = true
+	issue.Work.SessionState = status
+	issue.Work.HistoryDirty = false
 }
 
 func historyWorkDetail(status string, errText *string) string {
@@ -760,7 +1123,11 @@ func formatMillis(ms int64) string {
 func runtimeMessage(err error) string {
 	var runtimeErr *runtimeError
 	if errors.As(err, &runtimeErr) {
-		return runtimeErr.Code + ": " + safeDiagnostic(runtimeErr.Message)
+		message := runtimeErr.Code + ": " + safeDiagnostic(runtimeErr.Message)
+		if runtimeErr.Reason != "" {
+			message += " [" + runtimeErr.Reason + "]"
+		}
+		return message
 	}
 	return safeDiagnostic(err.Error())
 }
@@ -770,9 +1137,37 @@ func confirmedReject(err error) bool {
 	return errors.As(err, &runtimeErr) && runtimeErr.Code != "protocol_error"
 }
 
+func (a *appModel) routeSession(sessionID string) (*contact, *productIssue, bool) {
+	for _, ct := range a.contacts {
+		if ct.SessionID == sessionID {
+			return ct, nil, false
+		}
+		for _, issue := range ct.Issues {
+			if issue.WorkSessionID == sessionID {
+				return ct, issue, true
+			}
+		}
+	}
+	return nil, nil, false
+}
+
 func (a *appModel) applyRuntimeEvent(event runtimeEventEnvelope) {
+	if event.Event == nil {
+		return
+	}
+	if ct, issue, work := a.routeSession(event.SessionID); work {
+		if issue == nil {
+			return
+		}
+		if issue.Work.SendState == sendSubmitting && issue.Work.ActiveTaskID == "" {
+			issue.Work.pendingEvents = append(issue.Work.pendingEvents, event)
+			return
+		}
+		a.applyIssueEvent(ct, issue, event)
+		return
+	}
 	ct := a.contactBySession(event.SessionID)
-	if ct == nil || event.Event == nil {
+	if ct == nil {
 		return
 	}
 	if ct.SendState == sendSubmitting && ct.ActiveTaskID == "" {
@@ -780,6 +1175,120 @@ func (a *appModel) applyRuntimeEvent(event runtimeEventEnvelope) {
 		return
 	}
 	a.applyEvent(ct, event)
+}
+
+func (a *appModel) applyIssueEvent(ct *contact, issue *productIssue, event runtimeEventEnvelope) {
+	payload := event.Event
+	if payload == nil {
+		return
+	}
+	if issue.Work.ActiveTaskID == "" && payload.Type != "task_started" {
+		return
+	}
+	if event.TaskID != "" && issue.Work.ActiveTaskID != "" && event.TaskID != issue.Work.ActiveTaskID {
+		return
+	}
+	switch payload.Type {
+	case "task_started":
+		if w := workFor(ct, event.TaskID); w != nil {
+			switch w.State {
+			case workStopping, workCompleted, workFailed, workInterrupted, workUnknown:
+				return
+			}
+		}
+		if issue.Work.ActiveTaskID == "" && issue.Work.LastTaskID != "" && event.TaskID != issue.Work.LastTaskID {
+			return
+		}
+		if issue.Work.ActiveTaskID == "" {
+			issue.Work.ActiveTaskID = event.TaskID
+		}
+		if event.TaskID != issue.Work.ActiveTaskID {
+			return
+		}
+		issue.Work.LastTaskID = event.TaskID
+		issue.Work.SendState = sendAccepted
+		issue.Work.SessionState = "running"
+		issue.Work.SendError = ""
+		if w := a.ensureWork(ct, event.TaskID, event.MessageID); w != nil {
+			w.State = workRunning
+		}
+		if execution := ct.executionByTask(event.TaskID); execution != nil {
+			execution.Status = issueExecutionRunning
+			execution.Detail = ""
+		}
+	case "response_text_delta":
+		item := a.liveIssueText(issue, event.TaskID, payload.ItemID)
+		item.Text += payload.Delta
+		item.Streaming = true
+	case "response_text":
+		item := a.liveIssueText(issue, event.TaskID, payload.ItemID)
+		item.Text = payload.Text
+		item.Streaming = false
+	case "tool_started":
+		w := a.ensureWork(ct, event.TaskID, event.MessageID)
+		if w == nil {
+			return
+		}
+		call := workToolFor(w, payload.CallID)
+		if call == nil {
+			return
+		}
+		call.Name = payload.Name
+		call.Args = payload.Arguments
+		call.Started = true
+	case "tool_finished":
+		w := a.ensureWork(ct, event.TaskID, event.MessageID)
+		if w == nil {
+			return
+		}
+		call := workToolFor(w, payload.CallID)
+		if call == nil {
+			return
+		}
+		call.Name = payload.Name
+		call.Output = outputText(payload.Output)
+		call.Finished = true
+	case "task_finished":
+		if issue.Work.ActiveTaskID != "" && event.TaskID != issue.Work.ActiveTaskID {
+			return
+		}
+		if issue.Work.ActiveTaskID == "" && issue.Work.LastTaskID != "" && event.TaskID != issue.Work.LastTaskID {
+			return
+		}
+		issue.Work.LastTaskID = event.TaskID
+		issue.Work.ActiveTaskID = ""
+		issue.Work.SendState = sendIdle
+		issue.Work.SendError = ""
+		issue.Work.SessionState = "unknown"
+		issue.Work.HistoryDirty = true
+		issue.Work.historyGen++
+		detail := taskFinishedDetail(payload)
+		if w := workFor(ct, event.TaskID); w != nil {
+			w.State = workStateFromTask(payload.Status)
+			w.Detail = detail
+		} else if w := a.ensureWork(ct, event.TaskID, event.MessageID); w != nil {
+			w.State = workStateFromTask(payload.Status)
+			w.Detail = detail
+		}
+		if execution := ct.executionByTask(event.TaskID); execution != nil {
+			execution.Status = issueExecutionStatusFromWork(workStateFromTask(payload.Status))
+			execution.Detail = detail
+		}
+		_ = a.persist()
+		a.reloadIssueWorkByID(ct.ID, issue.ID)
+	}
+}
+
+func (a *appModel) liveIssueText(issue *productIssue, taskID, itemID string) *message {
+	key := "work-live:" + taskID + ":text:" + itemID
+	for _, m := range issue.Work.Messages {
+		if m.Key == key {
+			return m
+		}
+	}
+	m := &message{Key: key, Kind: msgContact, TaskID: taskID, ItemID: itemID, Time: nowTime()}
+	issue.Work.Messages = append(issue.Work.Messages, m)
+	return m
 }
 
 func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
@@ -977,18 +1486,186 @@ func (a *appModel) canSend(ct *contact) string {
 	if ct.SessionID != "" && !ct.Loaded {
 		return "This contact is still loading its history."
 	}
-	if ct.ActiveTaskID != "" || ct.SendState != sendIdle {
+	if sessionBusy(ct.SendState, ct.ActiveTaskID) {
 		return "This contact is busy."
 	}
-	for _, other := range a.contacts {
-		if other == ct {
-			continue
-		}
-		if other.ActiveTaskID != "" || other.SendState == sendSubmitting || other.SendState == sendAccepted || other.SendState == sendUnknown {
+	if a.activeTaskCount() >= a.maxActiveTasks() {
+		if a.maxActiveTasks() <= 1 {
 			return "Another contact is working; wait for its task to finish before sending here."
 		}
+		return "Runtime task capacity is full; retry after a task finishes."
 	}
 	return ""
+}
+
+func (a *appModel) canStartIssue(ct *contact, issue *productIssue) string {
+	if a.demo {
+		return ""
+	}
+	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
+		return "Runtime is not ready."
+	}
+	if sessionBusy(issue.Work.SendState, issue.Work.ActiveTaskID) {
+		return "This issue already has an active execution."
+	}
+	if issue.WorkSessionID != "" && !issue.Work.Loaded {
+		return "This issue's work history is still loading."
+	}
+	if a.activeTaskCount() >= a.maxActiveTasks() {
+		if a.maxActiveTasks() <= 1 {
+			return "The single runtime slot is in use; retry after the conversation or work task finishes."
+		}
+		return "Runtime task capacity is full; retry after a task finishes."
+	}
+	if a.activeWorkTaskCount() >= a.workTaskLimit() {
+		return "Work capacity is full; one runtime slot is reserved for conversation."
+	}
+	return ""
+}
+
+func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *issueExecution, prompt string) bool {
+	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
+		issue.Work.SendError = "Runtime is not ready."
+		return false
+	}
+	// Capture immutable session inputs on the UI thread. The worker must not
+	// look up the contact/issue or read mutable profile/session fields later.
+	workspace := ct.Workspace
+	system := profileSystemPrompt(ct)
+	sessionID := issue.WorkSessionID
+	go a.submitIssueTask(ct.ID, issue.ID, execution.ID, sessionID, workspace, system, prompt)
+	return true
+}
+
+func (a *appModel) submitIssueTask(contactID, issueID, executionID, sessionID, workspace, system, prompt string) {
+	if sessionID == "" {
+		session, err := a.rt.createSession(workspace, system)
+		if err != nil {
+			a.failIssueSubmit(contactID, issueID, err, false)
+			return
+		}
+		sessionID = session.SessionID
+		saved := make(chan error, 1)
+		a.updateUI(func() {
+			ct := a.contactByID(contactID)
+			if ct == nil {
+				saved <- errors.New("contact disappeared before saving its work session")
+				return
+			}
+			issue := ct.issueByID(issueID)
+			if issue == nil {
+				saved <- errors.New("issue disappeared before saving its work session")
+				return
+			}
+			if issue.WorkSessionID != "" && issue.WorkSessionID != sessionID {
+				saved <- errors.New("issue work session changed before it was saved")
+				return
+			}
+			issue.WorkSessionID = sessionID
+			issue.Work.Loaded = true
+			issue.Work.SessionState = session.State
+			if _, execution := ct.executionByID(executionID); execution != nil {
+				execution.SessionID = sessionID
+			}
+			saved <- a.persist()
+		})
+		if err := <-saved; err != nil {
+			a.failIssueSubmit(contactID, issueID, fmt.Errorf("save issue work session mapping: %w", err), false)
+			return
+		}
+	}
+	result, err := a.rt.sendTask(sessionID, prompt)
+	if err != nil {
+		a.failIssueSubmit(contactID, issueID, err, true)
+		return
+	}
+	a.updateUI(func() {
+		ct := a.contactByID(contactID)
+		if ct == nil {
+			return
+		}
+		issue := ct.issueByID(issueID)
+		if issue == nil || issue.WorkSessionID != sessionID {
+			return
+		}
+		execution := ct.executionByTask(result.TaskID)
+		if execution == nil {
+			_, execution = ct.executionByID(executionID)
+		}
+		a.acceptIssueTask(ct, issue, execution, prompt, result)
+	})
+}
+
+func (a *appModel) acceptIssueTask(ct *contact, issue *productIssue, execution *issueExecution, prompt string, result runtimeSendResult) {
+	issue.Work.historyGen++
+	issue.Work.ActiveTaskID = result.TaskID
+	issue.Work.LastTaskID = result.TaskID
+	issue.Work.SendState = sendAccepted
+	issue.Work.SendError = ""
+	if execution != nil {
+		execution.SessionID = issue.WorkSessionID
+		execution.TaskID = result.TaskID
+		execution.MessageID = result.MessageID
+		execution.Status = issueExecutionAccepted
+		execution.Detail = ""
+	}
+	issue.Work.pendingExecutionID = ""
+	if w := a.ensureWork(ct, result.TaskID, result.MessageID); w != nil {
+		w.State = workAccepted
+		w.Prompt = prompt
+	}
+	pending := issue.Work.pendingEvents
+	issue.Work.pendingEvents = nil
+	for _, event := range pending {
+		a.applyIssueEvent(ct, issue, event)
+	}
+	if err := a.persist(); err != nil {
+		if execution != nil {
+			execution.Status = issueExecutionUnknown
+			execution.Detail = "Task was accepted, but its work-session association could not be saved: " + err.Error()
+		}
+		issue.Work.SendError = "Task accepted, but its issue association could not be saved; reload before retrying."
+	}
+}
+
+func (a *appModel) failIssueSubmit(contactID, issueID string, err error, submitted bool) {
+	a.updateUI(func() {
+		ct := a.contactByID(contactID)
+		if ct == nil {
+			return
+		}
+		issue := ct.issueByID(issueID)
+		if issue == nil {
+			return
+		}
+		issue.Work.pendingEvents = nil
+		_, execution := ct.executionByID(issue.Work.pendingExecutionID)
+		issue.Work.pendingExecutionID = ""
+		switch {
+		case confirmedReject(err):
+			issue.Work.SendState = sendIdle
+			issue.Work.SendError = runtimeMessage(err)
+			if execution != nil {
+				execution.Status = issueExecutionRejected
+				execution.Detail = issue.Work.SendError
+			}
+		case submitted:
+			issue.Work.SendState = sendUnknown
+			issue.Work.SendError = "Delivery not confirmed (" + runtimeMessage(err) + "). Reload to check before sending again."
+			if execution != nil {
+				execution.Status = issueExecutionUnknown
+				execution.Detail = issue.Work.SendError
+			}
+		default:
+			issue.Work.SendState = sendIdle
+			issue.Work.SendError = runtimeMessage(err)
+			if execution != nil {
+				execution.Status = issueExecutionNotDispatched
+				execution.Detail = issue.Work.SendError
+			}
+		}
+		_ = a.persist()
+	})
 }
 
 func (a *appModel) sendRuntime(ct *contact, text string) bool {
@@ -1144,7 +1821,13 @@ func (a *appModel) failSubmit(contactID string, err error, submitted bool) {
 
 func (a *appModel) cancelSelected() {
 	ct := a.selectedContact()
-	if a.rt == nil || ct.ActiveTaskID == "" {
+	if a.rt == nil {
+		return
+	}
+	if ct.ActiveTaskID == "" {
+		if issue := ct.selectedIssue(); issue != nil && issue.Work.ActiveTaskID != "" {
+			a.cancelIssue(issue.ID)
+		}
 		return
 	}
 	contactID, sessionID, taskID := ct.ID, ct.SessionID, ct.ActiveTaskID
@@ -1161,6 +1844,65 @@ func (a *appModel) cancelSelected() {
 		status, err := a.rt.cancelTask(sessionID, taskID)
 		a.updateUI(func() { a.applyCancelResult(contactID, taskID, status, err) })
 	}()
+}
+
+func (a *appModel) cancelIssue(issueID string) bool {
+	ct := a.selectedContact()
+	if a.rt == nil {
+		return false
+	}
+	issue := ct.issueByID(issueID)
+	if issue == nil || issue.Work.ActiveTaskID == "" || issue.WorkSessionID == "" {
+		return false
+	}
+	taskID, sessionID := issue.Work.ActiveTaskID, issue.WorkSessionID
+	if w := workFor(ct, taskID); w != nil {
+		w.State = workStopping
+		w.StopRequested = true
+	}
+	if issue.Work.StopRequestedTasks == nil {
+		issue.Work.StopRequestedTasks = map[string]bool{}
+	}
+	issue.Work.StopRequestedTasks[taskID] = true
+	issue.Work.SendError = "Cancellation requested"
+	go func() {
+		status, err := a.rt.cancelTask(sessionID, taskID)
+		a.updateUI(func() { a.applyIssueCancelResult(ct.ID, issueID, taskID, status, err) })
+	}()
+	return true
+}
+
+func (a *appModel) applyIssueCancelResult(contactID, issueID, taskID, status string, err error) {
+	ct := a.contactByID(contactID)
+	if ct == nil {
+		return
+	}
+	issue := ct.issueByID(issueID)
+	if issue == nil {
+		return
+	}
+	if err != nil {
+		if issue.Work.ActiveTaskID == taskID {
+			if w := workFor(ct, taskID); w != nil && w.State == workStopping {
+				w.State = workRunning
+			}
+			issue.Work.SendError = "Cancel failed: " + runtimeMessage(err)
+		}
+		return
+	}
+	if issue.Work.ActiveTaskID != taskID {
+		return
+	}
+	switch status {
+	case "requested", "already_requested":
+		if w := workFor(ct, taskID); w != nil {
+			w.State = workStopping
+			w.StopRequested = true
+		}
+		issue.Work.SendError = "Cancelling; waiting for the runtime to stop."
+	case "not_running":
+		issue.Work.SendError = "The task already finished; waiting for its final state."
+	}
 }
 
 func (a *appModel) applyCancelResult(contactID, taskID, status string, err error) {
@@ -1210,21 +1952,31 @@ func (a *appModel) applyCancelResult(contactID, taskID, status string, err error
 
 func (a *appModel) reloadSelected() {
 	ct := a.selectedContact()
-	if ct.SessionID == "" {
-		return
-	}
 	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
 		ct.SendError = "Runtime disconnected; restart Saki to reload history."
 		return
 	}
-	a.reloadContactByID(ct.ID)
+	if ct.SessionID != "" {
+		a.reloadContactByID(ct.ID)
+	}
+	if issue := ct.selectedIssue(); issue != nil && issue.WorkSessionID != "" {
+		a.reloadIssueWorkByID(ct.ID, issue.ID)
+	}
 }
 
 func (a *appModel) profileLocked(ct *contact) bool {
 	if a.demo {
 		return false
 	}
-	return ct.SessionID != "" || ct.SendState == sendSubmitting
+	if ct.SessionID != "" || ct.SendState == sendSubmitting {
+		return true
+	}
+	for _, issue := range ct.Issues {
+		if issue.WorkSessionID != "" || issue.Work.SendState == sendSubmitting || issue.Work.ActiveTaskID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *appModel) addRuntimeContact() {

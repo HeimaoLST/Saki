@@ -32,6 +32,7 @@ type runtimeError struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
 	SessionID string `json:"session_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 func (e *runtimeError) Error() string {
@@ -48,6 +49,14 @@ type runtimeReady struct {
 	Version int    `json:"version"`
 	Type    string `json:"type"`
 	API     string `json:"api"`
+}
+
+type runtimeCapabilities struct {
+	ProtocolVersion int      `json:"protocol_version"`
+	StorageSchemas  []int    `json:"storage_schemas"`
+	Methods         []string `json:"methods"`
+	MaxActiveTasks  int      `json:"max_active_tasks"`
+	AutomaticTitles bool     `json:"automatic_titles"`
 }
 
 type runtimeMetadata struct {
@@ -99,6 +108,14 @@ type runtimeSendResult struct {
 
 type runtimeCancelResult struct {
 	Status string `json:"status"`
+}
+
+type runtimeTaskState struct {
+	SessionID       string `json:"session_id"`
+	TaskID          string `json:"task_id"`
+	Status          string `json:"status"`
+	Phase           string `json:"phase"`
+	CancelRequested bool   `json:"cancel_requested"`
 }
 
 // historyRecord is one page entry of the semantic journal reader. The record
@@ -553,6 +570,14 @@ func (c *runtimeClient) loadSession(sessionID string) (runtimeSession, error) {
 	return session, nil
 }
 
+func (c *runtimeClient) capabilities() (runtimeCapabilities, error) {
+	var result runtimeCapabilities
+	if err := c.call("runtime.capabilities", map[string]any{}, &result, runtimeControlTimeout); err != nil {
+		return runtimeCapabilities{}, err
+	}
+	return result, nil
+}
+
 func (c *runtimeClient) sessionStatus(sessionID string) (runtimeSession, error) {
 	var session runtimeSession
 	if err := c.call("session.status", map[string]any{"session_id": sessionID}, &session, runtimeControlTimeout); err != nil {
@@ -591,6 +616,17 @@ func (c *runtimeClient) sendTask(sessionID, text string) (runtimeSendResult, err
 		return runtimeSendResult{}, errors.New("runtime accepted task without task_id/message_id")
 	}
 	return result, nil
+}
+
+func (c *runtimeClient) taskStatus(sessionID, taskID string) (runtimeTaskState, error) {
+	var state runtimeTaskState
+	if err := c.call("task.status", map[string]any{
+		"session_id": sessionID,
+		"task_id":    taskID,
+	}, &state, runtimeControlTimeout); err != nil {
+		return runtimeTaskState{}, err
+	}
+	return state, nil
 }
 
 func (c *runtimeClient) cancelTask(sessionID, taskID string) (string, error) {

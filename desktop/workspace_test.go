@@ -511,6 +511,12 @@ func TestWorkPanelRendersToolDetailsWithoutInference(t *testing.T) {
 	if tr.HasText("Delivered file") || tr.HasText("artifact") {
 		t.Fatal("tool output must not be inferred as a delivered file")
 	}
+	if err := tr.Click("Copy received output"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(tr.Clipboard(), "first heading") {
+		t.Fatalf("collapsed copy did not preserve raw tool output: %q", tr.Clipboard())
+	}
 	if err := tr.Click("Details"); err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +524,10 @@ func TestWorkPanelRendersToolDetailsWithoutInference(t *testing.T) {
 	if !tr.HasText("content") {
 		t.Fatalf("raw tool output not visible after Details: %v", tr.Texts())
 	}
-	if err := tr.Click("Copy"); err != nil {
+	if tr.HasText("Copy full output") {
+		t.Fatal("expanded tool details duplicated the full-output copy control")
+	}
+	if err := tr.Click("Copy received output"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(tr.Clipboard(), "first heading") {
