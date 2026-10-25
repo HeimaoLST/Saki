@@ -425,14 +425,25 @@ func (a *appModel) loadCapabilities() {
 		return
 	}
 	capabilities, err := a.rt.capabilities()
-	if err != nil {
-		return
-	}
 	a.updateUI(func() {
-		if capabilities.MaxActiveTasks > 0 {
-			a.runtimeMaxActiveTasks = capabilities.MaxActiveTasks
+		if err != nil {
+			a.runtimeCapabilitiesLoaded = false
+			a.runtimeCapabilitiesErr = "Runtime capacity is not loaded: " + runtimeMessage(err) + ". The app uses the conservative single-slot behavior until it is retried."
+			return
 		}
+		if capabilities.MaxActiveTasks < 1 {
+			a.runtimeCapabilitiesLoaded = false
+			a.runtimeCapabilitiesErr = "Runtime returned an invalid task capacity; the app uses the conservative single-slot behavior."
+			return
+		}
+		a.runtimeMaxActiveTasks = capabilities.MaxActiveTasks
+		a.runtimeCapabilitiesLoaded = true
+		a.runtimeCapabilitiesErr = ""
 	})
+}
+
+func (a *appModel) capacityKnown() bool {
+	return a.demo || a.runtimeCapabilitiesLoaded
 }
 
 func (a *appModel) maxActiveTasks() int {
@@ -1092,7 +1103,11 @@ func formatMillis(ms int64) string {
 func runtimeMessage(err error) string {
 	var runtimeErr *runtimeError
 	if errors.As(err, &runtimeErr) {
-		return runtimeErr.Code + ": " + safeDiagnostic(runtimeErr.Message)
+		message := runtimeErr.Code + ": " + safeDiagnostic(runtimeErr.Message)
+		if runtimeErr.Reason != "" {
+			message += " [" + runtimeErr.Reason + "]"
+		}
+		return message
 	}
 	return safeDiagnostic(err.Error())
 }

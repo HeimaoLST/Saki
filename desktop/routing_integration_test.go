@@ -35,7 +35,8 @@ func startRoutingHarness(t *testing.T, binary string, provider *providerFixture,
 	h := &guiHarness{app: app, pump: pump, provider: provider, root: root}
 	app.startRuntime()
 	pump.wait(func() bool {
-		return app.runtimeStatus == runtimeStateReady && app.runtimeMaxActiveTasks == maxTasks
+		return app.runtimeStatus == runtimeStateReady && app.runtimeCapabilitiesLoaded &&
+			app.runtimeMaxActiveTasks == maxTasks
 	})
 	t.Cleanup(func() {
 		server.Close()
@@ -145,6 +146,28 @@ func TestIndependentIssueWorkAndConversationCapacityTwo(t *testing.T) {
 	if provider.count() != 2 {
 		t.Fatalf("provider requests = %d, want 2", provider.count())
 	}
+	for i := 0; i < provider.count(); i++ {
+		body := provider.body(i)
+		if strings.Contains(body, "Issue A") && strings.Contains(body, "Conversation B") {
+			t.Fatalf("provider request %d mixed both session prompts: %s", i, body)
+		}
+	}
+	workPages, _, err := h.app.historyAll(workSession)
+	if err != nil {
+		t.Fatalf("work history: %v", err)
+	}
+	chatPages, _, err := h.app.historyAll(conversationSession)
+	if err != nil {
+		t.Fatalf("conversation history: %v", err)
+	}
+	workHistory := historyTexts(workPages)
+	chatHistory := historyTexts(chatPages)
+	if containsText(workHistory, "Conversation B") || !containsText(workHistory, "nagi-118 answer") {
+		t.Fatalf("actual work history leaked/corrupted: %v", workHistory)
+	}
+	if containsText(chatHistory, "Issue A") || !containsText(chatHistory, "Conversation B") {
+		t.Fatalf("actual conversation history leaked/corrupted: %v", chatHistory)
+	}
 	h.shutdown(t)
 	beforeRestart := provider.count()
 	h2 := restartGUIHarness(t, binary)
@@ -241,6 +264,23 @@ func TestIndependentExecutionCapacityOneSerializesConversation(t *testing.T) {
 		t.Fatalf("provider requests = %d, want 2", provider.count())
 	}
 	h.shutdown(t)
+}
+
+func historyTexts(records []historyRecord) []string {
+	var out []string
+	for _, record := range records {
+		if record.Record.Type != "messages" {
+			continue
+		}
+		for _, item := range record.Record.Items {
+			if item.Type == "message" {
+				if text := inputText(item.Content); text != "" {
+					out = append(out, text)
+				}
+			}
+		}
+	}
+	return out
 }
 
 func containsText(values []string, needle string) bool {
@@ -544,4 +584,100 @@ func contactMessageTextsForWork(issue *productIssue) []string {
 		out = append(out, m.Text)
 	}
 	return out
+}
+
+func TestIssueExecutionCanBeVerifiedFromRuntimeTaskStatus(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startRoutingHarness(t, binary, provider, 1)
+	var issueID, executionID string
+	h.pump.do(func() {
+		if !h.app.createIssue("Recovery issue", "Verify without retrying.") {
+			t.Fatalf("createIssue: %s", h.app.issueFormError)
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue: %s", h.app.issueFormError)
+		}
+	})
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
+	})
+	before := provider.count()
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		executionID = issue.Executions[0].ID
+		issue.Executions[0].Status = issueExecutionUnknown
+		if !h.app.reconcileIssueExecution(issueID, executionID) {
+			t.Fatal("reconcile did not start for a task with trusted IDs")
+		}
+	})
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Executions[0].Status == issueExecutionCompleted
+	})
+	if provider.count() != before {
+		t.Fatalf("verification retried the task: %d -> %d", before, provider.count())
+	}
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		issue.Executions[0].TaskID = ""
+		issue.Executions[0].Status = issueExecutionUnknown
+		if h.app.reconcileIssueExecution(issueID, executionID) {
+			t.Fatal("reconcile accepted an execution without a task ID")
+		}
+	})
+	if !strings.Contains(h.app.selectedContact().issueByID(issueID).Executions[0].Detail, "No trusted task association") {
+		t.Fatal("missing-task recovery did not remain explicitly unknown")
+	}
+	h.shutdown(t)
+}
+
+func TestIssueWorkMessageDoesNotBecomeConversationUnread(t *testing.T) {
+	ct := &contact{ID: "x", Name: "X", SessionID: "conversation-x", Loaded: true}
+	issue := &productIssue{ID: "i1", ContactID: "x", Goal: "work", WorkSessionID: "work-i1"}
+	issue.Work.SessionID = "work-i1"
+	issue.Work.ActiveTaskID = "t1"
+	ct.Issues = []*productIssue{issue}
+	other := &contact{ID: "y", Name: "Y"}
+	a := &appModel{contacts: []*contact{ct, other}, selected: 1, scrollTo: -1}
+	a.applyIssueEvent(ct, issue, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "work-i1", TaskID: "t1",
+		Event: &runtimeEvent{Type: "response_text", ItemID: "text-1", Text: "issue result"},
+	})
+	if len(ct.Messages) != 0 || ct.Unread != 0 {
+		t.Fatalf("issue message entered conversation/unread: messages=%d unread=%d", len(ct.Messages), ct.Unread)
+	}
+	if len(issue.Work.Messages) != 1 || issue.Work.Messages[0].Text != "issue result" {
+		t.Fatalf("issue work message missing: %+v", issue.Work.Messages)
+	}
+}
+
+func TestLateIssueTaskTerminalDoesNotReplaceCurrentWork(t *testing.T) {
+	ct := &contact{ID: "x", Name: "X", Loaded: true}
+	issue := &productIssue{ID: "i1", ContactID: "x", Goal: "work"}
+	issue.Work.SessionID = "work-i1"
+	issue.Work.ActiveTaskID = "t2"
+	issue.Work.LastTaskID = "t2"
+	issue.Work.SendState = sendAccepted
+	issue.Executions = []*issueExecution{
+		{ID: "e1", SessionID: "work-i1", TaskID: "t1", Status: issueExecutionCompleted},
+		{ID: "e2", SessionID: "work-i1", TaskID: "t2", Status: issueExecutionRunning},
+	}
+	ct.Issues = []*productIssue{issue}
+	ct.Works = []*workItem{{TaskID: "t1", State: workCompleted}, {TaskID: "t2", State: workRunning}}
+	a := &appModel{contacts: []*contact{ct}, selected: 0, scrollTo: -1}
+	a.applyIssueEvent(ct, issue, runtimeEventEnvelope{
+		Version: 1, Type: "event", SessionID: "work-i1", TaskID: "t1",
+		Event: &runtimeEvent{Type: "task_finished", Status: "failed"},
+	})
+	if issue.Work.ActiveTaskID != "t2" || issue.Work.SendState == sendIdle {
+		t.Fatalf("late terminal replaced current issue work: %+v", issue.Work)
+	}
+	if issue.Executions[0].Status != issueExecutionCompleted || issue.Executions[1].Status != issueExecutionRunning {
+		t.Fatalf("late terminal rewrote executions: %+v", issue.Executions)
+	}
 }

@@ -463,3 +463,36 @@ func TestStoreV2IssuesRemainReadableAndGainWorkSession(t *testing.T) {
 		t.Fatalf("v3 work session or old execution changed: %+v", restored)
 	}
 }
+
+func TestProfileLockObservesIssueWorkTarget(t *testing.T) {
+	ct := &contact{ID: "x", Name: "X", Loaded: true}
+	a := &appModel{demo: false, contacts: []*contact{ct}, runtimeStatus: runtimeStateReady, rt: &runtimeClient{}}
+	if a.profileLocked(ct) {
+		t.Fatal("unbound contact with no issue work was locked")
+	}
+	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "work", WorkSessionID: "work-session"}
+	issue.Work.SessionID = "work-session"
+	ct.Issues = []*productIssue{issue}
+	if !a.profileLocked(ct) {
+		t.Fatal("issue work session did not lock the contact profile")
+	}
+}
+
+func TestRuntimeExitMarksAllActiveIssueWorkUnknown(t *testing.T) {
+	ct := &contact{ID: "x", Name: "X", SessionID: "chat-x", Loaded: true, SendState: sendIdle}
+	issue := &productIssue{ID: "i1", ContactID: "x", Goal: "work"}
+	issue.Work.SessionID = "work-i1"
+	issue.Work.ActiveTaskID = "t1"
+	issue.Work.SendState = sendAccepted
+	issue.Executions = []*issueExecution{{ID: "e1", SessionID: "work-i1", TaskID: "t1", Status: issueExecutionRunning}}
+	ct.Issues = []*productIssue{issue}
+	ct.Works = []*workItem{{TaskID: "t1", State: workRunning}}
+	a := &appModel{contacts: []*contact{ct}}
+	a.clearActiveTasksAfterExit()
+	if issue.Work.ActiveTaskID != "" || issue.Work.SendState != sendUnknown || issue.Executions[0].Status != issueExecutionUnknown {
+		t.Fatalf("issue work survived exit as active: work=%+v exec=%+v", issue.Work, issue.Executions[0])
+	}
+	if ct.ActiveTaskID != "" || ct.SendState != sendIdle {
+		t.Fatalf("conversation without active task was rewritten: %+v", ct)
+	}
+}

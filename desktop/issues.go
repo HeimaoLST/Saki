@@ -428,3 +428,79 @@ func issueRunBlocked(issue *productIssue) string {
 	}
 	return ""
 }
+
+// reconcileIssueExecution is the explicit recovery action for an execution
+// whose local terminal state is unknown. It only trusts the Runtime task
+// association (session_id + task_id); it never guesses a task from prompt text
+// and never dispatches a replacement task.
+func (a *appModel) reconcileIssueExecution(issueID, executionID string) bool {
+	ct := a.selectedContact()
+	issue := ct.issueByID(issueID)
+	_, execution := ct.executionByID(executionID)
+	if issue == nil || execution == nil {
+		return false
+	}
+	if execution.SessionID == "" || execution.TaskID == "" {
+		execution.Detail = "No trusted task association is recorded; inspect the issue work history or confirm that this execution was not dispatched. No automatic retry."
+		return false
+	}
+	sessionID, taskID := execution.SessionID, execution.TaskID
+	go a.checkIssueExecution(ct.ID, issue.ID, execution.ID, sessionID, taskID)
+	return true
+}
+
+func (a *appModel) checkIssueExecution(contactID, issueID, executionID, sessionID, taskID string) {
+	state, err := a.rt.taskStatus(sessionID, taskID)
+	a.updateUI(func() {
+		ct := a.contactByID(contactID)
+		if ct == nil {
+			return
+		}
+		issue := ct.issueByID(issueID)
+		if issue == nil {
+			return
+		}
+		_, execution := ct.executionByID(executionID)
+		if execution == nil || execution.SessionID != sessionID || execution.TaskID != taskID {
+			return
+		}
+		if err != nil {
+			execution.Detail = "Could not verify this execution with Runtime: " + runtimeMessage(err) + ". No automatic retry."
+			return
+		}
+		switch state.Status {
+		case "completed", "failed", "interrupted":
+			execution.Status = state.Status
+			execution.Detail = ""
+			issue.Work.SendState = sendIdle
+			issue.Work.SendError = ""
+			if issue.Work.ActiveTaskID == taskID {
+				issue.Work.ActiveTaskID = ""
+			}
+			if w := workFor(ct, taskID); w != nil {
+				w.State = workStateFromTask(state.Status)
+				w.Detail = ""
+			}
+			_ = a.persist()
+			a.reloadIssueWorkByID(contactID, issueID)
+		case "accepted", "running":
+			execution.Status = state.Status
+			execution.Detail = ""
+			issue.Work.ActiveTaskID = taskID
+			issue.Work.LastTaskID = taskID
+			issue.Work.SendState = sendAccepted
+			issue.Work.SendError = ""
+			if w := a.ensureWork(ct, taskID, execution.MessageID); w != nil {
+				if state.Status == "running" {
+					w.State = workRunning
+				} else {
+					w.State = workAccepted
+				}
+			}
+		default:
+			execution.Status = issueExecutionUnknown
+			execution.Detail = "Runtime reports no trusted terminal state for this task; inspect the work record or confirm not dispatched. No automatic retry."
+		}
+		_ = a.persist()
+	})
+}

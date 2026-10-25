@@ -110,6 +110,14 @@ type runtimeCancelResult struct {
 	Status string `json:"status"`
 }
 
+type runtimeTaskState struct {
+	SessionID       string `json:"session_id"`
+	TaskID          string `json:"task_id"`
+	Status          string `json:"status"`
+	Phase           string `json:"phase"`
+	CancelRequested bool   `json:"cancel_requested"`
+}
+
 // historyRecord is one page entry of the semantic journal reader. The record
 // keeps InputItem shapes; it is not the live OutputItem/id structure.
 type historyRecord struct {
@@ -608,6 +616,17 @@ func (c *runtimeClient) sendTask(sessionID, text string) (runtimeSendResult, err
 		return runtimeSendResult{}, errors.New("runtime accepted task without task_id/message_id")
 	}
 	return result, nil
+}
+
+func (c *runtimeClient) taskStatus(sessionID, taskID string) (runtimeTaskState, error) {
+	var state runtimeTaskState
+	if err := c.call("task.status", map[string]any{
+		"session_id": sessionID,
+		"task_id":    taskID,
+	}, &state, runtimeControlTimeout); err != nil {
+		return runtimeTaskState{}, err
+	}
+	return state, nil
 }
 
 func (c *runtimeClient) cancelTask(sessionID, taskID string) (string, error) {

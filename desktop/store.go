@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+// v3 adds issue.work_session_id. v1/v2 remain readable here; older apps
+// reject v3, so they cannot load and silently save over the new field.
 const contactStoreVersion = 3
 
 type storedContact struct {
