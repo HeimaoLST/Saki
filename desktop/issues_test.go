@@ -416,3 +416,50 @@ func TestIssueFormCannotLeakIntoNewContact(t *testing.T) {
 		t.Fatalf("add contact leaked issue form: contacts=%d error=%q", len(a.contacts), a.issueFormError)
 	}
 }
+
+func TestStoreV2IssuesRemainReadableAndGainWorkSession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "contacts.json")
+	legacy := storedState{
+		Version: 2, Selected: "c1",
+		Contacts: []storedContact{{ID: "c1", Name: "Saki", SessionID: "conversation-old"}},
+		Issues: []storedIssue{{
+			ID: "i1", ContactID: "c1", Goal: "legacy issue", Status: issueStatusOpen,
+			Executions: []storedIssueExecution{{ID: "e1", SessionID: "conversation-old", TaskID: "t1", Status: issueExecutionCompleted}},
+		}},
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := openContactStore(path, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	issues := issuesForStoredContact(store.state.Issues, "c1")
+	if len(issues) != 1 || issues[0].WorkSessionID != "" || issues[0].Work.SessionID != "" {
+		t.Fatalf("v2 issue gained an invented work session: %+v", issues)
+	}
+	if issues[0].Executions[0].SessionID != "conversation-old" || issues[0].Executions[0].TaskID != "t1" {
+		t.Fatalf("v2 execution was rewritten: %+v", issues[0].Executions[0])
+	}
+	ct := &contact{ID: "c1", Name: "Saki", SessionID: "conversation-old", Issues: issues}
+	issues[0].WorkSessionID = "work-new"
+	issues[0].Work.SessionID = "work-new"
+	if err := store.save([]*contact{ct}, "c1"); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := openContactStore(path, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.state.Version != contactStoreVersion {
+		t.Fatalf("saved store version = %d", reloaded.state.Version)
+	}
+	restored := issuesForStoredContact(reloaded.state.Issues, "c1")[0]
+	if restored.WorkSessionID != "work-new" || restored.Executions[0].SessionID != "conversation-old" {
+		t.Fatalf("v3 work session or old execution changed: %+v", restored)
+	}
+}

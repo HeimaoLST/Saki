@@ -20,6 +20,32 @@ type productIssue struct {
 	CreatedAt    int64
 	UpdatedAt    int64
 	Executions   []*issueExecution
+
+	// WorkSessionID is the issue-owned execution context. It is intentionally
+	// separate from contact.SessionID (the ongoing conversation). Old
+	// executions keep their actual SessionID and are never migrated in place.
+	WorkSessionID string
+	Work          issueWorkSession
+}
+
+// issueWorkSession is the in-memory runtime projection for one issue's
+// execution context. Only WorkSessionID is persisted; messages, work items
+// and task state are restored from the Runtime by session_id.
+type issueWorkSession struct {
+	SessionID          string
+	Loaded             bool
+	LoadErr            string
+	ActiveTaskID       string
+	LastTaskID         string
+	SendState          sendState
+	SendError          string
+	SessionState       string
+	Messages           []*message
+	UnlinkedTools      []*workTool
+	StopRequestedTasks map[string]bool
+	pendingEvents      []runtimeEventEnvelope
+	pendingExecutionID string
+	historyGen         int
 }
 
 // issueExecution is the persisted association for one attempt on an issue.
@@ -235,7 +261,9 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 			ID: stored.ID, ContactID: contactID, Goal: stored.Goal,
 			Requirements: stored.Requirements, Status: stored.Status,
 			Evidence: stored.Evidence, CreatedAt: stored.CreatedAt, UpdatedAt: stored.UpdatedAt,
+			WorkSessionID: stored.WorkSessionID,
 		}
+		issue.Work.SessionID = stored.WorkSessionID
 		if issue.Status == "" {
 			issue.Status = issueStatusOpen
 		}
