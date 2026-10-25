@@ -399,9 +399,21 @@ func (a *appModel) beginShutdown() {
 	}()
 }
 
+func (a *appModel) setUIHook(hook func(func())) {
+	a.uiHookMu.Lock()
+	a.uiHook = hook
+	a.uiHookMu.Unlock()
+}
+
+func (a *appModel) getUIHook() func(func()) {
+	a.uiHookMu.Lock()
+	defer a.uiHookMu.Unlock()
+	return a.uiHook
+}
+
 func (a *appModel) updateUI(fn func()) {
-	if a.uiHook != nil {
-		a.uiHook(fn)
+	if hook := a.getUIHook(); hook != nil {
+		hook(fn)
 		return
 	}
 	if a.win != nil {
@@ -471,7 +483,7 @@ func (a *appModel) activeTaskCount() int {
 			count++
 		}
 		for _, issue := range ct.Issues {
-			if issue.WorkSessionID != "" || issue.Work.SessionID != "" || sessionBusy(issue.Work.SendState, issue.Work.ActiveTaskID) {
+			if issue.WorkSessionID != "" || sessionBusy(issue.Work.SendState, issue.Work.ActiveTaskID) {
 				if sessionBusy(issue.Work.SendState, issue.Work.ActiveTaskID) {
 					count++
 				}
@@ -496,10 +508,10 @@ func (a *appModel) activeWorkTaskCount() int {
 func (a *appModel) restoreIssueWorks() {
 	for _, ct := range a.contacts {
 		for _, issue := range ct.Issues {
-			if issue.Work.SessionID == "" {
+			if issue.WorkSessionID == "" {
 				continue
 			}
-			contactID, issueID, sessionID := ct.ID, issue.ID, issue.Work.SessionID
+			contactID, issueID, sessionID := ct.ID, issue.ID, issue.WorkSessionID
 			issue.Work.Loaded = false
 			go a.restoreIssueWork(contactID, issueID, sessionID)
 		}
@@ -587,7 +599,7 @@ func (a *appModel) restoreIssueWork(contactID, issueID, sessionID string) {
 				return
 			}
 			issue := ct.issueByID(issueID)
-			if issue == nil || issue.Work.SessionID != sessionID {
+			if issue == nil || issue.WorkSessionID != sessionID {
 				return
 			}
 			issue.Work.Loaded = false
@@ -603,7 +615,7 @@ func (a *appModel) restoreIssueWork(contactID, issueID, sessionID string) {
 			return
 		}
 		issue := ct.issueByID(issueID)
-		if issue == nil || issue.Work.SessionID != sessionID {
+		if issue == nil || issue.WorkSessionID != sessionID {
 			return
 		}
 		issue.Work.Loaded = err == nil
@@ -642,12 +654,12 @@ func (a *appModel) reloadIssueWorkByID(contactID, issueID string) {
 		return
 	}
 	issue := ct.issueByID(issueID)
-	if issue == nil || issue.Work.SessionID == "" {
+	if issue == nil || issue.WorkSessionID == "" {
 		return
 	}
 	issue.Work.historyGen++
 	gen := issue.Work.historyGen
-	sessionID := issue.Work.SessionID
+	sessionID := issue.WorkSessionID
 	go a.reloadIssueWork(contactID, issueID, sessionID, gen)
 }
 
@@ -660,7 +672,7 @@ func (a *appModel) reloadIssueWork(contactID, issueID, sessionID string, gen int
 				return
 			}
 			issue := ct.issueByID(issueID)
-			if issue == nil || issue.Work.SessionID != sessionID || issue.Work.historyGen != gen {
+			if issue == nil || issue.WorkSessionID != sessionID || issue.Work.historyGen != gen {
 				return
 			}
 			issue.Work.LoadErr = runtimeMessage(err)
@@ -675,7 +687,7 @@ func (a *appModel) reloadIssueWork(contactID, issueID, sessionID string, gen int
 			return
 		}
 		issue := ct.issueByID(issueID)
-		if issue == nil || issue.Work.SessionID != sessionID || issue.Work.historyGen != gen {
+		if issue == nil || issue.WorkSessionID != sessionID || issue.Work.historyGen != gen {
 			return
 		}
 		if err != nil {
@@ -1016,7 +1028,7 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 }
 
 func (a *appModel) applyIssueWorkHistory(ct *contact, issue *productIssue, records []historyRecord, status string) {
-	sessionID := issue.Work.SessionID
+	sessionID := issue.WorkSessionID
 	projection := parseHistory(sessionID, records, issue.Work.StopRequestedTasks)
 	issue.Work.Messages = projection.messages
 	issue.Work.UnlinkedTools = projection.unlinked
@@ -1123,7 +1135,7 @@ func (a *appModel) routeSession(sessionID string) (*contact, *productIssue, bool
 			return ct, nil, false
 		}
 		for _, issue := range ct.Issues {
-			if issue.Work.SessionID == sessionID || issue.WorkSessionID == sessionID {
+			if issue.WorkSessionID == sessionID {
 				return ct, issue, true
 			}
 		}
@@ -1512,7 +1524,7 @@ func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *i
 	// look up the contact/issue or read mutable profile/session fields later.
 	workspace := ct.Workspace
 	system := profileSystemPrompt(ct)
-	sessionID := issue.Work.SessionID
+	sessionID := issue.WorkSessionID
 	go a.submitIssueTask(ct.ID, issue.ID, execution.ID, sessionID, workspace, system, prompt)
 	return true
 }
@@ -1537,11 +1549,10 @@ func (a *appModel) submitIssueTask(contactID, issueID, executionID, sessionID, w
 				saved <- errors.New("issue disappeared before saving its work session")
 				return
 			}
-			if issue.Work.SessionID != "" && issue.Work.SessionID != sessionID {
+			if issue.WorkSessionID != "" && issue.WorkSessionID != sessionID {
 				saved <- errors.New("issue work session changed before it was saved")
 				return
 			}
-			issue.Work.SessionID = sessionID
 			issue.WorkSessionID = sessionID
 			issue.Work.Loaded = true
 			issue.Work.SessionState = session.State
@@ -1566,7 +1577,7 @@ func (a *appModel) submitIssueTask(contactID, issueID, executionID, sessionID, w
 			return
 		}
 		issue := ct.issueByID(issueID)
-		if issue == nil || issue.Work.SessionID != sessionID {
+		if issue == nil || issue.WorkSessionID != sessionID {
 			return
 		}
 		execution := ct.executionByTask(result.TaskID)
@@ -1584,7 +1595,7 @@ func (a *appModel) acceptIssueTask(ct *contact, issue *productIssue, execution *
 	issue.Work.SendState = sendAccepted
 	issue.Work.SendError = ""
 	if execution != nil {
-		execution.SessionID = issue.Work.SessionID
+		execution.SessionID = issue.WorkSessionID
 		execution.TaskID = result.TaskID
 		execution.MessageID = result.MessageID
 		execution.Status = issueExecutionAccepted
@@ -1833,10 +1844,10 @@ func (a *appModel) cancelIssue(issueID string) bool {
 		return false
 	}
 	issue := ct.issueByID(issueID)
-	if issue == nil || issue.Work.ActiveTaskID == "" || issue.Work.SessionID == "" {
+	if issue == nil || issue.Work.ActiveTaskID == "" || issue.WorkSessionID == "" {
 		return false
 	}
-	taskID, sessionID := issue.Work.ActiveTaskID, issue.Work.SessionID
+	taskID, sessionID := issue.Work.ActiveTaskID, issue.WorkSessionID
 	if w := workFor(ct, taskID); w != nil {
 		w.State = workStopping
 		w.StopRequested = true
@@ -1940,7 +1951,7 @@ func (a *appModel) reloadSelected() {
 	if ct.SessionID != "" {
 		a.reloadContactByID(ct.ID)
 	}
-	if issue := ct.selectedIssue(); issue != nil && issue.Work.SessionID != "" {
+	if issue := ct.selectedIssue(); issue != nil && issue.WorkSessionID != "" {
 		a.reloadIssueWorkByID(ct.ID, issue.ID)
 	}
 }
@@ -1953,7 +1964,7 @@ func (a *appModel) profileLocked(ct *contact) bool {
 		return true
 	}
 	for _, issue := range ct.Issues {
-		if issue.Work.SessionID != "" || issue.Work.SendState == sendSubmitting || issue.Work.ActiveTaskID != "" {
+		if issue.WorkSessionID != "" || issue.Work.SendState == sendSubmitting || issue.Work.ActiveTaskID != "" {
 			return true
 		}
 	}

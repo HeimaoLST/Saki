@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -167,6 +168,7 @@ type appModel struct {
 	workDir                   string
 	sessionDir                string
 	storePath                 string
+	uiHookMu                  sync.Mutex
 	uiHook                    func(func()) // test seam for deterministic UI-thread ordering
 	requestQuit               func()       // set by main to mygo.App.Quit
 	quitReady                 bool

@@ -439,7 +439,7 @@ func TestStoreV2IssuesRemainReadableAndGainWorkSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	issues := issuesForStoredContact(store.state.Issues, "c1")
-	if len(issues) != 1 || issues[0].WorkSessionID != "" || issues[0].Work.SessionID != "" {
+	if len(issues) != 1 || issues[0].WorkSessionID != "" {
 		t.Fatalf("v2 issue gained an invented work session: %+v", issues)
 	}
 	if issues[0].Executions[0].SessionID != "conversation-old" || issues[0].Executions[0].TaskID != "t1" {
@@ -447,7 +447,7 @@ func TestStoreV2IssuesRemainReadableAndGainWorkSession(t *testing.T) {
 	}
 	ct := &contact{ID: "c1", Name: "Saki", SessionID: "conversation-old", Issues: issues}
 	issues[0].WorkSessionID = "work-new"
-	issues[0].Work.SessionID = "work-new"
+	issues[0].WorkSessionID = "work-new"
 	if err := store.save([]*contact{ct}, "c1"); err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +471,7 @@ func TestProfileLockObservesIssueWorkTarget(t *testing.T) {
 		t.Fatal("unbound contact with no issue work was locked")
 	}
 	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "work", WorkSessionID: "work-session"}
-	issue.Work.SessionID = "work-session"
+	issue.WorkSessionID = "work-session"
 	ct.Issues = []*productIssue{issue}
 	if !a.profileLocked(ct) {
 		t.Fatal("issue work session did not lock the contact profile")
@@ -481,7 +481,7 @@ func TestProfileLockObservesIssueWorkTarget(t *testing.T) {
 func TestRuntimeExitMarksAllActiveIssueWorkUnknown(t *testing.T) {
 	ct := &contact{ID: "x", Name: "X", SessionID: "chat-x", Loaded: true, SendState: sendIdle}
 	issue := &productIssue{ID: "i1", ContactID: "x", Goal: "work"}
-	issue.Work.SessionID = "work-i1"
+	issue.WorkSessionID = "work-i1"
 	issue.Work.ActiveTaskID = "t1"
 	issue.Work.SendState = sendAccepted
 	issue.Executions = []*issueExecution{{ID: "e1", SessionID: "work-i1", TaskID: "t1", Status: issueExecutionRunning}}
@@ -513,5 +513,53 @@ func TestUnknownIssueExecutionCanBeConfirmedNotDispatched(t *testing.T) {
 	}
 	if issueRunBlocked(issue) != "" {
 		t.Fatal("confirmed not-dispatched execution still blocks explicit retry")
+	}
+}
+
+func TestIssueRecoveryRejectsAnotherIssuesExecution(t *testing.T) {
+	ct := &contact{ID: "c1", Name: "Saki"}
+	issueA := &productIssue{ID: "iA", ContactID: "c1", Goal: "A"}
+	execA := &issueExecution{ID: "eA", SessionID: "work-A", TaskID: "tA", Status: issueExecutionCompleted}
+	issueA.Executions = []*issueExecution{execA}
+	issueB := &productIssue{ID: "iB", ContactID: "c1", Goal: "B"}
+	execB := &issueExecution{ID: "eB", SessionID: "work-B", Prompt: "B", Status: issueExecutionUnknown}
+	issueB.Executions = []*issueExecution{execB}
+	ct.Issues = []*productIssue{issueA, issueB}
+	ct.SelectedIssueID = issueB.ID
+	a := &appModel{contacts: []*contact{ct}, selected: 0}
+	if a.reconcileIssueExecution(issueB.ID, execA.ID) {
+		t.Fatal("reconcile accepted another issue's execution")
+	}
+	if a.confirmIssueExecutionNotDispatched(issueB.ID, execA.ID) {
+		t.Fatal("confirm accepted another issue's execution")
+	}
+	if execA.Status != issueExecutionCompleted || execB.Status != issueExecutionUnknown {
+		t.Fatalf("wrong-owner recovery changed executions: A=%+v B=%+v", execA, execB)
+	}
+	issueB.Work.ActiveTaskID = "tB"
+	if a.confirmIssueExecutionNotDispatched(issueB.ID, execB.ID) {
+		t.Fatal("confirm marked not dispatched while work was active")
+	}
+}
+
+func TestIssueWorkNoticeSurfacesFailureWithoutChatUnread(t *testing.T) {
+	ct := &contact{ID: "x", Name: "X", Loaded: true, Unread: 3}
+	issue := &productIssue{ID: "i1", ContactID: "x", Goal: "build login"}
+	issue.Work.ActiveTaskID = ""
+	issue.Executions = []*issueExecution{{ID: "e1", Status: issueExecutionFailed, Detail: "provider failed"}}
+	ct.Issues = []*productIssue{issue}
+	a := &appModel{contacts: []*contact{ct}, selected: 0}
+	notice := a.issueWorkNotice(ct)
+	if !notice.Attention || notice.IssueID != issue.ID || !strings.Contains(notice.Text, "build login") ||
+		!strings.Contains(notice.Text, "provider failed") {
+		t.Fatalf("issue work notice = %+v", notice)
+	}
+	if ct.Unread != 3 || ct.ActiveTaskID != "" {
+		t.Fatalf("notice changed unread/active conversation: unread=%d active=%q", ct.Unread, ct.ActiveTaskID)
+	}
+	issue.Executions[0].Status = issueExecutionRunning
+	notice = a.issueWorkNotice(ct)
+	if notice.Text != "" {
+		t.Fatalf("running execution without active task produced a false notice: %+v", notice)
 	}
 }

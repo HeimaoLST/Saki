@@ -275,7 +275,7 @@ type uiPump struct {
 
 func newUIPump(t *testing.T, app *appModel) *uiPump {
 	p := &uiPump{t: t, q: make(chan func(), 256), done: make(chan struct{})}
-	app.uiHook = func(fn func()) { p.q <- fn }
+	app.setUIHook(func(fn func()) { p.q <- fn })
 	go p.run()
 	return p
 }
@@ -856,11 +856,11 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 		if ct.Draft != prompt {
 			t.Fatalf("issue run consumed a composer draft equal to its prompt: %q", ct.Draft)
 		}
-		if issue.Work.SessionID == "" || issue.Work.SessionID == ct.SessionID {
-			t.Fatalf("issue work session was not independent: work=%q conversation=%q", issue.Work.SessionID, ct.SessionID)
+		if issue.WorkSessionID == "" || issue.WorkSessionID == ct.SessionID {
+			t.Fatalf("issue work session was not independent: work=%q conversation=%q", issue.WorkSessionID, ct.SessionID)
 		}
-		if issue.Executions[0].SessionID != issue.Work.SessionID || issue.Executions[1].SessionID != issue.Work.SessionID {
-			t.Fatalf("execution session mapping = %+v / work=%q", issue.Executions, issue.Work.SessionID)
+		if issue.Executions[0].SessionID != issue.WorkSessionID || issue.Executions[1].SessionID != issue.WorkSessionID {
+			t.Fatalf("execution session mapping = %+v / work=%q", issue.Executions, issue.WorkSessionID)
 		}
 	})
 	if provider.count() != 2 {
@@ -1137,8 +1137,10 @@ func TestGUIAppPersistsMappingBeforeSend(t *testing.T) {
 	}()
 
 	manual := make(chan func(), 8)
+	var pumpHook func(func())
 	h.pump.do(func() {
-		h.app.uiHook = func(fn func()) { manual <- fn }
+		pumpHook = h.app.getUIHook()
+		h.app.setUIHook(func(fn func()) { manual <- fn })
 		ct := h.app.contacts[0]
 		ct.Draft = "mapping ordering"
 		h.app.sendCurrent()
@@ -1152,9 +1154,8 @@ func TestGUIAppPersistsMappingBeforeSend(t *testing.T) {
 	if got := provider.count(); got != 0 {
 		t.Fatalf("task reached provider before mapping persisted: %d", got)
 	}
-	h.pump.close()
-	h.pump = newUIPump(t, h.app)
-	mapping() // set SessionID + persist, then unblock the worker
+	h.pump.do(func() { h.app.setUIHook(pumpHook) })
+	h.pump.do(mapping) // set SessionID + persist, then unblock the worker
 	h.pump.wait(func() bool {
 		ct := h.app.contacts[0]
 		return ct.LastTaskID != "" && ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty
@@ -1191,8 +1192,10 @@ func TestGUIAppSaveFailureStopsBeforeSend(t *testing.T) {
 	}()
 
 	manual := make(chan func(), 8)
+	var pumpHook func(func())
 	h.pump.do(func() {
-		h.app.uiHook = func(fn func()) { manual <- fn }
+		pumpHook = h.app.getUIHook()
+		h.app.setUIHook(func(fn func()) { manual <- fn })
 		ct := h.app.contacts[0]
 		ct.Draft = "keep draft"
 		h.app.sendCurrent()
@@ -1211,9 +1214,8 @@ func TestGUIAppSaveFailureStopsBeforeSend(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.app.store.path = filepath.Join(badParent, "contacts.json")
-	h.pump.close()
-	h.pump = newUIPump(t, h.app)
-	mapping()
+	h.pump.do(func() { h.app.setUIHook(pumpHook) })
+	h.pump.do(mapping)
 	h.pump.wait(func() bool {
 		ct := h.app.contacts[0]
 		return ct.SendState == sendIdle && strings.Contains(ct.SendError, "save")
@@ -1263,7 +1265,7 @@ func TestGUIAppRejectedComposerSendKeepsInFlightIssueAssociation(t *testing.T) {
 		ct := h.app.selectedContact()
 		issueID = ct.SelectedIssueID
 		ct.Draft = "ordinary composer attempt"
-		h.app.uiHook = func(fn func()) { manual <- fn }
+		h.app.setUIHook(func(fn func()) { manual <- fn })
 		if !h.app.runIssue(issueID) {
 			t.Fatalf("runIssue failed: %s", h.app.issueFormError)
 		}
@@ -1293,7 +1295,7 @@ func TestGUIAppRejectedComposerSendKeepsInFlightIssueAssociation(t *testing.T) {
 		t.Fatalf("rejected normal send consumed in-flight association: pending=%q want=%q", pending, executionID)
 	}
 	h.pump.do(func() {
-		h.app.uiHook = func(fn func()) { h.pump.q <- fn }
+		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
 		mapping()
 	})
 	h.pump.wait(func() bool {

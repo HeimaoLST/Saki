@@ -264,7 +264,7 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 			Evidence: stored.Evidence, CreatedAt: stored.CreatedAt, UpdatedAt: stored.UpdatedAt,
 			WorkSessionID: stored.WorkSessionID,
 		}
-		issue.Work.SessionID = stored.WorkSessionID
+		issue.WorkSessionID = stored.WorkSessionID
 		if issue.Status == "" {
 			issue.Status = issueStatusOpen
 		}
@@ -436,8 +436,8 @@ func issueRunBlocked(issue *productIssue) string {
 func (a *appModel) reconcileIssueExecution(issueID, executionID string) bool {
 	ct := a.selectedContact()
 	issue := ct.issueByID(issueID)
-	_, execution := ct.executionByID(executionID)
-	if issue == nil || execution == nil {
+	owner, execution := ct.executionByID(executionID)
+	if issue == nil || execution == nil || owner != issue {
 		return false
 	}
 	if execution.SessionID == "" || execution.TaskID == "" {
@@ -460,8 +460,8 @@ func (a *appModel) checkIssueExecution(contactID, issueID, executionID, sessionI
 		if issue == nil {
 			return
 		}
-		_, execution := ct.executionByID(executionID)
-		if execution == nil || execution.SessionID != sessionID || execution.TaskID != taskID {
+		owner, execution := ct.executionByID(executionID)
+		if owner != issue || execution == nil || execution.SessionID != sessionID || execution.TaskID != taskID {
 			return
 		}
 		if err != nil {
@@ -472,10 +472,10 @@ func (a *appModel) checkIssueExecution(contactID, issueID, executionID, sessionI
 		case "completed", "failed", "interrupted":
 			execution.Status = state.Status
 			execution.Detail = ""
-			issue.Work.SendState = sendIdle
-			issue.Work.SendError = ""
 			if issue.Work.ActiveTaskID == taskID {
 				issue.Work.ActiveTaskID = ""
+				issue.Work.SendState = sendIdle
+				issue.Work.SendError = ""
 			}
 			if w := workFor(ct, taskID); w != nil {
 				w.State = workStateFromTask(state.Status)
@@ -486,10 +486,12 @@ func (a *appModel) checkIssueExecution(contactID, issueID, executionID, sessionI
 		case "accepted", "running":
 			execution.Status = state.Status
 			execution.Detail = ""
-			issue.Work.ActiveTaskID = taskID
-			issue.Work.LastTaskID = taskID
-			issue.Work.SendState = sendAccepted
-			issue.Work.SendError = ""
+			if issue.Work.ActiveTaskID == "" || issue.Work.ActiveTaskID == taskID {
+				issue.Work.ActiveTaskID = taskID
+				issue.Work.LastTaskID = taskID
+				issue.Work.SendState = sendAccepted
+				issue.Work.SendError = ""
+			}
 			if w := a.ensureWork(ct, taskID, execution.MessageID); w != nil {
 				if state.Status == "running" {
 					w.State = workRunning
@@ -511,8 +513,11 @@ func (a *appModel) checkIssueExecution(contactID, issueID, executionID, sessionI
 func (a *appModel) confirmIssueExecutionNotDispatched(issueID, executionID string) bool {
 	ct := a.selectedContact()
 	issue := ct.issueByID(issueID)
-	_, execution := ct.executionByID(executionID)
-	if issue == nil || execution == nil || execution.TaskID != "" {
+	owner, execution := ct.executionByID(executionID)
+	if issue == nil || execution == nil || owner != issue || execution.TaskID != "" {
+		return false
+	}
+	if issue.Work.ActiveTaskID != "" || issue.Work.SendState == sendSubmitting {
 		return false
 	}
 	switch execution.Status {
@@ -527,4 +532,46 @@ func (a *appModel) confirmIssueExecutionNotDispatched(issueID, executionID strin
 	issue.Work.pendingExecutionID = ""
 	_ = a.persist()
 	return true
+}
+
+// issueWorkNotice is a model-derived, non-unread summary for issue work. It
+// keeps work visible when the workspace is hidden and keeps attention states
+// discoverable even when the work produced no chat message. It never changes
+// contact.ActiveTaskID or conversation status.
+type issueWorkNotice struct {
+	Text      string
+	Attention bool
+	IssueID   string
+}
+
+func (a *appModel) issueWorkNotice(ct *contact) issueWorkNotice {
+	attention := issueWorkNotice{}
+	for _, issue := range ct.Issues {
+		if issue.Work.ActiveTaskID != "" || issue.Work.SendState == sendSubmitting ||
+			issue.Work.SendState == sendAccepted || issue.Work.SendState == sendUnknown {
+			text := "Issue work active: " + issue.Goal
+			attention := issue.Work.SendError != "" || issue.Work.SendState == sendUnknown
+			if attention {
+				text = "Issue work needs attention: " + issue.Goal
+			}
+			if issue.Work.SendError != "" {
+				text += " — " + truncate(issue.Work.SendError, 180)
+			}
+			return issueWorkNotice{Text: text, Attention: attention, IssueID: issue.ID}
+		}
+		for index := len(issue.Executions) - 1; index >= 0; index-- {
+			execution := issue.Executions[index]
+			switch execution.Status {
+			case issueExecutionFailed, issueExecutionUnknown, issueExecutionInterrupted:
+				text := "Issue work needs attention: " + issue.Goal
+				if execution.Detail != "" {
+					text += " — " + truncate(execution.Detail, 180)
+				}
+				if attention.Text == "" {
+					attention = issueWorkNotice{Text: text, Attention: true, IssueID: issue.ID}
+				}
+			}
+		}
+	}
+	return attention
 }

@@ -189,7 +189,7 @@ func TestIndependentIssueWorkAndConversationCapacityTwo(t *testing.T) {
 	h.snapshot(func() {
 		ct := h.app.selectedContact()
 		issue := ct.issueByID(issueID)
-		conversationSession, workSession = ct.SessionID, issue.Work.SessionID
+		conversationSession, workSession = ct.SessionID, issue.WorkSessionID
 		for _, m := range ct.Messages {
 			chatMessages = append(chatMessages, m.Text)
 		}
@@ -274,8 +274,8 @@ func TestIndependentIssueWorkAndConversationCapacityTwo(t *testing.T) {
 	h2.snapshot(func() {
 		ct := h2.app.contacts[0]
 		issue := ct.Issues[0]
-		if issue.Work.SessionID == "" || issue.Work.SessionID == ct.SessionID {
-			t.Fatalf("restart lost independent sessions: conversation=%q work=%q", ct.SessionID, issue.Work.SessionID)
+		if issue.WorkSessionID == "" || issue.WorkSessionID == ct.SessionID {
+			t.Fatalf("restart lost independent sessions: conversation=%q work=%q", ct.SessionID, issue.WorkSessionID)
 		}
 		var chat, work []string
 		for _, m := range ct.Messages {
@@ -427,7 +427,7 @@ func TestStoppingIssueWorkDoesNotStopConversation(t *testing.T) {
 		return ct.ActiveTaskID != "" && issue != nil && issue.Work.ActiveTaskID != ""
 	})
 	var workSession string
-	h.pump.do(func() { workSession = h.app.selectedContact().issueByID(issueID).Work.SessionID })
+	h.pump.do(func() { workSession = h.app.selectedContact().issueByID(issueID).WorkSessionID })
 	if status, err := h.app.rt.cancelTask(workSession, "wrong-task-id"); err != nil || status != "not_running" {
 		t.Fatalf("wrong task cancel = %q / %v", status, err)
 	}
@@ -561,7 +561,7 @@ func TestIssueWorkSessionUsesProfileSnapshotAtAdmission(t *testing.T) {
 			t.Fatalf("createIssue: %s", h.app.issueFormError)
 		}
 		issueID = ct.SelectedIssueID
-		h.app.uiHook = func(fn func()) { manual <- fn }
+		h.app.setUIHook(func(fn func()) { manual <- fn })
 		if !h.app.runIssue(issueID) {
 			t.Fatalf("runIssue: %s", h.app.issueFormError)
 		}
@@ -582,7 +582,7 @@ func TestIssueWorkSessionUsesProfileSnapshotAtAdmission(t *testing.T) {
 		otherIssueID = ct.SelectedIssueID
 	})
 	h.pump.do(func() {
-		h.app.uiHook = func(fn func()) { h.pump.q <- fn }
+		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
 		mapping()
 	})
 	h.pump.wait(func() bool {
@@ -604,7 +604,7 @@ func TestIssueWorkSessionUsesProfileSnapshotAtAdmission(t *testing.T) {
 	if issue == nil || other == nil {
 		t.Fatalf("issues after snapshot test: first=%+v other=%+v", issue, other)
 	}
-	if other.Work.SessionID != "" || len(other.Executions) != 0 {
+	if other.WorkSessionID != "" || len(other.Executions) != 0 {
 		t.Fatalf("adding another issue changed its work target: %+v", other)
 	}
 	h.shutdown(t)
@@ -740,7 +740,7 @@ func TestIssueExecutionCanBeVerifiedFromRuntimeTaskStatus(t *testing.T) {
 func TestIssueWorkMessageDoesNotBecomeConversationUnread(t *testing.T) {
 	ct := &contact{ID: "x", Name: "X", SessionID: "conversation-x", Loaded: true}
 	issue := &productIssue{ID: "i1", ContactID: "x", Goal: "work", WorkSessionID: "work-i1"}
-	issue.Work.SessionID = "work-i1"
+	issue.WorkSessionID = "work-i1"
 	issue.Work.ActiveTaskID = "t1"
 	ct.Issues = []*productIssue{issue}
 	other := &contact{ID: "y", Name: "Y"}
@@ -760,7 +760,7 @@ func TestIssueWorkMessageDoesNotBecomeConversationUnread(t *testing.T) {
 func TestLateIssueTaskTerminalDoesNotReplaceCurrentWork(t *testing.T) {
 	ct := &contact{ID: "x", Name: "X", Loaded: true}
 	issue := &productIssue{ID: "i1", ContactID: "x", Goal: "work"}
-	issue.Work.SessionID = "work-i1"
+	issue.WorkSessionID = "work-i1"
 	issue.Work.ActiveTaskID = "t2"
 	issue.Work.LastTaskID = "t2"
 	issue.Work.SendState = sendAccepted
@@ -833,7 +833,7 @@ func TestCapacityThreeRunsTwoIssuesOnTwoContactsIndependently(t *testing.T) {
 	h.snapshot(func() {
 		a, c := h.app.contacts[0], h.app.contacts[1]
 		issueAObj, issueCObj := a.issueByID(issueA), c.issueByID(issueC)
-		sessionA, sessionC = issueAObj.Work.SessionID, issueCObj.Work.SessionID
+		sessionA, sessionC = issueAObj.WorkSessionID, issueCObj.WorkSessionID
 		if sessionA == "" || sessionC == "" || sessionA == sessionC {
 			t.Fatalf("work sessions = %q / %q", sessionA, sessionC)
 		}
@@ -986,11 +986,15 @@ func TestQuitDrainsIssueAndConversationSessions(t *testing.T) {
 	h.pump.do(func() { h.app.beginShutdown() })
 	h.pump.wait(func() bool { return h.app.runtimeStatus == runtimeStateDraining })
 	provider.release("quit-A")
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle
+	})
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
 		issue := ct.issueByID(issueID)
-		if h.app.runtimeStatus != runtimeStateDraining || ct.ActiveTaskID == "" || issue.Work.ActiveTaskID == "" {
-			t.Fatalf("quit stopped only one session: runtime=%q chat=%q work=%q", h.app.runtimeStatus, ct.ActiveTaskID, issue.Work.ActiveTaskID)
+		if h.app.runtimeStatus != runtimeStateDraining || ct.ActiveTaskID == "" || issue.Work.ActiveTaskID != "" {
+			t.Fatalf("quit did not keep waiting for conversation B: runtime=%q chat=%q work=%q", h.app.runtimeStatus, ct.ActiveTaskID, issue.Work.ActiveTaskID)
 		}
 	})
 	provider.release("quit-B")
@@ -1069,6 +1073,73 @@ func TestConversationUnreadDoesNotComeFromIssueWork(t *testing.T) {
 		if h.app.contacts[0].Unread != 1 {
 			t.Fatalf("issue work changed conversation unread: %d", h.app.contacts[0].Unread)
 		}
+	})
+	h.shutdown(t)
+}
+
+func TestLateCompletedExecutionCheckDoesNotClearNewActiveTask(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := newGatedProvider("late-new", "late-old")
+	defer provider.release("late-old")
+	defer provider.release("late-new")
+	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 1)
+	var issueID, oldExecutionID string
+	h.pump.do(func() {
+		if !h.app.createIssue("late-old", "old work") {
+			t.Fatalf("createIssue: %s", h.app.issueFormError)
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("run old: %s", h.app.issueFormError)
+		}
+	})
+	select {
+	case <-provider.arrived["late-old"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive old run")
+	}
+	provider.release("late-old")
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
+	})
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		oldExecutionID = issue.Executions[0].ID
+		issue.Goal = "late-new"
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("run new: %s", h.app.issueFormError)
+		}
+	})
+	select {
+	case <-provider.arrived["late-new"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive new run")
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID != "" && len(issue.Executions) == 2
+	})
+	h.pump.do(func() {
+		if !h.app.reconcileIssueExecution(issueID, oldExecutionID) {
+			t.Fatal("old execution could not be verified")
+		}
+	})
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Executions[0].Status == issueExecutionCompleted
+	})
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		if issue.Work.ActiveTaskID == "" || issue.Work.SendState != sendAccepted {
+			t.Fatalf("late old verification cleared new active task: %+v", issue.Work)
+		}
+	})
+	provider.release("late-new")
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 2 && issue.Executions[1].Status == issueExecutionCompleted
 	})
 	h.shutdown(t)
 }
