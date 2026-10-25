@@ -894,3 +894,177 @@ func TestCapacityThreeRunsTwoIssuesOnTwoContactsIndependently(t *testing.T) {
 	}
 	h.shutdown(t)
 }
+
+func TestUnknownIssueExecutionIsRecoveredFromHistoryAfterRestart(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startRoutingHarness(t, binary, provider, 1)
+	var issueID string
+	h.pump.do(func() {
+		if !h.app.createIssue("Unknown recovery", "Do not resend.") {
+			t.Fatalf("createIssue: %s", h.app.issueFormError)
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue: %s", h.app.issueFormError)
+		}
+	})
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
+	})
+	before := provider.count()
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		issue.Executions[0].Status = issueExecutionUnknown
+		issue.Executions[0].Detail = "simulated accepted-but-unknown"
+		issue.Work.SendState = sendUnknown
+		_ = h.app.persist()
+	})
+	h.shutdown(t)
+	h2 := restartGUIHarness(t, binary)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.wait(func() bool {
+		ct := h2.app.contacts[0]
+		issue := ct.issueByID(issueID)
+		return issue != nil && issue.Work.Loaded && len(issue.Executions) == 1
+	})
+	h2.snapshot(func() {
+		issue := h2.app.contacts[0].issueByID(issueID)
+		if issue.Executions[0].Status != issueExecutionCompleted {
+			t.Fatalf("unknown execution was not recovered from history: %+v", issue.Executions[0])
+		}
+	})
+	if provider.count() != before {
+		t.Fatalf("restart/verification retried the issue: %d -> %d", before, provider.count())
+	}
+}
+
+func TestQuitDrainsIssueAndConversationSessions(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := newGatedProvider("quit-A", "quit-B")
+	defer provider.release("quit-A")
+	defer provider.release("quit-B")
+	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 2)
+	var issueID string
+	h.pump.do(func() {
+		if !h.app.createIssue("quit-A issue", "Drain me.") {
+			t.Fatalf("createIssue: %s", h.app.issueFormError)
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue: %s", h.app.issueFormError)
+		}
+	})
+	select {
+	case <-provider.arrived["quit-A"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive A")
+	}
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "quit-B conversation"
+		if !h.app.sendCurrent() {
+			t.Fatalf("conversation B rejected: %s", ct.SendError)
+		}
+	})
+	select {
+	case <-provider.arrived["quit-B"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive B")
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		return ct.ActiveTaskID != "" && issue != nil && issue.Work.ActiveTaskID != ""
+	})
+	h.pump.do(func() { h.app.beginShutdown() })
+	h.pump.wait(func() bool { return h.app.runtimeStatus == runtimeStateDraining })
+	provider.release("quit-A")
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		if h.app.runtimeStatus != runtimeStateDraining || ct.ActiveTaskID == "" || issue.Work.ActiveTaskID == "" {
+			t.Fatalf("quit stopped only one session: runtime=%q chat=%q work=%q", h.app.runtimeStatus, ct.ActiveTaskID, issue.Work.ActiveTaskID)
+		}
+	})
+	provider.release("quit-B")
+	h.pump.wait(func() bool { return h.app.runtimeStatus == runtimeStateExited })
+	h.snapshot(func() {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		if ct.ActiveTaskID != "" || issue.Work.ActiveTaskID != "" {
+			t.Fatalf("drain left active tasks: chat=%q work=%q", ct.ActiveTaskID, issue.Work.ActiveTaskID)
+		}
+	})
+	h.pump.close()
+	h.closed = true
+}
+
+func TestConversationUnreadDoesNotComeFromIssueWork(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := newGatedProvider("unread-A", "unread-B")
+	defer provider.release("unread-A")
+	defer provider.release("unread-B")
+	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 2)
+	h.pump.do(func() {
+		h.app.addDefaultContact()
+		h.app.selectContact(0)
+	})
+	var issueID string
+	h.pump.do(func() {
+		if !h.app.createIssue("unread-A issue", "Work should not make chat unread.") {
+			t.Fatalf("createIssue: %s", h.app.issueFormError)
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue: %s", h.app.issueFormError)
+		}
+	})
+	select {
+	case <-provider.arrived["unread-A"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive A")
+	}
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "unread-B conversation"
+		if !h.app.sendCurrent() {
+			t.Fatalf("conversation B rejected: %s", ct.SendError)
+		}
+	})
+	select {
+	case <-provider.arrived["unread-B"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive B")
+	}
+	h.pump.do(func() { h.app.selectContact(1) })
+	provider.release("unread-B")
+	h.pump.wait(func() bool {
+		x := h.app.contacts[0]
+		return x.ActiveTaskID == "" && x.SendState == sendIdle && !x.HistoryDirty &&
+			containsText(contactMessageTexts(x), "unread-B result")
+	})
+	h.pump.do(func() {
+		if h.app.contacts[0].Unread != 1 || h.app.contacts[1].Unread != 0 {
+			t.Fatalf("conversation unread = X:%d Y:%d", h.app.contacts[0].Unread, h.app.contacts[1].Unread)
+		}
+	})
+	provider.release("unread-A")
+	h.pump.wait(func() bool {
+		issue := h.app.contacts[0].issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			containsText(contactMessageTextsForWork(issue), "unread-A result")
+	})
+	h.pump.do(func() {
+		if h.app.contacts[0].Unread != 1 {
+			t.Fatalf("issue work changed conversation unread: %d", h.app.contacts[0].Unread)
+		}
+	})
+	h.shutdown(t)
+}
