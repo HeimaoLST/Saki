@@ -176,6 +176,21 @@ type appModel struct {
 	historyQuery              string
 	highlight                 string
 
+	connectionPath         string
+	connectionForm         *connectionSettings
+	connectionSaved        *connectionConfig
+	connectionEffective    *connectionConfig
+	connectionLaunch       *connectionLaunch
+	connectionManaged      bool
+	connectionLegacy       bool
+	connectionGeneration   int
+	connectionApplying     bool
+	connectionSaveInFlight bool
+	connectionTesting      bool
+	connectionTestCancel   func()
+	startupDetailsOpen     bool
+	shutdownDrainStarted   bool
+
 	// Layout is native runtime state, not product configuration. Width is
 	// updated from the window so the same view can choose three-pane,
 	// compact, or overlay presentation.

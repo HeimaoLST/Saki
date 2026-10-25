@@ -105,4 +105,22 @@ func TestPreviewConnectionSettings(t *testing.T) {
 			writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("connection-actions-%d-dark-%t.png", width, dark)), tr.Image())
 		}
 	}
+	isolateConnectionApp(t, t.TempDir(), "")
+	for _, dark := range []bool{false, true} {
+		for _, size := range [][2]int{{1040, 720}, {720, 640}} {
+			a, err := newRuntimeApp()
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.windowWidth = size[0]
+			tr := ui.NewTester(a.view, size[0], size[1])
+			tr.SetDark(dark)
+			tr.Frame()
+			name := fmt.Sprintf("connection-app-%dx%d-dark-%t", size[0], size[1], dark)
+			writePreviewPNG(t, filepath.Join(dir, name+"-form.png"), tr.Image())
+			tr.Scroll(float32(size[0]/2), float32(size[1]/2), 0, 1200)
+			tr.Frame()
+			writePreviewPNG(t, filepath.Join(dir, name+"-actions.png"), tr.Image())
+		}
+	}
 }

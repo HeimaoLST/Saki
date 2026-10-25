@@ -1,12 +1,12 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-22。状态：**实现事实（#63 运行时接入、#90 局部布局打磨、#112 启动诊断；#112 原生验收部分完成）；#92 主题系统仅完成设计，功能尚未实现**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
+更新日期：2026-10-25。本文保留各阶段的实现与验证记录；配置以末尾 **#116 首用配置** 为当前候选事实，阅读与独立工作会话分别见 #113/#118。早期原生窗口证据只适用于其注明的包，不代表新配置候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
 
 [previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。当前代码仍使用 Main/Dawn 派生色；#92 设计目标是用户确认的 Moon/Dawn，但本轮只交付设计，不代表换色功能已实现。concurrency、`search_history`／`read_history`、附件、模型切换等仍是后续独立任务，不在首轮。
 
 ## 已确认需求与交付边界
 
-需求／产品决定（用户确认，#44）：首次使用无需先定义 agent。添加联系人即得到可输入的默认通用助手；name／purpose／instructions／workspace 为可选设置。默认助手不解决 host 的模型、凭据与工具配置。
+需求／产品决定（用户确认，#44）：首次使用无需先定义 agent。添加联系人即得到可输入的默认通用助手；name／purpose／instructions／workspace 为可选设置。联系人 profile 与宿主连接分开；#116 在 GUI 提供宿主模型连接的首用配置。
 
 实现事实（#63）：
 - 正常启动从 GUI contact store 恢复；默认创建一个 `Saki` 联系人，零配置即可看到界面。测试/截图 fixture 仍保留在 `seededApp()`，正常真实启动不会混入种子历史。
@@ -62,12 +62,13 @@ Headless 证据（fixture，不等于线上模型或原生窗口）：
 - `desktop/runtime.go`：stdio v1 client／DTO（request id 路由、持续读 stdout、stderr 诊断、协议失败单一边界、迟到 response 丢弃、读完后 Wait）。
 - `desktop/runtime_model.go`：启动/恢复、真实发送、事件应用、history 转换、取消、退出与配置。
 - `desktop/store.go`：GUI contact store（原子写，损坏不覆盖）。
+- `desktop/connection_config.go`、`connection_app.go`、`connection_runtime.go`、`connection_settings.go`：GUI 配置来源、保存/应用生命周期、既有 stdio 接口适配与表单；不实现模型协议客户端。
 - `desktop/model.go`／`view.go`／`main.go`：状态模型、原生布局与入口；`seededApp` 仅测试/截图。
 - Store：`SAKI_GUI_STORE`，否则 `<UserConfigDir>/Saki/contacts.json`（macOS 通常 `~/Library/Application Support/Saki/contacts.json`）。
 - Session 目录：`SAKI_SESSION_DIR`，否则 `<store 目录>/sessions`；作为子进程环境注入。
 - Runtime 可执行：`SAKI_RUNTIME_BIN`；否则查找 GUI 可执行文件旁的 `Saki-runtime`／`saki-runtime`、`../Resources/Saki-runtime`／`../Resources/Saki`；最后查 `PATH` 的 `Saki`。
-- 工作目录：`SAKI_GUI_WORKDIR`；否则当前目录（Finder 的 `/` 除外，退回 home）。作为子进程 cwd 与默认 `session.create.working_directory`。
-- 模型/API/base URL/凭据沿用宿主环境或子进程 cwd 的 `.env`；GUI 不持久化、不打印 key，也不提供 Keychain/向导/全配置系统。Finder 启动不继承 shell cwd/env，需要在明确位置提供 `.env` 或从终端启动。
+- 工作目录：有 GUI 配置时使用已应用的默认目录；旧联系人仍保留自身 Workspace。外部配置模式沿用 `SAKI_GUI_WORKDIR`，否则当前目录（Finder 的 `/` 除外，退回 home）。
+- 模型连接：`<store 目录>/connection.json` 是唯一 GUI 可编辑来源，保存协议、endpoint、key、默认模型、显式 context/output 容量、默认目录与活动任务上限。无该文件时兼容既有宿主环境/`.env`；损坏或失效的 GUI 配置必须在界面修复，不能静默回退。详见末尾 #116。
 
 可复制的本机构建与启动（不含 key；key 由宿主 `.env`/环境提供）：
 
@@ -89,7 +90,7 @@ open "/private/tmp/saki-gui-63-app/Saki.app"
 SAKI_GUI_WORKDIR=/abs/working-directory \
   "/private/tmp/saki-gui-63-app/Saki.app/Contents/MacOS/Saki"
 ```
-Finder 启动使用默认 store／session／home workdir，且不继承 shell 环境；把 `.env` 放在该 workdir，或从终端带 env 启动。不要把 key 放进 Info.plist 或仓库。
+Finder 启动不继承 shell 环境。空配置时通过 Connection settings 保存并 Apply；已有 GUI 配置从持久文件恢复。上述命令保留为开发者外部环境模式入口。不要把 key 放进 Info.plist、候选包或仓库。
 
 ## 原生工作台（#130，实现事实）
 
@@ -227,7 +228,7 @@ v2 `8a04d63` 的原生修复证据（13..18）：
 | 查看 B 与 A 执行 | 单执行槽；A 运行时切到 B 查看不会 cancel A，B 的发送返回 busy | 同宿主 A/B 同时执行仍由 #61 承载，不是首轮承诺 |
 | 历史检索工具 | 未实现 `search_history`／`read_history` | History 只对已加载 transcript 做本地过滤 |
 | 附件 | 未接入 GUI；runtime 现有图片输入能力未暴露 | 不保存文件内容 |
-| 模型配置 | host 环境变量／启动配置；contact 级配置 deferred | GUI 不改写 API/key |
+| 模型配置 | #116 GUI 宿主配置；无 GUI 文件时兼容外部环境；会话内模型切换由 #115 继续 | 默认值与已存在会话的实际配置分开 |
 
 上述是当前交付边界；不得把单执行槽或本地过滤写成并发执行／模型检索已完成。
 
@@ -557,3 +558,17 @@ type resolvedTheme struct {
 - **验证（当前代码承诺范围）**：`go test ./...`、`go vet ./...`、真实 Runtime 受控双 gate 的 A/B 会话隔离、对话/事项双在途 Stop、max1/max2/max3 容量、跨联系人/事项历史、profile admission snapshot、未知恢复、quit 多 session；最新完整 Go race 为 157 PASS / 0 FAIL / 7 SKIP（固定到合并后的工作树；具体 SHA 与日志由 #118 交付评论记录）。测试使用本地 fixture，不连接付费在线模型。
 - **UI 边界**：右工作卡只展示当前事项的真实 work；事项结果预览使用工作会话消息，不把聊天记录当工作结果。普通对话 composer 与事项 Stop 不共享控制路径。容量未知提示不会在真实 1 槽时出现。
 - **未包含/后续**：settings 模块（`5551b76` 主责）未接入本 PR；#142 补充递交、#153 生命周期、#154 对话协作不随本阶段扩称完成。原生 CUA/窗口/输入法仍由父级验证；`Sky native pipe startup failed` 不得被 headless 截图替代。完整 Nagi MVP 仍需后续 issue 与真实试用。
+
+## #116 首用配置与安全重载（候选实现，2026-10-25）
+
+代码来源：PR158，保留独立模块 `5551b76`，在普通 merge `37a3b3d` 消费冻结组合 `021bf575`（#118/#113）后接线。需求依据 PR157 `a0d4af7` 的完整 MVP；本节不改变 #113/#118 已记录的事项、历史与路由语义。验证 SHA、命令结果与未验项以本单交付证据为准。
+
+- **首次使用**：配置读取先于默认联系人持久化。没有 GUI 文件也没有既有外部配置时，显示可编辑设置；保存选定目录后才生成真实默认联系人。已有联系人的目录、草稿、会话与事项不被新默认值批量覆盖。可解析但失效的设置保留值供修正；坏文件保留并报错。
+- **唯一来源与凭据**：`connection.json` 通过同目录临时文件、sync、rename 原子保存，权限 0600；key 是本机私有明文，界面明确说明，不声称 Keychain 加密。凭据不存入联系人/事项文件。HostConfig 是不可编辑的派生启动快照，仅含凭据环境变量名称；实际 key 由独立 child env 注入。受管配置覆盖继承的旧连接与容量环境，不改变 GUI 进程的环境。
+- **保存与应用**：Save 只保存配置，失败保留原文件及编辑值；当前 helper 和有效默认值不随保存改变。Apply saved 验证候选 helper 的 ready 与 `connection.list` 后才替换旧 helper，失败保留原连接可用性。切换期间禁止新派发，切换成功重读真实 capabilities；配置与历史恢复均不自动发送任务。
+- **活动工作保护**：使用 #118 的 `activeTaskCount`/`sessionBusy` 与 `issueRunBlocked`，涵盖所有联系人对话、事项工作、派发中、取消中和未确认执行。保存可独立进行；有活动目标时 Apply 明确拒绝。未知派发使用现有 Check execution/确认未派发入口处置，不盲目重发；旧 helper 已实际退出时可启动新 helper 进行只读恢复。
+- **显式测试**：Test connection and model 使用表单中的值发起短模型测试；它不保存或应用设置，不改变当前联系人历史。测试在独立临时会话目录中运行、禁用工具，有时限；退出先取消测试 task，待临时 helper 和目录清理完成后再关闭窗口。ready、保存成功与 Apply 成功均不表示供应商已接受模型请求；测试结果与主 helper 生效状态分开显示。
+- **实际配置与旧会话**：连接来自 `connection.list`，模型/目录/容量来自临时会话的 `session.config.get`，并非把输入值直接标为生效。受管新对话和新事项工作使用同一个配置创建入口，显式 schema 2 与连接 ID，持久化 endpoint 身份。旧会话不隐式升级或重新绑定；绑定未知/endpoint 不兼容时保留历史查看，用户显式创建新上下文继续。旧联系人与事项不会为“应用设置”而被删除。
+- **#115/#152 接点**：#115 负责已有会话内模型选择与 config revision，不能把宿主默认值当作所有旧 session 已更新；#152 继续联系人/历史的产品管理，已有 Workspace 保留，新联系人采用已应用默认目录。外部 HostConfig 的多连接/MCP 目录不会自动合并进本单单连接 GUI 来源，本单没有新增 MCP 管理器、OAuth、云同步或通用插件框架。
+- **验证范围**：`connection_app_test.go` 验证空配置不提前落盘、旧联系人保持、无效设置修复及联系人目录创建失败后可修复；`connection_app_integration_test.go` 通过实际 app.view/actions 和真实 Rust helper 验证 Save/Apply/Test、首次发送、重启、保存失败、后台事项保护、候选失败回退、未知恢复、换端点后的历史边界、测试错误修正和退出取消。`connection_integration_test.go` 继续覆盖 Responses/Chat 两协议。使用受控本地 endpoint，不代表任意外部 provider 均兼容。
+- **未验与外部缺口**：本轮原生 CUA 仍返回 `Sky Computer Use native pipe startup failed`，Finder 冷启动/原生键盘交互未验，headless 截图与真实进程测试不替代。#160 已复现 Runtime 把 provider 回显的当前 key 写入错误事件与历史；GUI 显示层处理不能修复服务端 journal，本单不宣称该全链路边界已通过。没有真实凭据用于该复现或候选包。

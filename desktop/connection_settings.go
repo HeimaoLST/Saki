@@ -120,7 +120,7 @@ func (s *connectionSettings) view(c *ui.Context, t *ui.Theme, actions connection
 		s.field(c, t, "Endpoint", "API endpoint", "https://api.example.com/v1", &s.Draft.Endpoint, false)
 		ui.Text(c, "Use the API base URL. Nagi adds the protocol path.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 		s.field(c, t, "APIKey", "API key", "Paste your API key", &s.Draft.APIKey, true)
-		ui.Text(c, "Saved in a private local file, without encryption. Keys are only passed to the model connection, never to contacts or messages.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Saved in a private local file, without encryption. Nagi does not add this key to contact settings or model prompts.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 		s.field(c, t, "Model", "Default model", "Provider model ID", &s.Draft.Model, false)
 		ui.Text(c, "Capacity · explicit limits").FontSize(12).FontWeight(500).TextColor(t.Text)
 		ui.Text(c, "Enter limits supported by this model. These values are not inferred from its name.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
@@ -140,7 +140,7 @@ func (s *connectionSettings) view(c *ui.Context, t *ui.Theme, actions connection
 		if s.ReloadBlocked != "" {
 			ui.Text(c, s.ReloadBlocked).FontSize(12).LineHeight(1.4).TextColor(t.Warning)
 		}
-		ui.Text(c, "Saving does not interrupt work. Apply saved restarts the connection after all active work finishes.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Saving does not interrupt work. When all work has finished, choose Apply saved to use the saved settings.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 		if s.SavedSummary != "" {
 			ui.Text(c, "Saved: "+s.SavedSummary).FontSize(12).LineHeight(1.4).TextColor(t.Text)
 		}

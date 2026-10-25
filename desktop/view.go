@@ -572,10 +572,14 @@ func speakerLabel(c *contact, e historyEntry) string {
 
 func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 	returnAux := a.aux
+	width := float32(340)
+	if returnAux == "configuration" {
+		width = 560
+	}
 	open := true
 	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
-		panel.Width(340).FillHeight().Background(t.Surface).Children(func() {
+		panel.Width(width).FillHeight().Background(t.Surface).Children(func() {
 			ui.Scroll(c).Grow(1).Padding(12).Children(func() {
 				ui.Column(c).Gap(10).Children(func() {
 					switch returnAux {
@@ -663,15 +667,24 @@ func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 }
 
 func (a *appModel) openConfiguration() {
+	a.ensureConnectionForm()
 	a.aux = "configuration"
+	if a.store == nil {
+		a.startupDetailsOpen = true
+	}
 }
 
 func (a *appModel) configurationPanel(c *ui.Context, t *ui.Theme) {
-	ui.Row(c).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "Startup & configuration").FontSize(16).FontWeight(500).TextColor(t.Text)
-		ui.Spacer(c)
-		ui.Button(c, "Close").FontSize(12).OnClick(func() { a.closeAux() })
-	})
+	a.connectionPanel(c, t)
+	label := "Startup details"
+	if a.startupDetailsOpen {
+		label = "Hide startup details"
+	}
+	ui.Button(c, label).FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.startupDetailsOpen = !a.startupDetailsOpen })
+	if !a.startupDetailsOpen {
+		return
+	}
+	ui.Text(c, "Startup & configuration").FontSize(16).FontWeight(500).TextColor(t.Text)
 	a.runtimePanel(c, t, a.selectedContact())
 }
 
@@ -734,7 +747,11 @@ func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 		ui.Text(c, "Session API: unknown until the runtime session is loaded").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 	}
 	ui.Text(c, "Session model: "+valueOr(ct.SessionModel, "unknown until the session is loaded")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
-	ui.Text(c, "Host configuration: API_KEY is required; SAKI_API, SAKI_BASE_URL and SAKI_MODEL have runtime defaults. Set them in the environment or in the GUI work directory's .env; values stay hidden.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	if a.connectionManaged || (a.connectionForm != nil && a.connectionForm.HasSaved) {
+		ui.Text(c, "Connection settings are managed by Nagi; the runtime reads its endpoint, model and key from that saved connection.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	} else {
+		ui.Text(c, "Host configuration: API_KEY is required; SAKI_API, SAKI_BASE_URL and SAKI_MODEL have runtime defaults. Set them in the environment or in the GUI work directory's .env; values stay hidden.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	}
 }
 
 func valueOr(value, fallback string) string {

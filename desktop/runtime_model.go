@@ -27,47 +27,88 @@ const (
 
 func newRuntimeApp() (*appModel, error) {
 	storePath := guiStorePath()
-	workDir := guiWorkDir()
-	store, err := openContactStore(storePath, workDir)
+	defaultWorkDir := guiWorkDir()
+	sessionDir := guiSessionDir(storePath)
+	startup := readConnectionStartup(storePath, defaultWorkDir)
+	workDir := defaultWorkDir
+	formWorkDir := defaultWorkDir
+	if startup.Config != nil {
+		workDir = startup.Config.WorkingDirectory
+		formWorkDir = workDir
+	} else if startup.FormConfig != nil && startup.FormConfig.WorkingDirectory != "" {
+		formWorkDir = startup.FormConfig.WorkingDirectory
+	}
+
+	_, statErr := os.Stat(storePath)
+	storeExists := statErr == nil
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return nil, statErr
+	}
+	var store *contactStore
+	var err error
+	switch {
+	case storeExists:
+		store, err = openContactStore(storePath, workDir)
+	case startup.Config != nil:
+		store, err = openContactStore(storePath, startup.Config.WorkingDirectory)
+	case startup.Missing && startup.External:
+		store, err = openContactStore(storePath, workDir)
+	}
 	if err != nil {
 		return nil, err
 	}
+
 	a := &appModel{
-		store:         store,
-		storePath:     storePath,
-		sessionDir:    guiSessionDir(storePath),
-		workDir:       workDir,
-		runtimeStatus: runtimeStateStarting,
-		workspaceOpen: true,
-		scrollTo:      -1,
+		store:               store,
+		storePath:           storePath,
+		sessionDir:          sessionDir,
+		workDir:             workDir,
+		runtimeStatus:       runtimeStateStarting,
+		workspaceOpen:       true,
+		scrollTo:            -1,
+		connectionPath:      startup.Path,
+		connectionSaved:     startup.Config,
+		connectionEffective: startup.Config,
+		connectionManaged:   startup.Config != nil,
+		connectionLegacy:    startup.Missing && startup.External && startup.Config == nil,
 	}
-	for _, stored := range store.state.Contacts {
-		workspace := stored.Workspace
-		if workspace == "" {
-			workspace = workDir
-		}
-		ct := &contact{
-			ID:           stored.ID,
-			Name:         stored.Name,
-			Role:         stored.Role,
-			Purpose:      stored.Purpose,
-			Instructions: stored.Instructions,
-			Workspace:    workspace,
-			SessionID:    stored.SessionID,
-			Draft:        stored.Draft,
-			Status:       statusReady,
-			WorkLabel:    "Preparing a reply",
-		}
-		ct.Issues = issuesForStoredContact(store.state.Issues, ct.ID)
-		if issue := ct.selectedIssue(); issue != nil {
-			ct.SelectedIssueID = issue.ID
-		}
-		a.contacts = append(a.contacts, ct)
+	if store != nil {
+		applyStoreSelection(a, store)
+	} else {
+		a.contacts = []*contact{placeholderContact(workDir)}
+		a.selected = 0
 	}
-	for i, ct := range a.contacts {
-		if ct.ID == store.state.Selected {
-			a.selected = i
+	formConfig := startup.Config
+	if formConfig == nil {
+		formConfig = startup.FormConfig
+	}
+	a.connectionForm = newConnectionSettings(formConfig, formWorkDir)
+	if startup.Config == nil {
+		a.connectionForm.HasSaved = false
+		switch {
+		case startup.LoadErr != nil:
+			a.connectionForm.Source = "Saved connection settings need repair"
+			a.connectionForm.Error = "Saved connection settings need repair. Check the values and save again."
+			a.runtimeStatus = runtimeStateFailed
+			a.runtimeStage = "Connection configuration"
+			a.runtimeErr = "Saved connection settings need repair."
+			a.runtimeHint = "Fix the saved values in Connection settings, then save and apply."
+		case startup.External:
+			a.connectionForm.Source = "Environment configuration"
+		default:
+			a.connectionForm.Source = "Not configured in Nagi"
+			a.runtimeStatus = runtimeStateFailed
+			a.runtimeStage = "Connection configuration"
+			a.runtimeErr = "Connection settings are required before the runtime can start."
+			a.runtimeHint = "Enter a connection, model and working directory, then save and apply."
 		}
+	}
+	if startup.Config != nil {
+		a.connectionForm.Source = "Nagi connection settings"
+		a.connectionForm.SavedSummary = connectionSummary(startup.Config)
+	}
+	if startup.LoadErr != nil || (startup.Config == nil && !startup.External) {
+		a.aux = "configuration"
 	}
 	return a, nil
 }
@@ -195,7 +236,7 @@ func (a *appModel) childEnv() []string {
 }
 
 func (a *appModel) startRuntime() {
-	if a.demo || a.store == nil || a.rt != nil {
+	if a.demo || a.store == nil || a.rt != nil || a.connectionApplying {
 		return
 	}
 	binary := findRuntimeBinary()
@@ -204,53 +245,79 @@ func (a *appModel) startRuntime() {
 		a.runtimeStage = "Runtime helper"
 		a.runtimeErr = "Runtime helper not found."
 		a.runtimeHint = a.runtimeHelperHint()
+		if a.connectionForm != nil {
+			a.connectionForm.Error = "Runtime helper not found."
+			a.connectionForm.Busy = false
+		}
 		return
 	}
 	a.runtimeBinary = binary
-	rt, err := startRuntime(runtimeOptions{
-		Binary: binary,
-		Dir:    a.workDir,
-		Env:    a.childEnv(),
-		Handlers: runtimeHandlers{
-			OnReady: func(ready runtimeReady) {
-				a.updateUI(func() {
-					a.runtimeStatus = runtimeStateReady
-					a.runtimeErr = ""
-					a.runtimeStage = ""
-					a.runtimeHint = ""
-					a.runtimeAPI = ready.API
-					a.runtimeHandshake = true
-					a.restoreContacts()
-					a.restoreIssueWorks()
-					go a.loadCapabilities()
-				})
-			},
-			OnEvent: func(event runtimeEventEnvelope) {
-				a.updateUI(func() { a.applyRuntimeEvent(event) })
-			},
-			OnExit: func(err error) {
-				a.updateUI(func() { a.applyRuntimeExit(err) })
-			},
-			OnProtocolError: func(message string) {
-				a.updateUI(func() { a.protocolFailed(message) })
-			},
-			OnStderr: func(string) {},
-		},
-	})
+	gen := a.connectionGeneration + 1
+	a.connectionGeneration = gen
+
+	var rt *runtimeClient
+	var err error
+	if a.connectionEffective != nil {
+		launch, prepareErr := prepareConnectionLaunch(*a.connectionEffective, os.Environ(), a.sessionDir, os.TempDir())
+		if prepareErr != nil {
+			a.runtimeStatus = runtimeStateFailed
+			a.runtimeStage = "Connection configuration"
+			a.runtimeErr = "Could not prepare the saved connection: " + a.connectionSafeMessage(prepareErr)
+			a.runtimeHint = "Fix Connection settings, then save and apply."
+			if a.connectionForm != nil {
+				a.connectionForm.Error = a.runtimeErr
+				a.connectionForm.Busy = false
+			}
+			return
+		}
+		rt, err = startRuntime(runtimeOptions{
+			Binary: binary, Dir: launch.Dir, Env: launch.Env,
+			Handlers: a.runtimeHandlers(gen, nil),
+		})
+		if err != nil {
+			launch.Cleanup()
+		} else {
+			a.connectionLaunch = launch
+			a.connectionManaged = true
+			a.connectionLegacy = false
+			a.workDir = a.connectionEffective.WorkingDirectory
+		}
+	} else if a.connectionLegacy || a.connectionForm == nil {
+		rt, err = startRuntime(runtimeOptions{
+			Binary: binary, Dir: a.workDir, Env: a.childEnv(),
+			Handlers: a.runtimeHandlers(gen, nil),
+		})
+	} else {
+		a.connectionGeneration = gen - 1
+		a.runtimeStatus = runtimeStateFailed
+		a.runtimeStage = "Connection configuration"
+		a.runtimeErr = "Connection settings are required before the runtime can start."
+		a.runtimeHint = "Enter a connection, model and working directory, then save and apply."
+		return
+	}
 	if err != nil {
 		a.runtimeStatus = runtimeStateFailed
 		a.runtimeStage = "Runtime start"
-		a.runtimeErr = "Could not start runtime: " + safeDiagnostic(err.Error())
-		a.runtimeHint = "Check the helper path and permissions at " + binary + ", then restart Saki."
+		a.runtimeErr = "Could not start runtime: " + a.connectionSafeMessage(err)
+		a.runtimeHint = "Check the helper path and permissions at " + binary + ", then try Apply saved."
+		if a.connectionForm != nil {
+			a.connectionForm.Error = a.runtimeErr
+			a.connectionForm.Busy = false
+		}
 		return
 	}
 	a.rt = rt
+	a.runtimeStatus = runtimeStateStarting
+	a.runtimeHandshake = false
+	a.runtimeErr = ""
+	a.runtimeStage = ""
+	a.runtimeHint = ""
 }
 
 func (a *appModel) protocolFailed(message string) {
 	a.runtimeStatus = runtimeStateFailed
 	a.runtimeStage = "Runtime protocol"
-	a.runtimeErr = "Runtime protocol error: " + safeDiagnostic(message)
+	a.runtimeErr = "Runtime protocol error: " + a.connectionSafeText(message)
 	a.runtimeHint = "Restart Saki; delivery or result may be unconfirmed. No automatic retry."
 	for _, ct := range a.contacts {
 		if ct.SendState == sendSubmitting || ct.ActiveTaskID != "" {
@@ -330,7 +397,7 @@ func (a *appModel) applyRuntimeExit(err error) {
 	diagnostic := ""
 	if a.rt != nil {
 		if lines := a.rt.diagnostics(); len(lines) > 0 {
-			diagnostic = safeDiagnostic(lines[len(lines)-1])
+			diagnostic = a.connectionSafeText(lines[len(lines)-1])
 		}
 	}
 	wasReady := a.runtimeHandshake
@@ -339,7 +406,7 @@ func (a *appModel) applyRuntimeExit(err error) {
 		a.runtimeStage = "Runtime connection"
 		a.runtimeErr = "Runtime connection lost"
 		if err != nil {
-			a.runtimeErr += ": " + safeDiagnostic(err.Error())
+			a.runtimeErr += ": " + a.connectionSafeText(err.Error())
 		}
 		a.runtimeHint = "Restart Saki and reload history. Accepted work may be unconfirmed; no automatic retry."
 	} else {
@@ -358,7 +425,7 @@ func (a *appModel) applyRuntimeExit(err error) {
 			if diagnostic != "" {
 				a.runtimeErr = "Runtime exited before ready: " + diagnostic
 			} else if err != nil {
-				a.runtimeErr = "Runtime exited before ready: " + safeDiagnostic(err.Error())
+				a.runtimeErr = "Runtime exited before ready: " + a.connectionSafeText(err.Error())
 			} else {
 				a.runtimeErr = "Runtime exited before ready."
 			}
@@ -376,27 +443,11 @@ func (a *appModel) beginShutdown() {
 	}
 	a.shutdownStarted = true
 	a.persist()
-	if a.rt == nil {
-		a.quitReady = true
-		if a.requestQuit != nil {
-			a.requestQuit()
-		}
-		return
+	if a.connectionTestCancel != nil {
+		a.connectionTestCancel()
+		a.connectionTestCancel = nil
 	}
-	a.runtimeStatus = runtimeStateDraining
-	a.runtimeErr = ""
-	go func() {
-		err := a.rt.shutdown()
-		a.updateUI(func() {
-			a.quitReady = true
-			if err != nil {
-				a.runtimeErr = "Runtime shutdown: " + err.Error()
-			}
-			if a.requestQuit != nil {
-				a.requestQuit()
-			}
-		})
-	}()
+	a.finishShutdown()
 }
 
 func (a *appModel) setUIHook(hook func(func())) {
@@ -432,15 +483,18 @@ func (a *appModel) contactBySession(sessionID string) *contact {
 	return nil
 }
 
-func (a *appModel) loadCapabilities() {
-	if a.rt == nil {
+func (a *appModel) loadCapabilities(rt *runtimeClient, gen int) {
+	if rt == nil {
 		return
 	}
-	capabilities, err := a.rt.capabilities()
+	capabilities, err := rt.capabilities()
 	a.updateUI(func() {
+		if gen != a.connectionGeneration || a.rt != rt {
+			return
+		}
 		if err != nil {
 			a.runtimeCapabilitiesLoaded = false
-			a.runtimeCapabilitiesErr = "Runtime capacity is not loaded: " + runtimeMessage(err) + ". The app uses the conservative single-slot behavior until it is retried."
+			a.runtimeCapabilitiesErr = "Runtime capacity is not loaded: " + a.connectionRuntimeMessage(err) + ". The app uses the conservative single-slot behavior until it is retried."
 			return
 		}
 		if capabilities.MaxActiveTasks < 1 {
@@ -462,8 +516,9 @@ func (a *appModel) retryCapabilities() {
 	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
 		return
 	}
+	rt, gen := a.rt, a.connectionGeneration
 	a.runtimeCapabilitiesErr = ""
-	go a.loadCapabilities()
+	go a.loadCapabilities(rt, gen)
 }
 
 func (a *appModel) maxActiveTasks() int {
@@ -513,7 +568,7 @@ func (a *appModel) activeWorkTaskCount() int {
 	return count
 }
 
-func (a *appModel) restoreIssueWorks() {
+func (a *appModel) restoreIssueWorks(rt *runtimeClient, generation int) {
 	for _, ct := range a.contacts {
 		for _, issue := range ct.Issues {
 			if issue.WorkSessionID == "" {
@@ -521,40 +576,33 @@ func (a *appModel) restoreIssueWorks() {
 			}
 			contactID, issueID, sessionID := ct.ID, issue.ID, issue.WorkSessionID
 			issue.Work.Loaded = false
-			go a.restoreIssueWork(contactID, issueID, sessionID)
+			go a.restoreIssueWork(rt, generation, contactID, issueID, sessionID)
 		}
 	}
 }
 
-func (a *appModel) restoreContacts() {
+func (a *appModel) restoreContacts(rt *runtimeClient, generation int) {
 	for _, ct := range a.contacts {
 		if ct.SessionID == "" {
 			continue
 		}
 		contactID, sessionID := ct.ID, ct.SessionID
 		ct.Loaded = false
-		go a.restoreSession(contactID, sessionID)
+		go a.restoreSession(rt, generation, contactID, sessionID)
 	}
 }
 
-func (a *appModel) restoreSession(contactID, sessionID string) {
-	session, err := a.rt.loadSession(sessionID)
+func (a *appModel) restoreSession(rt *runtimeClient, generation int, contactID, sessionID string) {
+	session, err := rt.loadSession(sessionID)
 	if err != nil {
-		a.updateUI(func() {
-			ct := a.contactByID(contactID)
-			if ct == nil || ct.SessionID != sessionID {
-				return
-			}
-			ct.Loaded = false
-			ct.LoadErr = runtimeMessage(err)
-			ct.Unavailable = runtimeMessage(err)
-			ct.Status = statusAttention
-			ct.StatusDetail = runtimeMessage(err)
-		})
+		a.restoreContactReadOnly(rt, generation, contactID, sessionID, err)
 		return
 	}
-	pages, status, err := a.historyAll(sessionID)
+	pages, status, err := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
+		if generation != a.connectionGeneration || a.rt != rt {
+			return
+		}
 		ct := a.contactByID(contactID)
 		if ct == nil || ct.SessionID != sessionID {
 			return
@@ -579,9 +627,9 @@ func (a *appModel) restoreSession(contactID, sessionID string) {
 			}
 		}
 		if err != nil {
-			ct.LoadErr = runtimeMessage(err)
+			ct.LoadErr = a.connectionRuntimeMessage(err)
 			ct.Status = statusAttention
-			ct.StatusDetail = runtimeMessage(err)
+			ct.StatusDetail = ct.LoadErr
 			return
 		}
 		if ct.ActiveTaskID != "" {
@@ -598,26 +646,50 @@ func (a *appModel) restoreSession(contactID, sessionID string) {
 	})
 }
 
-func (a *appModel) restoreIssueWork(contactID, issueID, sessionID string) {
-	session, err := a.rt.loadSession(sessionID)
+func (a *appModel) restoreContactReadOnly(rt *runtimeClient, generation int, contactID, sessionID string, loadErr error) {
+	pages, status, historyErr := a.historyAllFor(rt, sessionID)
+	config, configErr := rt.connectionConfig(sessionID)
+	a.updateUI(func() {
+		if generation != a.connectionGeneration || a.rt != rt {
+			return
+		}
+		ct := a.contactByID(contactID)
+		if ct == nil || ct.SessionID != sessionID {
+			return
+		}
+		ct.Loaded = false
+		ct.LoadErr = a.connectionRuntimeMessage(loadErr)
+		ct.Unavailable = ct.LoadErr
+		ct.Status = statusAttention
+		ct.StatusDetail = ct.LoadErr
+		if configErr == nil {
+			ct.SessionModel = config.EffectiveConfig.Model
+			ct.SessionAPI = config.EffectiveConfig.API
+			ct.SessionWorkingDir = config.EffectiveConfig.WorkingDirectory
+		}
+		if historyErr == nil {
+			a.applyHistory(ct, pages, status)
+			ct.Loaded = false
+			ct.Status = statusAttention
+			ct.StatusDetail = ct.LoadErr
+			ct.Unavailable = ct.LoadErr
+		} else {
+			ct.LoadErr += "; history unavailable: " + a.connectionRuntimeMessage(historyErr)
+		}
+	})
+}
+
+func (a *appModel) restoreIssueWork(rt *runtimeClient, generation int, contactID, issueID, sessionID string) {
+	session, err := rt.loadSession(sessionID)
 	if err != nil {
-		a.updateUI(func() {
-			ct := a.contactByID(contactID)
-			if ct == nil {
-				return
-			}
-			issue := ct.issueByID(issueID)
-			if issue == nil || issue.WorkSessionID != sessionID {
-				return
-			}
-			issue.Work.Loaded = false
-			issue.Work.LoadErr = runtimeMessage(err)
-			issue.Work.SendError = runtimeMessage(err)
-		})
+		a.restoreIssueReadOnly(rt, generation, contactID, issueID, sessionID, err)
 		return
 	}
-	pages, status, err := a.historyAll(sessionID)
+	pages, status, err := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
+		if generation != a.connectionGeneration || a.rt != rt {
+			return
+		}
 		ct := a.contactByID(contactID)
 		if ct == nil {
 			return
@@ -630,8 +702,8 @@ func (a *appModel) restoreIssueWork(contactID, issueID, sessionID string) {
 		issue.Work.LoadErr = ""
 		issue.Work.SessionState = session.State
 		if err != nil {
-			issue.Work.LoadErr = runtimeMessage(err)
-			issue.Work.SendError = runtimeMessage(err)
+			issue.Work.LoadErr = a.connectionRuntimeMessage(err)
+			issue.Work.SendError = issue.Work.LoadErr
 			return
 		}
 		a.applyIssueWorkHistory(ct, issue, pages, status)
@@ -653,6 +725,33 @@ func (a *appModel) restoreIssueWork(contactID, issueID, sessionID string) {
 	})
 }
 
+func (a *appModel) restoreIssueReadOnly(rt *runtimeClient, generation int, contactID, issueID, sessionID string, loadErr error) {
+	pages, status, historyErr := a.historyAllFor(rt, sessionID)
+	a.updateUI(func() {
+		if generation != a.connectionGeneration || a.rt != rt {
+			return
+		}
+		ct := a.contactByID(contactID)
+		if ct == nil {
+			return
+		}
+		issue := ct.issueByID(issueID)
+		if issue == nil || issue.WorkSessionID != sessionID {
+			return
+		}
+		issue.Work.Loaded = false
+		issue.Work.LoadErr = a.connectionRuntimeMessage(loadErr)
+		issue.Work.SendError = issue.Work.LoadErr
+		if historyErr == nil {
+			a.applyIssueWorkHistory(ct, issue, pages, status)
+			issue.Work.Loaded = false
+			issue.Work.SendError = issue.Work.LoadErr
+		} else {
+			issue.Work.LoadErr += "; history unavailable: " + a.connectionRuntimeMessage(historyErr)
+		}
+	})
+}
+
 func (a *appModel) reloadIssueWorkByID(contactID, issueID string) {
 	if a.rt == nil || a.shutdownStarted || a.runtimeStatus == runtimeStateDraining || a.runtimeStatus == runtimeStateExited {
 		return
@@ -668,28 +767,21 @@ func (a *appModel) reloadIssueWorkByID(contactID, issueID string) {
 	issue.Work.historyGen++
 	gen := issue.Work.historyGen
 	sessionID := issue.WorkSessionID
-	go a.reloadIssueWork(contactID, issueID, sessionID, gen)
+	rt, runtimeGeneration := a.rt, a.connectionGeneration
+	go a.reloadIssueWork(rt, runtimeGeneration, contactID, issueID, sessionID, gen)
 }
 
-func (a *appModel) reloadIssueWork(contactID, issueID, sessionID string, gen int) {
-	session, err := a.rt.loadSession(sessionID)
+func (a *appModel) reloadIssueWork(rt *runtimeClient, runtimeGeneration int, contactID, issueID, sessionID string, gen int) {
+	session, err := rt.loadSession(sessionID)
 	if err != nil {
-		a.updateUI(func() {
-			ct := a.contactByID(contactID)
-			if ct == nil {
-				return
-			}
-			issue := ct.issueByID(issueID)
-			if issue == nil || issue.WorkSessionID != sessionID || issue.Work.historyGen != gen {
-				return
-			}
-			issue.Work.LoadErr = runtimeMessage(err)
-			issue.Work.SendError = runtimeMessage(err)
-		})
+		a.restoreIssueReadOnly(rt, runtimeGeneration, contactID, issueID, sessionID, err)
 		return
 	}
-	pages, status, err := a.historyAll(sessionID)
+	pages, status, err := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
+		if runtimeGeneration != a.connectionGeneration || a.rt != rt {
+			return
+		}
 		ct := a.contactByID(contactID)
 		if ct == nil {
 			return
@@ -699,8 +791,8 @@ func (a *appModel) reloadIssueWork(contactID, issueID, sessionID string, gen int
 			return
 		}
 		if err != nil {
-			issue.Work.LoadErr = runtimeMessage(err)
-			issue.Work.SendError = runtimeMessage(err)
+			issue.Work.LoadErr = a.connectionRuntimeMessage(err)
+			issue.Work.SendError = issue.Work.LoadErr
 			return
 		}
 		issue.Work.SessionState = session.State
@@ -742,24 +834,23 @@ func (a *appModel) reloadContactByID(contactID string) {
 	ct.historyGen++
 	gen := ct.historyGen
 	sessionID := ct.SessionID
-	go a.reloadSession(contactID, sessionID, gen)
+	rt, runtimeGeneration := a.rt, a.connectionGeneration
+	go a.reloadSession(rt, runtimeGeneration, contactID, sessionID, gen)
 }
 
-func (a *appModel) reloadSession(contactID, sessionID string, gen int) {
-	session, err := a.rt.loadSession(sessionID)
+func (a *appModel) reloadSession(rt *runtimeClient, runtimeGeneration int, contactID, sessionID string, gen int) {
+	session, err := rt.loadSession(sessionID)
 	if err != nil {
-		a.updateUI(func() {
-			ct := a.contactByID(contactID)
-			if ct == nil || ct.SessionID != sessionID || ct.historyGen != gen {
-				return
-			}
-			ct.LoadErr = runtimeMessage(err)
-			ct.SendError = runtimeMessage(err)
-		})
+		a.restoreContactReadOnly(rt, runtimeGeneration, contactID, sessionID, err)
 		return
 	}
-	pages, status, err := a.historyAll(sessionID)
-	a.updateUI(func() { a.applyReload(contactID, sessionID, gen, session, pages, status, err) })
+	pages, status, err := a.historyAllFor(rt, sessionID)
+	a.updateUI(func() {
+		if runtimeGeneration != a.connectionGeneration || a.rt != rt {
+			return
+		}
+		a.applyReload(contactID, sessionID, gen, session, pages, status, err)
+	})
 }
 
 func (a *appModel) applyReload(contactID, sessionID string, gen int, session runtimeSession, pages []historyRecord, status string, err error) {
@@ -768,8 +859,8 @@ func (a *appModel) applyReload(contactID, sessionID string, gen int, session run
 		return // a newer submit/task superseded this reload
 	}
 	if err != nil {
-		ct.LoadErr = runtimeMessage(err)
-		ct.SendError = runtimeMessage(err)
+		ct.LoadErr = a.connectionRuntimeMessage(err)
+		ct.SendError = ct.LoadErr
 		return
 	}
 	ct.SessionState = session.State
@@ -807,11 +898,18 @@ func (a *appModel) applyReload(contactID, sessionID string, gen int, session run
 }
 
 func (a *appModel) historyAll(sessionID string) ([]historyRecord, string, error) {
+	return a.historyAllFor(a.rt, sessionID)
+}
+
+func (a *appModel) historyAllFor(rt *runtimeClient, sessionID string) ([]historyRecord, string, error) {
+	if rt == nil {
+		return nil, "", errRuntimeDisconnected
+	}
 	offset := 0
 	var all []historyRecord
 	status := ""
 	for page := 0; page < 1000; page++ {
-		result, err := a.rt.historyPage(sessionID, offset, 100)
+		result, err := rt.historyPage(sessionID, offset, 100)
 		if err != nil {
 			return nil, "", err
 		}
@@ -1262,7 +1360,7 @@ func (a *appModel) applyIssueEvent(ct *contact, issue *productIssue, event runti
 		issue.Work.SessionState = "unknown"
 		issue.Work.HistoryDirty = true
 		issue.Work.historyGen++
-		detail := taskFinishedDetail(payload)
+		detail := a.connectionTaskFinishedDetail(payload)
 		if w := workFor(ct, event.TaskID); w != nil {
 			w.State = workStateFromTask(payload.Status)
 			w.Detail = detail
@@ -1389,7 +1487,7 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 		ct.historyGen++
 		ct.SessionState = "unknown"
 		ct.Status = statusFromString(payload.Status)
-		ct.StatusDetail = taskFinishedDetail(payload)
+		ct.StatusDetail = a.connectionTaskFinishedDetail(payload)
 		if ct.Status == statusAttention && ct.StatusDetail == "" {
 			ct.StatusDetail = "Previous task did not complete."
 		}
@@ -1477,8 +1575,14 @@ func (a *appModel) liveText(ct *contact, taskID, itemID string) *message {
 }
 
 func (a *appModel) canSend(ct *contact) string {
+	if a.shutdownStarted {
+		return "The app is shutting down."
+	}
 	if a.demo {
 		return ""
+	}
+	if a.connectionApplying {
+		return "Connection settings are being applied; wait for the new helper to become ready."
 	}
 	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
 		return "Runtime is not ready."
@@ -1499,8 +1603,14 @@ func (a *appModel) canSend(ct *contact) string {
 }
 
 func (a *appModel) canStartIssue(ct *contact, issue *productIssue) string {
+	if a.shutdownStarted {
+		return "The app is shutting down."
+	}
 	if a.demo {
 		return ""
+	}
+	if a.connectionApplying {
+		return "Connection settings are being applied; wait for the new helper to become ready."
 	}
 	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
 		return "Runtime is not ready."
@@ -1524,6 +1634,14 @@ func (a *appModel) canStartIssue(ct *contact, issue *productIssue) string {
 }
 
 func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *issueExecution, prompt string) bool {
+	if a.shutdownStarted {
+		issue.Work.SendError = "The app is shutting down."
+		return false
+	}
+	if a.connectionApplying {
+		issue.Work.SendError = "Connection settings are being applied; wait for the new helper to become ready."
+		return false
+	}
 	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
 		issue.Work.SendError = "Runtime is not ready."
 		return false
@@ -1533,13 +1651,14 @@ func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *i
 	workspace := ct.Workspace
 	system := profileSystemPrompt(ct)
 	sessionID := issue.WorkSessionID
-	go a.submitIssueTask(ct.ID, issue.ID, execution.ID, sessionID, workspace, system, prompt)
+	rt, configured := a.rt, a.connectionManaged
+	go a.submitIssueTask(rt, configured, ct.ID, issue.ID, execution.ID, sessionID, workspace, system, prompt)
 	return true
 }
 
-func (a *appModel) submitIssueTask(contactID, issueID, executionID, sessionID, workspace, system, prompt string) {
+func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID, issueID, executionID, sessionID, workspace, system, prompt string) {
 	if sessionID == "" {
-		session, err := a.rt.createSession(workspace, system)
+		session, err := a.configuredCreate(rt, configured, workspace, system)
 		if err != nil {
 			a.failIssueSubmit(contactID, issueID, err, false)
 			return
@@ -1574,12 +1693,15 @@ func (a *appModel) submitIssueTask(contactID, issueID, executionID, sessionID, w
 			return
 		}
 	}
-	result, err := a.rt.sendTask(sessionID, prompt)
+	result, err := rt.sendTask(sessionID, prompt)
 	if err != nil {
 		a.failIssueSubmit(contactID, issueID, err, true)
 		return
 	}
 	a.updateUI(func() {
+		if a.rt != rt {
+			return
+		}
 		ct := a.contactByID(contactID)
 		if ct == nil {
 			return
@@ -1644,21 +1766,21 @@ func (a *appModel) failIssueSubmit(contactID, issueID string, err error, submitt
 		switch {
 		case confirmedReject(err):
 			issue.Work.SendState = sendIdle
-			issue.Work.SendError = runtimeMessage(err)
+			issue.Work.SendError = a.connectionRuntimeMessage(err)
 			if execution != nil {
 				execution.Status = issueExecutionRejected
 				execution.Detail = issue.Work.SendError
 			}
 		case submitted:
 			issue.Work.SendState = sendUnknown
-			issue.Work.SendError = "Delivery not confirmed (" + runtimeMessage(err) + "). Reload to check before sending again."
+			issue.Work.SendError = "Delivery not confirmed (" + a.connectionRuntimeMessage(err) + "). Reload to check before sending again."
 			if execution != nil {
 				execution.Status = issueExecutionUnknown
 				execution.Detail = issue.Work.SendError
 			}
 		default:
 			issue.Work.SendState = sendIdle
-			issue.Work.SendError = runtimeMessage(err)
+			issue.Work.SendError = a.connectionRuntimeMessage(err)
 			if execution != nil {
 				execution.Status = issueExecutionNotDispatched
 				execution.Detail = issue.Work.SendError
@@ -1696,13 +1818,14 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 		ct.pendingIssueExecution = previousExecution
 		return false
 	}
-	go a.submitTask(contactID, sessionID, text, workspace, system)
+	rt, configured := a.rt, a.connectionManaged
+	go a.submitTask(rt, configured, contactID, sessionID, text, workspace, system)
 	return true
 }
 
-func (a *appModel) submitTask(contactID, sessionID, text, workspace, system string) {
+func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, sessionID, text, workspace, system string) {
 	if sessionID == "" {
-		session, err := a.rt.createSession(workspace, system)
+		session, err := a.configuredCreate(rt, configured, workspace, system)
 		if err != nil {
 			a.failSubmit(contactID, err, false)
 			return
@@ -1735,12 +1858,15 @@ func (a *appModel) submitTask(contactID, sessionID, text, workspace, system stri
 			return
 		}
 	}
-	result, err := a.rt.sendTask(sessionID, text)
+	result, err := rt.sendTask(sessionID, text)
 	if err != nil {
 		a.failSubmit(contactID, err, true)
 		return
 	}
 	a.updateUI(func() {
+		if a.rt != rt {
+			return
+		}
 		ct := a.contactByID(contactID)
 		if ct == nil || ct.SessionID != sessionID {
 			return
@@ -1800,12 +1926,12 @@ func (a *appModel) failSubmit(contactID string, err error, submitted bool) {
 		ct.pendingEvents = nil
 		if confirmedReject(err) {
 			ct.SendState = sendIdle
-			ct.SendError = runtimeMessage(err)
+			ct.SendError = a.connectionRuntimeMessage(err)
 			a.updatePendingIssueExecution(ct, issueExecutionRejected, ct.SendError)
 			_ = a.persist()
 			return
 		}
-		ct.SendError = runtimeMessage(err)
+		ct.SendError = a.connectionRuntimeMessage(err)
 		if submitted {
 			ct.SendState = sendUnknown
 			ct.SendError = "Delivery not confirmed (" + ct.SendError + "). Reload to check before sending again."
@@ -1840,9 +1966,15 @@ func (a *appModel) cancelSelected() {
 		ct.StopRequestedTasks[taskID] = true
 	}
 	ct.SendError = "Cancellation requested"
+	rt := a.rt
 	go func() {
-		status, err := a.rt.cancelTask(sessionID, taskID)
-		a.updateUI(func() { a.applyCancelResult(contactID, taskID, status, err) })
+		status, err := rt.cancelTask(sessionID, taskID)
+		a.updateUI(func() {
+			if a.rt != rt {
+				return
+			}
+			a.applyCancelResult(contactID, taskID, status, err)
+		})
 	}()
 }
 
@@ -1865,9 +1997,15 @@ func (a *appModel) cancelIssue(issueID string) bool {
 	}
 	issue.Work.StopRequestedTasks[taskID] = true
 	issue.Work.SendError = "Cancellation requested"
+	rt := a.rt
 	go func() {
-		status, err := a.rt.cancelTask(sessionID, taskID)
-		a.updateUI(func() { a.applyIssueCancelResult(ct.ID, issueID, taskID, status, err) })
+		status, err := rt.cancelTask(sessionID, taskID)
+		a.updateUI(func() {
+			if a.rt != rt {
+				return
+			}
+			a.applyIssueCancelResult(ct.ID, issueID, taskID, status, err)
+		})
 	}()
 	return true
 }
@@ -1886,7 +2024,7 @@ func (a *appModel) applyIssueCancelResult(contactID, issueID, taskID, status str
 			if w := workFor(ct, taskID); w != nil && w.State == workStopping {
 				w.State = workRunning
 			}
-			issue.Work.SendError = "Cancel failed: " + runtimeMessage(err)
+			issue.Work.SendError = "Cancel failed: " + a.connectionRuntimeMessage(err)
 		}
 		return
 	}
@@ -1915,7 +2053,7 @@ func (a *appModel) applyCancelResult(contactID, taskID, status string, err error
 			if w := ct.activeWork(); w != nil && w.State == workStopping {
 				w.State = workRunning
 			}
-			ct.SendError = "Cancel failed: " + runtimeMessage(err)
+			ct.SendError = "Cancel failed: " + a.connectionRuntimeMessage(err)
 		}
 		return
 	}

@@ -445,13 +445,16 @@ func (a *appModel) reconcileIssueExecution(issueID, executionID string) bool {
 		return false
 	}
 	sessionID, taskID := execution.SessionID, execution.TaskID
-	go a.checkIssueExecution(ct.ID, issue.ID, execution.ID, sessionID, taskID)
+	go a.checkIssueExecution(a.rt, ct.ID, issue.ID, execution.ID, sessionID, taskID)
 	return true
 }
 
-func (a *appModel) checkIssueExecution(contactID, issueID, executionID, sessionID, taskID string) {
-	state, err := a.rt.taskStatus(sessionID, taskID)
+func (a *appModel) checkIssueExecution(rt *runtimeClient, contactID, issueID, executionID, sessionID, taskID string) {
+	state, err := rt.taskStatus(sessionID, taskID)
 	a.updateUI(func() {
+		if a.rt != rt {
+			return
+		}
 		ct := a.contactByID(contactID)
 		if ct == nil {
 			return
@@ -465,7 +468,7 @@ func (a *appModel) checkIssueExecution(contactID, issueID, executionID, sessionI
 			return
 		}
 		if err != nil {
-			execution.Detail = "Could not verify this execution with Runtime: " + runtimeMessage(err) + ". No automatic retry."
+			execution.Detail = "Could not verify this execution with Runtime: " + a.connectionRuntimeMessage(err) + ". No automatic retry."
 			return
 		}
 		switch state.Status {

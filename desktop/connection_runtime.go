@@ -152,6 +152,7 @@ func probeConnection(ctx context.Context, binary string, config connectionConfig
 		}
 		return result, nil
 	case <-ctx.Done():
+		_, _ = rt.cancelTask(session.SessionID, task.TaskID)
 		return result, ctx.Err()
 	case <-rt.done:
 		return result, errors.New("test helper disconnected before a result was confirmed")
