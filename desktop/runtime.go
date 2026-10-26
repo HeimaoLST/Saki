@@ -667,12 +667,21 @@ func (c *runtimeClient) historyPage(sessionID string, offset, limit int) (runtim
 	return page, nil
 }
 
-func (c *runtimeClient) sendTask(sessionID, text string) (runtimeSendResult, error) {
+type runtimeContextInput struct {
+	Name string `json:"name"`
+	Text string `json:"text"`
+}
+
+func (c *runtimeClient) sendTask(sessionID, text string, context ...runtimeContextInput) (runtimeSendResult, error) {
 	var result runtimeSendResult
-	if err := c.call("task.send", map[string]any{
+	params := map[string]any{
 		"session_id": sessionID,
 		"message":    map[string]any{"text": text},
-	}, &result, runtimeSendTimeout); err != nil {
+	}
+	if len(context) > 0 {
+		params["context"] = context
+	}
+	if err := c.call("task.send", params, &result, runtimeSendTimeout); err != nil {
 		return runtimeSendResult{}, err
 	}
 	if result.TaskID == "" || result.MessageID == "" {
