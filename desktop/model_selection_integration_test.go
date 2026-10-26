@@ -175,6 +175,7 @@ func TestModelSelectionProcessLostReplyReadsCommittedValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sendModelTask(t, live, session.SessionID)
 	initial, err := live.client.connectionConfig(session.SessionID)
 	if err != nil {
 		t.Fatal(err)
@@ -200,8 +201,19 @@ func TestModelSelectionProcessLostReplyReadsCommittedValue(t *testing.T) {
 	if err != nil || string(after) != string(before) {
 		t.Fatal("reconciliation altered history")
 	}
+	if err := live.client.releaseSession(session.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := live.client.loadSession(session.SessionID)
+	if err != nil || reloaded.Metadata == nil || reloaded.Metadata.Model != "model-B" {
+		t.Fatalf("explicit release/load lost the committed configuration: %v", err)
+	}
+	after, err = os.ReadFile(historyPath)
+	if err != nil || string(after) != string(before) {
+		t.Fatal("explicit release/load altered history")
+	}
 	sendModelTask(t, live, session.SessionID)
-	if !reflect.DeepEqual(provider.requestedModels(), []string{"model-B"}) {
+	if !reflect.DeepEqual(provider.requestedModels(), []string{"model-A", "model-B"}) {
 		t.Fatal("subsequent request did not use the reconciled model")
 	}
 }

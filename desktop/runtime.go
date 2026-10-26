@@ -633,6 +633,10 @@ func (c *runtimeClient) loadSession(sessionID string) (runtimeSession, error) {
 	return session, nil
 }
 
+func (c *runtimeClient) releaseSession(sessionID string) error {
+	return c.call("session.release", map[string]any{"session_id": sessionID}, nil, runtimeControlTimeout)
+}
+
 func (c *runtimeClient) capabilities() (runtimeCapabilities, error) {
 	var result runtimeCapabilities
 	if err := c.call("runtime.capabilities", map[string]any{}, &result, runtimeControlTimeout); err != nil {
