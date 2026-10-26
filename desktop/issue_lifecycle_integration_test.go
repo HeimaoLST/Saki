@@ -243,15 +243,24 @@ func TestIssueRuntimeStopContinueAndExplicitCompletion(t *testing.T) {
 	defer provider.release("life-second")
 	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 1)
 	var issueID string
+	var createOK, runOK, cancelOK, editOK, continueOK, completeOK, reopenOK bool
+	var createErr, runErr, editErr, continueErr string
 	h.pump.do(func() {
-		if !h.app.createIssue("life-first", "first requirement") {
-			t.Fatalf("createIssue: %s", h.app.issueFormError)
+		createOK = h.app.createIssue("life-first", "first requirement")
+		createErr = h.app.issueFormError
+		if !createOK {
+			return
 		}
 		issueID = h.app.selectedContact().SelectedIssueID
-		if !h.app.runIssue(issueID) {
-			t.Fatalf("first run: %s", h.app.issueFormError)
-		}
+		runOK = h.app.runIssue(issueID)
+		runErr = h.app.issueFormError
 	})
+	if !createOK {
+		t.Fatalf("createIssue: %s", createErr)
+	}
+	if !runOK {
+		t.Fatalf("first run: %s", runErr)
+	}
 	select {
 	case <-provider.arrived["life-first"]:
 	case <-time.After(15 * time.Second):
@@ -261,29 +270,48 @@ func TestIssueRuntimeStopContinueAndExplicitCompletion(t *testing.T) {
 		issue := h.app.selectedContact().issueByID(issueID)
 		return issue != nil && issue.Work.ActiveTaskID != ""
 	})
-	h.pump.do(func() {
-		if !h.app.cancelIssue(issueID) {
-			t.Fatal("stop did not accept active issue")
-		}
-	})
-	provider.release("life-first")
+	h.pump.do(func() { cancelOK = h.app.cancelIssue(issueID) })
+	if !cancelOK {
+		t.Fatal("stop did not accept active issue")
+	}
+	// Keep the provider held until the real cancel terminal is visible. This
+	// avoids the opposite-order race where the model completes before the
+	// queued task.cancel reaches Runtime. The terminal itself is the proof;
+	// a transient "Cancelling" label is not.
 	h.pump.wait(func() bool {
 		issue := h.app.selectedContact().issueByID(issueID)
 		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
 			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted
 	})
-	first := h.app.selectedContact().issueByID(issueID)
-	if first.Status != issueStatusInProgress || first.Status == issueStatusCanceled {
-		t.Fatalf("stop was treated as issue completion/cancel: %q", first.Status)
-	}
-	h.pump.do(func() {
-		if !h.app.editIssue(issueID, "life-second", "second requirement") {
-			t.Fatalf("edit before continue: %s", h.app.issueFormError)
-		}
-		if !h.app.runIssue(issueID) {
-			t.Fatalf("continue run: %s", h.app.issueFormError)
+	provider.release("life-first")
+	var firstStatus, firstIssueStatus string
+	h.snapshot(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		if issue != nil {
+			firstIssueStatus = issue.Status
+			if len(issue.Executions) == 1 {
+				firstStatus = issue.Executions[0].Status
+			}
 		}
 	})
+	if firstStatus != issueExecutionInterrupted || firstIssueStatus != issueStatusInProgress || firstIssueStatus == issueStatusCanceled {
+		t.Fatalf("stop was treated as completion/cancel: execution=%q issue=%q", firstStatus, firstIssueStatus)
+	}
+	h.pump.do(func() {
+		editOK = h.app.editIssue(issueID, "life-second", "second requirement")
+		editErr = h.app.issueFormError
+		if !editOK {
+			return
+		}
+		continueOK = h.app.runIssue(issueID)
+		continueErr = h.app.issueFormError
+	})
+	if !editOK {
+		t.Fatalf("edit before continue: %s", editErr)
+	}
+	if !continueOK {
+		t.Fatalf("continue run: %s", continueErr)
+	}
 	select {
 	case <-provider.arrived["life-second"]:
 	case <-time.After(15 * time.Second):
@@ -295,28 +323,52 @@ func TestIssueRuntimeStopContinueAndExplicitCompletion(t *testing.T) {
 		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
 			len(issue.Executions) == 2 && issue.Executions[1].Status == issueExecutionCompleted
 	})
-	issue := h.app.selectedContact().issueByID(issueID)
-	if issue.Status != issueStatusInProgress || issue.Executions[0].SessionID != issue.Executions[1].SessionID {
-		t.Fatalf("continue did not stay in the same issue/work session: %+v / %+v", issue, issue.Executions)
+	var continueIssueStatus string
+	var sameSession bool
+	var promptsEqual bool
+	h.snapshot(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		if issue != nil {
+			continueIssueStatus = issue.Status
+			if len(issue.Executions) == 2 {
+				sameSession = issue.Executions[0].SessionID == issue.Executions[1].SessionID
+				promptsEqual = issue.Executions[0].Prompt == issue.Executions[1].Prompt
+			}
+		}
+	})
+	if continueIssueStatus != issueStatusInProgress || !sameSession {
+		t.Fatalf("continue did not stay in the same issue/work session: issue=%q sameSession=%v", continueIssueStatus, sameSession)
 	}
-	if issue.Executions[0].Prompt == issue.Executions[1].Prompt {
+	if promptsEqual {
 		t.Fatal("continued run did not preserve distinct sent snapshots")
 	}
-	h.pump.do(func() {
-		if !h.app.completeIssue(issueID, "user reviewed both runs") {
-			t.Fatal("explicit completion failed")
-		}
-	})
-	if issue.Status != issueStatusCompleted {
-		t.Fatalf("explicit completion status = %q", issue.Status)
+	h.pump.do(func() { completeOK = h.app.completeIssue(issueID, "user reviewed both runs") })
+	if !completeOK {
+		t.Fatal("explicit completion failed")
 	}
-	h.pump.do(func() {
-		if !h.app.reopenIssue(issueID) {
-			t.Fatal("reopen failed")
+	var completedStatus string
+	h.snapshot(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		if issue != nil {
+			completedStatus = issue.Status
 		}
 	})
-	if issue.Status != issueStatusInProgress {
-		t.Fatalf("reopen status = %q", issue.Status)
+	if completedStatus != issueStatusCompleted {
+		t.Fatalf("explicit completion status = %q", completedStatus)
+	}
+	h.pump.do(func() { reopenOK = h.app.reopenIssue(issueID) })
+	if !reopenOK {
+		t.Fatal("reopen failed")
+	}
+	var reopenedStatus string
+	h.snapshot(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		if issue != nil {
+			reopenedStatus = issue.Status
+		}
+	})
+	if reopenedStatus != issueStatusInProgress {
+		t.Fatalf("reopen status = %q", reopenedStatus)
 	}
 	if provider.count() != 2 {
 		t.Fatalf("unexpected retries: %d", provider.count())
@@ -541,4 +593,82 @@ func TestIssueContinuationCapturesRequirementsRevisionBeforeDispatch(t *testing.
 		t.Fatalf("restart resent a model request: %d", provider.count())
 	}
 	h2.shutdown(t)
+}
+
+func TestIssueRuntimeCompletedBeforeLateCancelStaysCompleted(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := newGatedProvider("late-cancel")
+	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 1)
+	defer func() {
+		provider.release("late-cancel")
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	var issueID string
+	var createOK, runOK bool
+	var errText string
+	h.pump.do(func() {
+		createOK = h.app.createIssue("late-cancel", "complete before cancel is observed")
+		errText = h.app.issueFormError
+		if !createOK {
+			return
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		runOK = h.app.runIssue(issueID)
+		errText = h.app.issueFormError
+	})
+	if !createOK || !runOK {
+		t.Fatalf("setup = create:%v run:%v err:%q", createOK, runOK, errText)
+	}
+	select {
+	case <-provider.arrived["late-cancel"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive late-cancel task")
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID != ""
+	})
+	provider.release("late-cancel")
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && len(issue.Executions) == 1 &&
+			issue.Executions[0].Status == issueExecutionCompleted
+	})
+	var sessionID, taskID string
+	var contactID string
+	h.snapshot(func() {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		contactID = ct.ID
+		if issue != nil && len(issue.Executions) == 1 {
+			sessionID = issue.Executions[0].SessionID
+			taskID = issue.Executions[0].TaskID
+		}
+	})
+	if sessionID == "" || taskID == "" {
+		t.Fatalf("completed execution has no trusted identity: session=%q task=%q", sessionID, taskID)
+	}
+	status, cancelErr := h.app.rt.cancelTask(sessionID, taskID)
+	if cancelErr != nil {
+		t.Fatalf("late task.cancel failed: %v", cancelErr)
+	}
+	if status != "not_running" {
+		t.Fatalf("late task.cancel status = %q, want the Runtime terminal contract \"not_running\"", status)
+	}
+	h.pump.do(func() { h.app.applyIssueCancelResult(contactID, issueID, taskID, status, nil) })
+	var completedStatus, activeTask string
+	h.snapshot(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		if issue != nil {
+			activeTask = issue.Work.ActiveTaskID
+			if len(issue.Executions) == 1 {
+				completedStatus = issue.Executions[0].Status
+			}
+		}
+	})
+	if completedStatus != issueExecutionCompleted || activeTask != "" {
+		t.Fatalf("late cancel changed a completed task: status=%q active=%q", completedStatus, activeTask)
+	}
 }

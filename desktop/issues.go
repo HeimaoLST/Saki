@@ -27,6 +27,10 @@ type productIssue struct {
 	// stores its own immutable Context snapshot before dispatch.
 	Context taskContext
 
+	// Supplements owns user supplements and their dispatch receipts for this
+	// issue. It is persisted with the issue; it is not a Runtime history copy.
+	Supplements *issueSupplementLedger
+
 	// WorkSessionID is the issue-owned execution context. It is intentionally
 	// separate from contact.SessionID (the ongoing conversation). Old
 	// executions keep their actual SessionID and are never migrated in place.
@@ -79,6 +83,7 @@ type issueExecution struct {
 	RequirementsRevision int
 	Context              []taskContextItem
 	ContextExpanded      bool
+	SupplementBatchID    string
 }
 
 const (
@@ -310,6 +315,9 @@ func (a *appModel) createIssue(goal, requirements string) bool {
 		Status: issueStatusNotStarted, CreatedAt: now, UpdatedAt: now,
 	}
 	item.Context.onChange = a.persist
+	if item.Supplements == nil {
+		item.Supplements = newIssueSupplementLedger()
+	}
 	previousSelected := ct.SelectedIssueID
 	ct.Issues = append(ct.Issues, item)
 	ct.SelectedIssueID = item.ID
@@ -373,6 +381,7 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 			Evidence: stored.Evidence, CreatedAt: stored.CreatedAt, UpdatedAt: stored.UpdatedAt,
 			WorkSessionID: stored.WorkSessionID,
 			Context:       taskContext{items: cloneTaskContextItems(stored.TaskContext)},
+			Supplements:   cloneIssueSupplementLedger(stored.Supplements),
 		}
 		if len(stored.RequirementItems) > 0 {
 			for _, item := range stored.RequirementItems {
@@ -415,7 +424,7 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 				ID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID,
 				MessageID: execution.MessageID, Prompt: execution.Prompt,
 				Status: status, Detail: detail, RequirementsRevision: execution.RequirementsRevision,
-				Context: cloneTaskContextItems(execution.Context),
+				Context: cloneTaskContextItems(execution.Context), SupplementBatchID: execution.SupplementBatchID,
 			})
 		}
 		issue.Status = normalizeIssueStatus(stored.Status, issue.Executions)
@@ -431,12 +440,28 @@ func (a *appModel) runIssue(issueID string) bool {
 }
 
 func (a *appModel) runIssueFor(ct *contact, issueID string) bool {
-	if ct == nil {
-		a.issueFormError = "Contact not found."
+	issue := issueForContact(ct, issueID)
+	if issue == nil {
+		if ct == nil {
+			a.issueFormError = "Contact not found."
+		} else {
+			a.issueFormError = "Issue not found for this contact."
+		}
 		return false
 	}
-	issue := ct.issueByID(issueID)
-	if issue == nil {
+	if !a.issueRunCaptured(ct, issue) {
+		return false
+	}
+	ct.SelectedIssueID = issue.ID
+	ct.SelectedWorkTaskID = ""
+	return true
+}
+
+// issueRunCaptured validates and dispatches using captured objects only. The
+// automatic continuation path uses this directly so it never depends on, or
+// steals, the UI's selected issue.
+func (a *appModel) issueRunCaptured(ct *contact, issue *productIssue) bool {
+	if ct == nil || issue == nil {
 		a.issueFormError = "Issue not found for this contact."
 		return false
 	}
@@ -453,49 +478,11 @@ func (a *appModel) runIssueFor(ct *contact, issueID string) bool {
 		issue.Work.SendError = reason
 		return false
 	}
-	prompt := issuePrompt(issue)
-	if strings.TrimSpace(prompt) == "" {
+	if strings.TrimSpace(issuePrompt(issue)) == "" {
 		a.issueFormError = "This issue has no goal to run."
 		return false
 	}
-	ct.SelectedIssueID = issue.ID
-	ct.SelectedWorkTaskID = ""
-	execution := &issueExecution{
-		ID: newIssueExecutionID(), SessionID: issue.WorkSessionID, Prompt: prompt, Status: issueExecutionPending,
-		RequirementsRevision: issue.RequirementsRevision,
-		Context:              issue.Context.snapshot(),
-	}
-	issue.Executions = append(issue.Executions, execution)
-	issue.UpdatedAt = nowMillis()
-	previousSend, previousPending := issue.Work.SendState, issue.Work.pendingExecutionID
-	previousStatus, previousUpdated := issue.Status, issue.UpdatedAt
-	issue.Status = issueStatusInProgress
-	issue.UpdatedAt = nowMillis()
-	issue.Work.SendState = sendSubmitting
-	issue.Work.SendError = ""
-	issue.Work.pendingExecutionID = execution.ID
-	a.issueFormError = ""
-	if err := a.persist(); err != nil {
-		issue.Executions = issue.Executions[:len(issue.Executions)-1]
-		issue.Work.SendState, issue.Work.pendingExecutionID = previousSend, previousPending
-		issue.Status, issue.UpdatedAt = previousStatus, previousUpdated
-		a.issueFormError = "Could not save the issue execution: " + err.Error()
-		return false
-	}
-	if !a.startIssueTask(ct, issue, execution, prompt) {
-		issue.Work.SendState = sendIdle
-		issue.Work.pendingExecutionID = ""
-		execution.Status = issueExecutionNotDispatched
-		execution.Detail = issue.Work.SendError
-		if execution.Detail == "" {
-			execution.Detail = "The task was not dispatched."
-		}
-		issue.Status = issueStatusNeedsAttention
-		a.issueFormError = execution.Detail
-		_ = a.persist()
-		return false
-	}
-	return true
+	return a.startIssueRun(ct, issue)
 }
 
 func (a *appModel) selectIssue(issueID string) {
@@ -591,6 +578,7 @@ func (a *appModel) reconcileIssueExecution(issueID, executionID string) bool {
 
 func (a *appModel) checkIssueExecution(rt *runtimeClient, contactID, issueID, executionID, sessionID, taskID string) {
 	state, err := rt.taskStatus(sessionID, taskID)
+	pages, _, historyErr := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
 		if a.rt != rt {
 			return
@@ -624,8 +612,11 @@ func (a *appModel) checkIssueExecution(rt *runtimeClient, contactID, issueID, ex
 				w.State = workStateFromTask(state.Status)
 				w.Detail = ""
 			}
-			_ = a.persist()
+			if !a.acceptSupplementFromHistory(issue, execution, pages, historyErr) {
+				_ = a.persist()
+			}
 			a.reloadIssueWorkByID(contactID, issueID)
+			a.maybeAutoContinueAllIssues()
 		case "accepted", "running":
 			execution.Status = state.Status
 			execution.Detail = ""
@@ -642,11 +633,14 @@ func (a *appModel) checkIssueExecution(rt *runtimeClient, contactID, issueID, ex
 					w.State = workAccepted
 				}
 			}
+			if !a.acceptSupplementFromHistory(issue, execution, pages, historyErr) {
+				_ = a.persist()
+			}
 		default:
 			execution.Status = issueExecutionUnknown
 			execution.Detail = "Runtime reports no trusted terminal state for this task; inspect the work record or confirm not dispatched. No automatic retry."
+			_ = a.persist()
 		}
-		_ = a.persist()
 	})
 }
 
@@ -668,12 +662,35 @@ func (a *appModel) confirmIssueExecutionNotDispatched(issueID, executionID strin
 	default:
 		return false
 	}
+	oldExecutionStatus, oldExecutionDetail := execution.Status, execution.Detail
+	oldWorkState, oldWorkError, oldWorkPending := issue.Work.SendState, issue.Work.SendError, issue.Work.pendingExecutionID
+	oldAuto := false
+	if issue.Supplements != nil {
+		oldAuto = issue.Supplements.AutoContinue
+		issue.Supplements.AutoContinue = false
+	}
 	execution.Status = issueExecutionNotDispatched
 	execution.Detail = "User confirmed that no task was dispatched; the execution remains available for an explicit retry."
 	issue.Work.SendState = sendIdle
 	issue.Work.SendError = ""
 	issue.Work.pendingExecutionID = ""
-	_ = a.persist()
+	batch := issueSupplementBatchForExecution(issue, execution.ID)
+	saved := true
+	if batch != nil {
+		if issue.Supplements == nil || !issue.Supplements.NotDispatched(batch, execution.Detail, a.persist) {
+			saved = false
+		}
+	} else if err := a.persist(); err != nil {
+		saved = false
+	}
+	if !saved {
+		execution.Status, execution.Detail = oldExecutionStatus, oldExecutionDetail
+		issue.Work.SendState, issue.Work.SendError, issue.Work.pendingExecutionID = oldWorkState, oldWorkError, oldWorkPending
+		if issue.Supplements != nil {
+			issue.Supplements.AutoContinue = oldAuto
+		}
+		return false
+	}
 	return true
 }
 

@@ -92,6 +92,9 @@ type contact struct {
 	History               []historyEntry
 	Revealed              []string
 	Draft                 string
+	Archived              bool
+	ArchivedAt            int64
+	PreviousSessions      []string
 	Context               taskContext
 	replyIndex            int
 	list                  ui.ListState
@@ -150,21 +153,36 @@ type appModel struct {
 	auxMessage      int
 	defaultContactN int
 	focusComposer   bool
-	settingsDraft   profileDraft
-	settingsError   bool
 
-	issueFormOpen          bool
-	issueFormEditingID     string
-	issueGoal              string
-	issueRequirements      string
-	issueFormError         string
-	taskContextIssueID     string
-	focusIssueGoal         bool
-	focusIssueNew          bool
-	issueFilter            string
-	issueActionError       string
-	issueRequirementDrafts map[string]*string
-	issueCompletionDrafts  map[string]*string
+	contactProfile           *contactProfileEditor
+	contactProfileID         string
+	contactSearch            string
+	contactScope             string
+	contactHistory           *contactHistoryResult
+	contactHistoryFull       *contactHistoryFull
+	contactHistoryBusy       bool
+	contactHistoryDetailBusy bool
+	contactHistoryError      string
+	contactHistoryGen        int
+	contactHistoryDetailGen  int
+	contactHistoryInFlight   int
+
+	issueFormOpen                 bool
+	issueFormEditingID            string
+	issueGoal                     string
+	issueRequirements             string
+	issueFormError                string
+	taskContextIssueID            string
+	focusIssueGoal                bool
+	focusIssueNew                 bool
+	issueFilter                   string
+	issueActionError              string
+	issueRequirementDrafts        map[string]*string
+	issueCompletionDrafts         map[string]*string
+	issueSupplementDrafts         map[string]*string
+	issueSupplementFormID         string
+	issueSupplementPreviewID      string
+	issueSupplementShowAllBatches bool
 
 	// Runtime mode. demo keeps the local fixture path for tests/screenshots;
 	// the shipped app is runtime-backed.
@@ -369,11 +387,11 @@ func (a *appModel) selectContact(i int) {
 	if !a.leaveIssueFormForSwitch() {
 		return
 	}
+	a.contacts[i].Unread = 0
+	a.selected = i
 	if !a.demo {
 		a.persist()
 	}
-	a.contacts[i].Unread = 0
-	a.selected = i
 	a.screen = viewChat
 	a.aux = ""
 	a.highlight = ""
@@ -446,6 +464,8 @@ func (a *appModel) addDefaultContact() {
 	}
 	a.contacts = append(a.contacts, c)
 	a.selected = len(a.contacts) - 1
+	a.contactScope = "active"
+	a.contactSearch = ""
 	a.screen = viewChat
 	a.aux = ""
 	a.focusComposer = true
@@ -453,31 +473,7 @@ func (a *appModel) addDefaultContact() {
 
 func (a *appModel) openSettings() {
 	c := a.selectedContact()
-	a.settingsDraft = profileDraft{Name: c.Name, Purpose: c.Purpose, Instructions: c.Instructions, Workspace: c.Workspace}
-	a.settingsError = false
-	a.aux = "settings"
-}
-
-func (a *appModel) saveSettings() bool {
-	name := strings.TrimSpace(a.settingsDraft.Name)
-	if name == "" {
-		a.settingsError = true
-		return false
-	}
-	c := a.selectedContact()
-	c.Name = name
-	// Once a runtime session exists (or its first create is in flight), the
-	// profile was already used for session.create and cannot be hot-applied.
-	// Keep the stored values unchanged and only update the product name.
-	if !a.profileLocked(c) {
-		c.Purpose = strings.TrimSpace(a.settingsDraft.Purpose)
-		c.Instructions = strings.TrimSpace(a.settingsDraft.Instructions)
-		c.Workspace = strings.TrimSpace(a.settingsDraft.Workspace)
-	}
-	a.aux = ""
-	a.settingsError = false
-	a.persist()
-	return true
+	a.openContactProfile(c.ID)
 }
 
 func (a *appModel) closeAux() {
@@ -506,6 +502,13 @@ func (a *appModel) openHistory() {
 	a.screen = viewHistory
 	a.aux = ""
 	a.historyQuery = ""
+	a.contactHistory = nil
+	a.contactHistoryFull = nil
+	a.contactHistoryBusy = false
+	a.contactHistoryDetailBusy = false
+	a.contactHistoryError = ""
+	a.contactHistoryGen++
+	a.contactHistoryDetailGen++
 	a.focusHistoryOpen = true
 }
 

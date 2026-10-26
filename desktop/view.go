@@ -18,7 +18,7 @@ func (a *appModel) view(c *ui.Context) {
 				a.rail(c, t)
 			}
 			a.main(c, t)
-			if a.workspaceOpen && !a.workOverlay() {
+			if a.workspaceOpen && !a.workOverlay() && a.aux != "settings" {
 				a.workspaceFrame(c, t, a.workWidth())
 			}
 		})
@@ -52,12 +52,35 @@ func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
 			ui.Spacer(c)
 			ui.Button(c, "Add contact").FontSize(12).Padding(4, 8).Radius(999).Background(t.SurfaceHover).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.addDefaultContact() })
 		})
+		ui.TextInput(c, &a.contactSearch).Label("Search contacts").FontSize(12).Placeholder("Name or purpose")
+		ui.Row(c).Gap(3).Children(func() {
+			a.contactScopeButton(c, t, "active", "Active")
+			a.contactScopeButton(c, t, "archived", "Archived")
+			a.contactScopeButton(c, t, "all", "All")
+		})
+		visible := a.visibleContactIndices()
+		if len(visible) == 0 {
+			ui.Text(c, "No contacts match this scope and search.").FontSize(11).LineHeight(1.35).TextColor(t.TextMuted)
+			return
+		}
 		ui.Scroll(c).Grow(1).Children(func() {
-			for i := range a.contacts {
+			for _, i := range visible {
 				a.railRow(c, t, i)
 			}
 		})
 	})
+}
+
+func (a *appModel) contactScopeButton(c *ui.Context, t *ui.Theme, scope, label string) {
+	current := a.contactScope
+	if current == "" {
+		current = "active"
+	}
+	background := ui.Transparent
+	if current == scope {
+		background = t.SurfaceHover
+	}
+	ui.Button(c, label).FontSize(11).Padding(4, 7).Radius(7).Background(background).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.setContactScope(scope) })
 }
 
 func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
@@ -136,6 +159,7 @@ func (a *appModel) statusColor(t *ui.Theme, s contactStatus) ui.Color {
 // ---------- main column ----------
 
 func (a *appModel) main(c *ui.Context, t *ui.Theme) {
+	ct := a.selectedContact()
 	ui.Column(c).Grow(1).FillHeight().Background(t.Surface).Children(func() {
 		if !a.demo {
 			switch {
@@ -160,9 +184,17 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 			case a.runtimeStatus == runtimeStateStarting:
 				ui.Text(c, "Connecting to runtime…").FontSize(12).Padding(8, 16).TextColor(t.TextMuted)
 			}
-			if ct := a.selectedContact(); ct.LoadErr != "" {
+			if ct.LoadErr != "" {
 				ui.Text(c, "Contact load: "+ct.LoadErr).FontSize(12).Padding(8, 16).TextColor(t.Warning)
 			}
+		}
+		if ct.Archived {
+			ui.Row(c).AlignItems(ui.Center).Gap(8).Padding(6, 16).Background(t.SurfaceHover).Children(func() {
+				ui.Text(c, "Archived contact · sending and new issue runs are disabled. History, drafts and issue data are retained.").FontSize(11).TextColor(t.Warning)
+				ui.Spacer(c)
+				ui.Button(c, "Restore contact").FontSize(11).Padding(3, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.Text).OnClick(func() { a.restoreContact(ct.ID) })
+				ui.Button(c, "Settings").FontSize(11).Padding(3, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openSettings() })
+			})
 		}
 		a.header(c, t)
 		a.chat(c, t)
@@ -542,17 +574,56 @@ func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 					ui.Text(c, "Searching only "+ct.Name+"'s conversation history. Messages from other contacts are never included.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 					if !a.demo && ct.SessionID != "" && !ct.Loaded {
 						ui.Text(c, "History is not loaded yet; existing records are not shown as absent.").FontSize(12).LineHeight(1.4).TextColor(t.Warning)
-						return
 					}
 					ui.TextInput(c, &a.historyQuery).FontSize(14).Placeholder("Search " + ct.Name + "'s history")
+					if !a.demo {
+						ui.Button(c, "Search saved contexts").FontSize(12).Padding(4, 8).Background(t.SurfaceHover).BorderWidth(0).TextColor(t.Text).OnClick(func() { a.searchContactHistoryAsync(a.historyQuery) })
+						if a.contactHistoryBusy {
+							ui.Text(c, "Searching saved contexts…").FontSize(12).TextColor(t.TextMuted)
+						}
+						if a.contactHistoryError != "" {
+							ui.Text(c, a.contactHistoryError).FontSize(12).LineHeight(1.4).TextColor(t.Warning)
+						}
+						if a.contactHistory != nil {
+							ui.Text(c, a.contactHistorySummary()).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+							if len(a.contactHistory.Failures) > 0 {
+								for _, failure := range a.contactHistory.Failures {
+									ui.Text(c, "Saved context unavailable: "+failure.SessionID).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
+								}
+							}
+							for _, match := range a.contactHistory.Matches {
+								match := match
+								ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
+									ui.Text(c, match.Date+" · saved context "+match.SessionID).FontSize(11).LineHeight(1.4).TextColor(t.Success)
+									ui.Text(c, match.Preview).FontSize(13).LineHeight(1.5).TextColor(t.Text)
+									ui.Button(c, "View full message").FontSize(12).OnClick(func() { a.openContactHistoryMatch(match) })
+								})
+							}
+						}
+						if a.contactHistoryDetailBusy {
+							ui.Text(c, "Opening the full saved message…").FontSize(12).TextColor(t.TextMuted)
+						}
+						if a.contactHistoryFull != nil {
+							full := a.contactHistoryFull
+							from := "Contact"
+							if full.From == "me" {
+								from = "You"
+							}
+							ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
+								ui.Text(c, "Full saved message · "+from+" · "+full.Date+" · "+full.SessionID).FontSize(11).LineHeight(1.4).TextColor(t.Success)
+								markdownReader(c, full.Text, markdownReaderOptions{CopyLabel: "Copy saved message"}).FontSize(14).LineHeight(1.5).TextColor(t.Text)
+								taskContextReadOnlyView(c, a.workTheme, full.Context)
+								ui.Button(c, "Close full message").FontSize(12).OnClick(func() { a.contactHistoryFull = nil })
+							})
+						}
+					}
 					matches := a.historyMatches()
 					if len(matches) == 0 {
 						if strings.TrimSpace(a.historyQuery) == "" {
 							ui.Text(c, "No saved messages in "+ct.Name+"'s loaded history.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 						} else {
-							ui.Text(c, "No messages in "+ct.Name+"'s history match “"+a.historyQuery+"”. Try a shorter phrase.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+							ui.Text(c, "No messages in "+ct.Name+"'s loaded history match “"+a.historyQuery+"”.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 						}
-						return
 					}
 					for _, e := range matches {
 						e := e
@@ -659,7 +730,13 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 
 func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
-	locked := a.profileLocked(ct)
+	if a.contactProfile == nil || a.contactProfileID != ct.ID {
+		a.openContactProfile(ct.ID)
+	}
+	editor := a.contactProfile
+	editor.Archived = ct.Archived
+	editor.HasConversation = ct.SessionID != ""
+	editor.ActiveWork, editor.UnknownWork = a.contactActivity(ct)
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "Contact settings").FontSize(16).FontWeight(500).TextColor(t.Text)
 		ui.Spacer(c)
@@ -668,28 +745,20 @@ func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 		}
 		ui.Button(c, "Close").FontSize(12).OnClick(func() { a.closeAux() })
 	})
-	switch {
-	case a.demo:
-		ui.Text(c, "Changes apply to the demo only. Saved history stays intact.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
-	case locked:
-		ui.Text(c, "Purpose, instructions and workspace are fixed once this contact's session starts. They can be set before the first message; the name can still change.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
-	default:
-		ui.Text(c, "Optional. These are used when the first message creates this contact's session.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
-	}
-	ui.Text(c, "Name").FontSize(12).FontWeight(500).TextColor(t.Text)
-	ui.TextInput(c, &a.settingsDraft.Name).Label("Contact name").FontSize(14).Placeholder("Name")
-	if a.settingsError {
-		ui.Text(c, "Enter a name for this contact.").FontSize(12).TextColor(t.Danger)
-	}
-	ui.Text(c, "Purpose").FontSize(12).FontWeight(500).TextColor(t.Text)
-	ui.TextArea(c, &a.settingsDraft.Purpose).Label("Contact purpose").FontSize(14).Placeholder("Purpose").Disabled(locked)
-	ui.Text(c, "Instructions").FontSize(12).FontWeight(500).TextColor(t.Text)
-	ui.TextArea(c, &a.settingsDraft.Instructions).Label("Contact instructions").FontSize(14).Placeholder("Instructions").Disabled(locked)
-	ui.Text(c, "Workspace").FontSize(12).FontWeight(500).TextColor(t.Text)
-	ui.TextInput(c, &a.settingsDraft.Workspace).Label("Contact workspace").FontSize(14).Placeholder("/absolute/path/to/workspace").Disabled(locked)
-	ui.Row(c).Gap(8).Children(func() {
-		ui.Button(c, "Cancel").FontSize(13).OnClick(func() { a.closeAux() })
-		ui.PrimaryButton(c, "Save changes").FontSize(13).OnClick(func() { a.saveSettings() })
+	editor.view(c, t, contactProfileActions{
+		Save: func(draft profileDraft) {
+			a.saveContactProfileDraft(draft, false)
+		},
+		SaveAndNew: func(draft profileDraft) {
+			a.saveContactProfileDraft(draft, true)
+		},
+		Archive: func() {
+			a.archiveContact(ct.ID)
+		},
+		Restore: func() {
+			a.restoreContact(ct.ID)
+		},
+		Cancel: func() { a.closeAux() },
 	})
 }
 
@@ -753,7 +822,7 @@ func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 	ui.Text(c, "GUI work directory: "+valueOr(a.workDir, "not configured")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 	workspace := ct.SessionWorkingDir
 	if workspace == "" {
-		workspace = ct.Workspace
+		workspace = a.effectiveContactWorkspace(ct)
 	}
 	ui.Text(c, "Contact workspace: "+valueOr(workspace, "not configured")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 	session := ct.SessionID
