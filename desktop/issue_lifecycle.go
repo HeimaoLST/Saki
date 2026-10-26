@@ -457,7 +457,20 @@ func (ct *contact) issuesForFilter(filter string) []*productIssue {
 }
 
 func issueFilterActionLabel(filter string) string {
-	return "Show " + strings.ToLower(issueFilterLabel(filter))
+	switch filter {
+	case "waiting":
+		return "Waiting"
+	case "attention":
+		return "Attention"
+	case "completed":
+		return "Done"
+	case "canceled":
+		return "Canceled"
+	case "archived":
+		return "Archived"
+	default:
+		return "Active"
+	}
 }
 
 func issueFilterLabel(filter string) string {

@@ -422,7 +422,7 @@ func TestIssueUIStatusFilterSelection(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	if err := tr.Click("Show completed"); err != nil {
+	if err := tr.Click("Done"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
