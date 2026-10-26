@@ -1796,7 +1796,7 @@ func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *i
 	// Capture immutable session inputs on the UI thread. The worker must not
 	// look up the contact/issue or read mutable profile/session fields later.
 	workspace := a.effectiveContactWorkspace(ct)
-	system := profileSystemPrompt(ct)
+	system := a.issueToolWorkSystemPrompt(ct)
 	sessionID := issue.WorkSessionID
 	context := cloneTaskContextItems(execution.Context)
 	rt, configured := a.rt, a.connectionManaged
@@ -1866,7 +1866,7 @@ func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID
 	}
 	wireContext := taskContextInputs(context)
 	if workTools {
-		configuredTools, err := a.issueToolEnsureWorkSession(rt, sessionID, createdSession)
+		configuredTools, err := a.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, createdSession)
 		if err != nil {
 			a.failIssueSubmit(contactID, issueID, err, false)
 			return
@@ -2175,7 +2175,7 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 	contactID := ct.ID
 	sessionID := ct.SessionID
 	workspace := a.effectiveContactWorkspace(ct)
-	system := profileSystemPrompt(ct)
+	system := a.issueToolConversationSystemPrompt(ct)
 	submittedContext := ct.Context.snapshot()
 	ct.historyGen++ // invalidate any in-flight reload
 	ct.SubmittedDraft = text
@@ -2235,7 +2235,7 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 	}
 	wireContext := taskContextInputs(context)
 	if issueTools {
-		configuredTools, err := a.issueToolEnsureConversationSession(rt, sessionID, createdSession)
+		configuredTools, err := a.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, createdSession)
 		if err != nil {
 			a.failSubmit(contactID, err, false)
 			return

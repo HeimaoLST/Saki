@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -208,7 +209,7 @@ func (a *appModel) issueToolMergedWorkSelection(current runtimeToolSelection) (m
 	return selection, nil
 }
 
-func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID string, created bool) (bool, error) {
+func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID, roleGuidance string, created bool) (bool, error) {
 	if created {
 		a.markIssueToolSchemaReady(rt, sessionID)
 		return true, nil
@@ -223,7 +224,10 @@ func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID strin
 	if config.StorageSchema < 2 {
 		return false, nil
 	}
-	if runtimeSelectionHasWorkWait(config.EffectiveConfig.ToolSelection) && a.issueToolSchemaReady(rt, sessionID) {
+	toolsReady := runtimeSelectionHasWorkWait(config.EffectiveConfig.ToolSelection)
+	desiredPrompt := addWorkflowGuidance(config.EffectiveConfig.SystemPrompt, roleGuidance)
+	promptReady := desiredPrompt == config.EffectiveConfig.SystemPrompt
+	if toolsReady && promptReady && a.issueToolSchemaReady(rt, sessionID) {
 		return true, nil
 	}
 	selection, mergeErr := a.issueToolMergedWorkSelection(config.EffectiveConfig.ToolSelection)
@@ -233,15 +237,25 @@ func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID strin
 	if selection == nil {
 		return false, nil
 	}
-	updated, err := rt.updateSessionToolSelection(sessionID, config.ConfigRevision, selection)
+	if toolsReady && a.issueToolSchemaReady(rt, sessionID) {
+		selection = nil
+	}
+	promptPatch := ""
+	if !promptReady {
+		promptPatch = desiredPrompt
+	}
+	updated, err := rt.updateSessionConfiguration(sessionID, config.ConfigRevision, selection, promptPatch)
 	if err != nil {
-		return false, fmt.Errorf("enable or refresh work wait tool: %w", err)
+		return false, fmt.Errorf("enable or refresh issue work workflow: %w", err)
 	}
 	if updated.ReadbackError != nil {
-		return false, fmt.Errorf("read back work tool selection: %w", updated.ReadbackError)
+		return false, fmt.Errorf("read back work configuration: %w", updated.ReadbackError)
 	}
 	if !runtimeSelectionHasWorkWait(updated.EffectiveConfig.ToolSelection) {
 		return false, errors.New("Runtime did not confirm the work wait tool")
+	}
+	if updated.EffectiveConfig.SystemPrompt != desiredPrompt {
+		return false, errors.New("Runtime did not confirm the work workflow prompt")
 	}
 	a.markIssueToolSchemaReady(rt, sessionID)
 	return true, nil
@@ -405,7 +419,7 @@ func (a *appModel) clearIssueToolSchemaReady(sessionID string) {
 	a.issueToolMu.Unlock()
 }
 
-func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, sessionID string, created bool) (bool, error) {
+func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, sessionID, roleGuidance string, created bool) (bool, error) {
 	if created {
 		a.markIssueToolSchemaReady(rt, sessionID)
 		return true, nil
@@ -420,7 +434,10 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 	if config.StorageSchema < 2 {
 		return false, nil
 	}
-	if runtimeSelectionHasIssueTools(config.EffectiveConfig.ToolSelection) && a.issueToolSchemaReady(rt, sessionID) {
+	toolsReady := runtimeSelectionHasIssueTools(config.EffectiveConfig.ToolSelection)
+	desiredPrompt := addWorkflowGuidance(config.EffectiveConfig.SystemPrompt, roleGuidance)
+	promptReady := desiredPrompt == config.EffectiveConfig.SystemPrompt
+	if toolsReady && promptReady && a.issueToolSchemaReady(rt, sessionID) {
 		return true, nil
 	}
 	selection, mergeErr := a.issueToolMergedSelection(config.EffectiveConfig.ToolSelection)
@@ -430,17 +447,28 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 	if selection == nil {
 		return false, nil
 	}
+	if toolsReady && a.issueToolSchemaReady(rt, sessionID) {
+		selection = nil
+	}
 	// Updating the full (merged) selection also reconfirms the current helper's
-	// tool declaration after restart. It changes no model/cwd/prompt setting.
-	updated, err := rt.updateSessionToolSelection(sessionID, config.ConfigRevision, selection)
+	// tool declaration after restart. The combined prompt preserves the user's
+	// saved profile; this changes no model/cwd/compaction setting.
+	promptPatch := ""
+	if !promptReady {
+		promptPatch = desiredPrompt
+	}
+	updated, err := rt.updateSessionConfiguration(sessionID, config.ConfigRevision, selection, promptPatch)
 	if err != nil {
-		return false, fmt.Errorf("enable or refresh issue tools for this conversation: %w", err)
+		return false, fmt.Errorf("enable or refresh conversation issue workflow: %w", err)
 	}
 	if updated.ReadbackError != nil {
-		return false, fmt.Errorf("read back conversation tool selection: %w", updated.ReadbackError)
+		return false, fmt.Errorf("read back conversation configuration: %w", updated.ReadbackError)
 	}
 	if !runtimeSelectionHasIssueTools(updated.EffectiveConfig.ToolSelection) {
 		return false, errors.New("Runtime did not confirm the conversation issue-tool selection")
+	}
+	if updated.EffectiveConfig.SystemPrompt != desiredPrompt {
+		return false, errors.New("Runtime did not confirm the conversation workflow prompt")
 	}
 	a.markIssueToolSchemaReady(rt, sessionID)
 	return true, nil
@@ -1187,7 +1215,7 @@ func issueToolResponseError(response issueToolForwardResponse) *IssueToolError {
 // pre-accept pendingSend snapshot and otherwise uses the live msgUser record
 // with the scope's real Runtime task. It never reads the current draft, scans
 // chat history, or treats the scope token as user material.
-func (a *appModel) issueToolCreateContext(ct *contact, scope IssueToolScope) []taskContextItem {
+func (a *appModel) issueToolTurnContext(ct *contact, scope IssueToolScope) []taskContextItem {
 	if ct == nil || ct.ID != scope.ContactID {
 		return nil
 	}
@@ -1210,6 +1238,31 @@ func (a *appModel) issueToolCreateContext(ct *contact, scope IssueToolScope) []t
 	return nil
 }
 
+func mergeIssueToolTurnContext(existing, captured []taskContextItem) []taskContextItem {
+	merged := cloneTaskContextItems(existing)
+	index := make(map[string]taskContextItem, len(merged))
+	for _, item := range merged {
+		index[item.ID+"\x00"+strconv.FormatUint(item.Revision, 10)] = item
+	}
+	for _, item := range captured {
+		key := item.ID + "\x00" + strconv.FormatUint(item.Revision, 10)
+		if _, ok := index[key]; ok {
+			continue
+		}
+		merged = append(merged, item)
+		index[key] = item
+	}
+	return merged
+}
+
+func (a *appModel) issueToolCaptureTurnContext(ct *contact, scope IssueToolScope) ([]taskContextItem, error) {
+	captured := a.issueToolTurnContext(ct, scope)
+	if err := validateTaskContext(captured); err != nil {
+		return nil, err
+	}
+	return captured, nil
+}
+
 func (a *appModel) issueToolCreate(scope IssueToolScope, request IssueToolActionRequest, operation *IssueToolOperation) (issueToolForwardResponse, error) {
 	var callErr error
 	var receipt *IssueToolReceipt
@@ -1229,7 +1282,7 @@ func (a *appModel) issueToolCreate(scope IssueToolScope, request IssueToolAction
 			callErr = latestErr
 			return
 		}
-		capturedContext := a.issueToolCreateContext(ct, latestScope)
+		capturedContext := a.issueToolTurnContext(ct, latestScope)
 		if err := validateTaskContext(capturedContext); err != nil {
 			callErr = err
 			return
@@ -1309,11 +1362,39 @@ func (a *appModel) issueToolSupplement(scope IssueToolScope, request IssueToolAc
 			callErr = errors.New("issue tool scope contact no longer exists")
 			return
 		}
-		if err := a.addIssueSupplement(ct, request.IssueID, request.Text); err != nil {
+		issue := issueForContact(ct, request.IssueID)
+		if issue == nil {
+			callErr = errors.New("issue not found")
+			return
+		}
+		latestScope, latestErr := a.issueToolScopeByRef(scope.Ref)
+		if latestErr != nil {
+			callErr = latestErr
+			return
+		}
+		captured, captureErr := a.issueToolCaptureTurnContext(ct, latestScope)
+		if captureErr != nil {
+			callErr = captureErr
+			return
+		}
+		previousContext := issue.Context.snapshot()
+		mergedContext := mergeIssueToolTurnContext(issue.Context.items, captured)
+		contextChanged := len(mergedContext) != len(issue.Context.items)
+		if contextChanged {
+			if err := validateTaskContext(mergedContext); err != nil {
+				callErr = err
+				return
+			}
+		}
+		if err := a.addIssueSupplementBefore(ct, request.IssueID, request.Text, func(*issueSupplement) {
+			if contextChanged {
+				issue.Context.items = mergedContext
+			}
+		}); err != nil {
+			issue.Context.items = previousContext
 			callErr = err
 			return
 		}
-		issue := issueForContact(ct, request.IssueID)
 		callErr = a.issueToolSetReceipt(operation, &IssueToolReceipt{
 			State: issueToolReceiptSaved, IssueID: request.IssueID,
 			RequirementsRevision: issueToolRevisionPointer(issue.RequirementsRevision),
@@ -1613,10 +1694,32 @@ func (a *appModel) issueToolAnswerQuestion(scope IssueToolScope, request IssueTo
 			callErr = errors.New("issue cannot accept this answer in its current state")
 			return
 		}
+		latestScope, latestErr := a.issueToolScopeByRef(scope.Ref)
+		if latestErr != nil {
+			callErr = latestErr
+			return
+		}
+		captured, captureErr := a.issueToolCaptureTurnContext(ct, latestScope)
+		if captureErr != nil {
+			callErr = captureErr
+			return
+		}
 		ledger := issueSupplementLedgerFor(issue)
 		previousQuestion := *question
 		previousStatus, previousUpdated, previousAuto := issue.Status, issue.UpdatedAt, ledger.AutoContinue
+		previousContext := issue.Context.snapshot()
+		mergedContext := mergeIssueToolTurnContext(issue.Context.items, captured)
+		contextChanged := len(mergedContext) != len(issue.Context.items)
+		if contextChanged {
+			if err := validateTaskContext(mergedContext); err != nil {
+				callErr = err
+				return
+			}
+		}
 		if err := a.addIssueSupplementBefore(ct, issue.ID, request.Text, func(item *issueSupplement) {
+			if contextChanged {
+				issue.Context.items = mergedContext
+			}
 			question.State, question.AnsweredAt, question.AnswerSupplementID = issueQuestionAnswered, nowMillis(), item.ID
 			if len(issue.Executions) > 0 {
 				issue.Status, ledger.AutoContinue = issueStatusInProgress, true
@@ -1633,6 +1736,7 @@ func (a *appModel) issueToolAnswerQuestion(scope IssueToolScope, request IssueTo
 		}); err != nil {
 			*question = previousQuestion
 			issue.Status, issue.UpdatedAt, ledger.AutoContinue = previousStatus, previousUpdated, previousAuto
+			issue.Context.items = previousContext
 			operation.Receipt = nil
 			callErr = err
 			return

@@ -39,6 +39,7 @@ type runtimeConnectionConfig struct {
 		Model                 string               `json:"model"`
 		API                   string               `json:"api"`
 		WorkingDirectory      string               `json:"working_directory"`
+		SystemPrompt          string               `json:"system_prompt"`
 		Compaction            runtimeCompaction    `json:"compaction"`
 		ToolSelection         runtimeToolSelection `json:"tool_selection"`
 		CapacitySource        struct {
@@ -65,13 +66,21 @@ func (c *runtimeClient) connectionConfig(sessionID string) (runtimeConnectionCon
 	return result, err
 }
 
-// updateSessionToolSelection changes only the tool_selection field. It does not
-// rewrite model, connection, cwd, system prompt or compaction.
-func (c *runtimeClient) updateSessionToolSelection(sessionID string, revision uint64, selection map[string]any) (runtimeConfigUpdated, error) {
+// updateSessionConfiguration changes only the explicitly supplied tool
+// selection and/or system prompt. It does not rewrite model, connection, cwd or
+// compaction.
+func (c *runtimeClient) updateSessionConfiguration(sessionID string, revision uint64, selection map[string]any, systemPrompt string) (runtimeConfigUpdated, error) {
+	patch := map[string]any{}
+	if selection != nil {
+		patch["tool_selection"] = selection
+	}
+	if systemPrompt != "" {
+		patch["system_prompt"] = systemPrompt
+	}
 	var result runtimeConfigUpdated
 	err := c.call("session.config.update", map[string]any{
 		"session_id": sessionID, "expected_revision": revision,
-		"patch": map[string]any{"tool_selection": selection},
+		"patch": patch,
 	}, &result, runtimeControlTimeout)
 	if err != nil {
 		// A lost reply is not proof of failure; read back the committed value
