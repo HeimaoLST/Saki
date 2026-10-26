@@ -22,14 +22,12 @@ const (
 
 const (
 	supplementStatePending       = "pending"
-	supplementStatePrepared      = "prepared"
 	supplementStateDispatching   = "dispatching"
 	supplementStateSubmitted     = "submitted"
 	supplementStateRejected      = "rejected"
 	supplementStateNotDispatched = "not_dispatched"
 	supplementStateUnknown       = "unknown"
 
-	supplementBatchPrepared      = "prepared"
 	supplementBatchDispatching   = "dispatching"
 	supplementBatchAccepted      = "accepted"
 	supplementBatchRejected      = "rejected"
@@ -187,10 +185,6 @@ func validateSupplementTarget(target issueSupplementTarget) error {
 	return nil
 }
 
-func supplementTargetsEqual(a, b issueSupplementTarget) bool {
-	return a.ContactID == b.ContactID && a.IssueID == b.IssueID && a.RequirementsRevision == b.RequirementsRevision
-}
-
 func supplementTargetsSameIssue(a, b issueSupplementTarget) bool {
 	return a.ContactID == b.ContactID && a.IssueID == b.IssueID
 }
@@ -226,58 +220,11 @@ func (l *issueSupplementLedger) activeBatch(target issueSupplementTarget) *issue
 			continue
 		}
 		switch batch.State {
-		case supplementBatchPrepared, supplementBatchDispatching, supplementBatchUnknown:
+		case supplementBatchDispatching, supplementBatchUnknown:
 			return batch
 		}
 	}
 	return nil
-}
-
-// Prepare creates and durably stores an immutable batch from currently pending
-// supplements. It captures the exact target/requirements revision and copies
-// the text; later additions or edits cannot alter the batch.
-func (l *issueSupplementLedger) Prepare(target issueSupplementTarget, save func() error) (*issueSupplementBatch, error) {
-	if err := validateSupplementTarget(target); err != nil {
-		return nil, err
-	}
-	if save == nil {
-		return nil, errSupplementSaveRequired
-	}
-	if !l.AutoContinue {
-		return nil, errors.New("automatic supplement continuation is stopped")
-	}
-	if active := l.activeBatch(target); active != nil {
-		return nil, fmt.Errorf("a supplement batch is already %s for this issue", active.State)
-	}
-	items := l.pendingFor(target)
-	if len(items) == 0 {
-		return nil, errSupplementNoPending
-	}
-	batch := &issueSupplementBatch{
-		ID: newIssueSupplementID(), Target: target, CreatedAt: nowMillis(), State: supplementBatchPrepared,
-	}
-	var texts []string
-	for _, item := range items {
-		batch.Snapshot = append(batch.Snapshot, issueSupplementSnapshot{
-			ID: item.ID, Text: item.Text, RequirementsRevision: item.RequirementsRevision,
-		})
-		texts = append(texts, item.Text)
-		item.State = supplementStatePrepared
-		item.BatchID = batch.ID
-	}
-	batch.Text = strings.Join(texts, "\n")
-	l.Batches = append(l.Batches, batch)
-	if err := save(); err != nil {
-		l.Batches = l.Batches[:len(l.Batches)-1]
-		for _, snapshot := range batch.Snapshot {
-			if item := l.itemByID(snapshot.ID); item != nil {
-				item.State = supplementStatePending
-				item.BatchID = ""
-			}
-		}
-		return nil, fmt.Errorf("could not save supplement batch: %w", err)
-	}
-	return batch, nil
 }
 
 func (l *issueSupplementLedger) snapshotBatchItems(batch *issueSupplementBatch) map[string]issueSupplement {
@@ -304,31 +251,6 @@ func (l *issueSupplementLedger) restoreBatchItems(batch *issueSupplementBatch, o
 			}
 		}
 	}
-}
-
-// BeginDispatch is the durable boundary before task.send. Only after this save
-// may the app start the RPC. A stopped/unknown dispatching batch must never be
-// folded back into pending.
-func (l *issueSupplementLedger) BeginDispatch(batch *issueSupplementBatch, save func() error) bool {
-	canonical := l.canonicalBatch(batch)
-	if save == nil || canonical == nil || canonical.State != supplementBatchPrepared || !l.AutoContinue {
-		return false
-	}
-	batch = canonical
-	old := batch.State
-	oldItems := l.snapshotBatchItems(batch)
-	batch.State = supplementBatchDispatching
-	for _, snapshot := range batch.Snapshot {
-		if item := l.itemByID(snapshot.ID); item != nil {
-			item.State = supplementStateDispatching
-		}
-	}
-	if err := save(); err != nil {
-		batch.State = old
-		l.restoreBatchItems(batch, oldItems)
-		return false
-	}
-	return true
 }
 
 // PrepareDispatch creates and durably stores a batch already at the dispatch
@@ -437,32 +359,6 @@ func (l *issueSupplementLedger) DeferDispatch(batch *issueSupplementBatch, save 
 	return true
 }
 
-// ReleasePrepared abandons only a local prepared batch that has not crossed the
-// BeginDispatch boundary. It returns the exact snapshot items to pending, keeps
-// AutoContinue unchanged, and leaves the canceled batch as audit history. It is
-// deliberately narrower than StopAutoContinue, which revokes user intent.
-func (l *issueSupplementLedger) ReleasePrepared(batch *issueSupplementBatch, save func() error) bool {
-	canonical := l.canonicalBatch(batch)
-	if save == nil || canonical == nil || canonical.State != supplementBatchPrepared || canonical.ExecutionID != "" {
-		return false
-	}
-	old := *canonical
-	oldItems := l.snapshotBatchItems(canonical)
-	for _, snapshot := range canonical.Snapshot {
-		if item := l.itemByID(snapshot.ID); item != nil {
-			item.State = supplementStatePending
-			item.BatchID = ""
-		}
-	}
-	canonical.State = supplementBatchCanceled
-	if err := save(); err != nil {
-		*canonical = old
-		l.restoreBatchItems(canonical, oldItems)
-		return false
-	}
-	return true
-}
-
 // Accept records a real Runtime acceptance with all four identities. It remains
 // valid even if auto-continuation was stopped after dispatch; submission does
 // not claim adoption, understanding, or requirement satisfaction.
@@ -502,7 +398,7 @@ func (l *issueSupplementLedger) Accept(batch *issueSupplementBatch, association 
 func (l *issueSupplementLedger) Reject(batch *issueSupplementBatch, detail string, save func() error) bool {
 	canonical := l.canonicalBatch(batch)
 	if save == nil || canonical == nil ||
-		(canonical.State != supplementBatchPrepared && canonical.State != supplementBatchDispatching) {
+		canonical.State != supplementBatchDispatching {
 		return false
 	}
 	batch = canonical
@@ -526,8 +422,7 @@ func (l *issueSupplementLedger) Reject(batch *issueSupplementBatch, detail strin
 func (l *issueSupplementLedger) NotDispatched(batch *issueSupplementBatch, detail string, save func() error) bool {
 	canonical := l.canonicalBatch(batch)
 	if save == nil || canonical == nil ||
-		(canonical.State != supplementBatchPrepared && canonical.State != supplementBatchDispatching &&
-			canonical.State != supplementBatchUnknown) {
+		(canonical.State != supplementBatchDispatching && canonical.State != supplementBatchUnknown) {
 		return false
 	}
 	batch = canonical
@@ -551,7 +446,7 @@ func (l *issueSupplementLedger) NotDispatched(batch *issueSupplementBatch, detai
 func (l *issueSupplementLedger) Unknown(batch *issueSupplementBatch, detail string, save func() error) bool {
 	canonical := l.canonicalBatch(batch)
 	if save == nil || canonical == nil ||
-		(canonical.State != supplementBatchPrepared && canonical.State != supplementBatchDispatching) {
+		canonical.State != supplementBatchDispatching {
 		return false
 	}
 	batch = canonical
@@ -574,9 +469,9 @@ func (l *issueSupplementLedger) Unknown(batch *issueSupplementBatch, detail stri
 	return true
 }
 
-// StopAutoContinue revokes future scheduling only. Prepared, never-dispatched
-// batches return to pending; dispatching/unknown batches retain their identity
-// so a late accepted response can still be recorded.
+// StopAutoContinue revokes future scheduling only. Dispatching/unknown
+// batches retain their identity so a late accepted response can still be
+// recorded; it never turns them back into pending.
 func (l *issueSupplementLedger) StopAutoContinue(batch *issueSupplementBatch, save func() error) bool {
 	if save == nil {
 		return false
@@ -594,15 +489,6 @@ func (l *issueSupplementLedger) StopAutoContinue(batch *issueSupplementBatch, sa
 	if batch != nil {
 		oldBatch = *batch
 		oldItems = l.snapshotBatchItems(batch)
-		if batch.State == supplementBatchPrepared {
-			for _, snapshot := range batch.Snapshot {
-				if item := l.itemByID(snapshot.ID); item != nil {
-					item.State = supplementStatePending
-					item.BatchID = ""
-				}
-			}
-			batch.State = supplementBatchCanceled
-		}
 	}
 	if err := save(); err != nil {
 		l.AutoContinue = oldAuto

@@ -169,7 +169,6 @@ type appModel struct {
 	issueSupplementFormID         string
 	issueSupplementPreviewID      string
 	issueSupplementShowAllBatches bool
-	supplementAutoPass            bool
 
 	// Runtime mode. demo keeps the local fixture path for tests/screenshots;
 	// the shipped app is runtime-backed.

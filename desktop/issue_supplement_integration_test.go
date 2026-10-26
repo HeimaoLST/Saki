@@ -15,11 +15,12 @@ import (
 
 func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 	binary := requireRuntimeBinary(t)
-	provider := newGatedProvider("supp B", "supp A")
+	provider := newGatedProvider("supp B", "supp C", "supp A")
 	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 2)
 	defer func() {
 		provider.release("supp A")
 		provider.release("supp B")
+		provider.release("supp C")
 		if !h.closed {
 			h.shutdown(t)
 		}
@@ -111,6 +112,10 @@ func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 		if addErrB != nil {
 			return
 		}
+		addErrB = h.app.addIssueSupplement(ct, issueID, "supp C")
+		if addErrB != nil {
+			return
+		}
 		if !h.app.editIssueFor(ct, issueID, issue.Goal, "Current requirement changed") {
 			editErr = errors.New(h.app.issueFormError)
 		}
@@ -121,12 +126,32 @@ func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 	if provider.count() != 1 {
 		t.Fatalf("new supplement dispatched while A was active: provider=%d", provider.count())
 	}
+	var conversationErr error
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "Conversation B independent"
+		if !h.app.sendCurrent() {
+			conversationErr = errors.New(ct.SendError)
+		}
+	})
+	if conversationErr != nil {
+		t.Fatalf("conversation B was rejected: %v", conversationErr)
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		return ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty &&
+			len(ct.Messages) > 0
+	})
+	if provider.count() != 2 {
+		t.Fatalf("conversation B request count = %d, want 2 total", provider.count())
+	}
 	var pendingOK bool
 	h.snapshot(func() {
 		issue := h.app.selectedContact().issueByID(issueID)
 		pendingOK = issue != nil && issue.RequirementsRevision == 2 &&
-			issue.Supplements.pendingCount() == 1 &&
-			issue.Supplements.Items[1].RequirementsRevision == 1
+			issue.Supplements.pendingCount() == 2 &&
+			issue.Supplements.Items[1].RequirementsRevision == 1 &&
+			issue.Supplements.Items[2].RequirementsRevision == 1
 	})
 	if !pendingOK {
 		t.Fatal("in-flight supplement receipt/revision was not retained pending")
@@ -164,20 +189,20 @@ func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 			batch2.Target.RequirementsRevision == 2 &&
 			batch2.ExecutionID == second.ID && second.SupplementBatchID == batch2.ID &&
 			second.RequirementsRevision == 2 && !strings.Contains(second.Prompt, "supp A") &&
-			strings.Contains(second.Prompt, "supp B") &&
+			strings.Contains(second.Prompt, "supp B") && strings.Contains(second.Prompt, "supp C") &&
 			strings.Contains(second.Prompt, "Current requirement changed")
 		secondBatchState = batch2.State
 		secondBatchTarget = batch2.Target.RequirementsRevision
-		if len(batch2.Snapshot) == 1 {
+		if len(batch2.Snapshot) == 2 {
 			secondReceiptRevision = batch2.Snapshot[0].RequirementsRevision
-			secondText = batch2.Snapshot[0].Text
+			secondText = batch2.Snapshot[0].Text + "|" + batch2.Snapshot[1].Text
 		}
 		firstPrompt, secondPrompt = first.Prompt, second.Prompt
 		secondContextCount = len(second.Context)
 		issueContextCount = len(issue.Context.snapshot())
 	})
 	if !secondOK || (secondBatchState != supplementBatchDispatching && secondBatchState != supplementBatchAccepted) ||
-		secondBatchTarget != 2 || secondReceiptRevision != 1 || secondText != "supp B" ||
+		secondBatchTarget != 2 || secondReceiptRevision != 1 || secondText != "supp B|supp C" ||
 		secondContextCount != 0 || issueContextCount != 0 {
 		t.Fatalf("second dispatch state = ok:%v batch:%s target:%d receipt:%d text:%q contexts:%d/%d",
 			secondOK, secondBatchState, secondBatchTarget, secondReceiptRevision, secondText, secondContextCount, issueContextCount)
@@ -188,8 +213,14 @@ func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 	if !strings.Contains(provider.body(0), "supp A") || !strings.Contains(provider.body(0), "Issue context") {
 		t.Fatalf("first provider body missing prompt/context: %s", provider.body(0))
 	}
-	if !strings.Contains(provider.body(1), "supp B") || !strings.Contains(provider.body(1), "Current requirement changed") {
-		t.Fatalf("second provider body missing current target: %s", provider.body(1))
+	if !strings.Contains(provider.body(2), "supp B") || !strings.Contains(provider.body(2), "supp C") ||
+		!strings.Contains(provider.body(2), "Current requirement changed") {
+		t.Fatalf("second provider body missing current target: %s", provider.body(2))
+	}
+	if !strings.Contains(provider.body(1), "Conversation B independent") ||
+		strings.Contains(provider.body(1), "supp A") || strings.Contains(provider.body(1), "supp B") ||
+		strings.Contains(provider.body(1), "supp C") {
+		t.Fatalf("conversation B provider body mixed issue supplements: %s", provider.body(1))
 	}
 
 	provider.release("supp B")
@@ -199,8 +230,8 @@ func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 			len(issue.Executions) == 2 && issue.Executions[1].Status == issueExecutionCompleted &&
 			issue.Supplements.Batches[1].State == supplementBatchAccepted
 	})
-	if provider.count() != 2 {
-		t.Fatalf("supplement continuation produced %d provider requests, want 2", provider.count())
+	if provider.count() != 3 {
+		t.Fatalf("supplement/conversation produced %d provider requests, want 3", provider.count())
 	}
 	var finalOK bool
 	h.snapshot(func() {
@@ -208,8 +239,9 @@ func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 		finalOK = issue != nil && issue.Supplements.pendingCount() == 0 &&
 			issue.Supplements.Items[0].State == supplementStateSubmitted &&
 			issue.Supplements.Items[1].State == supplementStateSubmitted &&
+			issue.Supplements.Items[2].State == supplementStateSubmitted &&
 			issue.Supplements.Items[0].Text == "supp A" && issue.Supplements.Items[1].Text == "supp B" &&
-			issue.Supplements.AutoContinue
+			issue.Supplements.Items[2].Text == "supp C" && issue.Supplements.AutoContinue
 	})
 	if !finalOK {
 		t.Fatal("final supplement receipts were not accepted without auto disable")

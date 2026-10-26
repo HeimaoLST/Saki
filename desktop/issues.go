@@ -658,7 +658,7 @@ func (a *appModel) confirmIssueExecutionNotDispatched(issueID, executionID strin
 		return false
 	}
 	oldExecutionStatus, oldExecutionDetail := execution.Status, execution.Detail
-	oldWorkError, oldWorkPending := issue.Work.SendError, issue.Work.pendingExecutionID
+	oldWorkState, oldWorkError, oldWorkPending := issue.Work.SendState, issue.Work.SendError, issue.Work.pendingExecutionID
 	oldAuto := false
 	if issue.Supplements != nil {
 		oldAuto = issue.Supplements.AutoContinue
@@ -680,7 +680,7 @@ func (a *appModel) confirmIssueExecutionNotDispatched(issueID, executionID strin
 	}
 	if !saved {
 		execution.Status, execution.Detail = oldExecutionStatus, oldExecutionDetail
-		issue.Work.SendError, issue.Work.pendingExecutionID = oldWorkError, oldWorkPending
+		issue.Work.SendState, issue.Work.SendError, issue.Work.pendingExecutionID = oldWorkState, oldWorkError, oldWorkPending
 		if issue.Supplements != nil {
 			issue.Supplements.AutoContinue = oldAuto
 		}

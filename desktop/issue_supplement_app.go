@@ -32,18 +32,6 @@ func issueSupplementTargetFor(ct *contact, issue *productIssue) issueSupplementT
 	}
 }
 
-func issueSupplementFullInput(issue *productIssue, ledger *issueSupplementLedger, target issueSupplementTarget) string {
-	base := issuePrompt(issue)
-	if ledger == nil {
-		return base
-	}
-	text := strings.TrimSpace(ledger.pendingText(target))
-	if text == "" {
-		return base
-	}
-	return base + issueSupplementInputPrefix + text
-}
-
 func (a *appModel) addIssueSupplement(ct *contact, issueID, text string) error {
 	issue := issueForContact(ct, issueID)
 	if issue == nil {
@@ -97,28 +85,18 @@ func (a *appModel) setIssueSupplementAuto(ct *contact, issueID string, enabled b
 }
 
 func (a *appModel) maybeAutoContinueAllIssues() {
-	if a.supplementAutoPass {
-		return
-	}
-	a.supplementAutoPass = true
-	defer func() { a.supplementAutoPass = false }()
 	for _, ct := range a.contacts {
 		for _, issue := range ct.Issues {
-			a.autoContinueIssueLocked(ct, issue)
+			a.autoContinueIssue(ct, issue)
 		}
 	}
 }
 
 func (a *appModel) maybeAutoContinueIssue(ct *contact, issue *productIssue) bool {
-	if a.supplementAutoPass {
-		return false
-	}
-	a.supplementAutoPass = true
-	defer func() { a.supplementAutoPass = false }()
-	return a.autoContinueIssueLocked(ct, issue)
+	return a.autoContinueIssue(ct, issue)
 }
 
-func (a *appModel) autoContinueIssueLocked(ct *contact, issue *productIssue) bool {
+func (a *appModel) autoContinueIssue(ct *contact, issue *productIssue) bool {
 	if a == nil || ct == nil || issue == nil || a.shutdownStarted {
 		return false
 	}
@@ -140,15 +118,7 @@ func (a *appModel) autoContinueIssueLocked(ct *contact, issue *productIssue) boo
 	}
 	target := issueSupplementTargetFor(ct, issue)
 	if active := ledger.activeBatch(target); active != nil {
-		// A local prepared batch never crossed the send boundary. It is safe to
-		// release and rebuild at the current revision without revoking auto.
-		if active.State != supplementBatchPrepared || active.ExecutionID != "" {
-			return false
-		}
-		if !ledger.ReleasePrepared(active, a.persist) {
-			issue.Work.SendError = "A locally prepared supplement batch could not be released for update."
-			return false
-		}
+		return false
 	}
 	if reason := a.canStartIssue(ct, issue); reason != "" {
 		return false
@@ -169,14 +139,8 @@ func (a *appModel) startIssueRun(ct *contact, issue *productIssue) bool {
 	ledger := issueSupplementLedgerFor(issue)
 	target := issueSupplementTargetFor(ct, issue)
 	if active := ledger.activeBatch(target); active != nil {
-		if active.State != supplementBatchPrepared || active.ExecutionID != "" {
-			a.issueFormError = "A supplement batch is already " + active.State + " for this issue."
-			return false
-		}
-		if !ledger.ReleasePrepared(active, a.persist) {
-			a.issueFormError = "Could not release the locally prepared supplement batch."
-			return false
-		}
+		a.issueFormError = "A supplement batch is already " + active.State + " for this issue."
+		return false
 	}
 	pendingText := strings.TrimSpace(ledger.pendingText(target))
 	if pendingText != "" {
@@ -251,13 +215,6 @@ func issueSupplementBatchForExecution(issue *productIssue, executionID string) *
 	return nil
 }
 
-func issueSupplementBatchForID(issue *productIssue, batchID string) *issueSupplementBatch {
-	if issue == nil || issue.Supplements == nil || batchID == "" {
-		return nil
-	}
-	return issue.Supplements.batchByID(batchID)
-}
-
 func (a *appModel) openIssueSupplementForm(issueID string) {
 	a.issueSupplementFormID = issueID
 }
@@ -280,11 +237,6 @@ func (a *appModel) issueSupplementDraft(issueID string) *string {
 }
 
 func (a *appModel) saveIssueSupplement(ct *contact, issueID, text string) bool {
-	issue := issueForContact(ct, issueID)
-	if issue == nil {
-		a.issueActionError = "Issue not found."
-		return false
-	}
 	if err := a.addIssueSupplement(ct, issueID, text); err != nil {
 		a.issueActionError = err.Error()
 		return false
@@ -308,9 +260,6 @@ func (a *appModel) retryIssueSupplementBatch(ct *contact, issue *productIssue, b
 	return true
 }
 
-// normalizeRestoredSupplementBatches prevents restart from silently treating
-// an in-flight or unknown dispatch as a fresh automatic candidate. It does not
-// resend. If an execution association is missing, the batch becomes unknown.
 func (a *appModel) normalizeRestoredSupplementBatches() {
 	changed := false
 	for _, ct := range a.contacts {

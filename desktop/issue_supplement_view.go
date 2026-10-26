@@ -45,9 +45,6 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 	if ledger != nil {
 		if active := ledger.activeBatch(target); active != nil {
 			switch active.State {
-			case supplementBatchPrepared:
-				ui.Text(c, "A locally prepared batch is waiting; it will be released and rebuilt at the current target.").
-					FontSize(10).LineHeight(1.35).TextColor(t.TextMuted)
 			case supplementBatchDispatching:
 				ui.Text(c, "Dispatching; waiting for the Runtime receipt. Automatic continuation will not start another batch yet.").
 					FontSize(10).LineHeight(1.35).TextColor(t.Warning)
@@ -225,8 +222,6 @@ func shortExecutionID(id string) string {
 
 func issueSupplementBatchLabel(batch *issueSupplementBatch) string {
 	switch batch.State {
-	case supplementBatchPrepared:
-		return "Batch prepared · not dispatched"
 	case supplementBatchDispatching:
 		return "Batch dispatching · receipt pending"
 	case supplementBatchAccepted:

@@ -99,3 +99,35 @@ func TestIssueSupplementAcceptedSaveFailureDisablesAutoWithoutBatch(t *testing.T
 func writeBlockedPathForTest(path string) error {
 	return os.WriteFile(path, []byte("not a directory"), 0o600)
 }
+
+func TestIssueSupplementConfirmNotDispatchedSaveFailureRestoresAllWorkState(t *testing.T) {
+	a, ct := taskContextApp(t)
+	if !a.createIssue("confirm save failure", "keep state") {
+		t.Fatal(a.issueFormError)
+	}
+	issue := ct.selectedIssue()
+	if err := a.addIssueSupplement(ct, issue.ID, "unknown text"); err != nil {
+		t.Fatal(err)
+	}
+	execution := &issueExecution{ID: "execution-confirm-fail", Status: issueExecutionUnknown, Detail: "unknown"}
+	issue.Executions = append(issue.Executions, execution)
+	issue.Work.SendState = sendUnknown
+	issue.Work.SendError = "unknown delivery"
+	issue.Work.pendingExecutionID = execution.ID
+	issue.Status = issueStatusNeedsAttention
+	oldAuto := issue.Supplements.AutoContinue
+	oldStore := a.store.path
+	badParent := filepath.Join(t.TempDir(), "blocked-confirm-save")
+	if err := writeBlockedPathForTest(badParent); err != nil {
+		t.Fatal(err)
+	}
+	a.store.path = filepath.Join(badParent, "contacts.json")
+	ok := a.confirmIssueExecutionNotDispatched(issue.ID, execution.ID)
+	a.store.path = oldStore
+	if ok || execution.Status != issueExecutionUnknown || execution.Detail != "unknown" ||
+		issue.Work.SendState != sendUnknown || issue.Work.SendError != "unknown delivery" ||
+		issue.Work.pendingExecutionID != execution.ID || issue.Supplements.AutoContinue != oldAuto {
+		t.Fatalf("failed confirm changed state: ok=%v execution=%+v work=%v/%q/%q auto=%v",
+			ok, execution, issue.Work.SendState, issue.Work.SendError, issue.Work.pendingExecutionID, issue.Supplements.AutoContinue)
+	}
+}
