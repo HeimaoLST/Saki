@@ -19,8 +19,8 @@ func issuePreviewApp(scene string) *appModel {
 		Workspace: "/Users/you/Workspace/Saki", Status: statusReady,
 		Issues: []*productIssue{
 			{
-				ID: "issue-1", ContactID: "saki", Goal: "Ship explicit product issues", Status: issueStatusOpen,
-				Requirements:  "Persist the original goal and requirements.\nKeep every execution associated with this issue.",
+				ID: "issue-1", ContactID: "saki", Goal: "Ship explicit product issues", Status: issueStatusInProgress,
+				Requirements:  parseIssueRequirements("Persist the original goal and requirements.\nKeep every execution associated with this issue."),
 				WorkSessionID: "issue-preview-work-1",
 				Executions: []*issueExecution{
 					{ID: "exec-1", SessionID: "issue-preview-work-1", TaskID: "task-1", MessageID: "msg-1", Prompt: "Ship explicit product issues", Status: issueExecutionCompleted},
@@ -28,8 +28,8 @@ func issuePreviewApp(scene string) *appModel {
 				},
 			},
 			{
-				ID: "issue-2", ContactID: "saki", Goal: "Verify restart continuation", Status: issueStatusOpen,
-				Requirements:  "Do not turn an accepted draft into a new task after restart.",
+				ID: "issue-2", ContactID: "saki", Goal: "Verify restart continuation", Status: issueStatusInProgress,
+				Requirements:  parseIssueRequirements("Do not turn an accepted draft into a new task after restart."),
 				WorkSessionID: "issue-preview-work-2",
 				Executions: []*issueExecution{
 					{ID: "exec-3", SessionID: "issue-preview-work-2", TaskID: "task-3", MessageID: "msg-3", Prompt: "Verify restart continuation", Status: issueExecutionInterrupted},

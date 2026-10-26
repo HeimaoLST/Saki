@@ -1372,6 +1372,7 @@ func (a *appModel) applyIssueEvent(ct *contact, issue *productIssue, event runti
 			execution.Status = issueExecutionStatusFromWork(workStateFromTask(payload.Status))
 			execution.Detail = detail
 		}
+		a.applyIssueTerminalLifecycle(issue, event.TaskID, payload.Status)
 		_ = a.persist()
 		a.reloadIssueWorkByID(ct.ID, issue.ID)
 	}
@@ -1748,6 +1749,13 @@ func (a *appModel) acceptIssueTask(ct *contact, issue *productIssue, execution *
 		}
 		issue.Work.SendError = "Task accepted, but its issue association could not be saved; reload before retrying."
 	}
+	if (issue.Work.cancelAfterAccept || issue.Status == issueStatusCanceled) && issue.Work.ActiveTaskID != "" {
+		if a.cancelIssue(issue.ID) {
+			issue.Work.cancelAfterAccept = false
+		} else {
+			issue.Work.SendError = "The accepted task could not be cancelled; do not retry it automatically."
+		}
+	}
 }
 
 func (a *appModel) failIssueSubmit(contactID, issueID string, err error, submitted bool) {
@@ -1785,6 +1793,10 @@ func (a *appModel) failIssueSubmit(contactID, issueID string, err error, submitt
 				execution.Status = issueExecutionNotDispatched
 				execution.Detail = issue.Work.SendError
 			}
+		}
+		if issue.Status != issueStatusCanceled && issue.Status != issueStatusCompleted && !issue.Archived {
+			issue.Status = issueStatusNeedsAttention
+			issue.UpdatedAt = nowMillis()
 		}
 		_ = a.persist()
 	})

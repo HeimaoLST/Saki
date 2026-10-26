@@ -465,7 +465,7 @@ func TestStoppingIssueWorkDoesNotStopConversation(t *testing.T) {
 			containsText(contactMessageTexts(ct), "gate-B result")
 	})
 	issue := ct.issueByID(issueID)
-	if issue.Status != issueStatusOpen || containsText(contactMessageTextsForWork(issue), "gate-B result") {
+	if issue.Status != issueStatusInProgress || containsText(contactMessageTextsForWork(issue), "gate-B result") {
 		t.Fatalf("B result leaked into A or A closed: %+v", issue)
 	}
 	if provider.count() != 2 {

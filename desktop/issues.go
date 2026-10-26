@@ -11,15 +11,17 @@ import (
 // A productIssue is the GUI-owned product object. Runtime tasks are linked as
 // execution associations; an execution terminal is not an item completion.
 type productIssue struct {
-	ID           string
-	ContactID    string
-	Goal         string
-	Requirements string
-	Status       string
-	Evidence     string
-	CreatedAt    int64
-	UpdatedAt    int64
-	Executions   []*issueExecution
+	ID                   string
+	ContactID            string
+	Goal                 string
+	Requirements         []*issueRequirement
+	Status               string
+	Archived             bool
+	Evidence             string
+	CreatedAt            int64
+	UpdatedAt            int64
+	Executions           []*issueExecution
+	RequirementsRevision int
 
 	// WorkSessionID is the issue-owned execution context. It is intentionally
 	// separate from contact.SessionID (the ongoing conversation). Old
@@ -32,7 +34,6 @@ type productIssue struct {
 // execution context. Only WorkSessionID is persisted; messages, work items
 // and task state are restored from the Runtime by session_id.
 type issueWorkSession struct {
-	SessionID          string
 	Loaded             bool
 	LoadErr            string
 	ActiveTaskID       string
@@ -45,25 +46,49 @@ type issueWorkSession struct {
 	StopRequestedTasks map[string]bool
 	pendingEvents      []runtimeEventEnvelope
 	pendingExecutionID string
+	cancelAfterAccept  bool
 	historyGen         int
 	HistoryDirty       bool
+}
+
+// issueRequirement is the single live truth for a product requirement. The
+// legacy Requirements string exists only at the store serialization boundary.
+type issueRequirement struct {
+	ID        string
+	Text      string
+	State     string
+	Evidence  string
+	UpdatedAt int64
 }
 
 // issueExecution is the persisted association for one attempt on an issue.
 // Prompt is the exact pre-dispatch snapshot; Runtime history remains the
 // authority for task/message/tool results.
 type issueExecution struct {
-	ID        string
-	SessionID string
-	TaskID    string
-	MessageID string
-	Prompt    string
-	Status    string
-	Detail    string
+	ID                   string
+	SessionID            string
+	TaskID               string
+	MessageID            string
+	Prompt               string
+	Status               string
+	Detail               string
+	RequirementsRevision int
 }
 
 const (
-	issueStatusOpen = "open"
+	issueStatusNotStarted     = "not_started"
+	issueStatusInProgress     = "in_progress"
+	issueStatusWaitingUser    = "waiting_user"
+	issueStatusNeedsAttention = "needs_attention"
+	issueStatusCompleted      = "completed"
+	issueStatusCanceled       = "canceled"
+
+	// Legacy name kept for old tests/data; new code uses NotStarted.
+	issueStatusOpen = issueStatusNotStarted
+
+	requirementUnverified = "unverified"
+	requirementSatisfied  = "satisfied"
+	requirementUnmet      = "unmet"
 
 	issueExecutionPending       = "pending"
 	issueExecutionNotDispatched = "not_dispatched"
@@ -82,6 +107,92 @@ func newIssueID() string {
 		return "issue-" + hex.EncodeToString(bytes[:])
 	}
 	return fmt.Sprintf("issue-%d", time.Now().UnixNano())
+}
+
+func newRequirementID() string {
+	var bytes [8]byte
+	if _, err := rand.Read(bytes[:]); err == nil {
+		return "requirement-" + hex.EncodeToString(bytes[:])
+	}
+	return fmt.Sprintf("requirement-%d", time.Now().UnixNano())
+}
+
+func parseIssueRequirements(text string) []*issueRequirement {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	var out []*issueRequirement
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		out = append(out, &issueRequirement{ID: newRequirementID(), Text: line, State: requirementUnverified})
+	}
+	return out
+}
+
+func issueRequirementsText(issue *productIssue) string {
+	if issue == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(issue.Requirements))
+	for _, requirement := range issue.Requirements {
+		if requirement != nil && strings.TrimSpace(requirement.Text) != "" {
+			parts = append(parts, requirement.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func issueRequirementByID(issue *productIssue, id string) *issueRequirement {
+	if issue == nil {
+		return nil
+	}
+	for _, requirement := range issue.Requirements {
+		if requirement != nil && requirement.ID == id {
+			return requirement
+		}
+	}
+	return nil
+}
+
+func normalizeIssueStatus(status string, executions []*issueExecution) string {
+	switch status {
+	case issueStatusNotStarted, issueStatusInProgress, issueStatusWaitingUser,
+		issueStatusNeedsAttention, issueStatusCompleted, issueStatusCanceled:
+		return status
+	case "", "open":
+		if len(executions) > 0 {
+			return issueStatusInProgress
+		}
+		return issueStatusNotStarted
+	default:
+		return issueStatusNeedsAttention
+	}
+}
+
+func issueStatusLabel(issue *productIssue) string {
+	if issue == nil {
+		return "Unknown"
+	}
+	if issue.Archived {
+		return "Archived"
+	}
+	switch issue.Status {
+	case issueStatusNotStarted:
+		return "Not started"
+	case issueStatusInProgress:
+		return "In progress"
+	case issueStatusWaitingUser:
+		return "Waiting for you"
+	case issueStatusNeedsAttention:
+		return "Needs attention"
+	case issueStatusCompleted:
+		return "Completed"
+	case issueStatusCanceled:
+		return "Canceled"
+	default:
+		return "Needs attention"
+	}
 }
 
 func newIssueExecutionID() string {
@@ -108,7 +219,7 @@ func (ct *contact) selectedIssue() *productIssue {
 		}
 	}
 	for _, issue := range ct.Issues {
-		if issue.Status == issueStatusOpen {
+		if !issue.Archived && issue.Status != issueStatusCompleted && issue.Status != issueStatusCanceled {
 			return issue
 		}
 	}
@@ -121,7 +232,17 @@ func (ct *contact) selectedIssue() *productIssue {
 func (ct *contact) openIssues() []*productIssue {
 	out := make([]*productIssue, 0, len(ct.Issues))
 	for _, issue := range ct.Issues {
-		if issue.Status == issueStatusOpen {
+		if !issue.Archived {
+			out = append(out, issue)
+		}
+	}
+	return out
+}
+
+func (ct *contact) archivedIssues() []*productIssue {
+	out := make([]*productIssue, 0)
+	for _, issue := range ct.Issues {
+		if issue.Archived {
 			out = append(out, issue)
 		}
 	}
@@ -179,7 +300,7 @@ func (ct *contact) executionByID(id string) (*productIssue, *issueExecution) {
 
 func issuePrompt(issue *productIssue) string {
 	goal := strings.TrimSpace(issue.Goal)
-	requirements := strings.TrimSpace(issue.Requirements)
+	requirements := strings.TrimSpace(issueRequirementsText(issue))
 	if requirements == "" {
 		return goal
 	}
@@ -198,8 +319,9 @@ func (a *appModel) createIssue(goal, requirements string) bool {
 	ct := a.selectedContact()
 	now := nowMillis()
 	item := &productIssue{
-		ID: newIssueID(), ContactID: ct.ID, Goal: goal, Requirements: requirements,
-		Status: issueStatusOpen, CreatedAt: now, UpdatedAt: now,
+		ID: newIssueID(), ContactID: ct.ID, Goal: goal,
+		Requirements: parseIssueRequirements(requirements), RequirementsRevision: 1,
+		Status: issueStatusNotStarted, CreatedAt: now, UpdatedAt: now,
 	}
 	previousSelected := ct.SelectedIssueID
 	ct.Issues = append(ct.Issues, item)
@@ -260,14 +382,30 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 		}
 		issue := &productIssue{
 			ID: stored.ID, ContactID: contactID, Goal: stored.Goal,
-			Requirements: stored.Requirements, Status: stored.Status,
+			Archived: stored.Archived, RequirementsRevision: stored.RequirementsRevision,
 			Evidence: stored.Evidence, CreatedAt: stored.CreatedAt, UpdatedAt: stored.UpdatedAt,
 			WorkSessionID: stored.WorkSessionID,
 		}
-		issue.WorkSessionID = stored.WorkSessionID
-		if issue.Status == "" {
-			issue.Status = issueStatusOpen
+		if len(stored.RequirementItems) > 0 {
+			for _, item := range stored.RequirementItems {
+				if strings.TrimSpace(item.Text) == "" {
+					continue
+				}
+				state := item.State
+				if state != requirementSatisfied && state != requirementUnmet {
+					state = requirementUnverified
+				}
+				issue.Requirements = append(issue.Requirements, &issueRequirement{
+					ID: item.ID, Text: item.Text, State: state, Evidence: item.Evidence, UpdatedAt: item.UpdatedAt,
+				})
+			}
+		} else {
+			issue.Requirements = parseIssueRequirements(stored.Requirements)
 		}
+		if issue.RequirementsRevision < 1 {
+			issue.RequirementsRevision = 1
+		}
+		issue.WorkSessionID = stored.WorkSessionID
 		for _, execution := range stored.Executions {
 			if execution.ID == "" {
 				continue
@@ -288,9 +426,10 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 			issue.Executions = append(issue.Executions, &issueExecution{
 				ID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID,
 				MessageID: execution.MessageID, Prompt: execution.Prompt,
-				Status: status, Detail: detail,
+				Status: status, Detail: detail, RequirementsRevision: execution.RequirementsRevision,
 			})
 		}
+		issue.Status = normalizeIssueStatus(stored.Status, issue.Executions)
 		out = append(out, issue)
 	}
 	return out
@@ -303,6 +442,10 @@ func (a *appModel) runIssue(issueID string) bool {
 	issue := ct.issueByID(issueID)
 	if issue == nil {
 		a.issueFormError = "Issue not found for this contact."
+		return false
+	}
+	if reason := issueLifecycleStartBlocked(issue); reason != "" {
+		a.issueFormError = reason
 		return false
 	}
 	if reason := issueRunBlocked(issue); reason != "" {
@@ -327,6 +470,9 @@ func (a *appModel) runIssue(issueID string) bool {
 	issue.Executions = append(issue.Executions, execution)
 	issue.UpdatedAt = nowMillis()
 	previousSend, previousPending := issue.Work.SendState, issue.Work.pendingExecutionID
+	previousStatus, previousUpdated := issue.Status, issue.UpdatedAt
+	issue.Status = issueStatusInProgress
+	issue.UpdatedAt = nowMillis()
 	issue.Work.SendState = sendSubmitting
 	issue.Work.SendError = ""
 	issue.Work.pendingExecutionID = execution.ID
@@ -334,6 +480,7 @@ func (a *appModel) runIssue(issueID string) bool {
 	if err := a.persist(); err != nil {
 		issue.Executions = issue.Executions[:len(issue.Executions)-1]
 		issue.Work.SendState, issue.Work.pendingExecutionID = previousSend, previousPending
+		issue.Status, issue.UpdatedAt = previousStatus, previousUpdated
 		a.issueFormError = "Could not save the issue execution: " + err.Error()
 		return false
 	}
@@ -345,6 +492,7 @@ func (a *appModel) runIssue(issueID string) bool {
 		if execution.Detail == "" {
 			execution.Detail = "The task was not dispatched."
 		}
+		issue.Status = issueStatusNeedsAttention
 		a.issueFormError = execution.Detail
 		_ = a.persist()
 		return false
@@ -405,10 +553,11 @@ func issueExecutionStatusFromWork(state workState) string {
 }
 
 func issueRequirementsSummary(issue *productIssue) string {
-	if strings.TrimSpace(issue.Requirements) == "" {
+	text := issueRequirementsText(issue)
+	if strings.TrimSpace(text) == "" {
 		return "No requirements recorded."
 	}
-	return issue.Requirements
+	return text
 }
 
 func unresolvedExecution(execution *issueExecution) bool {

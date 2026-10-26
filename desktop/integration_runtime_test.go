@@ -837,32 +837,42 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 	})
 	run()
 	var issue *productIssue
+	var draftAfterRun, workSession, conversationSession string
+	var executionSessions []string
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
 		issue = ct.Issues[0]
-		if len(issue.Executions) != 2 {
-			t.Fatalf("executions = %+v", issue.Executions)
-		}
-		if issue.Executions[0].TaskID == issue.Executions[1].TaskID ||
-			issue.Executions[0].SessionID == "" || issue.Executions[1].MessageID == "" {
-			t.Fatalf("execution associations = %+v", issue.Executions)
-		}
-		if issue.Status != issueStatusOpen {
-			t.Fatalf("runtime completion changed issue status: %q", issue.Status)
-		}
-		if !strings.Contains(issueEvidenceText(issue), "not recorded") {
-			t.Fatalf("completion evidence = %q", issueEvidenceText(issue))
-		}
-		if ct.Draft != prompt {
-			t.Fatalf("issue run consumed a composer draft equal to its prompt: %q", ct.Draft)
-		}
-		if issue.WorkSessionID == "" || issue.WorkSessionID == ct.SessionID {
-			t.Fatalf("issue work session was not independent: work=%q conversation=%q", issue.WorkSessionID, ct.SessionID)
-		}
-		if issue.Executions[0].SessionID != issue.WorkSessionID || issue.Executions[1].SessionID != issue.WorkSessionID {
-			t.Fatalf("execution session mapping = %+v / work=%q", issue.Executions, issue.WorkSessionID)
+		draftAfterRun = ct.Draft
+		workSession, conversationSession = issue.WorkSessionID, ct.SessionID
+		for _, execution := range issue.Executions {
+			executionSessions = append(executionSessions, execution.SessionID)
 		}
 	})
+	if len(issue.Executions) != 2 {
+		t.Fatalf("executions = %+v", issue.Executions)
+	}
+	if issue.Executions[0].TaskID == issue.Executions[1].TaskID ||
+		issue.Executions[0].SessionID == "" || issue.Executions[1].MessageID == "" {
+		t.Fatalf("execution associations = %+v", issue.Executions)
+	}
+	if issue.Status != issueStatusInProgress {
+		t.Fatalf("runtime completion changed issue status: %q", issue.Status)
+	}
+	if !strings.Contains(issueEvidenceText(issue), "not recorded") {
+		t.Fatalf("completion evidence = %q", issueEvidenceText(issue))
+	}
+	if draftAfterRun != prompt {
+		t.Fatalf("issue run consumed a composer draft equal to its prompt: %q", draftAfterRun)
+	}
+	if workSession == "" || workSession == conversationSession {
+		t.Fatalf("issue work session was not independent: work=%q conversation=%q", workSession, conversationSession)
+	}
+	for _, sessionID := range executionSessions {
+		if sessionID != workSession {
+			t.Fatalf("execution session mapping = %v / work=%q", executionSessions, workSession)
+		}
+	}
+
 	if provider.count() != 2 {
 		t.Fatalf("issue runs made %d model requests, want 2", provider.count())
 	}
@@ -878,19 +888,23 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 		ct := h2.app.contacts[0]
 		return len(ct.Issues) == 1 && ct.Issues[0].Work.Loaded && len(ct.Issues[0].Executions) == 2
 	})
+	var restoredIssue *productIssue
+	var restoredDraft string
 	h2.snapshot(func() {
 		ct := h2.app.contacts[0]
-		issue = ct.Issues[0]
-		if issue.ID != issueID || issue.Status != issueStatusOpen || len(issue.Executions) != 2 {
-			t.Fatalf("restored issue = %+v", issue)
-		}
-		if issue.Executions[0].TaskID == "" || issue.Executions[1].TaskID == "" {
-			t.Fatalf("restored execution IDs = %+v", issue.Executions)
-		}
-		if ct.Draft != prompt {
-			t.Fatalf("restart issue draft = %q", ct.Draft)
-		}
+		restoredIssue = ct.Issues[0]
+		restoredDraft = ct.Draft
 	})
+	if restoredIssue.ID != issueID || restoredIssue.Status != issueStatusInProgress || len(restoredIssue.Executions) != 2 {
+		t.Fatalf("restored issue = %+v", restoredIssue)
+	}
+	if restoredIssue.Executions[0].TaskID == "" || restoredIssue.Executions[1].TaskID == "" {
+		t.Fatalf("restored execution IDs = %+v", restoredIssue.Executions)
+	}
+	if restoredDraft != prompt {
+		t.Fatalf("restart issue draft = %q", restoredDraft)
+	}
+
 	if provider.count() != beforeRestart {
 		t.Fatalf("restart issued model requests: %d -> %d", beforeRestart, provider.count())
 	}
@@ -989,7 +1003,7 @@ func TestGUIAppIssueStopKeepsItemAndExecution(t *testing.T) {
 	})
 	ct := h.app.selectedContact()
 	issue := ct.issueByID(issueID)
-	if issue == nil || issue.Status != issueStatusOpen || ct.Draft != "later issue draft" {
+	if issue == nil || issue.Status != issueStatusInProgress || ct.Draft != "later issue draft" {
 		release()
 		t.Fatalf("stop issue/draft = %+v / %q", issue, ct.Draft)
 	}
@@ -1313,7 +1327,7 @@ func TestGUIAppRejectedComposerSendKeepsInFlightIssueAssociation(t *testing.T) {
 	if execution.TaskID == "" || ct.Issues[0].Work.pendingExecutionID != "" || execution.ID != executionID {
 		t.Fatalf("accepted task lost its issue attribution: %+v pending=%q", execution, ct.Issues[0].Work.pendingExecutionID)
 	}
-	if len(ct.Issues[0].Executions) != 1 || ct.Issues[0].Status != issueStatusOpen || ct.Draft != "ordinary composer attempt" {
+	if len(ct.Issues[0].Executions) != 1 || ct.Issues[0].Status != issueStatusInProgress || ct.Draft != "ordinary composer attempt" {
 		t.Fatalf("issue/draft after in-flight rejection = %+v / %q", ct.Issues[0], ct.Draft)
 	}
 	if provider.count() != 1 {
