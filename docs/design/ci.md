@@ -61,13 +61,14 @@ driver 自建本地 fixture HTTP 服务，不需要外部 provider/key；其断�
 ```sh
 cd desktop
 SAKI_TEST_RUNTIME_BIN="$GITHUB_WORKSPACE/target/debug/Saki" \
-SAKI_TEST_ONLINE=0 CGO_ENABLED=0 \
+SAKI_TEST_ONLINE=0 SAKI_PREVIEW_DIR="$RUNNER_TEMP/desktop-preview-package" \
+CGO_ENABLED=0 \
   go test -json ./... -count=1 | tee "$RUNNER_TEMP/desktop-go-test.json"
 python3 "$GITHUB_WORKSPACE/scripts/check-gui-runtime-results.py" \
   "$RUNNER_TEMP/desktop-go-test.json"
 ```
 
-`go test` 的 stdout JSON 用仅 stdout 的 `tee` 同时保留完整逐项日志，stderr 直接进入 CI 日志；不使用会混入 stderr 的 `2>&1`。显式 `set -o pipefail` 与 bash `-e` 保证 Go 非零不会被 tee 吞掉，checker 错误也有原始 JSON/日志可查。`SAKI_TEST_RUNTIME_BIN` 必须指向本次构建的绝对 binary，`SAKI_TEST_ONLINE=0` 显式关闭线上入口，`-count=1` 禁止缓存替代新 binary。Go test 非零直接失败；checker 再验证 package PASS 与场景合同，任一不符都失败。
+`go test` 的 stdout JSON 用仅 stdout 的 `tee` 同时保留完整逐项日志，stderr 直接进入 CI 日志；不使用会混入 stderr 的 `2>&1`。显式 `set -o pipefail` 与 bash `-e` 保证 Go 非零不会被 tee 吞掉，checker 错误也有原始 JSON/日志可查。step 设置临时 `SAKI_PREVIEW_DIR`，让 bundle 内已有的 headless preview 测试实际运行（包括新增 model-selection preview）；仅保留线上 smoke 和两个独立 reader 目录的 opt-in skip，不新增 allowlist。`SAKI_TEST_RUNTIME_BIN` 必须指向本次构建的绝对 binary，`SAKI_TEST_ONLINE=0` 显式关闭线上入口，`-count=1` 禁止缓存替代新 binary。Go test 非零直接失败；checker 再验证 package PASS 与场景合同，任一不符都失败。
 
 checker（`scripts/check-gui-runtime-results.py`）的**必须 PASS** 清单（原 #87 五项 + 当前 Nagi 场景）：
 
@@ -105,7 +106,7 @@ TestPreviewRuntimeStates
 TestPreviewStartupDiagnostics
 ```
 
-这些预览测试只在显式目录 opt-in 时运行；线上 smoke 仍需 `SAKI_TEST_ONLINE=1` + 宿主凭据，不进入本 CI。完整 package 让未来新增离线测试自然执行；若新增合法 opt-in，必须同步检查脚本 allowlist，不能静默放开未知 Skip。step 超时 10 分钟；Linux/headless，不覆盖真实窗口/IME。失败留在既有 `rust` job，沿 `rust` → `ci-required` 传播；无 if-file-exists/continue-on-error/skip。
+`SAKI_PREVIEW_DIR` 的预览测试在本 step 使用临时目录实际运行；另两个 reader 专用目录和线上 smoke 仍为显式 opt-in，未获得目录/凭据时 Skip，属于既有 8 项 allowlist。完整 package 让未来新增离线测试自然执行；若新增合法 opt-in，必须同步检查脚本 allowlist，不能静默放开未知 Skip。step 超时 10 分钟；Linux/headless，不覆盖真实窗口/IME。失败留在既有 `rust` job，沿 `rust` → `ci-required` 传播；无 if-file-exists/continue-on-error/skip。
 
 ## macOS arm64 工程候选（2026-10-24）
 
