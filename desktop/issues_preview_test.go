@@ -19,18 +19,18 @@ func issuePreviewApp(scene string) *appModel {
 		Workspace: "/Users/you/Workspace/Saki", Status: statusReady,
 		Issues: []*productIssue{
 			{
-				ID: "issue-1", ContactID: "saki", Goal: "Ship explicit product issues", Status: issueStatusOpen,
-				Requirements:  "Persist the original goal and requirements.\nKeep every execution associated with this issue.",
-				WorkSessionID: "issue-preview-work-1",
+				ID: "issue-1", ContactID: "saki", Goal: "Ship explicit product issues", Status: issueStatusInProgress,
+				Requirements:  parseIssueRequirements("Persist the original goal and requirements.\nKeep every execution associated with this issue."),
+				WorkSessionID: "issue-preview-work-1", RequirementsRevision: 1,
 				Executions: []*issueExecution{
 					{ID: "exec-1", SessionID: "issue-preview-work-1", TaskID: "task-1", MessageID: "msg-1", Prompt: "Ship explicit product issues", Status: issueExecutionCompleted},
 					{ID: "exec-2", SessionID: "issue-preview-work-1", TaskID: "task-2", MessageID: "msg-2", Prompt: "Ship explicit product issues", Status: issueExecutionCompleted},
 				},
 			},
 			{
-				ID: "issue-2", ContactID: "saki", Goal: "Verify restart continuation", Status: issueStatusOpen,
-				Requirements:  "Do not turn an accepted draft into a new task after restart.",
-				WorkSessionID: "issue-preview-work-2",
+				ID: "issue-2", ContactID: "saki", Goal: "Verify restart continuation", Status: issueStatusInProgress,
+				Requirements:  parseIssueRequirements("Do not turn an accepted draft into a new task after restart."),
+				WorkSessionID: "issue-preview-work-2", RequirementsRevision: 1,
 				Executions: []*issueExecution{
 					{ID: "exec-3", SessionID: "issue-preview-work-2", TaskID: "task-3", MessageID: "msg-3", Prompt: "Verify restart continuation", Status: issueExecutionInterrupted},
 				},
@@ -90,6 +90,28 @@ func issuePreviewApp(scene string) *appModel {
 		a.issueFormOpen = true
 		a.issueGoal = "Keep requirements attached to each run"
 		a.issueRequirements = "Show the original requirement text and an explicit unverified completion state."
+	case "issue-archive":
+		ct.Issues[0].Status = issueStatusCompleted
+		ct.Issues[0].Archived = true
+		ct.Issues[0].Evidence = "User reviewed the result and archived the item."
+		a.issueFilter = "archived"
+	case "issue-edit":
+		a.issueFormOpen = true
+		a.issueFormEditingID = ct.Issues[0].ID
+		a.issueGoal = ct.Issues[0].Goal
+		a.issueRequirements = issueRequirementsText(ct.Issues[0])
+	case "issue-long":
+		ct.Issues[0].Requirements[1].Text = "Keep every execution associated with this issue, preserve the exact sent snapshot, show the result and evidence, and do not turn a completed Runtime task into issue completion."
+		ct.Issues[0].Requirements[1].Evidence = "User verified the long requirement against the execution result and the reviewed output."
+		ct.Issues[0].Requirements[1].State = requirementSatisfied
+	case "issue-completed":
+		ct.Issues[0].Status = issueStatusCompleted
+		ct.Issues[0].Evidence = "User reviewed the rendered result and accepted the remaining verification note."
+		ct.Issues[0].Requirements[0].State = requirementSatisfied
+		ct.Issues[0].Requirements[0].Evidence = "User confirmed the original goal and execution result."
+		ct.Issues[0].Requirements[1].State = requirementUnmet
+		ct.Issues[0].Requirements[1].Evidence = "Second requirement is documented but not verified."
+		a.issueFilter = "completed"
 	case "issue-unknown":
 		ct.Issues[1].Executions[0] = &issueExecution{ID: "exec-3", SessionID: "issue-preview-work-2", Prompt: "Verify restart continuation", Status: issueExecutionUnknown, Detail: "No trusted Runtime task history was found for this execution; manually inspect or confirm not dispatched."}
 		ct.SelectedIssueID = "issue-2"
@@ -132,6 +154,18 @@ func TestPreviewIssueStates(t *testing.T) {
 		write("issue-dual", 960, 640, dark)
 		write("issue-dual", 1040, 720, dark)
 		write("issue-dual", 320, 900, dark)
+		write("issue-completed", 1040, 720, dark)
+		write("issue-completed", 320, 900, dark)
+		write("issue-archive", 1040, 720, dark)
+		write("issue-archive", 960, 640, dark)
+		write("issue-archive", 320, 900, dark)
+		write("issue-edit", 1040, 720, dark)
+		write("issue-edit", 960, 640, dark)
+		write("issue-edit", 320, 900, dark)
+		write("issue-long", 960, 640, dark)
+		write("issue-long", 1040, 720, dark)
+		write("issue-long", 1380, 900, dark)
+		write("issue-long", 320, 900, dark)
 		write("issue-unknown", 320, 640, dark)
 	}
 }

@@ -29,10 +29,73 @@ var errRuntimeDisconnected = errors.New("runtime disconnected")
 // ---------- wire DTOs ----------
 
 type runtimeError struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	SessionID string `json:"session_id,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	Code            string  `json:"code"`
+	Message         string  `json:"message"`
+	SessionID       string  `json:"session_id,omitempty"`
+	Reason          string  `json:"reason,omitempty"`
+	CurrentRevision *uint64 `json:"current_revision,omitempty"`
+}
+
+type runtimeCompaction struct {
+	ContextTokens    int  `json:"context_budget_tokens"`
+	MaxInputTokens   *int `json:"max_input_tokens"`
+	OutputTokens     int  `json:"reserve_tokens"`
+	KeepRecentTokens int  `json:"keep_recent_tokens"`
+	MaxSummaryTokens int  `json:"max_summary_tokens"`
+}
+
+type runtimeModelLimits struct {
+	Context int  `json:"context"`
+	Input   *int `json:"input"`
+	Output  *int `json:"output"`
+}
+
+type runtimeCatalogModel struct {
+	CatalogID string             `json:"catalog_id"`
+	Name      string             `json:"name"`
+	Limits    runtimeModelLimits `json:"limits"`
+}
+
+type runtimeConfiguredModel struct {
+	Model      string            `json:"model"`
+	Compaction runtimeCompaction `json:"compaction"`
+}
+
+type runtimeModelCatalog struct {
+	ConnectionID     string                   `json:"connection_id"`
+	Models           []runtimeCatalogModel    `json:"models"`
+	ConfiguredModels []runtimeConfiguredModel `json:"configured_models"`
+}
+
+type runtimeModelPatch struct {
+	Model      string             `json:"model"`
+	CatalogID  string             `json:"catalog_id,omitempty"`
+	Compaction *runtimeCompaction `json:"compaction,omitempty"`
+}
+
+type runtimeConfigUpdated struct {
+	runtimeConnectionConfig
+	EffectiveFrom string `json:"effective_from"`
+	ReadbackError error  `json:"-"`
+}
+
+func (c *runtimeClient) models(connectionID string) (runtimeModelCatalog, error) {
+	var result runtimeModelCatalog
+	err := c.call("model.list", map[string]any{"connection_id": connectionID}, &result, runtimeControlTimeout)
+	return result, err
+}
+
+func (c *runtimeClient) updateSessionModel(sessionID string, revision uint64, patch runtimeModelPatch) (runtimeConfigUpdated, error) {
+	var result runtimeConfigUpdated
+	err := c.call("session.config.update", map[string]any{
+		"session_id": sessionID, "expected_revision": revision, "patch": patch,
+	}, &result, runtimeControlTimeout)
+	if err != nil {
+		// An error or lost reply does not prove the write failed. Read the
+		// committed value once, without submitting the patch again.
+		result.runtimeConnectionConfig, result.ReadbackError = c.connectionConfig(sessionID)
+	}
+	return result, err
 }
 
 func (e *runtimeError) Error() string {
@@ -570,6 +633,10 @@ func (c *runtimeClient) loadSession(sessionID string) (runtimeSession, error) {
 	return session, nil
 }
 
+func (c *runtimeClient) releaseSession(sessionID string) error {
+	return c.call("session.release", map[string]any{"session_id": sessionID}, nil, runtimeControlTimeout)
+}
+
 func (c *runtimeClient) capabilities() (runtimeCapabilities, error) {
 	var result runtimeCapabilities
 	if err := c.call("runtime.capabilities", map[string]any{}, &result, runtimeControlTimeout); err != nil {
@@ -604,12 +671,21 @@ func (c *runtimeClient) historyPage(sessionID string, offset, limit int) (runtim
 	return page, nil
 }
 
-func (c *runtimeClient) sendTask(sessionID, text string) (runtimeSendResult, error) {
+type runtimeContextInput struct {
+	Name string `json:"name"`
+	Text string `json:"text"`
+}
+
+func (c *runtimeClient) sendTask(sessionID, text string, context ...runtimeContextInput) (runtimeSendResult, error) {
 	var result runtimeSendResult
-	if err := c.call("task.send", map[string]any{
+	params := map[string]any{
 		"session_id": sessionID,
 		"message":    map[string]any{"text": text},
-	}, &result, runtimeSendTimeout); err != nil {
+	}
+	if len(context) > 0 {
+		params["context"] = context
+	}
+	if err := c.call("task.send", params, &result, runtimeSendTimeout); err != nil {
 		return runtimeSendResult{}, err
 	}
 	if result.TaskID == "" || result.MessageID == "" {
