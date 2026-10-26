@@ -27,6 +27,9 @@ func issueLifecycleStartBlocked(issue *productIssue) string {
 	if issue.Archived {
 		return "Restore this archived issue before starting work."
 	}
+	if issue.openQuestion() != nil {
+		return "Answer the waiting question before continuing this issue."
+	}
 	switch issue.Status {
 	case issueStatusCompleted:
 		return "Reopen this completed issue before starting another execution."

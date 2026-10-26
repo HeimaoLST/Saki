@@ -554,6 +554,9 @@ func TestIssueToolWaitAnswerResumeUsesQuestionAnd142Ledger(t *testing.T) {
 		t.Fatalf("wait state = receipt=%+v question=%+v status=%q auto=%v", waitReceipt, issue.openQuestion(), issue.Status, issue.Supplements.AutoContinue)
 	}
 	questionRef := waitReceipt.QuestionRef
+	if a.runIssue(issue.ID) {
+		t.Fatal("run bypassed the open structured question")
+	}
 	repeated, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: waitArgs})
 	if err != nil || repeated.IsError || len(issue.Questions) != 1 {
 		t.Fatalf("repeated wait = %+v err=%v questions=%d", repeated, err, len(issue.Questions))
