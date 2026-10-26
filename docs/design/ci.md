@@ -31,7 +31,7 @@
 | Runtime + TUI | `rust` | `cargo test --locked --all-targets` | 单元、集成与 example target；测试数量以对应 SHA 的实际 run 为准 |
 | TUI（真实 PTY） | `rust` | `cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1` | 真实 PTY 上进入／退出终端并验证 panic 后 cooked mode 恢复 |
 | Runtime stdio（真实子进程） | `rust` | `cargo build --locked --bin Saki`；`python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki` | 两个真实 OS 进程、临时 read、task/message/journal 关联、恢复/history 零重放、继续前文与 stdout 断连 drain；driver 自带本地 fixture，无外部 provider/key |
-| GUI→Runtime（完整离线 desktop 包） | `rust` | `go test -json ./...` + `scripts/check-gui-runtime-results.py`（见下方权威命令） | 真实 Saki `--stdio` 双进程、首用 Save/Apply/Test/重启、活动配置变更/失败重载保留 helper、工作/对话并发、定向停止、容量与恢复；18 个必须场景逐项 PASS；仅 8 个显式预览/线上 opt-in Skip 可接受；线上 smoke 不接入 |
+| GUI→Runtime（完整离线 desktop 包） | `rust` | `go test -json ./...` + `scripts/check-gui-runtime-results.py`（见下方权威命令） | 真实 Saki `--stdio` 双进程、首用 Save/Apply/Test/重启、活动配置变更/失败重载保留 helper、工作/对话并发、定向停止、容量与恢复；18 个必须场景逐项 PASS；8 项 allowlist 不变；设置 preview 目录后 6 个 preview 实际运行，正常 3 个 online/reader Skip；线上 smoke 不接入 |
 | macOS arm64 工程候选 | `macos-app` | `bash scripts/build-macos-app.sh /absolute/out`（输出在 checkout 外） | Go GUI + Rust `Saki-runtime` helper、`Saki.app/Contents/MacOS/{Saki,Saki-runtime}`、Info.plist `dev.saki.desktop`、arm64 Mach-O、ad-hoc 签名；manifest/zip/SHA256SUMS；工程候选，不是 Nagi MVP |
 | GUI（独立 Go module） | `gui` | `gofmt -l .`（必须为空）、`CGO_ENABLED=0 go vet ./...`、`go test ./... -count=1`、`go build` | 格式、vet、测试、构建 |
 | GUI（可复现图像） | `gui` | `SAKI_PREVIEW_DIR=... go test -run TestPreviewImages -count=1 .` | headless `ui.Tester` 生成 light/dark add／settings 等场景 PNG，作为 artifact 保留 14 天 |
@@ -59,16 +59,18 @@ driver 自建本地 fixture HTTP 服务，不需要外部 provider/key；其断�
 `rust` job 在构建本次真实 `target/debug/Saki` 后，运行**完整离线 desktop Go package**，不靠手写 selector 只选少数测试：
 
 ```sh
+set -euo pipefail
+export SAKI_PREVIEW_DIR="$RUNNER_TEMP/desktop-preview-package"
+mkdir -p "$SAKI_PREVIEW_DIR"
 cd desktop
 SAKI_TEST_RUNTIME_BIN="$GITHUB_WORKSPACE/target/debug/Saki" \
-SAKI_TEST_ONLINE=0 SAKI_PREVIEW_DIR="$RUNNER_TEMP/desktop-preview-package" \
-CGO_ENABLED=0 \
+SAKI_TEST_ONLINE=0 CGO_ENABLED=0 \
   go test -json ./... -count=1 | tee "$RUNNER_TEMP/desktop-go-test.json"
 python3 "$GITHUB_WORKSPACE/scripts/check-gui-runtime-results.py" \
   "$RUNNER_TEMP/desktop-go-test.json"
 ```
 
-`go test` 的 stdout JSON 用仅 stdout 的 `tee` 同时保留完整逐项日志，stderr 直接进入 CI 日志；不使用会混入 stderr 的 `2>&1`。显式 `set -o pipefail` 与 bash `-e` 保证 Go 非零不会被 tee 吞掉，checker 错误也有原始 JSON/日志可查。step 设置临时 `SAKI_PREVIEW_DIR`，让 bundle 内已有的 headless preview 测试实际运行（包括新增 model-selection preview）；仅保留线上 smoke 和两个独立 reader 目录的 opt-in skip，不新增 allowlist。`SAKI_TEST_RUNTIME_BIN` 必须指向本次构建的绝对 binary，`SAKI_TEST_ONLINE=0` 显式关闭线上入口，`-count=1` 禁止缓存替代新 binary。Go test 非零直接失败；checker 再验证 package PASS 与场景合同，任一不符都失败。
+`go test` 的 stdout JSON 用仅 stdout 的 `tee` 同时保留完整逐项日志，stderr 直接进入 CI 日志；不使用会混入 stderr 的 `2>&1`。显式 `set -o pipefail` 与 bash `-e` 保证 Go 非零不会被 tee 吞掉，checker 错误也有原始 JSON/日志可查。step 在 Go 命令前设置并创建临时 `SAKI_PREVIEW_DIR`，让 desktop 包已有的 headless preview 测试实际运行（包括新增 model-selection preview）；8 项 allowlist 名称保持不变，当前路径使 6 个 preview 实际 PASS，正常仅剩 3 个已知 online/reader opt-in Skip。`SAKI_TEST_RUNTIME_BIN` 必须指向本次构建的绝对 binary，`SAKI_TEST_ONLINE=0` 显式关闭线上入口，`-count=1` 禁止缓存替代新 binary。Go test 非零直接失败；checker 再验证 package PASS 与场景合同，任一不符都失败。
 
 checker（`scripts/check-gui-runtime-results.py`）的**必须 PASS** 清单（原 #87 五项 + 当前 Nagi 场景）：
 
@@ -234,8 +236,10 @@ python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
 
 # GUI→Runtime 完整离线 desktop package（子 shell 保持后续命令仍在仓库根）
 (
+  set -euo pipefail
+  export SAKI_PREVIEW_DIR=/tmp/desktop-preview-package
+  mkdir -p "$SAKI_PREVIEW_DIR"
   cd desktop
-  set -o pipefail
   SAKI_TEST_RUNTIME_BIN="$PWD/../target/debug/Saki" SAKI_TEST_ONLINE=0 CGO_ENABLED=0 \
     go test -json ./... -count=1 | tee /tmp/desktop-go-test.json
   python3 ../scripts/check-gui-runtime-results.py /tmp/desktop-go-test.json

@@ -106,7 +106,7 @@ jobs:
             echo "- \`cargo test --locked --all-targets\` (unit, integration, example targets)"
             echo "- \`pty_panic_restores_terminal\` (real PTY fixture; step asserts the named fixture passed)"
             echo "- \`cargo build --locked --bin Saki\` + \`python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki\` (real cross-process stdio smoke; no external provider)"
-            echo "- \`SAKI_TEST_RUNTIME_BIN=\$GITHUB_WORKSPACE/target/debug/Saki SAKI_TEST_ONLINE=0 CGO_ENABLED=0 go test -json ./... -count=1\` in desktop, validated by \`scripts/check-gui-runtime-results.py\` (18 required PASS; only 8 explicit preview/online SKIPs allowed)"
+            echo "- \`SAKI_TEST_RUNTIME_BIN=\$GITHUB_WORKSPACE/target/debug/Saki SAKI_TEST_ONLINE=0 SAKI_PREVIEW_DIR=\$RUNNER_TEMP/desktop-preview-package CGO_ENABLED=0 go test -json ./... -count=1\` in desktop, validated by \`scripts/check-gui-runtime-results.py\` (18 MUST; 8-name allowlist unchanged; current preview dir runs 6 previews, normal 3 online/reader SKIPs)"
             echo ""
             echo "Runtime and TUI share this crate; this job is the required gate for both lines."
           } >> "$GITHUB_STEP_SUMMARY"
