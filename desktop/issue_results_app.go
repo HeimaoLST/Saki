@@ -238,7 +238,7 @@ func (a *appModel) issueResultPanelView(c *ui.Context, t *ui.Theme) {
 		return
 	}
 	hasBody := page.Panel.Response != "" || len(page.Panel.Files) > 0
-	if !hasBody {
+	if !hasBody && (page.Loading || page.LoadError != "") {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			ui.Text(c, "Run results").FontSize(16).FontWeight(600).TextColor(t.Text).Grow(1)
 			if !page.Loading {

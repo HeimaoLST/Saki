@@ -1059,3 +1059,20 @@ func TestIssueResultPageReloadDuringCheckDrainsStaleCallback(t *testing.T) {
 		t.Fatal("reload allowed a stale in-flight check callback to apply")
 	}
 }
+
+func TestIssueResultAppEmptyStateShowsHonestPanelControls(t *testing.T) {
+	app := issueResultAppPreview("empty", 1040)
+	tr := ui.NewTester(app.view, 1040, 900)
+	tr.Frame()
+	texts := tr.Texts()
+	for _, want := range []string{
+		"No assistant response was recorded for this run.",
+		"No files were reported for this run.",
+		"Reload result",
+		"Close results",
+	} {
+		if !issueResultTextsHave(texts, want) {
+			t.Fatalf("loaded empty result page missing %q in %v", want, texts)
+		}
+	}
+}
