@@ -283,7 +283,7 @@ func TestSettingsFieldsReceiveInputAndDoNotStealComposerFocus(t *testing.T) {
 	}
 
 	// Explicitly focus the Settings name field through the UI and type.
-	nameBefore := a.settingsDraft.Name
+	nameBefore := a.contactProfile.Draft.Name
 	if err := tr.Click("Contact name"); err != nil {
 		t.Fatal(err)
 	}
@@ -293,8 +293,8 @@ func TestSettingsFieldsReceiveInputAndDoNotStealComposerFocus(t *testing.T) {
 	}
 	tr.Type(" edited")
 	tr.Frame()
-	if a.settingsDraft.Name != nameBefore+" edited" {
-		t.Fatalf("Settings name field did not receive the typed input: %q", a.settingsDraft.Name)
+	if a.contactProfile.Draft.Name != nameBefore+" edited" {
+		t.Fatalf("Settings name field did not receive the typed input: %q", a.contactProfile.Draft.Name)
 	}
 	if ct.Draft != "keep me" {
 		t.Fatalf("typing in Settings changed the composer draft: %q", ct.Draft)
@@ -313,8 +313,8 @@ func TestSettingsFieldsReceiveInputAndDoNotStealComposerFocus(t *testing.T) {
 	if ct.Draft != "keep me" {
 		t.Fatalf("typing after Tab leaked into the composer: %q", ct.Draft)
 	}
-	if a.settingsDraft.Name != nameBefore+" edited" {
-		t.Fatalf("typing after Tab changed the name field: %q", a.settingsDraft.Name)
+	if a.contactProfile.Draft.Name != nameBefore+" edited" {
+		t.Fatalf("typing after Tab changed the name field: %q", a.contactProfile.Draft.Name)
 	}
 }
 
@@ -333,10 +333,11 @@ func TestSettingsSavePreservesMessagesHistoryAndDraft(t *testing.T) {
 	beforeLast := ct.Messages[beforeMsgs-1].Text
 
 	a.openSettings()
-	a.settingsDraft.Name = "Saki Renamed"
-	a.settingsDraft.Purpose = "Keeps earlier decisions in view."
-	a.settingsDraft.Workspace = "~/Workspace/saki"
-	if !a.saveSettings() {
+	draft := a.contactProfile.Draft
+	draft.Name = "Saki Renamed"
+	draft.Purpose = "Keeps earlier decisions in view."
+	draft.Workspace = t.TempDir()
+	if !a.saveContactProfileDraft(draft, false) {
 		t.Fatal("settings save should succeed with a name")
 	}
 	if ct.Name != "Saki Renamed" {
@@ -353,8 +354,8 @@ func TestSettingsSavePreservesMessagesHistoryAndDraft(t *testing.T) {
 	}
 
 	a.openSettings()
-	a.settingsDraft.Name = "  "
-	if a.saveSettings() || !a.settingsError {
+	a.contactProfile.Draft.Name = "  "
+	if a.saveContactProfileDraft(a.contactProfile.Draft, false) || a.contactProfile.Errors["Name"] == "" {
 		t.Fatal("empty settings name must be rejected")
 	}
 	if ct.Name != "Saki Renamed" {

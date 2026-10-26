@@ -1,6 +1,6 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-26。本文保留各阶段的实现与验证记录；连接配置见末尾 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118，资料快照与递交见 **#117 资料快照、阅读与递交**。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
+更新日期：2026-10-26。本文保留各阶段的实现与验证记录；连接配置见末尾 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118，资料快照与递交见 **#117 资料快照、阅读与递交**，联系人编辑、归档及旧对话访问见 **#152 联系人管理与已保存对话**。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
 
 [previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。当前代码仍使用 Main/Dawn 派生色；#92 设计目标是用户确认的 Moon/Dawn，但本轮只交付设计，不代表换色功能已实现。concurrency、`search_history`／`read_history`、附件、模型切换等仍是后续独立任务，不在首轮。
 
@@ -8,11 +8,11 @@
 
 需求／产品决定（用户确认，#44）：首次使用无需先定义 agent。添加联系人即得到可输入的默认通用助手；name／purpose／instructions／workspace 为可选设置。联系人 profile 与宿主连接分开；#116 在 GUI 提供宿主模型连接的首用配置。
 
-实现事实（#63）：
+首轮实现事实（#63，后续新增行为以文末对应任务为准）：
 - 正常启动从 GUI contact store 恢复；默认创建一个 `Saki` 联系人，零配置即可看到界面。测试/截图 fixture 仍保留在 `seededApp()`，正常真实启动不会混入种子历史。
 - Add contact 一次点击创建并选中 `New contact N`、`Role=Assistant`、Ready 的空联系人，composer 取得一次焦点；不创建 runtime session，直到第一次发送。
 - contact → runtime `session_id` 的映射、显示名、profile、草稿和选中项由 GUI 持久化；消息正文不复制，历史只来自 `session.history` 的已解析 journal 记录。
-- Settings：显示名始终可改；`purpose/instructions/workspace` 只在首次 `session.create` 时作为 profile/system prompt 与 working directory 使用。已有 `SessionID` 或首次 create 在途时，这三项只读，保存设置也只更新名字，不重建 session、不丢历史/草稿、不伪称热更新生效。
+- Settings：#63 首轮在已有 `SessionID` 或首次 create 在途时锁定 `purpose/instructions/workspace`。#152 已替换此限制：允许保存未来默认值，已有执行上下文仍保留原快照；显式新对话保留旧历史，详见文末。
 - 首轮单执行槽：`busy` 明确拒绝且草稿保留；不做队列或并发。查看另一个联系人不会 cancel/release 当前任务，事件按 `(session,task)` 路由。
 - 首次 create 后，GUI 先回到 UI 线程设置 `session_id` 并确认 `store.save` 成功，才调用 `task.send`；保存失败不发送、保留草稿并显示错误。已有 session 的发送同样要求 contact/draft 持久化成功，不把未保存的映射用于执行。
 - 接纳 response 与 `task_started` 分开：前者显示“已接受，等待开始”，只有 `task_started` 才进入 Working；delta 追加、final 覆盖同一 `(session,task,item_id)`，工具按 `call_id` 归属，工具业务错误不自动判整轮失败。
@@ -62,6 +62,7 @@ Headless 证据（fixture，不等于线上模型或原生窗口）：
 - `desktop/runtime.go`：stdio v1 client／DTO（request id 路由、持续读 stdout、stderr 诊断、协议失败单一边界、迟到 response 丢弃、读完后 Wait）。
 - `desktop/runtime_model.go`：启动/恢复、真实发送、事件应用、history 转换、取消、退出与配置。
 - `desktop/store.go`：GUI contact store（原子写，损坏不覆盖）。
+- `desktop/contact_profile.go`、`contact_management.go`、`contact_history.go`：联系人表单与唯一保存路径、归档/恢复、联系人筛选、指定会话范围的历史搜索及原文定位。
 - `desktop/connection_config.go`、`connection_app.go`、`connection_runtime.go`、`connection_settings.go`：GUI 配置来源、保存/应用生命周期、既有 stdio 接口适配与表单；不实现模型协议客户端。
 - `desktop/model.go`／`view.go`／`main.go`：状态模型、原生布局与入口；`seededApp` 仅测试/截图。
 - Store：`SAKI_GUI_STORE`，否则 `<UserConfigDir>/Saki/contacts.json`（macOS 通常 `~/Library/Application Support/Saki/contacts.json`）。
@@ -613,7 +614,7 @@ type resolvedTheme struct {
 - **单次输入**：对话和事项 Run/Continue 都沿既有 sendTask 的可选 context 参数。派发前固定并保存该次输入；正文只放 message.text、资料只放 context，不拼进 system 或再次附进正文。每个 issueExecution.Context 是独立不可变快照；后续编辑/刷新不改旧执行。接纳只移除同ID同Revision待发项，后来的编辑仍保留；拒绝、容量满和派发前保存失败不清空。
 - **预算**：GUI检查序列化 caller_context 包装后的合计1MiB，包含名称和来源标签；不是裸文件大小。Go JSON转义相对Rust略保守，最终接纳验证仍由Runtime负责。不静默截断或部分读取后当成功。
 - **历史与复制**：用户资料保持字面文字，独立展示名称/来源和精确原文复制；历史资料是只读记录，不成为待发草稿。Runtime将资料编码为普通text part，本轮GUI保留非空正文首part，后续wrapper才按契约显示；这不提供通用的来源证明。外部context-only输入的首part无法仅凭形状判定，保留原始可读文字而不猜测。
-- **持久化**：contact store v5读原v1-v4，保留既有联系人/会话/事项与旧execution身份；新增待发资料、执行资料快照和未确认对话提交意图。旧v4程序拒绝v5，避免保存时静默丢新字段；降级使用升级前备份或隔离数据目录，不直接交旧程序重写v5。当前 #142 进一步升到 v6，增加事项补充 ledger；新程序读 v1-v5，旧 v5 程序拒绝 v6，不静默丢补充 receipt。Runtime消息历史仍是执行记录权威，未另存一份消息库。
+- **持久化**：contact store v5读原v1-v4，保留既有联系人/会话/事项与旧execution身份；新增待发资料、执行资料快照和未确认对话提交意图。旧v4程序拒绝v5，避免保存时静默丢新字段；降级使用升级前备份或隔离数据目录，不直接交旧程序重写v5。#142 进一步升到 v6，增加事项补充 ledger；#152 的 v7 保留这些字段并读 v1-v6，详见对应章节。Runtime消息历史仍是执行记录权威，未另存一份消息库。
 - **未确认与恢复**：派发前保存的提交意图在接纳响应故障/重启后保持 unknown；有会话映射的 submitting 恢复为 unknown，没有映射则按“保存会话映射先于派发”的既有顺序视为未派发。自动历史刷新不清除该意图，不自动重发。用户明确 Reload 且成功读到闲置会话与历史后，才保存解除本地提交保护；保留资料并提示先检查记录再手动发送或移除。这不证明不确定消息已经送达/未送达，不按正文匹配猜 task。保存解除状态失败仍保留意图。
 - **验证范围**：`task_context_integration_test.go`通过实际GUI→Rust→本地受控provider及Runtime历史核对单次输入、移除、文件快照、事项/对话归属、重启和只读资料复制；stdio故障代理在真实Rust接纳后将回复替换为协议错误并屏蔽该连接事件，证明未知恢复与不自动重提，不冒称真实网络超时/磁盘故障。容量、派发前保存失败与受控接纳回调中的后续编辑分别覆盖。精确最终组合SHA、全包结果、原始失败与CI见PR170/issue117交付证据。明暗720/1040的对话、事项编辑、执行资料预览均为headless页面，非macOS原生通过。
 - **边界**：没有PDF/OCR/Office、扫描目录、索引、云附件或第二个执行循环。#142补充会消费同一资料快照与发送投影，其自动递交状态机不属于本单。原生文件选择器/IME/系统剪贴板行为仍须原生证据；headless截图和注入剪贴板不替代。
@@ -631,3 +632,14 @@ type resolvedTheme struct {
 - **验证边界**：真实 Runtime 测试覆盖初始 A 显式 Run 后在途 B+C、revision 变化、同 contact 对话与独立 contact Y 隔离、A terminal 后唯一自动后续；Stop/Cancel pending/auto、显式 Resume 一次、waiting 答案、真实 failed、Cancel 前延迟 accept 的真实 IDs、lost task.send 回包→unknown→restart 不重派、实际 Runtime history 的完整 Prompt+Context 匹配，以及 MyGo UI Tester 的 Save failure/确认未派发 save 失败/全文 preview+copy/owner draft 隔离/unknown Check 控件。preview 明暗 320/360/720/960/1040/1380 共 12 张，其中 320/360 是独立工作栏组件 layout，不是应用承诺支持 320 窗口。固定 Runtime `c738c633…`；历史 d4e 完整 race 的 320 PASS 是旧精确源，不是本最终 SHA 的计数。当前实现/受控测试与在线/原生分层记录；native/CUA 仍未验证。
 - **Magpie 实际尝试（未通过）**：使用隔离 connection/store/session，Runtime effective config 实测 `model=deepseek/deepseek-flash`、`api=openai-chat-completions`、`endpoint=http://127.0.0.1:3425/v1`、`connection_id=default`；首轮只读 probeA，补充在首 execution 后加入。第一个真实 task 随即 `failed`，Runtime 错误为 `HTTP 400 invalid_request_error: DeepSeek: reasoning_content in the thinking mode must be passed back`。此时 pending=2、issue needs_attention、auto off、requirement unverified，未产生第二 task；验收 trace 保存在 `/private/tmp/saki-gui-142/magpie-acceptance/20261026-161209/trace.json`；该 trace 的 `raw_history` 不能作为原始 SSE/wire 证据，持久 session 的 `history.jsonl` 保留 actual Runtime shape（父已核）。这不是模型质量结论，且未再重试/换 provider。旧的 OpenCode 在线失败日志保留，旧 trace 未保留 raw tool 明细。
 - **当前结论/后续**：首 task failed 时的 GUI 行为（needs_attention、auto off、pending 保留）按设计工作；完整真实模型两 task 验收保持未通过。Magpie 400 已正式交 Runtime 路由 [#177](https://github.com/HeimaoLST/Saki/issues/177) 并由 PM/Runtime 跟进，不由本 GUI 单修改 Runtime/prefix、不重试付费请求、不扩称 A/B 工具读取或完整在线验收。
+
+## #152 联系人管理与已保存对话（候选实现，2026-10-26）
+
+代码来源：`agent/gui/152-contact-management`，普通合入 #142 固定 `15234ea`，首个实际接线提交 `ff51594`，后续修正和最终验证 SHA 由 PR #171 记录。本节描述真实 app 路径；早期 profile 独立组件不作为完整交付证据。
+
+- **保存与生效范围**：联系人 ID 稳定；名称保存成功后立即用于界面，Purpose/Instructions/Workspace 保存为未来新执行上下文的默认值。Instructions 原文保留空白与换行。现有对话和已有事项工作会话不热更新；已开始的 create/send 使用开始时捕获的配置。活动工作中仍可保存未来默认值。Name 不可为空；非空 Workspace 必须是存在的绝对目录，空值表示使用已应用的宿主默认目录。表单错误保留输入，磁盘保存失败回滚联系人与 store 内存；非 demo 且 store 不可用时不报告保存成功。
+- **新对话**：`Save and start new conversation` 先原子保存 profile 和旧 `SessionID` 引用，清空当前对话绑定；下次正常 Send 才沿已有 `configuredCreate`/`sendTask` 创建新会话，不在按钮点击时调用模型或宣称 Runtime 已接受配置。原联系人、事项及其 WorkSessionID/execution/要求版本、待发草稿与 Context 保留。后续 Runtime 拒绝新 cwd 时显示发送错误、保留待发输入和旧历史入口，用户修正后显式重试；不会自动返回旧会话执行，也不静默重发未知提交。
+- **归档与恢复**：归档标记和时间随同一 contact store 保存，不删除会话文件、草稿、Context 或事项。对话/事项 submitting、active、unknown、未确认提交、待自动派发补充或所属模型更新在途时，阻止归档和新对话并解释原因。归档联系人可检索历史，禁止聊天发送及事项执行；恢复后沿原会话继续。归档/恢复失败保持原状态。列表按 Active/Archived/All 与名称/职责筛选；归档后当前联系人仍可见并可恢复。
+- **历史读取**：保留原来当前对话的即时搜索，并提供 `Search saved contexts`。范围是该联系人的当前对话与显式保留的旧对话 ID，不扫描其他联系人或事项工作会话。查询通过 Runtime `session.history` 和既有 `parseHistory`，不解析 JSONL、不调用模型、不另建索引；结果按会话去重，最多 100 条，部分会话不可读与截断明确显示。每条命中携带会话 ID/EntryID，可读取完整消息和其原始 Context，查看不会修改当前执行绑定。异步结果绑定联系人、Runtime 实例及查询版本，迟到结果不能覆盖其他对象；退出等待读取回调完成后关闭 UI。
+- **数据兼容**：store v7 新增 `archived`、`archived_at`、`previous_sessions`，读 v1-v6；保留 v6 的 Context、pendingSend、要求版本、execution 与 supplement ledger 关联。只保存旧会话引用，不复制消息正文。升级后旧 v6 应用会拒绝 v7，防止保存时丢字段；降级使用升级前备份或隔离的数据目录，不能把新 store 直接交旧包写入。Runtime 协议无变更，#117 exact-ID/revision 清理、#142 单一补充派发路径及 #173 停止回归继续保留。
+- **验证与限制**：实际 GUI action + 固定 Rust helper 的受控 provider 测试覆盖保存后现有请求快照、新对话/cwd、活动事项保护、旧对话和 Context 定位、不同联系人隔离、重启、归档恢复、保存失败回滚，以及 Runtime 拒绝新目录后的明确重试。组件/应用截图属于 headless；不代表原生 IME/VoiceOver 或线上模型兼容通过。本单测试使用 #160 固定 helper `c738c633…`，没有付费模型重试；#177 的 Runtime 修复交付与 #142 GUI 在线补充复验另记，不能把 Runtime 受控成功当作 GUI 全流程通过。最终测试计数与 CI 以精确候选的交付记录为准。

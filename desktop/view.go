@@ -190,7 +190,7 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 		}
 		if ct.Archived {
 			ui.Row(c).AlignItems(ui.Center).Gap(8).Padding(6, 16).Background(t.SurfaceHover).Children(func() {
-				ui.Text(c, "Archived contact · history and issues are read-only.").FontSize(11).TextColor(t.Warning)
+				ui.Text(c, "Archived contact · sending and new issue runs are disabled. History, drafts and issue data are retained.").FontSize(11).TextColor(t.Warning)
 				ui.Spacer(c)
 				ui.Button(c, "Restore contact").FontSize(11).Padding(3, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.Text).OnClick(func() { a.restoreContact(ct.ID) })
 				ui.Button(c, "Settings").FontSize(11).Padding(3, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openSettings() })
@@ -753,22 +753,13 @@ func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 			a.saveContactProfileDraft(draft, true)
 		},
 		Archive: func() {
-			a.archiveContact(editorID(a))
+			a.archiveContact(ct.ID)
 		},
 		Restore: func() {
-			a.restoreContact(editorID(a))
+			a.restoreContact(ct.ID)
 		},
 		Cancel: func() { a.closeAux() },
 	})
-	a.settingsDraft = editor.Draft
-	a.settingsError = len(editor.Errors) > 0
-}
-
-func editorID(a *appModel) string {
-	if a.contactProfileID != "" {
-		return a.contactProfileID
-	}
-	return a.selectedContact().ID
 }
 
 func (a *appModel) openConfiguration() {
@@ -831,7 +822,7 @@ func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 	ui.Text(c, "GUI work directory: "+valueOr(a.workDir, "not configured")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 	workspace := ct.SessionWorkingDir
 	if workspace == "" {
-		workspace = ct.Workspace
+		workspace = a.effectiveContactWorkspace(ct)
 	}
 	ui.Text(c, "Contact workspace: "+valueOr(workspace, "not configured")).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 	session := ct.SessionID

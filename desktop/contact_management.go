@@ -1,13 +1,7 @@
 package main
 
-// Contact-management app behavior: profile save/start-new, archive/restore,
-// sidebar scoping and the read-only Runtime history search. Persistence and
-// Runtime calls stay in their existing owners; this file coordinates them.
-
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -34,8 +28,6 @@ func (a *appModel) openContactProfile(contactID string) {
 	a.contactProfile.Archived = ct.Archived
 	a.contactProfile.HasConversation = ct.SessionID != ""
 	a.contactProfile.ActiveWork, a.contactProfile.UnknownWork = a.contactActivity(ct)
-	a.settingsDraft = a.contactProfile.Draft
-	a.settingsError = false
 	a.aux = "settings"
 }
 
@@ -47,9 +39,6 @@ func (a *appModel) contactActivity(ct *contact) (active, unknown bool) {
 		unknown = true
 	}
 	if a.modelOpActive && ct.SessionID != "" && a.modelOpSessionID == ct.SessionID {
-		active = true
-	}
-	if a.modelConfigForSession(ct.SessionID) {
 		active = true
 	}
 	for _, issue := range ct.Issues {
@@ -74,18 +63,8 @@ func (a *appModel) contactActivity(ct *contact) (active, unknown bool) {
 		if a.modelOpActive && issue.WorkSessionID != "" && a.modelOpSessionID == issue.WorkSessionID {
 			active = true
 		}
-		if a.modelConfigForSession(issue.WorkSessionID) {
-			active = true
-		}
 	}
 	return active, unknown
-}
-
-func (a *appModel) modelConfigForSession(sessionID string) bool {
-	if sessionID == "" || a.aux != "model" || a.modelForm == nil {
-		return false
-	}
-	return a.modelForm.Target.Config.SessionID == sessionID
 }
 
 func (a *appModel) contactArchiveBlocked(ct *contact) string {
@@ -137,30 +116,15 @@ func (a *appModel) saveContactProfileDraft(draft profileDraft, startNew bool) bo
 		}
 	}
 
-	draft.Name = strings.TrimSpace(draft.Name)
-	draft.Workspace = strings.TrimSpace(draft.Workspace)
-	if draft.Name == "" {
+	draft, problems := validateProfileDraft(entered)
+	if len(problems) > 0 {
 		if a.contactProfile != nil {
 			a.contactProfile.Draft = entered
-			a.contactProfile.Errors = map[string]string{"Name": "Enter a contact name."}
+			a.contactProfile.Errors = problems
+			a.contactProfile.Error = ""
+			a.contactProfile.Status = ""
 		}
 		return false
-	}
-	if draft.Workspace != "" {
-		if !filepath.IsAbs(draft.Workspace) {
-			if a.contactProfile != nil {
-				a.contactProfile.Draft = entered
-				a.contactProfile.Errors = map[string]string{"Workspace": "Workspace must be an absolute path, or empty to use the applied default."}
-			}
-			return false
-		}
-		if info, err := os.Stat(draft.Workspace); err != nil || !info.IsDir() {
-			if a.contactProfile != nil {
-				a.contactProfile.Draft = entered
-				a.contactProfile.Errors = map[string]string{"Workspace": "Workspace must be an existing directory."}
-			}
-			return false
-		}
 	}
 	previous := *ct
 	previousSessions := append([]string(nil), ct.PreviousSessions...)
@@ -220,14 +184,12 @@ func (a *appModel) saveContactProfileDraft(draft profileDraft, startNew bool) bo
 	if a.contactProfile != nil {
 		a.contactProfile.SetProfile(draft)
 		a.contactProfile.HasConversation = ct.SessionID != ""
-		a.contactProfile.Status = "Saved. Name is current now; the other values apply to future new contexts."
+		a.contactProfile.Status = "Profile saved. New conversations and new issue work sessions use these defaults; existing work is unchanged."
 		if startNew {
 			a.contactProfile.HasConversation = false
-			a.contactProfile.Status = "Profile saved and current conversation detached. The next message starts a new context."
+			a.contactProfile.Status = "Profile saved. The next message starts a new conversation with these defaults."
 		}
 	}
-	a.settingsDraft = draft
-	a.settingsError = false
 	return true
 }
 
@@ -267,7 +229,7 @@ func (a *appModel) archiveContact(contactID string) bool {
 	}
 	if a.contactProfile != nil && a.contactProfileID == contactID {
 		a.contactProfile.Archived = true
-		a.contactProfile.Status = "Contact archived. Its history and issues are retained."
+		a.contactProfile.Status = "Contact archived. Sending and new issue runs are disabled; history and issue data are retained."
 	}
 	if a.selectedContact().ID == contactID {
 		a.contactScope = "archived"
@@ -386,8 +348,6 @@ func (a *appModel) contactHistorySessionIDs(ct *contact) []string {
 	return ids
 }
 
-// searchContactHistoryAsync binds the result to the contact, Runtime
-// generation and query revision that started it.
 func (a *appModel) historyAsyncStarted() {
 	a.contactHistoryInFlight++
 }
@@ -401,6 +361,7 @@ func (a *appModel) historyAsyncFinished() {
 	}
 }
 
+// Bind results to the contact, Runtime generation and query that started them.
 func (a *appModel) searchContactHistoryAsync(query string) {
 	if a.shutdownStarted {
 		return

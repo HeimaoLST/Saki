@@ -153,8 +153,6 @@ type appModel struct {
 	auxMessage      int
 	defaultContactN int
 	focusComposer   bool
-	settingsDraft   profileDraft
-	settingsError   bool
 
 	contactProfile           *contactProfileEditor
 	contactProfileID         string
@@ -389,11 +387,11 @@ func (a *appModel) selectContact(i int) {
 	if !a.leaveIssueFormForSwitch() {
 		return
 	}
+	a.contacts[i].Unread = 0
+	a.selected = i
 	if !a.demo {
 		a.persist()
 	}
-	a.contacts[i].Unread = 0
-	a.selected = i
 	a.screen = viewChat
 	a.aux = ""
 	a.highlight = ""
@@ -476,32 +474,6 @@ func (a *appModel) addDefaultContact() {
 func (a *appModel) openSettings() {
 	c := a.selectedContact()
 	a.openContactProfile(c.ID)
-}
-
-func (a *appModel) saveSettings() bool {
-	if !a.demo && a.store == nil {
-		a.settingsError = true
-		return false
-	}
-	name := strings.TrimSpace(a.settingsDraft.Name)
-	if name == "" {
-		a.settingsError = true
-		return false
-	}
-	c := a.selectedContact()
-	c.Name = name
-	// Once a runtime session exists (or its first create is in flight), the
-	// profile was already used for session.create and cannot be hot-applied.
-	// Keep the stored values unchanged and only update the product name.
-	if !a.profileLocked(c) {
-		c.Purpose = strings.TrimSpace(a.settingsDraft.Purpose)
-		c.Instructions = strings.TrimSpace(a.settingsDraft.Instructions)
-		c.Workspace = strings.TrimSpace(a.settingsDraft.Workspace)
-	}
-	a.aux = ""
-	a.settingsError = false
-	a.persist()
-	return true
 }
 
 func (a *appModel) closeAux() {

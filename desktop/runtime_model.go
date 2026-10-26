@@ -1744,7 +1744,7 @@ func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *i
 	}
 	// Capture immutable session inputs on the UI thread. The worker must not
 	// look up the contact/issue or read mutable profile/session fields later.
-	workspace := ct.Workspace
+	workspace := a.effectiveContactWorkspace(ct)
 	system := profileSystemPrompt(ct)
 	sessionID := issue.WorkSessionID
 	context := cloneTaskContextItems(execution.Context)
@@ -2025,7 +2025,7 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 	ct.pendingIssueExecution = issueExecutionID
 	contactID := ct.ID
 	sessionID := ct.SessionID
-	workspace := ct.Workspace
+	workspace := a.effectiveContactWorkspace(ct)
 	system := profileSystemPrompt(ct)
 	submittedContext := ct.Context.snapshot()
 	ct.historyGen++ // invalidate any in-flight reload
@@ -2358,21 +2358,6 @@ func (a *appModel) reloadSelected() {
 	}
 }
 
-func (a *appModel) profileLocked(ct *contact) bool {
-	if a.demo {
-		return false
-	}
-	if ct.SessionID != "" || ct.SendState == sendSubmitting {
-		return true
-	}
-	for _, issue := range ct.Issues {
-		if issue.WorkSessionID != "" || issue.Work.SendState == sendSubmitting || issue.Work.ActiveTaskID != "" {
-			return true
-		}
-	}
-	return false
-}
-
 func (a *appModel) addRuntimeContact() {
 	if !a.leaveIssueFormForSwitch() {
 		return
@@ -2405,6 +2390,13 @@ func profileSystemPrompt(ct *contact) string {
 		parts = append(parts, "Instructions: "+ct.Instructions)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func (a *appModel) effectiveContactWorkspace(ct *contact) string {
+	if ct != nil && ct.Workspace != "" {
+		return ct.Workspace
+	}
+	return a.workDir
 }
 
 func (a *appModel) selectedID() string {

@@ -69,17 +69,13 @@ func readConnectionStartup(storePath string, workDir string) connectionStartup {
 	return startup
 }
 
-func contactsFromStore(store *contactStore, fallbackWorkDir string) []*contact {
+func contactsFromStore(store *contactStore) []*contact {
 	contacts := make([]*contact, 0, len(store.state.Contacts))
 	for _, stored := range store.state.Contacts {
-		workspace := stored.Workspace
-		if workspace == "" {
-			workspace = fallbackWorkDir
-		}
 		ct := &contact{
 			ID: stored.ID, Name: stored.Name, Role: stored.Role,
 			Purpose: stored.Purpose, Instructions: stored.Instructions,
-			Workspace: workspace, SessionID: stored.SessionID, Draft: stored.Draft,
+			Workspace: stored.Workspace, SessionID: stored.SessionID, Draft: stored.Draft,
 			Archived: stored.Archived, ArchivedAt: stored.ArchivedAt,
 			PreviousSessions: append([]string(nil), stored.PreviousSessions...),
 			Status:           statusReady, WorkLabel: "Preparing a reply",
@@ -102,7 +98,7 @@ func placeholderContact(workDir string) *contact {
 
 func applyStoreSelection(a *appModel, store *contactStore) {
 	a.store = store
-	a.contacts = contactsFromStore(store, a.workDir)
+	a.contacts = contactsFromStore(store)
 	a.selected = 0
 	for i, ct := range a.contacts {
 		if ct.ID == store.state.Selected {
@@ -659,6 +655,8 @@ func (a *appModel) connectionPanel(c *ui.Context, t *ui.Theme) {
 	a.connectionForm.view(c, t, a.connectionActions())
 }
 
+// finishShutdown drains Runtime only after in-flight history reads have
+// delivered their final UI callback; those callbacks re-enter this function.
 func (a *appModel) finishShutdown() {
 	if a.quitReady || a.shutdownDrainStarted || a.connectionSaveInFlight || a.connectionApplying || a.connectionTesting || a.modelOpActive || a.contactHistoryInFlight > 0 {
 		return

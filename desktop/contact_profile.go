@@ -1,7 +1,6 @@
 package main
 
-// Standalone contact profile editor. It owns draft/validation/view only; the
-// host owns persistence, contact mutation, context creation and archive state.
+// Contact profile draft editor and validation.
 
 import (
 	"os"
@@ -67,6 +66,23 @@ func (e *contactProfileEditor) ResetDraft() {
 	e.focusField = "Name"
 }
 
+func validateProfileDraft(draft profileDraft) (profileDraft, map[string]string) {
+	problems := map[string]string{}
+	draft.Name = strings.TrimSpace(draft.Name)
+	draft.Workspace = strings.TrimSpace(draft.Workspace)
+	if draft.Name == "" {
+		problems["Name"] = "Enter a contact name."
+	}
+	if draft.Workspace != "" {
+		if !filepath.IsAbs(draft.Workspace) {
+			problems["Workspace"] = "Workspace must be an absolute path, or empty to use the applied default."
+		} else if info, err := os.Stat(draft.Workspace); err != nil || !info.IsDir() {
+			problems["Workspace"] = "Workspace must be an existing directory."
+		}
+	}
+	return draft, problems
+}
+
 func (e *contactProfileEditor) Request(saveAndNew bool) (profileDraft, bool) {
 	if e.Busy {
 		e.Error = "Saving is already in progress."
@@ -86,21 +102,8 @@ func (e *contactProfileEditor) Request(saveAndNew bool) (profileDraft, bool) {
 			return profileDraft{}, false
 		}
 	}
-	e.Errors = map[string]string{}
-	draft := e.Draft
-	draft.Name = strings.TrimSpace(draft.Name)
-	draft.Workspace = strings.TrimSpace(draft.Workspace)
-
-	if draft.Name == "" {
-		e.Errors["Name"] = "Enter a contact name."
-	}
-	if draft.Workspace != "" {
-		if !filepath.IsAbs(draft.Workspace) {
-			e.Errors["Workspace"] = "Workspace must be an absolute path, or empty to use the applied default."
-		} else if info, err := os.Stat(draft.Workspace); err != nil || !info.IsDir() {
-			e.Errors["Workspace"] = "Workspace must be an existing directory."
-		}
-	}
+	draft, errors := validateProfileDraft(e.Draft)
+	e.Errors = errors
 	e.Error = ""
 	if len(e.Errors) > 0 {
 		e.Status = ""
@@ -140,7 +143,7 @@ func (e *contactProfileEditor) view(c *ui.Context, t *ui.Theme, actions contactP
 				}
 			})
 		})
-		ui.Text(c, "Saving updates this contact's name. Purpose, instructions and workspace are defaults for future new contexts; existing conversations and issue work keep the snapshots they were created with.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Saving updates this contact's name. Purpose, instructions and workspace are defaults for future conversations and issues; existing conversations and issue work keep the snapshots they were created with.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 		if reason := e.activityReason(); reason != "" {
 			ui.Text(c, reason).FontSize(12).LineHeight(1.4).TextColor(t.Warning)
 		}

@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func TestContactManagementSaveUpdatesFutureProfileWithoutReplacingSession(t *testing.T) {
@@ -249,4 +252,128 @@ func TestContactManagementShutdownWaitsForHistoryCallback(t *testing.T) {
 	if !a.quitReady || !quit {
 		t.Fatal("the final history callback did not finish shutdown")
 	}
+}
+
+func TestSelectContactPersistsTheNewSelectionImmediately(t *testing.T) {
+	a, _, unbound := testRuntimeModel(t)
+	a.selectContact(1)
+	reloaded, err := openContactStore(a.store.path, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.state.Selected != unbound.ID || a.selectedID() != unbound.ID {
+		t.Fatalf("selected=%q store=%q want=%q", a.selectedID(), reloaded.state.Selected, unbound.ID)
+	}
+}
+
+func TestContactsFromStoreKeepsEmptyWorkspaceAsInheritedDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "contacts.json")
+	store, err := openContactStore(path, "/fallback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.state.Contacts[0].Workspace = ""
+	if err := store.saveState(); err != nil {
+		t.Fatal(err)
+	}
+	contacts := contactsFromStore(store)
+	if len(contacts) != 1 || contacts[0].Workspace != "" {
+		t.Fatalf("empty workspace was materialized on load: %+v", contacts)
+	}
+	a := &appModel{store: store, contacts: contacts, selected: 0, workDir: "/applied", scrollTo: -1}
+	if got := a.effectiveContactWorkspace(contacts[0]); got != "/applied" {
+		t.Fatalf("effective workspace = %q", got)
+	}
+	if err := a.persist(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := openContactStore(path, "/other-fallback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.state.Contacts[0].Workspace != "" {
+		t.Fatalf("empty workspace was persisted as %q", reloaded.state.Contacts[0].Workspace)
+	}
+}
+
+func TestContactManagementAppPreviews(t *testing.T) {
+	dir := os.Getenv("SAKI_PREVIEW_DIR")
+	if dir == "" {
+		dir = t.TempDir()
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	longPurpose := strings.Repeat("Keep the product decisions and evidence in view for future conversations. ", 3)
+	longInstructions := "  Preserve this indentation.\n" + strings.Repeat("\tCheck the actual Runtime state before claiming success.\n", 4)
+	for _, dark := range []bool{false, true} {
+		for _, width := range []int{720, 1280} {
+			a := testApp(t)
+			a.openSettings()
+			a.contactProfile.Draft.Name = "Research partner with a long name"
+			a.contactProfile.Draft.Purpose = longPurpose
+			a.contactProfile.Draft.Instructions = longInstructions
+			a.contactProfile.Draft.Workspace = t.TempDir()
+			tr := ui.NewTester(a.view, width, 720)
+			tr.SetDark(dark)
+			tr.Frame()
+			if !tr.HasText("Contact settings") || !tr.HasText("Save changes") {
+				t.Fatalf("settings preview missing content at width %d", width)
+			}
+			theme := "light"
+			if dark {
+				theme = "dark"
+			}
+			writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("app-settings-%s-%d.png", theme, width)), tr.Image())
+		}
+	}
+
+	archived := testApp(t)
+	archived.contactScope = "archived"
+	archived.selectedContact().Archived = true
+	archived.openSettings()
+	tr := ui.NewTester(archived.view, 1280, 720)
+	tr.Frame()
+	if !tr.HasText("Archived contact") || !tr.HasText("Restore") {
+		t.Fatal("archived app preview is missing the read-only banner or Restore")
+	}
+	writePreviewPNG(t, filepath.Join(dir, "app-archive-restore-1280.png"), tr.Image())
+
+	if !archived.restoreContact(archived.selectedContact().ID) {
+		t.Fatal("archived preview could not restore the contact")
+	}
+	tr = ui.NewTester(archived.view, 1280, 720)
+	tr.Frame()
+	if !tr.HasText("Settings") || archived.selectedContact().Archived {
+		t.Fatal("restored preview did not return to the editable app")
+	}
+	writePreviewPNG(t, filepath.Join(dir, "app-archive-restored-1280.png"), tr.Image())
+
+	empty := testApp(t)
+	empty.contactScope = "archived"
+	empty.contactSearch = "no-such-contact"
+	tr = ui.NewTester(empty.view, 1280, 720)
+	tr.Frame()
+	if !tr.HasText("No contacts match this scope and search.") {
+		t.Fatal("empty filter preview does not explain the result")
+	}
+	writePreviewPNG(t, filepath.Join(dir, "app-empty-filter-1280.png"), tr.Image())
+
+	history := testApp(t)
+	history.demo = false
+	history.runtimeStatus = runtimeStateReady
+	history.selectedContact().SessionID = "saved-session"
+	history.selectedContact().Loaded = true
+	history.openHistory()
+	history.contactHistoryFull = &contactHistoryFull{
+		SessionID: "saved-session", EntryID: "entry-1", Date: "Oct 1", From: "me",
+		Text:    "The retained message with its submitted context.",
+		Context: []taskContextItem{{ID: "ctx-1", Name: "Retained input", Text: "old context", Revision: 1}},
+	}
+	tr = ui.NewTester(history.view, 1280, 720)
+	tr.Frame()
+	if !tr.HasText("Full saved message") || !tr.HasText("Retained input") {
+		t.Fatal("history preview did not render the full message and Context")
+	}
+	writePreviewPNG(t, filepath.Join(dir, "app-history-full-context-1280.png"), tr.Image())
 }
