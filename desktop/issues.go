@@ -78,6 +78,7 @@ type issueExecution struct {
 	Detail               string
 	RequirementsRevision int
 	Context              []taskContextItem
+	ContextExpanded      bool
 }
 
 const (

@@ -830,7 +830,7 @@ func (a *appModel) reloadIssueWork(rt *runtimeClient, runtimeGeneration int, con
 	})
 }
 
-func (a *appModel) reloadContactByID(contactID string) {
+func (a *appModel) reloadContactByID(contactID string, explicit bool) {
 	if a.rt == nil || a.shutdownStarted || a.runtimeStatus == runtimeStateDraining || a.runtimeStatus == runtimeStateExited {
 		return
 	}
@@ -842,10 +842,10 @@ func (a *appModel) reloadContactByID(contactID string) {
 	gen := ct.historyGen
 	sessionID := ct.SessionID
 	rt, runtimeGeneration := a.rt, a.connectionGeneration
-	go a.reloadSession(rt, runtimeGeneration, contactID, sessionID, gen)
+	go a.reloadSession(rt, runtimeGeneration, contactID, sessionID, gen, explicit)
 }
 
-func (a *appModel) reloadSession(rt *runtimeClient, runtimeGeneration int, contactID, sessionID string, gen int) {
+func (a *appModel) reloadSession(rt *runtimeClient, runtimeGeneration int, contactID, sessionID string, gen int, explicit bool) {
 	session, err := rt.loadSession(sessionID)
 	if err != nil {
 		a.restoreContactReadOnly(rt, runtimeGeneration, contactID, sessionID, err)
@@ -856,11 +856,11 @@ func (a *appModel) reloadSession(rt *runtimeClient, runtimeGeneration int, conta
 		if runtimeGeneration != a.connectionGeneration || a.rt != rt {
 			return
 		}
-		a.applyReload(contactID, sessionID, gen, session, pages, status, err)
+		a.applyReload(contactID, sessionID, gen, session, pages, status, err, explicit)
 	})
 }
 
-func (a *appModel) applyReload(contactID, sessionID string, gen int, session runtimeSession, pages []historyRecord, status string, err error) {
+func (a *appModel) applyReload(contactID, sessionID string, gen int, session runtimeSession, pages []historyRecord, status string, err error, explicit bool) {
 	ct := a.contactByID(contactID)
 	if ct == nil || ct.SessionID != sessionID || ct.historyGen != gen {
 		return // a newer submit/task superseded this reload
@@ -895,9 +895,29 @@ func (a *appModel) applyReload(contactID, sessionID string, gen int, session run
 		return // a newer submit owns this contact; its generation changed too
 	}
 	// The runtime confirms this session is idle. For sendUnknown (or a missed
-	// terminal event) this is where reload may recover, but only after history
-	// was fetched successfully. Never re-send.
+	// terminal event) this is where an explicit reload may recover, but only
+	// after history was fetched successfully. Never re-send.
 	a.applyHistory(ct, pages, status)
+	unknownPending := ct.pendingSend != nil && ct.pendingSend.State == "unknown"
+	if unknownPending && !explicit {
+		ct.ActiveTaskID = ""
+		ct.SendState = sendUnknown
+		ct.Status = statusAttention
+		ct.SendError = taskContextUncertainSendError
+		ct.StatusDetail = ct.SendError
+		ct.LoadErr = ""
+		return
+	}
+	if unknownPending {
+		previous := clonePendingSend(ct.pendingSend)
+		ct.pendingSend = nil
+		if err := a.persist(); err != nil {
+			ct.pendingSend = previous
+			ct.LoadErr = "Could not save the history-reload state: " + err.Error()
+			return
+		}
+		ct.StatusDetail = "History reloaded; no retry was sent. Inspect the recorded messages before explicitly sending or removing retained task context."
+	}
 	ct.ActiveTaskID = ""
 	ct.SendState = sendIdle
 	ct.SendError = ""
@@ -1548,7 +1568,7 @@ func (a *appModel) applyEvent(ct *contact, event runtimeEventEnvelope) {
 			execution.Detail = ct.StatusDetail
 		}
 		_ = a.persist()
-		a.reloadContactByID(ct.ID)
+		a.reloadContactByID(ct.ID, false)
 	}
 }
 
@@ -1886,7 +1906,6 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 	ct.historyGen++ // invalidate any in-flight reload
 	ct.SubmittedDraft = text
 	ct.SubmittedRev = ct.draftRev
-	ct.submittedContext = submittedContext
 	ct.pendingSend = &pendingSend{Draft: text, Context: cloneTaskContextItems(submittedContext), State: "submitting"}
 	ct.SendState = sendSubmitting
 	ct.SendError = ""
@@ -1894,7 +1913,6 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 		ct.SendState = sendIdle
 		ct.SendError = "Could not save this contact; the message was not sent. " + err.Error()
 		ct.pendingIssueExecution = previousExecution
-		ct.submittedContext = nil
 		ct.pendingSend = nil
 		return false
 	}
@@ -1956,8 +1974,10 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 }
 
 func (a *appModel) acceptTask(ct *contact, text string, result runtimeSendResult) {
-	submittedContext := cloneTaskContextItems(ct.submittedContext)
-	ct.submittedContext = nil
+	var submittedContext []taskContextItem
+	if ct.pendingSend != nil {
+		submittedContext = cloneTaskContextItems(ct.pendingSend.Context)
+	}
 	ct.historyGen++
 	ct.ActiveTaskID = result.TaskID
 	ct.LastTaskID = result.TaskID
@@ -2023,7 +2043,6 @@ func (a *appModel) failSubmit(contactID string, err error, submitted bool) {
 			return
 		}
 		ct.pendingEvents = nil
-		ct.submittedContext = nil
 		if confirmedReject(err) {
 			ct.pendingSend = nil
 			ct.SendState = sendIdle
@@ -2198,7 +2217,7 @@ func (a *appModel) reloadSelected() {
 		return
 	}
 	if ct.SessionID != "" {
-		a.reloadContactByID(ct.ID)
+		a.reloadContactByID(ct.ID, true)
 	}
 	if issue := ct.selectedIssue(); issue != nil && issue.WorkSessionID != "" {
 		a.reloadIssueWorkByID(ct.ID, issue.ID)

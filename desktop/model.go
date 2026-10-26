@@ -115,7 +115,6 @@ type contact struct {
 	SendError         string
 	SubmittedDraft    string
 	SubmittedRev      int
-	submittedContext  []taskContextItem
 	pendingSend       *pendingSend
 	draftRev          int
 	HistoryDirty      bool
@@ -381,7 +380,7 @@ func (a *appModel) selectContact(i int) {
 	if !a.demo {
 		ct := a.contacts[i]
 		if ct.SessionID != "" && (!ct.Loaded || ct.HistoryDirty) && ct.ActiveTaskID == "" {
-			a.reloadContactByID(ct.ID)
+			a.reloadContactByID(ct.ID, false)
 		}
 	}
 }

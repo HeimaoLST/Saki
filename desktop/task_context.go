@@ -425,11 +425,20 @@ func taskContextUserContent(raw json.RawMessage) (string, []taskContextItem) {
 	}
 	var text strings.Builder
 	var items []taskContextItem
+	bodySeen := false
 	for _, part := range parts {
 		switch part.Type {
 		case "image":
 			text.WriteString("[image]")
 		case "text":
+			if !bodySeen {
+				// Runtime places the nonempty GUI body first, then caller
+				// context wrappers. The wire has no origin tag, so a first
+				// context-only wrapper from another caller stays literal.
+				text.WriteString(part.Text)
+				bodySeen = true
+				continue
+			}
 			if item, ok := taskContextEnvelope(part.Text); ok {
 				items = append(items, item)
 			} else {
@@ -492,7 +501,7 @@ func (tc *taskContext) view(c *ui.Context, theme workbenchTheme) {
 			ui.Spacer(c)
 			ui.Text(c, fmt.Sprintf("%d %s · %s / 1 MiB", len(tc.items), taskContextItemWord(len(tc.items)), taskContextSizeLabel(tc))).FontSize(11).TextColor(t.TextMuted)
 		})
-		ui.Text(c, "Saved text is sent as caller-provided context with the next message. A file snapshot changes only when you refresh it.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Saved text is sent as caller-provided context with the next send. A file snapshot changes only when you refresh it.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 
 		if tc.actionError != "" {
 			ui.Text(c, tc.actionError).FontSize(11).LineHeight(1.4).TextColor(t.Danger)
@@ -507,7 +516,7 @@ func (tc *taskContext) view(c *ui.Context, theme workbenchTheme) {
 		}
 
 		if len(tc.items) == 0 {
-			ui.Text(c, "No saved context. The next message will not include caller context.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "No saved context. The next send will not include caller context.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 		}
 		for _, item := range tc.items {
 			item := item

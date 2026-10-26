@@ -6,6 +6,8 @@ package main
 
 import "github.com/egoist/mygo/ui"
 
+const taskContextUncertainSendError = "A previous message may have been sent; delivery was not confirmed before restart. Reload history to verify. No automatic retry."
+
 func clonePendingSend(send *pendingSend) *pendingSend {
 	if send == nil {
 		return nil
@@ -34,9 +36,13 @@ func (a *appModel) loadStoredTaskContexts(store *contactStore) {
 				// a pending send without a session was never dispatched.
 				ct.pendingSend = nil
 			} else {
+				// A restored in-flight intent has the same uncertainty as a
+				// persisted unknown one; normalize it so automatic reload does
+				// not silently retire it.
+				ct.pendingSend.State = "unknown"
 				ct.SendState = sendUnknown
 				ct.Status = statusAttention
-				ct.SendError = "A previous message may have been sent; delivery was not confirmed before restart. Reload history to verify. No automatic retry."
+				ct.SendError = taskContextUncertainSendError
 				ct.StatusDetail = ct.SendError
 			}
 		}
@@ -80,11 +86,10 @@ func (a *appModel) taskContextPanel(c *ui.Context, t *ui.Theme) {
 		target = &issue.Context
 	}
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "Task context").FontSize(16).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, owner).FontSize(16).FontWeight(600).TextColor(t.Text).MaxLines(2)
 		ui.Spacer(c)
 		ui.Button(c, "Close task context").FontSize(12).OnClick(func() { a.closeAux() })
 	})
-	ui.Text(c, owner).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 	target.view(c, a.workTheme)
 }
 

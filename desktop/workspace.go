@@ -466,6 +466,18 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 				if execution.Prompt != "" {
 					ui.Text(c, "Sent snapshot: "+truncate(execution.Prompt, 240)).FontSize(10).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
 				}
+				if count := len(executionTaskContextItems(ct, issue, execution)); count > 0 {
+					label := fmt.Sprintf("Sent task context · %d", count)
+					if execution.ContextExpanded {
+						label = "Hide sent task context"
+					}
+					ui.Button(c, label).FontSize(10).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+						execution.ContextExpanded = !execution.ContextExpanded
+					})
+					if execution.ContextExpanded {
+						a.executionTaskContextView(c, t, ct, issue, execution)
+					}
+				}
 				if execution.Detail != "" {
 					ui.Text(c, execution.Detail).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 				}

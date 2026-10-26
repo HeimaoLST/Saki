@@ -9,12 +9,18 @@ package main
 // The only adapter below projects saved snapshots onto runtimeContextInput.
 
 import (
+	"bufio"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/egoist/mygo/ui"
 )
 
 type taskContextCallerContext struct {
@@ -265,28 +271,19 @@ func taskContextHistoryCallerContexts(t *testing.T, page runtimeHistory) []taskC
 			if item.Role != "user" {
 				continue
 			}
-			var parts []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}
-			if err := json.Unmarshal(item.Content, &parts); err == nil {
-				for _, part := range parts {
-					if part.Type != "text" {
-						continue
-					}
-					if context, ok := taskContextParseCallerContext(part.Text); ok {
-						contexts = append(contexts, context)
-					}
-				}
-				continue
-			}
-			var text string
-			if err := json.Unmarshal(item.Content, &text); err == nil {
-				if context, ok := taskContextParseCallerContext(text); ok {
-					contexts = append(contexts, context)
-				}
-			}
+			_, items := taskContextUserContent(item.Content)
+			contexts = append(contexts, taskContextCallerContextsFromItems(items)...)
 		}
+	}
+	return contexts
+}
+
+func taskContextCallerContextsFromItems(items []taskContextItem) []taskContextCallerContext {
+	contexts := make([]taskContextCallerContext, 0, len(items))
+	for _, item := range items {
+		contexts = append(contexts, taskContextCallerContext{
+			Type: "caller_context", Label: "Caller-provided context (user data)", Name: item.Name, Text: item.Text,
+		})
 	}
 	return contexts
 }
@@ -304,7 +301,12 @@ func taskContextUserCallerContexts(t *testing.T, body string) []taskContextCalle
 	t.Helper()
 	var contexts []taskContextCallerContext
 	for _, segments := range taskContextUserTexts(t, body) {
-		for _, segment := range segments {
+		for index, segment := range segments {
+			if index == 0 {
+				// The first user text part is the literal GUI body. The runtime
+				// has no origin tag for context-only external turns.
+				continue
+			}
 			if context, ok := taskContextParseCallerContext(segment); ok {
 				contexts = append(contexts, context)
 			}
@@ -643,4 +645,554 @@ func TestTaskContextGUIAppUnknownSendRestartKeepsWarningWithoutReplay(t *testing
 		t.Fatalf("restart replayed a send: %d provider requests", provider.count())
 	}
 	h2.shutdown(t)
+}
+
+func TestTaskContextIssueSentSnapshotPageCopyBeforeAndAfterRestart(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{}
+	h := startGUIHarness(t, binary, provider, "task-context-issue-snapshot-117")
+	var issueID string
+	h.pump.do(func() {
+		if !h.app.createIssue("Show sent context", "Keep the exact sent materials.") {
+			t.Fatalf("createIssue: %s", h.app.issueFormError)
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		issue := ct.issueByID(issueID)
+		if _, err := issue.Context.AddSnippet("Sent issue notes", "exact issue context\nwith unicode 你好"); err != nil {
+			t.Fatal(err)
+		}
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue: %s", h.app.issueFormError)
+		}
+	})
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted && issue.Work.ActiveTaskID == ""
+	})
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.SelectedIssueID = issueID
+		h.app.workspaceOpen = true
+	})
+	tr := ui.NewTester(h.app.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("Sent task context · 1"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.HasText("exact issue context") || !tr.HasText("Sent issue notes") {
+		t.Fatalf("sent issue context missing: %v", tr.Texts())
+	}
+	if err := tr.Click("Copy context text"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != "exact issue context\nwith unicode 你好" {
+		t.Fatalf("sent context copy = %q", got)
+	}
+	h.shutdown(t)
+
+	h2 := restartGUIHarness(t, binary)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.wait(func() bool { return h2.app.contacts[0].issueByID(issueID) != nil })
+	h2.pump.do(func() {
+		ct := h2.app.selectedContact()
+		ct.SelectedIssueID = issueID
+		h2.app.workspaceOpen = true
+	})
+	tr2 := ui.NewTester(h2.app.view, 1040, 720)
+	tr2.Frame()
+	if err := tr2.Click("Sent task context · 1"); err != nil {
+		t.Fatal(err)
+	}
+	tr2.Frame()
+	if !tr2.HasText("exact issue context") || !tr2.HasText("Sent issue notes") {
+		t.Fatalf("restored sent issue context missing: %v", tr2.Texts())
+	}
+	if err := tr2.Click("Copy context text"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr2.Clipboard(); got != "exact issue context\nwith unicode 你好" {
+		t.Fatalf("restored sent context copy = %q", got)
+	}
+	if provider.count() != 1 {
+		t.Fatalf("restart issued provider requests: %d", provider.count())
+	}
+	h2.shutdown(t)
+}
+
+func taskContextProxy(t *testing.T, binary string) (string, string) {
+	t.Helper()
+	proxy := filepath.Join(t.TempDir(), "task-context-proxy")
+	executable := "'" + strings.ReplaceAll(os.Args[0], "'", "'\"'\"'") + "'"
+	if err := os.WriteFile(proxy, []byte("#!/bin/sh\nexec "+executable+" -test.run=^TestTaskContextStdioProxyHelper$\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	countPath := filepath.Join(t.TempDir(), "task-send-count")
+	t.Setenv("SAKI_TASK_CONTEXT_PROXY", "1")
+	t.Setenv("SAKI_TASK_CONTEXT_PROXY_BINARY", binary)
+	t.Setenv("SAKI_TASK_CONTEXT_PROXY_COUNT", countPath)
+	return proxy, countPath
+}
+
+func TestTaskContextStdioProxyHelper(t *testing.T) {
+	if os.Getenv("SAKI_TASK_CONTEXT_PROXY") != "1" {
+		return
+	}
+	cmd := exec.Command(os.Getenv("SAKI_TASK_CONTEXT_PROXY_BINARY"), "--stdio")
+	cmd.Stderr = os.Stderr
+	input, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	taskSends := map[string]bool{}
+	suppressEvents := false
+	go func() {
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Buffer(make([]byte, 65536), runtimeMaxLine)
+		for scanner.Scan() {
+			var request struct {
+				ID     string `json:"id"`
+				Method string `json:"method"`
+			}
+			_ = json.Unmarshal(scanner.Bytes(), &request)
+			if request.Method == "task.send" {
+				mu.Lock()
+				taskSends[request.ID] = true
+				suppressEvents = true
+				mu.Unlock()
+				file, err := os.OpenFile(os.Getenv("SAKI_TASK_CONTEXT_PROXY_COUNT"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+				if err == nil {
+					_, _ = file.WriteString("task.send\n")
+					_ = file.Close()
+				}
+			}
+			if _, err := input.Write(append(append([]byte(nil), scanner.Bytes()...), '\n')); err != nil {
+				break
+			}
+		}
+		_ = input.Close()
+	}()
+	scanner := bufio.NewScanner(output)
+	scanner.Buffer(make([]byte, 65536), runtimeMaxLine)
+	dropped := false
+	for scanner.Scan() {
+		var response struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(scanner.Bytes(), &response)
+		mu.Lock()
+		drop := response.ID != "" && taskSends[response.ID] && !dropped
+		suppress := suppressEvents
+		mu.Unlock()
+		if suppress && response.Type == "event" {
+			continue
+		}
+		if drop {
+			dropped = true
+			data, _ := json.Marshal(map[string]any{
+				"version": runtimeProtocolVersion, "type": "response", "id": response.ID,
+				"error": map[string]string{"code": "protocol_error", "message": "controlled lost task.send reply"},
+			})
+			_, _ = os.Stdout.Write(append(data, '\n'))
+			continue
+		}
+		_, _ = os.Stdout.Write(append(append([]byte(nil), scanner.Bytes()...), '\n'))
+	}
+	if err := cmd.Wait(); err != nil {
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func TestTaskContextGUIAppLostTaskSendReplyRestartNoResubmit(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	proxy, countPath := taskContextProxy(t, binary)
+	provider := &providerFixture{Arrived: make(chan struct{})}
+	h := startGUIHarness(t, proxy, provider, "task-context-lost-reply-117")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if _, err := ct.Context.AddSnippet("Lost reply notes", "must survive unknown delivery"); err != nil {
+			t.Fatal(err)
+		}
+		ct.Draft = "This send reply will be lost."
+		if !h.app.sendCurrent() {
+			t.Fatalf("lost-reply send: %s", ct.SendError)
+		}
+	})
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		return ct.SendState == sendUnknown && ct.pendingSend != nil && ct.pendingSend.State == "unknown"
+	})
+	var lostContext []taskContextItem
+	var lostError string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		lostContext, lostError = ct.Context.snapshot(), ct.SendError
+	})
+	if len(lostContext) != 1 || !strings.Contains(lostError, "Delivery not confirmed") {
+		t.Fatalf("lost reply context/error = %+v / %q", lostContext, lostError)
+	}
+	select {
+	case <-provider.Arrived:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive the accepted lost-reply task")
+	}
+	if provider.count() != 1 {
+		t.Fatalf("lost reply provider requests = %d", provider.count())
+	}
+	if got, err := os.ReadFile(countPath); err != nil || string(got) != "task.send\n" {
+		t.Fatalf("task.send count = %q, %v", got, err)
+	}
+	h.shutdown(t)
+
+	h2 := restartGUIHarness(t, proxy)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.wait(func() bool {
+		ct := h2.app.contacts[0]
+		return ct.Loaded && len(ct.Messages) > 0
+	})
+	var restartState sendState
+	var restartPending *pendingSend
+	var restartContext []taskContextItem
+	h2.pump.do(func() {
+		ct := h2.app.selectedContact()
+		restartState, restartPending, restartContext = ct.SendState, clonePendingSend(ct.pendingSend), ct.Context.snapshot()
+	})
+	if restartState != sendUnknown || restartPending == nil || restartPending.State != "unknown" || len(restartContext) != 1 {
+		t.Fatalf("restart lost unknown reply state: state=%v pending=%+v context=%+v", restartState, restartPending, restartContext)
+	}
+	if provider.count() != 1 {
+		t.Fatalf("restart replayed task.send: provider %d", provider.count())
+	}
+	if got, err := os.ReadFile(countPath); err != nil || string(got) != "task.send\n" {
+		t.Fatalf("restart task.send count = %q, %v", got, err)
+	}
+	history, err := h2.app.rt.historyPage(h2.app.selectedContact().SessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contexts := taskContextHistoryCallerContexts(t, history); len(contexts) != 1 || contexts[0].Text != "must survive unknown delivery" {
+		t.Fatalf("lost-reply runtime history = %+v", contexts)
+	}
+	h2.pump.do(func() { h2.app.reloadSelected() })
+	h2.pump.wait(func() bool { return h2.app.selectedContact().SendState == sendIdle })
+	var retiredPending *pendingSend
+	var retiredContext []taskContextItem
+	var retiredDetail string
+	h2.pump.do(func() {
+		ct := h2.app.selectedContact()
+		retiredPending, retiredContext, retiredDetail = clonePendingSend(ct.pendingSend), ct.Context.snapshot(), ct.StatusDetail
+	})
+	if retiredPending != nil || len(retiredContext) != 1 {
+		t.Fatalf("explicit reload did not retire unknown intent while keeping materials: pending=%+v context=%+v", retiredPending, retiredContext)
+	}
+	if !strings.Contains(retiredDetail, "History reloaded; no retry was sent") {
+		t.Fatalf("explicit reload recovery was not visible: %q", retiredDetail)
+	}
+	if provider.count() != 1 {
+		t.Fatalf("explicit reload replayed task.send: provider %d", provider.count())
+	}
+	if got, err := os.ReadFile(countPath); err != nil || string(got) != "task.send\n" {
+		t.Fatalf("explicit reload task.send count = %q, %v", got, err)
+	}
+	h2.shutdown(t)
+}
+
+func TestTaskContextGUIEnvelopeLikeBodyStaysLiteralWithRealContext(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{}
+	h := startGUIHarness(t, binary, provider, "task-context-body-json-117")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	body := `{"type":"caller_context","label":"Caller-provided context (user data)","name":"body-as-json","text":"literal body"}`
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if _, err := ct.Context.AddSnippet("Real context", "real context body"); err != nil {
+			t.Fatal(err)
+		}
+		ct.Draft = body
+		if !h.app.sendCurrent() {
+			t.Fatalf("send: %s", ct.SendError)
+		}
+	})
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		return ct.LastTaskID != "" && ct.ActiveTaskID == "" && ct.SendState == sendIdle
+	})
+	if provider.count() != 1 {
+		t.Fatalf("provider requests = %d", provider.count())
+	}
+	userTexts := taskContextUserTexts(t, provider.body(0))
+	if len(userTexts) == 0 || len(userTexts[0]) != 2 || userTexts[0][0] != body {
+		t.Fatalf("provider user parts = %+v", userTexts)
+	}
+	contexts := taskContextUserCallerContexts(t, provider.body(0))
+	if len(contexts) != 1 || contexts[0].Name != "Real context" || contexts[0].Text != "real context body" {
+		t.Fatalf("provider context = %+v", contexts)
+	}
+	history, err := h.app.rt.historyPage(h.app.selectedContact().SessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contexts := taskContextHistoryCallerContexts(t, history); len(contexts) != 1 || contexts[0].Name != "Real context" {
+		t.Fatalf("history context = %+v", contexts)
+	}
+	tr := ui.NewTester(h.app.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("Copy message"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != body {
+		t.Fatalf("body copy = %q, want byte-exact body", got)
+	}
+	h.shutdown(t)
+}
+
+func TestTaskContextGUIStoreFailureBeforeSendKeepsMaterials(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{}
+	h := startGUIHarness(t, binary, provider, "task-context-savefail-117")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	var originalStore string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if _, err := ct.Context.AddSnippet("Saved locally", "keep after save failure"); err != nil {
+			t.Fatal(err)
+		}
+		ct.Draft = "must not dispatch"
+		originalStore = h.app.store.path
+		h.app.store.path = t.TempDir() // directory target makes persist fail
+		if h.app.sendCurrent() {
+			t.Fatal("send unexpectedly dispatched after store failure")
+		}
+	})
+	h.pump.wait(func() bool {
+		return h.app.selectedContact().SendState == sendIdle && strings.Contains(h.app.selectedContact().SendError, "Could not save")
+	})
+	var context []taskContextItem
+	var draft string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		context, draft = ct.Context.snapshot(), ct.Draft
+		h.app.store.path = originalStore
+	})
+	if len(context) != 1 || draft != "must not dispatch" || provider.count() != 0 {
+		t.Fatalf("save-failure boundary = context=%+v draft=%q provider=%d", context, draft, provider.count())
+	}
+}
+
+func TestTaskContextGUICapacityKeepsContextAndRetriesOnce(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	t.Setenv("SAKI_MAX_ACTIVE_TASKS", "1")
+	hold := make(chan struct{})
+	provider := &providerFixture{Hold: hold, Arrived: make(chan struct{})}
+	h := startGUIHarness(t, binary, provider, "task-context-capacity-117")
+	defer func() {
+		select {
+		case <-hold:
+		default:
+			close(hold)
+		}
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	var issueID string
+	h.pump.do(func() {
+		if !h.app.createIssue("Hold the slot", "Keep the issue active.") {
+			t.Fatalf("createIssue: %s", h.app.issueFormError)
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue: %s", h.app.issueFormError)
+		}
+	})
+	select {
+	case <-provider.Arrived:
+	case <-time.After(15 * time.Second):
+		t.Fatal("held issue did not reach the provider")
+	}
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if _, err := ct.Context.AddSnippet("Capacity context", "retry after release"); err != nil {
+			t.Fatal(err)
+		}
+		ct.Draft = "capacity retry prompt"
+		if h.app.sendCurrent() {
+			t.Fatal("conversation send was admitted at capacity")
+		}
+	})
+	var reason string
+	var context []taskContextItem
+	var draft string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		reason, context, draft = ct.SendError, ct.Context.snapshot(), ct.Draft
+	})
+	if !strings.Contains(reason, "capacity") && !strings.Contains(reason, "slot") && !strings.Contains(reason, "working") {
+		t.Fatalf("capacity reason = %q", reason)
+	}
+	if len(context) != 1 || draft != "capacity retry prompt" || provider.count() != 1 {
+		t.Fatalf("capacity rejection changed owner data: context=%+v draft=%q provider=%d", context, draft, provider.count())
+	}
+	close(hold)
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle
+	})
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if !h.app.sendCurrent() {
+			t.Fatalf("post-release retry: %s", ct.SendError)
+		}
+	})
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		return ct.LastTaskID != "" && ct.ActiveTaskID == "" && ct.SendState == sendIdle
+	})
+	if provider.count() != 2 {
+		t.Fatalf("post-release retry provider = %d", provider.count())
+	}
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if len(ct.Context.snapshot()) != 0 {
+			t.Fatalf("accepted retry did not clear context: %+v", ct.Context.snapshot())
+		}
+	})
+}
+
+func TestTaskContextGUIAcceptanceEditsPreserveNewerContextAndOwner(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{}
+	h := startGUIHarness(t, binary, provider, "task-context-accept-edit-117")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "Establish the conversation."
+		if !h.app.sendCurrent() {
+			t.Fatalf("establish send: %s", ct.SendError)
+		}
+	})
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		return ct.LastTaskID != "" && ct.ActiveTaskID == "" && ct.SendState == sendIdle
+	})
+	var ownerID, firstID, secondID string
+	manual := make(chan func(), 64)
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ownerID = ct.ID
+		first, err := ct.Context.AddSnippet("First", "old context")
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := ct.Context.AddSnippet("Second", "submitted sibling")
+		if err != nil {
+			t.Fatal(err)
+		}
+		firstID, secondID = first.ID, second.ID
+		ct.Draft = "acceptance prompt with stable context"
+		h.app.setUIHook(func(fn func()) { manual <- fn })
+		if !h.app.sendCurrent() {
+			t.Fatalf("acceptance send: %s", ct.SendError)
+		}
+	})
+	var firstCallback func()
+	select {
+	case firstCallback = <-manual:
+	case <-time.After(15 * time.Second):
+		t.Fatal("acceptance callback did not arrive")
+	}
+	var edited *taskContextItem
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		item, err := ct.Context.Edit(firstID, "First", "newer context")
+		if err != nil {
+			t.Fatal(err)
+		}
+		edited = &item
+		if _, err := ct.Context.AddSnippet("Third", "new during flight"); err != nil {
+			t.Fatal(err)
+		}
+		h.app.addDefaultContact()
+	})
+	h.pump.do(func() {
+		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
+		if firstCallback != nil {
+			firstCallback()
+			firstCallback = nil
+		}
+		for {
+			select {
+			case fn := <-manual:
+				fn()
+			default:
+				return
+			}
+		}
+	})
+	h.pump.wait(func() bool {
+		ct := h.app.contactByID(ownerID)
+		return ct != nil && ct.ActiveTaskID == "" && ct.SendState == sendIdle && len(ct.Messages) > 0
+	})
+	if provider.count() != 2 {
+		t.Fatalf("provider requests = %d", provider.count())
+	}
+	bodyContexts := taskContextCallerContexts(t, provider.body(1))
+	if len(bodyContexts) != 2 || bodyContexts[0].Text != "old context" || bodyContexts[1].Text != "submitted sibling" {
+		t.Fatalf("provider used edited context: %+v", bodyContexts)
+	}
+	var firstContext, secondContext []taskContextItem
+	h.pump.do(func() {
+		firstContext = h.app.contactByID(ownerID).Context.snapshot()
+		secondContext = h.app.contacts[len(h.app.contacts)-1].Context.snapshot()
+	})
+	if len(firstContext) != 2 || firstContext[0].Text != "newer context" || firstContext[1].Text != "new during flight" {
+		t.Fatalf("newer context did not survive acceptance: %+v", firstContext)
+	}
+	for _, item := range firstContext {
+		if item.ID == secondID {
+			t.Fatalf("submitted sibling survived exact clear: %+v", firstContext)
+		}
+	}
+	if edited == nil || edited.Revision != 2 {
+		t.Fatalf("edit revision = %+v", edited)
+	}
+	if len(secondContext) != 0 {
+		t.Fatalf("owner switch changed the new contact: %+v", secondContext)
+	}
 }

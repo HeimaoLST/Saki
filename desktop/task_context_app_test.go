@@ -88,7 +88,7 @@ func TestTaskContextAcceptedSendClearsOnlyExactSubmittedVersions(t *testing.T) {
 	}
 	ct.Draft = "prompt"
 	ct.SubmittedRev = ct.draftRev
-	ct.submittedContext = submitted
+	ct.pendingSend = &pendingSend{Draft: "prompt", Context: submitted, State: "submitting"}
 	a.acceptTask(ct, "prompt", runtimeSendResult{TaskID: "t1", MessageID: "m1"})
 
 	left := ct.Context.snapshot()
@@ -115,7 +115,7 @@ func TestTaskContextAcceptedSaveFailureKeepsNextDraftVisible(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ct.submittedContext = ct.Context.snapshot()
+	ct.pendingSend = &pendingSend{Draft: "prompt", Context: ct.Context.snapshot(), State: "submitting"}
 	a.store = &contactStore{path: t.TempDir()}
 	a.acceptTask(ct, "prompt", runtimeSendResult{TaskID: "t1", MessageID: "m1"})
 	if got := ct.Context.snapshot(); len(got) != 1 || got[0].ID != item.ID {
@@ -134,9 +134,9 @@ func TestTaskContextRejectedSendKeepsMaterials(t *testing.T) {
 	if _, err := ct.Context.AddSnippet("Keep", "rejected context"); err != nil {
 		t.Fatal(err)
 	}
-	ct.submittedContext = ct.Context.snapshot()
+	ct.pendingSend = &pendingSend{Draft: "rejected", Context: ct.Context.snapshot(), State: "submitting"}
 	a.failSubmit(ct.ID, &runtimeError{Code: "capacity", Message: "full"}, false)
-	if len(ct.Context.snapshot()) != 1 || len(ct.submittedContext) != 0 {
+	if len(ct.Context.snapshot()) != 1 || ct.pendingSend != nil {
 		t.Fatalf("rejected send changed context: %+v", ct.Context.snapshot())
 	}
 	if ct.SendState != sendIdle {
@@ -150,7 +150,6 @@ func TestTaskContextUnknownFailurePersistsPendingIntent(t *testing.T) {
 		t.Fatal(err)
 	}
 	ct.pendingSend = &pendingSend{Draft: "uncertain prompt", Context: ct.Context.snapshot(), State: "submitting"}
-	ct.submittedContext = ct.Context.snapshot()
 	ct.SubmittedDraft = "uncertain prompt"
 	a.failSubmit(ct.ID, &runtimeError{Code: "protocol_error", Message: "disconnected"}, true)
 	if ct.SendState != sendUnknown || ct.pendingSend == nil || ct.pendingSend.State != "unknown" {
@@ -165,6 +164,32 @@ func TestTaskContextUnknownFailurePersistsPendingIntent(t *testing.T) {
 	}
 	if store.state.Contacts[0].PendingSend == nil || store.state.Contacts[0].PendingSend.State != "unknown" {
 		t.Fatalf("unknown intent was not persisted: %+v", store.state.Contacts[0].PendingSend)
+	}
+}
+
+func TestTaskContextExplicitReloadRetiresUnknownWithoutRemovingMaterials(t *testing.T) {
+	a, ct := taskContextApp(t)
+	if _, err := ct.Context.AddSnippet("Keep", "after explicit reload"); err != nil {
+		t.Fatal(err)
+	}
+	ct.pendingSend = &pendingSend{Draft: "uncertain", Context: ct.Context.snapshot(), State: "unknown"}
+	ct.SendState = sendUnknown
+	if err := a.persist(); err != nil {
+		t.Fatal(err)
+	}
+	a.applyReload(ct.ID, ct.SessionID, 0, runtimeSession{SessionID: ct.SessionID, State: "idle", Status: "completed"}, nil, "completed", nil, true)
+	if ct.SendState != sendIdle || ct.pendingSend != nil {
+		t.Fatalf("explicit reload state = %v / %+v", ct.SendState, ct.pendingSend)
+	}
+	if len(ct.Context.snapshot()) != 1 || !strings.Contains(ct.StatusDetail, "History reloaded; no retry was sent") {
+		t.Fatalf("explicit reload materials/copy = %+v / %q", ct.Context.snapshot(), ct.StatusDetail)
+	}
+	store, err := openContactStore(a.store.path, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.state.Contacts[0].PendingSend != nil {
+		t.Fatalf("retired unknown intent reappeared in the store: %+v", store.state.Contacts[0].PendingSend)
 	}
 }
 
@@ -210,6 +235,25 @@ func TestTaskContextUserContentSeparatesOnlyActualEnvelope(t *testing.T) {
 	text, contexts = taskContextUserContent(ordinary)
 	if text != `{"type":"caller_context","name":"ordinary"}` || len(contexts) != 0 {
 		t.Fatalf("ordinary JSON became context: %q / %+v", text, contexts)
+	}
+	bodyJSON, err := json.Marshal(map[string]string{
+		"type": "caller_context", "label": "Caller-provided context (user data)",
+		"name": "body-as-json", "text": "literal body",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	realJSON, err := json.Marshal(map[string]string{
+		"type": "caller_context", "label": "Caller-provided context (user data)",
+		"name": "Real context", "text": "real body",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	both := []byte(`[{"type":"text","text":` + string(mustJSON(t, string(bodyJSON))) + `},{"type":"text","text":` + string(mustJSON(t, string(realJSON))) + `}]`)
+	text, contexts = taskContextUserContent(both)
+	if text != string(bodyJSON) || len(contexts) != 1 || contexts[0].Name != "Real context" || contexts[0].Text != "real body" {
+		t.Fatalf("envelope-like body was hidden or parsed: %q / %+v", text, contexts)
 	}
 	text, contexts = taskContextUserContent([]byte(`"main only"`))
 	if text != "main only" || len(contexts) != 0 {
@@ -445,6 +489,45 @@ func TestTaskContextExecutionFallbackUsesOnlyItsOwnedSession(t *testing.T) {
 	}
 }
 
+func TestTaskContextAutomaticReloadKeepsUnknownIntent(t *testing.T) {
+	a, ct := taskContextApp(t)
+	if _, err := ct.Context.AddSnippet("Keep", "still uncertain"); err != nil {
+		t.Fatal(err)
+	}
+	ct.pendingSend = &pendingSend{Draft: "uncertain", Context: ct.Context.snapshot(), State: "unknown"}
+	ct.SendState = sendIdle // a terminal event may have cleared the state before automatic reload
+	a.applyReload(ct.ID, ct.SessionID, 0, runtimeSession{SessionID: ct.SessionID, State: "idle", Status: "completed"}, nil, "completed", nil, false)
+	if ct.SendState != sendUnknown || ct.pendingSend == nil || ct.pendingSend.State != "unknown" || len(ct.Context.snapshot()) != 1 {
+		t.Fatalf("automatic reload retired unknown intent: state=%v pending=%+v context=%+v", ct.SendState, ct.pendingSend, ct.Context.snapshot())
+	}
+}
+
+func TestTaskContextRestoredSubmittingIntentSurvivesAutomaticReload(t *testing.T) {
+	a, ct := taskContextApp(t)
+	if _, err := ct.Context.AddSnippet("Restored in flight", "crash before reply"); err != nil {
+		t.Fatal(err)
+	}
+	ct.pendingSend = &pendingSend{Draft: "in flight", Context: ct.Context.snapshot(), State: "submitting"}
+	if err := a.persist(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := openContactStore(a.store.path, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded := &appModel{store: store, contacts: contactsFromStore(store, "/tmp")}
+	reloaded.loadStoredTaskContexts(store)
+	reloaded.bindTaskContexts()
+	restored := reloaded.contacts[0]
+	if restored.pendingSend == nil || restored.pendingSend.State != "unknown" || restored.SendState != sendUnknown {
+		t.Fatalf("restored submitting intent was not normalized: state=%v pending=%+v", restored.SendState, restored.pendingSend)
+	}
+	reloaded.applyReload(restored.ID, restored.SessionID, 0, runtimeSession{SessionID: restored.SessionID, State: "idle", Status: "completed"}, nil, "completed", nil, false)
+	if restored.SendState != sendUnknown || restored.pendingSend == nil || restored.pendingSend.State != "unknown" || len(restored.Context.snapshot()) != 1 {
+		t.Fatalf("automatic reload retired restored intent: state=%v pending=%+v context=%+v", restored.SendState, restored.pendingSend, restored.Context.snapshot())
+	}
+}
+
 func TestTaskContextUnknownSendSurvivesStoreRestartWithoutAutoReplay(t *testing.T) {
 	a, ct := taskContextApp(t)
 	if _, err := ct.Context.AddSnippet("Maybe sent", "possibly delivered"); err != nil {
@@ -506,4 +589,52 @@ func TestTaskContextStoreV5ReadsOldV4WithoutContext(t *testing.T) {
 	if reloaded.state.Version != 5 {
 		t.Fatalf("old v4 data was not saved as v5: %d", reloaded.state.Version)
 	}
+}
+
+func TestTaskContextAppIssueAndReadOnlyPreviewScreenshots(t *testing.T) {
+	dir := os.Getenv("SAKI_PREVIEW_DIR")
+	if dir == "" {
+		t.Skip("set SAKI_PREVIEW_DIR to write headless app previews")
+	}
+	write := func(scene string) {
+		for _, dark := range []bool{false, true} {
+			theme := "light"
+			if dark {
+				theme = "dark"
+			}
+			for _, size := range []struct {
+				name          string
+				width, height int
+			}{{"narrow", 720, 640}, {"wide", 1040, 720}} {
+				a, ct := taskContextApp(t)
+				issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "Show task context", Status: issueStatusInProgress}
+				issue.Context.onChange = a.persist
+				item, err := issue.Context.AddSnippet("Issue notes", "exact issue text\n第二行")
+				if err != nil {
+					t.Fatal(err)
+				}
+				issue.Executions = []*issueExecution{{
+					ID: "e1", SessionID: "issue-session", TaskID: "t1", MessageID: "m1",
+					Prompt: "Sent issue snapshot", Status: issueExecutionCompleted,
+					Context: []taskContextItem{item},
+				}}
+				issue.WorkSessionID = "issue-session"
+				ct.Issues = []*productIssue{issue}
+				ct.SelectedIssueID = issue.ID
+				a.workspaceOpen = true
+				a.windowWidth = size.width
+				if scene == "issue" {
+					a.openIssueTaskContext(issue.ID)
+				} else {
+					issue.Executions[0].ContextExpanded = true
+				}
+				tr := ui.NewTester(a.view, size.width, size.height)
+				tr.SetDark(dark)
+				tr.Frame()
+				writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("task-context-app-%s-%s-%s.png", scene, theme, size.name)), tr.Image())
+			}
+		}
+	}
+	write("issue")
+	write("readonly")
 }
