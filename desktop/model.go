@@ -30,6 +30,10 @@ type pendingSend struct {
 	Draft   string            `json:"draft,omitempty"`
 	Context []taskContextItem `json:"context,omitempty"`
 	State   string            `json:"state,omitempty"`
+	// ToolScopeRef binds the app-issued issue-tool scope to the one pending
+	// conversation turn. It is not a user-visible field and is cleared with the
+	// pending send after acceptance.
+	ToolScopeRef string `json:"tool_scope_ref,omitempty"`
 }
 
 type sendState int

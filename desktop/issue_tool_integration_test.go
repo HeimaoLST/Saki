@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -241,15 +240,21 @@ func issueToolTestIssueID(body string) string {
 
 func issueToolTestScope(body string) string {
 	last := ""
-	for _, pattern := range []string{
-		`"ref":"(scope-[0-9a-f]+)"`,
-		`\"ref\":\"(scope-[0-9a-f]+)\"`,
-	} {
-		for _, match := range regexp.MustCompile(pattern).FindAllStringSubmatch(body, -1) {
-			if len(match) == 2 {
-				last = match[1]
-			}
+	for offset := 0; ; {
+		index := strings.Index(body[offset:], "scope-")
+		if index < 0 {
+			break
 		}
+		index += offset
+		start := index + len("scope-")
+		end := start
+		for end < len(body) && (body[end] >= '0' && body[end] <= '9' || body[end] >= 'a' && body[end] <= 'f') {
+			end++
+		}
+		if end-start == 16 {
+			last = body[index:end]
+		}
+		offset = index + len("scope-")
 	}
 	return last
 }
@@ -390,6 +395,11 @@ func TestIssueToolConversationRealChainQueryCreateRun(t *testing.T) {
 	if !strings.Contains(provider.body(0), `"name":"issue_action"`) || !strings.Contains(provider.body(0), `"name":"issue_get"`) {
 		t.Fatal("first conversation request did not carry the externally selected issue tools")
 	}
+	for _, builtin := range []string{"read", "bash", "edit", "write"} {
+		if !strings.Contains(provider.body(0), `"name":"`+builtin+`"`) {
+			t.Fatalf("new conversation lost builtin tool %s", builtin)
+		}
+	}
 	for i := 0; i < provider.count(); i++ {
 		body := provider.body(i)
 		if strings.Contains(body, issueToolTestIssueGoal) && !strings.Contains(body, issueToolTestMarker) && strings.Contains(body, `"name":"issue_action"`) {
@@ -483,5 +493,243 @@ func TestIssueToolConversationRealChainQueryCreateRun(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.root, "issue-tool-helper")); err == nil {
 		t.Fatal("unexpected helper fixture created in workdir")
+	}
+}
+
+type issueToolSelectionProvider struct {
+	mu      sync.Mutex
+	bodies  []string
+	issueID string
+}
+
+func (p *issueToolSelectionProvider) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.bodies)
+}
+
+func (p *issueToolSelectionProvider) body(i int) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if i < 0 || i >= len(p.bodies) {
+		return ""
+	}
+	return p.bodies[i]
+}
+
+func (p *issueToolSelectionProvider) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		p.mu.Lock()
+		p.bodies = append(p.bodies, string(body))
+		step := len(p.bodies) - 1
+		issueID := p.issueID
+		p.mu.Unlock()
+		var response any
+		if step%2 == 0 {
+			response = issueResultFunctionCall("issue_get", "selection-get", map[string]any{
+				"scope": issueToolTestScope(string(body)), "issue_id": issueID,
+			})
+		} else {
+			response = issueResultPageFinal("SELECTION-RESULT")
+		}
+		data, _ := json.Marshal(response)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}
+}
+
+func issueToolTestOutput(body, callID string) string {
+	var payload struct {
+		Input []struct {
+			Type   string `json:"type"`
+			CallID string `json:"call_id"`
+			Output string `json:"output"`
+		} `json:"input"`
+	}
+	if json.Unmarshal([]byte(body), &payload) != nil {
+		return ""
+	}
+	for _, input := range payload.Input {
+		if input.Type != "function_call_output" || input.CallID != callID {
+			continue
+		}
+		var output struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		if json.Unmarshal([]byte(input.Output), &output) != nil {
+			return ""
+		}
+		for _, content := range output.Content {
+			return content.Text
+		}
+	}
+	return ""
+}
+
+func TestIssueToolExistingSchemaTwoSessionGetsSelectionAndRestart(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	provider := &issueToolSelectionProvider{}
+	h := startIssueToolTestHarness(t, binary, provider.handler())
+	var sessionID, contactID, issueID string
+	var setupErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if !h.app.createIssue("RESTART-GOAL", "RESTART-REQ") {
+			setupErr = h.app.issueFormError
+			return
+		}
+		issueID = ct.SelectedIssueID
+		session, err := h.app.rt.createConfiguredConversationSession(h.root, "", map[string]any{
+			"builtin": []string{}, "external": []map[string]string{},
+		})
+		if err != nil {
+			setupErr = err.Error()
+			return
+		}
+		ct.SessionID = session.SessionID
+		ct.Loaded = true
+		sessionID, contactID = session.SessionID, ct.ID
+		if err := h.app.persist(); err != nil {
+			setupErr = err.Error()
+		}
+	})
+	if setupErr != "" {
+		t.Fatal(setupErr)
+	}
+	beforeConfig, err := h.app.rt.connectionConfig(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	builtinBefore := append([]string(nil), beforeConfig.EffectiveConfig.ToolSelection.Builtin...)
+	modelBefore, cwdBefore := beforeConfig.EffectiveConfig.Model, beforeConfig.EffectiveConfig.WorkingDirectory
+	provider.mu.Lock()
+	provider.issueID = issueID
+	provider.mu.Unlock()
+	var sendErr string
+	h.pump.do(func() {
+		ct := h.app.contactByID(contactID)
+		ct.Draft = issueToolTestMarker + "-EXISTING"
+		if !h.app.sendCurrent() {
+			sendErr = ct.SendError
+		}
+	})
+	if sendErr != "" {
+		t.Fatal(sendErr)
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.contactByID(contactID)
+		return ct.SendState == sendIdle && ct.ActiveTaskID == "" && provider.count() == 2
+	})
+	var firstQuery IssueToolIssueDetail
+	if err := json.Unmarshal([]byte(issueToolTestOutput(provider.body(1), "selection-get")), &firstQuery); err != nil {
+		t.Fatalf("first tool output: %v", err)
+	}
+	if firstQuery.Issue.ID != issueID || firstQuery.Issue.Goal != "RESTART-GOAL" || len(firstQuery.Requirements) != 1 ||
+		firstQuery.Requirements[0].Text != "RESTART-REQ" || firstQuery.ExecutionCount != 0 {
+		t.Fatalf("first real issue_get output = %+v issueID=%q body1=%s", firstQuery, issueID, truncateIssueToolText(provider.body(1), 1800))
+	}
+	var configured bool
+	var readErr error
+	var schema int
+	var selection runtimeToolSelection
+	h.pump.do(func() {
+		config, err := h.app.rt.connectionConfig(sessionID)
+		readErr = err
+		schema = config.StorageSchema
+		selection = config.EffectiveConfig.ToolSelection
+		configured = runtimeSelectionHasIssueTools(selection)
+	})
+	if readErr != nil || !configured {
+		var debug string
+		h.pump.do(func() { debug = h.app.contactByID(contactID).SendError })
+		t.Fatalf("existing schema2 tool selection = configured=%v err=%v schema=%d selection=%+v count=%d sendErr=%q body0tools=%v", configured, readErr, schema, selection, provider.count(), debug, strings.Contains(provider.body(0), `"name":"issue_action"`))
+	}
+	if len(builtinBefore) != 0 || len(selection.Builtin) != 0 {
+		t.Fatalf("explicit empty builtin changed: before=%v after=%v", builtinBefore, selection.Builtin)
+	}
+	config, err := h.app.rt.connectionConfig(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.app.rt.updateSessionModel(sessionID, config.ConfigRevision, runtimeModelPatch{Model: config.EffectiveConfig.Model}); err != nil {
+		t.Fatalf("model apply config update: %v", err)
+	}
+	config, err = h.app.rt.connectionConfig(sessionID)
+	if err != nil || !runtimeSelectionHasIssueTools(config.EffectiveConfig.ToolSelection) {
+		t.Fatalf("model apply dropped issue tools: err=%v selection=%+v", err, config.EffectiveConfig.ToolSelection)
+	}
+	if config.EffectiveConfig.Model != modelBefore || config.EffectiveConfig.WorkingDirectory != cwdBefore {
+		t.Fatalf("tool selection changed model/cwd: model=%q/%q cwd=%q/%q", modelBefore, config.EffectiveConfig.Model, cwdBefore, config.EffectiveConfig.WorkingDirectory)
+	}
+	if strings.Contains(provider.body(0), `"name":"issue_action"`) == false {
+		t.Fatal("existing schema2 conversation did not expose issue tools")
+	}
+	var oldEndpoint string
+	h.pump.do(func() { oldEndpoint = h.app.issueToolEndpoint })
+	h.shutdown(t)
+	restarted := restartGUIHarness(t, binary)
+	t.Cleanup(func() {
+		if !restarted.closed {
+			restarted.shutdown(t)
+		}
+	})
+	restarted.pump.wait(func() bool {
+		ct := restarted.app.contactByID(contactID)
+		return ct != nil && ct.Loaded
+	})
+	if restarted.app.issueToolEndpoint == oldEndpoint || restarted.app.issueToolEndpoint == "" {
+		t.Fatalf("restart did not establish a new IPC socket: old=%q new=%q", oldEndpoint, restarted.app.issueToolEndpoint)
+	}
+	restartConfig, err := restarted.app.rt.connectionConfig(sessionID)
+	if err != nil || !runtimeSelectionHasIssueTools(restartConfig.EffectiveConfig.ToolSelection) ||
+		len(restartConfig.EffectiveConfig.ToolSelection.Builtin) != 0 ||
+		restartConfig.EffectiveConfig.Model != modelBefore || restartConfig.EffectiveConfig.WorkingDirectory != cwdBefore {
+		t.Fatalf("restart config changed: err=%v builtin=%v model=%q cwd=%q", err, restartConfig.EffectiveConfig.ToolSelection.Builtin, restartConfig.EffectiveConfig.Model, restartConfig.EffectiveConfig.WorkingDirectory)
+	}
+	var restartSendErr string
+	restarted.pump.do(func() {
+		ct := restarted.app.contactByID(contactID)
+		if ct == nil {
+			restartSendErr = "contact missing after restart"
+			return
+		}
+		ct.Draft = issueToolTestMarker + "-RESTART"
+		if !restarted.app.sendCurrent() {
+			restartSendErr = ct.SendError
+		}
+	})
+	if restartSendErr != "" {
+		t.Fatal(restartSendErr)
+	}
+	restarted.pump.wait(func() bool {
+		ct := restarted.app.contactByID(contactID)
+		return ct != nil && ct.SendState == sendIdle && ct.ActiveTaskID == "" && provider.count() == 4
+	})
+	if !strings.Contains(provider.body(2), `"name":"issue_get"`) {
+		t.Fatal("restart turn did not query through the new MCP helper socket")
+	}
+	var secondQuery IssueToolIssueDetail
+	if err := json.Unmarshal([]byte(issueToolTestOutput(provider.body(3), "selection-get")), &secondQuery); err != nil {
+		t.Fatalf("restart tool output: %v", err)
+	}
+	if secondQuery.Issue.ID != issueID || secondQuery.Issue.Goal != "RESTART-GOAL" ||
+		len(secondQuery.Requirements) != 1 || secondQuery.Requirements[0].Text != "RESTART-REQ" || secondQuery.ExecutionCount != 0 {
+		t.Fatalf("restart real issue_get output = %+v", secondQuery)
+	}
+	var restartStateErr string
+	restarted.pump.do(func() {
+		ct := restarted.app.contactByID(contactID)
+		if ct == nil || len(ct.Issues) != 1 || len(ct.Issues[0].Executions) != 0 || len(restarted.app.issueToolLedger.Operations) != 0 {
+			restartStateErr = fmt.Sprintf("restart query created execution/operation: %+v", ct)
+		}
+	})
+	if restartStateErr != "" {
+		t.Fatal(restartStateErr)
 	}
 }

@@ -129,6 +129,101 @@ func (a *appModel) issueToolConversationSelection() map[string]any {
 	}
 }
 
+func runtimeSelectionHasIssueTools(selection runtimeToolSelection) bool {
+	found := map[string]bool{}
+	for _, binding := range selection.External {
+		if binding.SourceID == issueToolSourceID {
+			found[binding.ToolName+"\x00"+binding.ExposedName] = true
+		}
+	}
+	for _, definition := range issueToolDefinitions() {
+		if !found[definition.Name+"\x00"+definition.Name] {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *appModel) issueToolMergedSelection(current runtimeToolSelection) (map[string]any, error) {
+	selection := a.issueToolConversationSelection()
+	if selection == nil {
+		return nil, nil
+	}
+	// An empty builtin list is an explicit "no built-in tools" choice. Preserve
+	// it exactly; only a new conversation gets the default four.
+	selection["builtin"] = append([]string{}, current.Builtin...)
+	external := make([]map[string]string, 0, len(current.External)+len(issueToolDefinitions()))
+	exposedOwner := map[string]string{}
+	canonical := map[string]bool{}
+	for _, binding := range current.External {
+		external = append(external, map[string]string{
+			"source_id": binding.SourceID, "tool_name": binding.ToolName, "exposed_name": binding.ExposedName,
+		})
+		if binding.ExposedName != "" {
+			exposedOwner[binding.ExposedName] = binding.SourceID + "\x00" + binding.ToolName
+		}
+		if binding.SourceID == issueToolSourceID && binding.ToolName == binding.ExposedName {
+			canonical[binding.ToolName] = true
+		}
+	}
+	for _, definition := range issueToolDefinitions() {
+		if canonical[definition.Name] {
+			continue
+		}
+		owner := issueToolSourceID + "\x00" + definition.Name
+		if existing, used := exposedOwner[definition.Name]; used && existing != owner {
+			return nil, fmt.Errorf("issue tool exposed name %q is already used by %s", definition.Name, existing)
+		}
+		exposedOwner[definition.Name] = owner
+		external = append(external, map[string]string{
+			"source_id": issueToolSourceID, "tool_name": definition.Name, "exposed_name": definition.Name,
+		})
+	}
+	selection["external"] = external
+	return selection, nil
+}
+
+// issueToolEnsureConversationSession checks an existing schema-2 session and
+// adds only the issue-tool bindings when absent. It deliberately does not
+// migrate schema 1 or guessed legacy ownership; those paths remain explicit
+// follow-ups.
+func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, sessionID string, created bool) (bool, error) {
+	if created {
+		return true, nil
+	}
+	if rt == nil || sessionID == "" {
+		return false, errRuntimeDisconnected
+	}
+	config, err := rt.connectionConfig(sessionID)
+	if err != nil {
+		return false, fmt.Errorf("read conversation tool selection: %w", err)
+	}
+	if config.StorageSchema < 2 {
+		return false, nil
+	}
+	if runtimeSelectionHasIssueTools(config.EffectiveConfig.ToolSelection) {
+		return true, nil
+	}
+	selection, mergeErr := a.issueToolMergedSelection(config.EffectiveConfig.ToolSelection)
+	if mergeErr != nil {
+		return false, mergeErr
+	}
+	if selection == nil {
+		return false, nil
+	}
+	updated, err := rt.updateSessionToolSelection(sessionID, config.ConfigRevision, selection)
+	if err != nil {
+		return false, fmt.Errorf("enable issue tools for this conversation: %w", err)
+	}
+	if updated.ReadbackError != nil {
+		return false, fmt.Errorf("read back conversation tool selection: %w", updated.ReadbackError)
+	}
+	if !runtimeSelectionHasIssueTools(updated.EffectiveConfig.ToolSelection) {
+		return false, errors.New("Runtime did not confirm the conversation issue-tool selection")
+	}
+	return true, nil
+}
+
 // issueToolNewScope issues one app-owned scope before a conversation task is
 // sent. The caller must persist it before the task.send.
 func (a *appModel) issueToolNewScope(contactID, sessionID, turnID string) (*IssueToolScope, error) {
@@ -183,6 +278,128 @@ func (a *appModel) issueToolScopeByRef(ref string) (IssueToolScope, error) {
 		return IssueToolScope{}, errors.New("issue tool scope contact no longer exists")
 	}
 	return scope, nil
+}
+
+// issueToolScopeActive binds a scope to the one captured conversation turn
+// that is currently submitting or executing. Scopes are not permanent
+// authorization: a new turn, new session, archive, restart after terminal, or
+// failed send cannot use an old scope for a new side effect.
+func (a *appModel) issueToolScopeActive(captured IssueToolScope) bool {
+	if captured.Validate() != nil || a.issueToolScopes == nil {
+		return false
+	}
+	// The accepted task can bind after the handler captured its scope copy.
+	// Read the latest binding from the app map, while requiring that the
+	// immutable scope identity still matches the captured one.
+	scope, ok := a.issueToolScopes[captured.Ref]
+	if !ok || scope.Ref != captured.Ref || scope.ContactID != captured.ContactID ||
+		scope.ConversationSessionID != captured.ConversationSessionID || scope.TurnID != captured.TurnID {
+		return false
+	}
+	ct := a.contactByID(scope.ContactID)
+	if ct == nil || ct.Archived || scope.Validate() != nil || ct.SessionID != scope.ConversationSessionID {
+		return false
+	}
+	if ct.ActiveTaskID != "" {
+		return scope.RuntimeTaskID != "" && scope.RuntimeTaskID == ct.ActiveTaskID
+	}
+	return ct.SendState == sendSubmitting && ct.pendingSend != nil && ct.pendingSend.ToolScopeRef == scope.Ref
+}
+
+func (a *appModel) issueToolActionAllowed(scope IssueToolScope) error {
+	if !a.issueToolScopeActive(scope) {
+		return &IssueToolError{Code: "scope_inactive", Message: "the conversation turn or issue tool owner is no longer active"}
+	}
+	return nil
+}
+
+func (a *appModel) issueToolAttachPendingScope(contactID, ref string) error {
+	ct := a.contactByID(contactID)
+	if ct == nil || ct.pendingSend == nil {
+		return errors.New("conversation send intent is no longer present")
+	}
+	previous := ct.pendingSend.ToolScopeRef
+	ct.pendingSend.ToolScopeRef = ref
+	if err := a.persist(); err != nil {
+		ct.pendingSend.ToolScopeRef = previous
+		return err
+	}
+	return nil
+}
+
+func (a *appModel) issueToolBindTask(ref, taskID string) {
+	if ref == "" || taskID == "" {
+		return
+	}
+	scope, ok := a.issueToolScopes[ref]
+	if !ok {
+		return
+	}
+	scope.RuntimeTaskID = taskID
+	a.issueToolScopes[ref] = scope
+}
+
+// issueToolReserveForTurn performs existing-operation lookup, active-turn
+// validation and Reserve in one UI queue callback. A repeated old operation can
+// still return its receipt after the scope expires, but it can never reserve a
+// new side effect outside the captured turn.
+func (a *appModel) issueToolReserveForTurn(scope IssueToolScope, request IssueToolActionRequest) (*IssueToolOperation, bool, bool, *IssueToolReceipt, error) {
+	var operation *IssueToolOperation
+	var created, existing bool
+	var receipt *IssueToolReceipt
+	var resultErr error
+	a.runOnUI(func() {
+		if a.issueToolLedger == nil {
+			a.issueToolLedger = &IssueToolOperationLedger{}
+		}
+		payload, err := issueToolCanonicalPayload(request)
+		if err != nil {
+			resultErr = err
+			return
+		}
+		slot := issueToolIntentSlot(scope, request)
+		if found, foundOK, err := a.issueToolLedger.operationFor(slot, payload); foundOK {
+			existing = true
+			operation = found
+			if err != nil {
+				resultErr = err
+				return
+			}
+			receipt = cloneIssueToolReceipt(found.Receipt)
+			return
+		}
+		if !a.issueToolScopeActive(scope) {
+			resultErr = &IssueToolError{Code: "scope_inactive", Message: "the conversation turn that issued this scope is no longer active"}
+			return
+		}
+		operation, created, resultErr = a.issueToolReserve(scope, request)
+		if !created && resultErr == nil {
+			existing = true
+			receipt = cloneIssueToolReceipt(operation.Receipt)
+		}
+	})
+	return operation, created, existing, receipt, resultErr
+}
+
+func cloneIssueToolReceipt(receipt *IssueToolReceipt) *IssueToolReceipt {
+	if receipt == nil {
+		return nil
+	}
+	copy := *receipt
+	if receipt.RequirementsRevision != nil {
+		value := *receipt.RequirementsRevision
+		copy.RequirementsRevision = &value
+	}
+	if receipt.Error != nil {
+		errorCopy := *receipt.Error
+		errorCopy.Candidates = append([]string(nil), receipt.Error.Candidates...)
+		if receipt.Error.CurrentRevision != nil {
+			value := *receipt.Error.CurrentRevision
+			errorCopy.CurrentRevision = &value
+		}
+		copy.Error = &errorCopy
+	}
+	return &copy
 }
 
 func issueToolErrorResponse(code, message string) (issueToolForwardResponse, error) {
@@ -295,6 +512,7 @@ func (a *appModel) issueToolHandleGet(_ context.Context, raw json.RawMessage) (i
 	}
 	var detail *IssueToolIssueDetail
 	var source issueResultSource
+	var scope IssueToolScope
 	var rt *runtimeClient
 	var generation int
 	var callErr error
@@ -303,7 +521,8 @@ func (a *appModel) issueToolHandleGet(_ context.Context, raw json.RawMessage) (i
 			callErr = errors.New("app is shutting down")
 			return
 		}
-		scope, err := a.issueToolScopeByRef(scopeRef)
+		var err error
+		scope, err = a.issueToolScopeByRef(scopeRef)
 		if err != nil {
 			callErr = err
 			return
@@ -385,14 +604,32 @@ func (a *appModel) issueToolHandleGet(_ context.Context, raw json.RawMessage) (i
 	if excerpt := strings.TrimSpace(strings.Join(issueResultResponseSegments(history, source.TaskID), "\n\n")); excerpt != "" {
 		detail.ResultExcerpt = truncateIssueToolText(excerpt, issueToolResultExcerptSize)
 	}
+	stillCurrent = false
+	a.runOnUI(func() {
+		ct := a.contactByID(scope.ContactID)
+		owner, execution := (*productIssue)(nil), (*issueExecution)(nil)
+		if ct != nil {
+			owner, execution = ct.executionByID(source.ExecutionID)
+		}
+		stillCurrent = rt != nil && a.rt == rt && a.connectionGeneration == generation &&
+			ct != nil && owner != nil && owner.ID == issueID && execution != nil &&
+			execution.SessionID == source.SessionID && execution.TaskID == source.TaskID
+	})
+	if !stillCurrent {
+		detail = &IssueToolIssueDetail{Issue: detail.Issue, ResultExecutionID: source.ExecutionID, ResultUnavailable: "The conversation turn or Runtime owner changed while history was being read; results were discarded."}
+	}
 	return issueToolJSONResponse(detail, false)
 }
 
 func truncateIssueToolText(text string, limit int) string {
-	if limit <= 0 || len(text) <= limit {
+	if limit <= 0 {
 		return text
 	}
-	return text[:limit] + "\n…[truncated]"
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit]) + "\n…[truncated]"
 }
 
 func issueToolRevisionPointer(value int) *int { return &value }
@@ -465,11 +702,13 @@ func (a *appModel) issueToolCompleteExecution(execution *issueExecution, accepte
 		receipt.Error = &IssueToolError{Code: "operation_unknown", Message: detail}
 	}
 	if err := a.issueToolSetReceipt(operation, receipt); err != nil {
-		receipt = &IssueToolReceipt{State: issueToolReceiptUnknown, Error: &IssueToolError{
-			Code: "operation_unknown", Message: "task acceptance was not saved with its operation receipt; reload before retrying",
-		}}
+		receipt = &IssueToolReceipt{
+			State: issueToolReceiptUnknown, IssueID: issueID, ExecutionID: execution.ID,
+			SessionID: execution.SessionID, TaskID: execution.TaskID, MessageID: execution.MessageID,
+			Error: &IssueToolError{Code: "operation_unknown", Message: "task acceptance was not saved with its operation receipt; reload before retrying"},
+		}
 	}
-	a.issueToolNotify(operation.ID, *receipt)
+	a.issueToolNotify(operation.ID, *cloneIssueToolReceipt(receipt))
 }
 
 func (a *appModel) issueToolHandleAction(_ context.Context, raw json.RawMessage) (issueToolForwardResponse, error) {
@@ -490,18 +729,18 @@ func (a *appModel) issueToolHandleAction(_ context.Context, raw json.RawMessage)
 		}
 		return issueToolErrorResponse("invalid_action", err.Error())
 	}
-	var operation *IssueToolOperation
-	var created bool
-	var reserveErr error
-	a.runOnUI(func() { operation, created, reserveErr = a.issueToolReserve(scope, request) })
+	operation, created, existing, receipt, reserveErr := a.issueToolReserveForTurn(scope, request)
 	if reserveErr != nil {
-		return issueToolErrorResponse("operation_conflict", reserveErr.Error())
+		return issueToolConsumeError(reserveErr)
 	}
-	if !created {
-		if operation.Receipt == nil {
+	if existing {
+		if receipt == nil {
 			return issueToolErrorResponse("operation_unknown", "this turn already recorded an operation without a receipt; not replaying it")
 		}
-		return issueToolJSONResponse(operation.Receipt, operation.Receipt.State == issueToolReceiptUnknown)
+		return issueToolJSONResponse(receipt, receipt.State == issueToolReceiptUnknown)
+	}
+	if !created {
+		return issueToolErrorResponse("operation_unknown", "operation was not reserved; no side effect was performed")
 	}
 	var response issueToolForwardResponse
 	switch request.Action {
@@ -518,17 +757,20 @@ func (a *appModel) issueToolHandleAction(_ context.Context, raw json.RawMessage)
 	default:
 		return issueToolErrorResponse("invalid_action", "unsupported issue action")
 	}
-	if response.IsError && operation.Receipt == nil {
+	if response.IsError {
 		toolErr := issueToolResponseError(response)
 		if toolErr == nil {
 			toolErr = &IssueToolError{Code: "operation_unknown", Message: "issue action failed without a receipt; no automatic retry"}
 		}
 		a.runOnUI(func() {
+			if operation.Receipt != nil {
+				return
+			}
 			receipt := &IssueToolReceipt{
 				State: issueToolReceiptUnknown, IssueID: operation.TargetIssueID, Error: toolErr,
 			}
 			if err := a.issueToolSetReceipt(operation, receipt); err == nil {
-				a.issueToolNotify(operation.ID, *receipt)
+				a.issueToolNotify(operation.ID, *cloneIssueToolReceipt(receipt))
 			}
 		})
 	}
@@ -548,7 +790,12 @@ func issueToolResponseError(response issueToolForwardResponse) *IssueToolError {
 
 func (a *appModel) issueToolCreate(scope IssueToolScope, request IssueToolActionRequest, operation *IssueToolOperation) (issueToolForwardResponse, error) {
 	var callErr error
+	var receipt *IssueToolReceipt
 	a.runOnUI(func() {
+		if err := a.issueToolActionAllowed(scope); err != nil {
+			callErr = err
+			return
+		}
 		ct := a.contactByID(scope.ContactID)
 		if ct == nil {
 			callErr = errors.New("issue tool scope contact no longer exists")
@@ -556,7 +803,7 @@ func (a *appModel) issueToolCreate(scope IssueToolScope, request IssueToolAction
 		}
 		previousAllowed := append([]string(nil), scope.AllowedIssueIDs...)
 		_, callErr = a.createIssueForWithSave(ct, request.Goal, strings.Join(request.Requirements, "\n"), func(created *productIssue) error {
-			receipt := &IssueToolReceipt{
+			receipt = &IssueToolReceipt{
 				State: issueToolReceiptSaved, IssueID: created.ID,
 				RequirementsRevision: issueToolRevisionPointer(created.RequirementsRevision),
 			}
@@ -568,19 +815,24 @@ func (a *appModel) issueToolCreate(scope IssueToolScope, request IssueToolAction
 				a.issueToolScopes[scope.Ref] = scope
 				return err
 			}
+			receipt = cloneIssueToolReceipt(operation.Receipt)
 			return nil
 		})
 	})
 	if callErr != nil {
 		return issueToolErrorResponse("saved_failed", callErr.Error())
 	}
-	return issueToolJSONResponse(operation.Receipt, false)
+	return issueToolJSONResponse(receipt, false)
 }
 
 func (a *appModel) issueToolUpdate(scope IssueToolScope, request IssueToolActionRequest, operation *IssueToolOperation) (issueToolForwardResponse, error) {
 	var callErr error
 	var revision int
 	a.runOnUI(func() {
+		if err := a.issueToolActionAllowed(scope); err != nil {
+			callErr = err
+			return
+		}
 		ct := a.contactByID(scope.ContactID)
 		issue := issueForContact(ct, request.IssueID)
 		if issue == nil {
@@ -604,12 +856,18 @@ func (a *appModel) issueToolUpdate(scope IssueToolScope, request IssueToolAction
 	if callErr != nil {
 		return issueActionErrorResponse(callErr)
 	}
-	return issueToolJSONResponse(operation.Receipt, false)
+	var receipt *IssueToolReceipt
+	a.runOnUI(func() { receipt = cloneIssueToolReceipt(operation.Receipt) })
+	return issueToolJSONResponse(receipt, false)
 }
 
 func (a *appModel) issueToolSupplement(scope IssueToolScope, request IssueToolActionRequest, operation *IssueToolOperation) (issueToolForwardResponse, error) {
 	var callErr error
 	a.runOnUI(func() {
+		if err := a.issueToolActionAllowed(scope); err != nil {
+			callErr = err
+			return
+		}
 		ct := a.contactByID(scope.ContactID)
 		if ct == nil {
 			callErr = errors.New("issue tool scope contact no longer exists")
@@ -628,7 +886,9 @@ func (a *appModel) issueToolSupplement(scope IssueToolScope, request IssueToolAc
 	if callErr != nil {
 		return issueActionErrorResponse(callErr)
 	}
-	return issueToolJSONResponse(operation.Receipt, false)
+	var receipt *IssueToolReceipt
+	a.runOnUI(func() { receipt = cloneIssueToolReceipt(operation.Receipt) })
+	return issueToolJSONResponse(receipt, false)
 }
 
 func (a *appModel) issueToolRun(scope IssueToolScope, _ IssueToolActionRequest, operation *IssueToolOperation) (issueToolForwardResponse, error) {
@@ -637,6 +897,10 @@ func (a *appModel) issueToolRun(scope IssueToolScope, _ IssueToolActionRequest, 
 	a.runOnUI(func() {
 		if a.shutdownStarted {
 			callErr = errors.New("app is shutting down")
+			return
+		}
+		if err := a.issueToolActionAllowed(scope); err != nil {
+			callErr = err
 			return
 		}
 		ct := a.contactByID(scope.ContactID)
@@ -685,6 +949,10 @@ func (a *appModel) issueToolStop(scope IssueToolScope, request IssueToolActionRe
 	var receipt *IssueToolReceipt
 	var callErr error
 	a.runOnUI(func() {
+		if err := a.issueToolActionAllowed(scope); err != nil {
+			callErr = err
+			return
+		}
 		ct := a.contactByID(scope.ContactID)
 		issue := issueForContact(ct, request.IssueID)
 		if issue == nil {
@@ -710,7 +978,7 @@ func (a *appModel) issueToolStop(scope IssueToolScope, request IssueToolActionRe
 	if callErr != nil {
 		return issueActionErrorResponse(callErr)
 	}
-	return issueToolJSONResponse(receipt, false)
+	return issueToolJSONResponse(cloneIssueToolReceipt(receipt), false)
 }
 
 func issueActionErrorResponse(err error) (issueToolForwardResponse, error) {

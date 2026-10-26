@@ -2098,6 +2098,7 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 }
 
 func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, sessionID, text, workspace, system string, context []taskContextItem, turnID string, issueTools bool) {
+	createdSession := false
 	if sessionID == "" {
 		session, err := a.configuredConversationCreate(rt, configured, workspace, system)
 		if err != nil {
@@ -2105,6 +2106,7 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 			return
 		}
 		sessionID = session.SessionID
+		createdSession = true
 		// The mapping must be durably saved before task.send; Window.Update is
 		// asynchronous, so wait for the UI callback's save result.
 		saved := make(chan error, 1)
@@ -2134,6 +2136,14 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 	}
 	wireContext := taskContextInputs(context)
 	if issueTools {
+		configuredTools, err := a.issueToolEnsureConversationSession(rt, sessionID, createdSession)
+		if err != nil {
+			a.failSubmit(contactID, err, false)
+			return
+		}
+		issueTools = configuredTools
+	}
+	if issueTools {
 		var scope *IssueToolScope
 		var scopeErr error
 		a.runOnUI(func() {
@@ -2145,6 +2155,15 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 		})
 		if scopeErr != nil {
 			a.failSubmit(contactID, fmt.Errorf("prepare issue tool scope: %w", scopeErr), false)
+			return
+		}
+		a.runOnUI(func() {
+			if err := a.issueToolAttachPendingScope(contactID, scope.Ref); err != nil {
+				scopeErr = fmt.Errorf("attach issue tool scope: %w", err)
+			}
+		})
+		if scopeErr != nil {
+			a.failSubmit(contactID, scopeErr, false)
 			return
 		}
 		if input, ok := issueToolScopeInput(scope); ok {
@@ -2170,14 +2189,17 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 
 func (a *appModel) acceptTask(ct *contact, text string, result runtimeSendResult) {
 	var submittedContext []taskContextItem
+	scopeRef := ""
 	if ct.pendingSend != nil {
 		submittedContext = cloneTaskContextItems(ct.pendingSend.Context)
+		scopeRef = ct.pendingSend.ToolScopeRef
 	}
 	ct.historyGen++
 	ct.ActiveTaskID = result.TaskID
 	ct.LastTaskID = result.TaskID
 	ct.SendState = sendAccepted
 	ct.SendError = ""
+	a.issueToolBindTask(scopeRef, result.TaskID)
 	issueSend := ct.pendingIssueExecution != ""
 	if w := a.ensureWork(ct, result.TaskID, result.MessageID); w != nil {
 		w.State = workAccepted
