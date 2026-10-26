@@ -17,6 +17,7 @@ pub(crate) const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 pub(crate) struct ApiTransport {
     http_client: reqwest::Client,
     pub(crate) request_timeout: Option<Duration>,
+    redaction_key: Option<String>,
 }
 
 impl ApiTransport {
@@ -35,6 +36,7 @@ impl ApiTransport {
         Ok(Self {
             http_client,
             request_timeout: None,
+            redaction_key: (!api_key.is_empty()).then(|| api_key.to_owned()),
         })
     }
 
@@ -43,6 +45,7 @@ impl ApiTransport {
         Self {
             http_client: reqwest::Client::new(),
             request_timeout: Some(timeout),
+            redaction_key: None,
         }
     }
 
@@ -71,6 +74,10 @@ impl ApiTransport {
             let overflow = serde_json::from_str::<Value>(&body)
                 .ok()
                 .is_some_and(|value| is_overflow(&value));
+            let body = match self.redaction_key.as_deref() {
+                Some(key) => body.replace(key, "[redacted]"),
+                None => body,
+            };
             return Err(if overflow {
                 ApiError::ContextOverflow { status, body }
             } else {
