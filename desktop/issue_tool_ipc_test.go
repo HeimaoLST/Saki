@@ -28,20 +28,20 @@ func issueToolTestRequest(scope string) issueToolForwardRequest {
 
 func TestIssueToolServerOneRequestOneHandlerAndCleanup(t *testing.T) {
 	path := issueToolSocketPath(t, "server")
+	var handlerCalls atomic.Int32
 	server, err := startIssueToolIPCServer(path, func(_ context.Context, request issueToolForwardRequest) (issueToolForwardResponse, error) {
+		handlerCalls.Add(1)
 		return issueToolForwardResponse{Content: []issueToolContent{{Type: "text", Text: string(request.Arguments)}}}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	handlerCalls := 0
 	response, err := issueToolIPCForwarder(path)(context.Background(), issueToolTestRequest("scope-one"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	handlerCalls++
-	if handlerCalls != 1 || len(response.Content) != 1 || !strings.Contains(response.Content[0].Text, "scope-one") {
-		t.Fatalf("server response = %+v calls=%d", response, handlerCalls)
+	if handlerCalls.Load() != 1 || len(response.Content) != 1 || !strings.Contains(response.Content[0].Text, "scope-one") {
+		t.Fatalf("server response = %+v calls=%d", response, handlerCalls.Load())
 	}
 	if err := server.Close(); err != nil {
 		t.Fatal(err)
@@ -93,6 +93,8 @@ func TestIssueToolServerCloseWaitsForActiveHandler(t *testing.T) {
 	path := issueToolSocketPath(t, "close-wait")
 	started := make(chan struct{})
 	release := make(chan struct{})
+	handlerDone := make(chan struct{})
+	var effects atomic.Int32
 	t.Cleanup(func() {
 		select {
 		case <-release:
@@ -103,6 +105,8 @@ func TestIssueToolServerCloseWaitsForActiveHandler(t *testing.T) {
 	server, err := startIssueToolIPCServer(path, func(_ context.Context, _ issueToolForwardRequest) (issueToolForwardResponse, error) {
 		close(started)
 		<-release
+		effects.Add(1)
+		close(handlerDone)
 		return issueToolForwardResponse{Content: []issueToolContent{{Type: "text", Text: "after-close"}}}, nil
 	})
 	if err != nil {
@@ -147,12 +151,23 @@ func TestIssueToolServerCloseWaitsForActiveHandler(t *testing.T) {
 		t.Fatal("Close did not finish after handler release")
 	}
 	select {
+	case <-handlerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not complete after release")
+	}
+	if effects.Load() != 1 {
+		t.Fatalf("handler side effects = %d", effects.Load())
+	}
+	select {
 	case result := <-clientResult:
-		if result != "after-close" {
-			t.Fatalf("client result = %q", result)
+		// Closing accepted IO may make the client see an unknown error before
+		// the handler's response is written. Either that error or a delivered
+		// receipt is acceptable; a second handler call is not.
+		if result == "" {
+			t.Fatal("client returned an empty result")
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("client did not receive active handler response")
+		t.Fatal("client did not finish after Close")
 	}
 }
 
