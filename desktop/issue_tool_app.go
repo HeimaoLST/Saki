@@ -424,6 +424,42 @@ func (a *appModel) issueToolReserveForTurn(scope IssueToolScope, request IssueTo
 	return operation, created, existing, receipt, resultErr
 }
 
+// filterIssueToolContext removes only the final app-issued scope input that is
+// still present in the persisted scope map. Earlier user inputs, including a
+// literal item with the same name, remain untouched. Raw Runtime history is
+// never rewritten.
+func (a *appModel) filterIssueToolContext(sessionID string, items []taskContextItem) []taskContextItem {
+	if len(items) == 0 {
+		return items
+	}
+	last := items[len(items)-1]
+	if last.Name != issueToolScopeContextName {
+		return items
+	}
+	var input IssueToolScope
+	if json.Unmarshal([]byte(last.Text), &input) != nil || input.Validate() != nil {
+		return items
+	}
+	stored, ok := a.issueToolScopes[input.Ref]
+	if !ok || stored.ConversationSessionID != sessionID || stored.ContactID != input.ContactID ||
+		stored.TurnID != input.TurnID || stored.CreatedAt != input.CreatedAt {
+		return items
+	}
+	if len(stored.AllowedIssueIDs) != len(input.AllowedIssueIDs) {
+		return items
+	}
+	for index := range stored.AllowedIssueIDs {
+		if stored.AllowedIssueIDs[index] != input.AllowedIssueIDs[index] {
+			return items
+		}
+	}
+	return append([]taskContextItem(nil), items[:len(items)-1]...)
+}
+
+func (a *appModel) parseHistory(sessionID string, records []historyRecord, stopRequested map[string]bool) historyProjection {
+	return parseHistoryWithContextFilter(sessionID, records, stopRequested, a.filterIssueToolContext)
+}
+
 func cloneIssueToolReceipt(receipt *IssueToolReceipt) *IssueToolReceipt {
 	if receipt == nil {
 		return nil

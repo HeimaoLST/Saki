@@ -408,6 +408,20 @@ func taskContextInputs(items []taskContextItem) []runtimeContextInput {
 	return inputs
 }
 
+// validateRuntimeContextInputs checks the actual caller-context wire budget,
+// including app-injected internal context. It never truncates or drops user
+// material; the caller must fail before task.send and preserve the draft.
+func validateRuntimeContextInputs(inputs []runtimeContextInput) error {
+	total := 0
+	for _, input := range inputs {
+		total += taskContextWrapperBytes(input.Name, input.Text)
+		if total > taskContextMaxBytes {
+			return fmt.Errorf("%w: combined caller context needs %d bytes", errTaskContextOversize, total)
+		}
+	}
+	return nil
+}
+
 // taskContextUserContent separates a Runtime user message's ordinary text from
 // actual caller_context parts. Ordinary text that merely resembles JSON stays
 // text; only the Runtime envelope type and label are recognized.

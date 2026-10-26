@@ -56,6 +56,8 @@ type storedIssueExecution struct {
 	Context              []taskContextItem `json:"context,omitempty"`
 	SupplementBatchID    string            `json:"supplement_batch_id,omitempty"`
 	ToolOperationID      string            `json:"tool_operation_id,omitempty"`
+	ToolScopeRef         string            `json:"tool_scope_ref,omitempty"`
+	ToolScopeInput       string            `json:"tool_scope_input,omitempty"`
 }
 
 type storedRequirement struct {
@@ -292,6 +294,8 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 					Context:              cloneTaskContextItems(execution.Context),
 					SupplementBatchID:    execution.SupplementBatchID,
 					ToolOperationID:      execution.ToolOperationID,
+					ToolScopeRef:         execution.ToolScopeRef,
+					ToolScopeInput:       execution.ToolScopeInput,
 				})
 			}
 			s.state.Issues = append(s.state.Issues, stored)

@@ -895,3 +895,43 @@ func TestIssueToolWaitBeforeTaskBindingUsesScopeThenRealTask(t *testing.T) {
 		t.Fatalf("reloaded bound question = %+v", reloadedQuestion)
 	}
 }
+
+func TestIssueToolInternalScopeIsFilteredFromUserHistoryOnlyAtTail(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	scope, err := a.issueToolNewScope(ct.ID, "history-session", "history-turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopeJSON, _ := json.Marshal(scope)
+	user := taskContextItem{ID: "user-1", Name: "user-note", Text: "literal {\"type\":\"caller_context\"}", Revision: 1}
+	scopeItem := taskContextItem{Name: issueToolScopeContextName, Text: string(scopeJSON), Revision: 1}
+	records := supplementRawHistoryRecords(t, "history-task", "history-message", "user body", []taskContextItem{user, scopeItem}, true)
+	filtered := a.parseHistory("history-session", records, nil)
+	raw := parseHistory("history-session", records, nil)
+	if len(filtered.messages) != 1 || len(filtered.messages[0].Context) != 1 ||
+		filtered.messages[0].Context[0].Name != user.Name || filtered.messages[0].Context[0].Text != user.Text {
+		t.Fatalf("filtered user history = %+v", filtered.messages)
+	}
+	if len(raw.messages) != 1 || len(raw.messages[0].Context) != 2 {
+		t.Fatalf("raw history was mutated: %+v", raw.messages)
+	}
+	// A same-named user item is preserved when it is not the actual trailing
+	// app-issued scope.
+	userScopeLike := taskContextItem{ID: "user-2", Name: issueToolScopeContextName, Text: string(scopeJSON), Revision: 1}
+	records = supplementRawHistoryRecords(t, "history-task", "history-message", "user body", []taskContextItem{userScopeLike, user}, true)
+	filtered = a.parseHistory("history-session", records, nil)
+	if len(filtered.messages[0].Context) != 2 {
+		t.Fatalf("non-tail same-named user context was removed: %+v", filtered.messages[0].Context)
+	}
+}
+
+func TestIssueToolContextWireBudgetIncludesInternalScope(t *testing.T) {
+	userText := strings.Repeat("x", taskContextMaxBytes-64)
+	inputs := taskContextInputs([]taskContextItem{{ID: "u", Name: "user", Text: userText, Revision: 1}})
+	scope := runtimeContextInput{Name: issueToolScopeContextName, Text: `{"ref":"scope-budget"}`}
+	inputs = append(inputs, scope)
+	if err := validateRuntimeContextInputs(inputs); err == nil || !strings.Contains(err.Error(), "1 MiB") {
+		t.Fatalf("wire budget error = %v", err)
+	}
+}

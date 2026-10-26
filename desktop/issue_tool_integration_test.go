@@ -595,6 +595,9 @@ func TestIssueToolExistingSchemaTwoSessionGetsSelectionAndRestart(t *testing.T) 
 		}
 		ct.SessionID = session.SessionID
 		ct.Loaded = true
+		ct.Context.items = []taskContextItem{{
+			ID: "user-material", Name: "user-note", Text: "literal user material containing {\"type\":\"caller_context\"}", Revision: 1,
+		}}
 		sessionID, contactID = session.SessionID, ct.ID
 		if err := h.app.persist(); err != nil {
 			setupErr = err.Error()
@@ -627,6 +630,31 @@ func TestIssueToolExistingSchemaTwoSessionGetsSelectionAndRestart(t *testing.T) 
 		ct := h.app.contactByID(contactID)
 		return ct.SendState == sendIdle && ct.ActiveTaskID == "" && provider.count() == 2
 	})
+	var userHistoryContexts []taskContextItem
+	var userHistoryText, userContextClearErr string
+	h.pump.do(func() {
+		ct := h.app.contactByID(contactID)
+		if len(ct.Context.items) != 0 {
+			userContextClearErr = "accepted send did not clear user context"
+			return
+		}
+		for _, message := range ct.Messages {
+			if message.Kind == msgUser && len(message.Context) > 0 {
+				userHistoryContexts = append([]taskContextItem(nil), message.Context...)
+				userHistoryText = message.Text
+			}
+		}
+	})
+	if userContextClearErr != "" {
+		t.Fatal(userContextClearErr)
+	}
+	if len(userHistoryContexts) != 1 || userHistoryContexts[0].Name != "user-note" ||
+		!strings.Contains(userHistoryContexts[0].Text, "literal user material") || userHistoryText != issueToolTestMarker+"-EXISTING" {
+		t.Fatalf("GUI user history misclassified internal scope: text=%q contexts=%+v", userHistoryText, userHistoryContexts)
+	}
+	if !strings.Contains(provider.body(0), "user-note") || !strings.Contains(provider.body(0), issueToolScopeContextName) {
+		t.Fatal("wire did not contain both user material and app scope")
+	}
 	var firstQuery IssueToolIssueDetail
 	if err := json.Unmarshal([]byte(issueToolTestOutput(provider.body(1), "selection-get")), &firstQuery); err != nil {
 		t.Fatalf("first tool output: %v", err)
@@ -684,6 +712,18 @@ func TestIssueToolExistingSchemaTwoSessionGetsSelectionAndRestart(t *testing.T) 
 		ct := restarted.app.contactByID(contactID)
 		return ct != nil && ct.Loaded
 	})
+	var restartHistoryContexts []taskContextItem
+	restarted.pump.do(func() {
+		ct := restarted.app.contactByID(contactID)
+		for _, message := range ct.Messages {
+			if message.Kind == msgUser && len(message.Context) > 0 {
+				restartHistoryContexts = append([]taskContextItem(nil), message.Context...)
+			}
+		}
+	})
+	if len(restartHistoryContexts) != 1 || restartHistoryContexts[0].Name != "user-note" {
+		t.Fatalf("restart history misclassified internal scope: %+v", restartHistoryContexts)
+	}
 	if restarted.app.issueToolEndpoint == oldEndpoint || restarted.app.issueToolEndpoint == "" {
 		t.Fatalf("restart did not establish a new IPC socket: old=%q new=%q", oldEndpoint, restarted.app.issueToolEndpoint)
 	}
@@ -1034,5 +1074,42 @@ func TestIssueToolWaitAnswerResumeRealChain(t *testing.T) {
 	})
 	if persistedQuestion == nil || persistedQuestion.State != issueQuestionAnswered || persistedQuestion.AnswerSupplementID == "" {
 		t.Fatalf("restart question/answer association = %+v", persistedQuestion)
+	}
+}
+
+func TestIssueToolScopeWireBudgetRejectsBeforeSend(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	provider := &issueToolSelectionProvider{}
+	h := startIssueToolTestHarness(t, binary, provider.handler())
+	large := taskContextItem{
+		ID: "large-user-context", Name: "large user material",
+		Text: strings.Repeat("x", taskContextMaxBytes-64), Revision: 1,
+	}
+	var sendErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Context.items = []taskContextItem{large}
+		ct.Draft = "budget request"
+		if !h.app.sendCurrent() {
+			sendErr = ct.SendError
+		}
+	})
+	if sendErr != "" {
+		t.Fatal(sendErr)
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		return ct.SendState == sendIdle && strings.Contains(ct.SendError, "1 MiB")
+	})
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if ct.Draft != "budget request" || len(ct.Context.items) != 1 || ct.Context.items[0].Text != large.Text {
+			t.Fatalf("budget failure lost draft/context: draft=%q contexts=%d", ct.Draft, len(ct.Context.items))
+		}
+	})
+	if provider.count() != 0 {
+		t.Fatalf("budget failure reached provider %d times", provider.count())
 	}
 }

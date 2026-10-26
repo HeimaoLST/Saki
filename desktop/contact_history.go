@@ -43,7 +43,7 @@ func (a *appModel) searchContactHistory(rt *runtimeClient, sessionIDs []string, 
 			result.Failures = append(result.Failures, contactHistoryFailure{SessionID: sessionID, Err: err})
 			continue
 		}
-		entries := parseHistory(sessionID, records, nil).entries
+		entries := a.parseHistory(sessionID, records, nil).entries
 		for i := len(entries) - 1; i >= 0; i-- {
 			entry := entries[i]
 			if !strings.Contains(strings.ToLower(entry.Text), query) {

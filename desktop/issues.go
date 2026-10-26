@@ -143,6 +143,8 @@ type issueExecution struct {
 	ContextExpanded      bool
 	SupplementBatchID    string
 	ToolOperationID      string
+	ToolScopeRef         string
+	ToolScopeInput       string
 }
 
 const (
@@ -517,7 +519,8 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 				MessageID: execution.MessageID, Prompt: execution.Prompt,
 				Status: status, Detail: detail, RequirementsRevision: execution.RequirementsRevision,
 				Context: cloneTaskContextItems(execution.Context), SupplementBatchID: execution.SupplementBatchID,
-				ToolOperationID: execution.ToolOperationID,
+				ToolOperationID: execution.ToolOperationID, ToolScopeRef: execution.ToolScopeRef,
+				ToolScopeInput: execution.ToolScopeInput,
 			})
 		}
 		issue.Status = normalizeIssueStatus(stored.Status, issue.Executions)

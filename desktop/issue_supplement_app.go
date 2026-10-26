@@ -317,19 +317,26 @@ func supplementHistoryMatches(execution *issueExecution, records []historyRecord
 	if execution == nil || execution.Prompt == "" || execution.TaskID == "" || execution.MessageID == "" {
 		return false
 	}
+	expected := cloneTaskContextItems(execution.Context)
+	if execution.ToolScopeRef != "" && execution.ToolScopeInput != "" {
+		expected = append(expected, taskContextItem{
+			Name: issueToolScopeContextName, Text: execution.ToolScopeInput,
+		})
+	}
 	// Runtime JournalRecord::Messages has no task/message IDs; parseHistory
 	// carries the ownership from TaskStarted through Messages to TaskFinished.
 	projection := parseHistory(execution.SessionID, records, nil)
 	for index := len(projection.messages) - 1; index >= 0; index-- {
 		message := projection.messages[index]
 		if message.Kind != msgUser || message.TaskID != execution.TaskID || message.MessageID != execution.MessageID ||
-			message.Text != execution.Prompt || len(message.Context) != len(execution.Context) {
+			message.Text != execution.Prompt || len(message.Context) != len(expected) {
 			continue
 		}
 		matched := true
-		for i := range message.Context {
-			current := execution.Context[i]
-			if message.Context[i].Name != current.inputName() || message.Context[i].Text != current.Text {
+		for i := range expected {
+			current := expected[i]
+			if message.Context[i].Name != current.inputName() && message.Context[i].Name != current.Name ||
+				message.Context[i].Text != current.Text {
 				matched = false
 				break
 			}

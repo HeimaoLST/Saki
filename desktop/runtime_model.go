@@ -1000,6 +1000,10 @@ type historyProjection struct {
 }
 
 func parseHistory(sessionID string, records []historyRecord, stopRequested map[string]bool) historyProjection {
+	return parseHistoryWithContextFilter(sessionID, records, stopRequested, nil)
+}
+
+func parseHistoryWithContextFilter(sessionID string, records []historyRecord, stopRequested map[string]bool, filter func(string, []taskContextItem) []taskContextItem) historyProjection {
 	projection := historyProjection{}
 	byTask := map[string]*workItem{}
 	taskID, messageID := "", ""
@@ -1065,6 +1069,9 @@ func parseHistory(sessionID string, records []historyRecord, stopRequested map[s
 					text, contexts := inputText(item.Content), []taskContextItem(nil)
 					if item.Role == "user" {
 						text, contexts = taskContextUserContent(item.Content)
+					}
+					if filter != nil && len(contexts) > 0 {
+						contexts = filter(sessionID, contexts)
 					}
 					if text == "" && len(contexts) == 0 {
 						continue
@@ -1159,7 +1166,7 @@ func mergeWorks(ct *contact, existing, incoming []*workItem, targetSession strin
 }
 
 func (a *appModel) applyHistory(ct *contact, records []historyRecord, status string) {
-	projection := parseHistory(ct.SessionID, records, ct.StopRequestedTasks)
+	projection := a.parseHistory(ct.SessionID, records, ct.StopRequestedTasks)
 	ct.Messages = projection.messages
 	ct.History = projection.entries
 	ct.UnlinkedTools = projection.unlinked
@@ -1204,7 +1211,7 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 
 func (a *appModel) applyIssueWorkHistory(ct *contact, issue *productIssue, records []historyRecord, status string) {
 	sessionID := issue.WorkSessionID
-	projection := parseHistory(sessionID, records, issue.Work.StopRequestedTasks)
+	projection := a.parseHistory(sessionID, records, issue.Work.StopRequestedTasks)
 	issue.Work.Messages = projection.messages
 	issue.Work.UnlinkedTools = projection.unlinked
 	ct.Works = mergeWorks(ct, ct.Works, projection.works, sessionID)
@@ -1824,7 +1831,12 @@ func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID
 			return
 		}
 	}
-	result, err := rt.sendTask(sessionID, prompt, taskContextInputs(context)...)
+	wireContext := taskContextInputs(context)
+	if err := validateRuntimeContextInputs(wireContext); err != nil {
+		a.failIssueSubmit(contactID, issueID, fmt.Errorf("issue work caller context: %w", err), false)
+		return
+	}
+	result, err := rt.sendTask(sessionID, prompt, wireContext...)
 	if err != nil {
 		a.failIssueSubmit(contactID, issueID, err, true)
 		return
@@ -2172,6 +2184,10 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 		if input, ok := issueToolScopeInput(scope); ok {
 			wireContext = append(wireContext, input)
 		}
+	}
+	if err := validateRuntimeContextInputs(wireContext); err != nil {
+		a.failSubmit(contactID, fmt.Errorf("caller context plus issue tool scope: %w", err), false)
+		return
 	}
 	result, err := rt.sendTask(sessionID, text, wireContext...)
 	if err != nil {

@@ -439,7 +439,7 @@ func (a *appModel) openContactHistoryMatch(match contactHistoryMatch) bool {
 		if err != nil {
 			errorText = "Could not read this saved context."
 		} else {
-			for _, entry := range parseHistory(match.SessionID, records, nil).entries {
+			for _, entry := range a.parseHistory(match.SessionID, records, nil).entries {
 				if entry.ID == match.EntryID {
 					full = &contactHistoryFull{
 						SessionID: match.SessionID, EntryID: match.EntryID, Date: entry.Date,
