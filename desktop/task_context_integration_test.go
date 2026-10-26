@@ -653,20 +653,26 @@ func TestTaskContextIssueSentSnapshotPageCopyBeforeAndAfterRestart(t *testing.T)
 	provider := &providerFixture{}
 	h := startGUIHarness(t, binary, provider, "task-context-issue-snapshot-117")
 	var issueID string
+	var setupErr error
 	h.pump.do(func() {
 		if !h.app.createIssue("Show sent context", "Keep the exact sent materials.") {
-			t.Fatalf("createIssue: %s", h.app.issueFormError)
+			setupErr = fmt.Errorf("createIssue: %s", h.app.issueFormError)
+			return
 		}
 		ct := h.app.selectedContact()
 		issueID = ct.SelectedIssueID
 		issue := ct.issueByID(issueID)
 		if _, err := issue.Context.AddSnippet("Sent issue notes", "exact issue context\nwith unicode 你好"); err != nil {
-			t.Fatal(err)
+			setupErr = err
+			return
 		}
 		if !h.app.runIssue(issueID) {
-			t.Fatalf("runIssue: %s", h.app.issueFormError)
+			setupErr = fmt.Errorf("runIssue: %s", h.app.issueFormError)
 		}
 	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
 	h.pump.wait(func() bool {
 		issue := h.app.selectedContact().issueByID(issueID)
 		return issue != nil && len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted && issue.Work.ActiveTaskID == ""
@@ -676,20 +682,30 @@ func TestTaskContextIssueSentSnapshotPageCopyBeforeAndAfterRestart(t *testing.T)
 		ct.SelectedIssueID = issueID
 		h.app.workspaceOpen = true
 	})
-	tr := ui.NewTester(h.app.view, 1040, 720)
-	tr.Frame()
-	if err := tr.Click("Sent task context · 1"); err != nil {
-		t.Fatal(err)
+	var clickErr error
+	var pageTexts []string
+	var copied string
+	h.pump.do(func() {
+		tr := ui.NewTester(h.app.view, 1040, 720)
+		tr.Frame()
+		if clickErr = tr.Click("Sent task context · 1"); clickErr != nil {
+			return
+		}
+		tr.Frame()
+		pageTexts = tr.Texts()
+		if clickErr = tr.Click("Copy context text"); clickErr != nil {
+			return
+		}
+		copied = tr.Clipboard()
+	})
+	if clickErr != nil {
+		t.Fatal(clickErr)
 	}
-	tr.Frame()
-	if !tr.HasText("exact issue context") || !tr.HasText("Sent issue notes") {
-		t.Fatalf("sent issue context missing: %v", tr.Texts())
+	if !containsText(pageTexts, "exact issue context") || !containsText(pageTexts, "Sent issue notes") {
+		t.Fatalf("sent issue context missing: %v", pageTexts)
 	}
-	if err := tr.Click("Copy context text"); err != nil {
-		t.Fatal(err)
-	}
-	if got := tr.Clipboard(); got != "exact issue context\nwith unicode 你好" {
-		t.Fatalf("sent context copy = %q", got)
+	if copied != "exact issue context\nwith unicode 你好" {
+		t.Fatalf("sent context copy = %q", copied)
 	}
 	h.shutdown(t)
 
@@ -705,20 +721,30 @@ func TestTaskContextIssueSentSnapshotPageCopyBeforeAndAfterRestart(t *testing.T)
 		ct.SelectedIssueID = issueID
 		h2.app.workspaceOpen = true
 	})
-	tr2 := ui.NewTester(h2.app.view, 1040, 720)
-	tr2.Frame()
-	if err := tr2.Click("Sent task context · 1"); err != nil {
-		t.Fatal(err)
+	var restartClickErr error
+	var restartTexts []string
+	var restartCopied string
+	h2.pump.do(func() {
+		tr2 := ui.NewTester(h2.app.view, 1040, 720)
+		tr2.Frame()
+		if restartClickErr = tr2.Click("Sent task context · 1"); restartClickErr != nil {
+			return
+		}
+		tr2.Frame()
+		restartTexts = tr2.Texts()
+		if restartClickErr = tr2.Click("Copy context text"); restartClickErr != nil {
+			return
+		}
+		restartCopied = tr2.Clipboard()
+	})
+	if restartClickErr != nil {
+		t.Fatal(restartClickErr)
 	}
-	tr2.Frame()
-	if !tr2.HasText("exact issue context") || !tr2.HasText("Sent issue notes") {
-		t.Fatalf("restored sent issue context missing: %v", tr2.Texts())
+	if !containsText(restartTexts, "exact issue context") || !containsText(restartTexts, "Sent issue notes") {
+		t.Fatalf("restored sent issue context missing: %v", restartTexts)
 	}
-	if err := tr2.Click("Copy context text"); err != nil {
-		t.Fatal(err)
-	}
-	if got := tr2.Clipboard(); got != "exact issue context\nwith unicode 你好" {
-		t.Fatalf("restored sent context copy = %q", got)
+	if restartCopied != "exact issue context\nwith unicode 你好" {
+		t.Fatalf("restored sent context copy = %q", restartCopied)
 	}
 	if provider.count() != 1 {
 		t.Fatalf("restart issued provider requests: %d", provider.count())
@@ -932,16 +958,21 @@ func TestTaskContextGUIEnvelopeLikeBodyStaysLiteralWithRealContext(t *testing.T)
 		}
 	}()
 	body := `{"type":"caller_context","label":"Caller-provided context (user data)","name":"body-as-json","text":"literal body"}`
+	var setupErr error
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
 		if _, err := ct.Context.AddSnippet("Real context", "real context body"); err != nil {
-			t.Fatal(err)
+			setupErr = err
+			return
 		}
 		ct.Draft = body
 		if !h.app.sendCurrent() {
-			t.Fatalf("send: %s", ct.SendError)
+			setupErr = fmt.Errorf("send: %s", ct.SendError)
 		}
 	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
 	h.pump.wait(func() bool {
 		ct := h.app.selectedContact()
 		return ct.LastTaskID != "" && ct.ActiveTaskID == "" && ct.SendState == sendIdle
@@ -957,20 +988,30 @@ func TestTaskContextGUIEnvelopeLikeBodyStaysLiteralWithRealContext(t *testing.T)
 	if len(contexts) != 1 || contexts[0].Name != "Real context" || contexts[0].Text != "real context body" {
 		t.Fatalf("provider context = %+v", contexts)
 	}
-	history, err := h.app.rt.historyPage(h.app.selectedContact().SessionID, 0, 100)
+	var sessionID string
+	h.pump.do(func() { sessionID = h.app.selectedContact().SessionID })
+	history, err := h.app.rt.historyPage(sessionID, 0, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if contexts := taskContextHistoryCallerContexts(t, history); len(contexts) != 1 || contexts[0].Name != "Real context" {
 		t.Fatalf("history context = %+v", contexts)
 	}
-	tr := ui.NewTester(h.app.view, 1040, 720)
-	tr.Frame()
-	if err := tr.Click("Copy message"); err != nil {
-		t.Fatal(err)
+	var clickErr error
+	var copied string
+	h.pump.do(func() {
+		tr := ui.NewTester(h.app.view, 1040, 720)
+		tr.Frame()
+		if clickErr = tr.Click("Copy message"); clickErr != nil {
+			return
+		}
+		copied = tr.Clipboard()
+	})
+	if clickErr != nil {
+		t.Fatal(clickErr)
 	}
-	if got := tr.Clipboard(); got != body {
-		t.Fatalf("body copy = %q, want byte-exact body", got)
+	if copied != body {
+		t.Fatalf("body copy = %q, want byte-exact body", copied)
 	}
 	h.shutdown(t)
 }
