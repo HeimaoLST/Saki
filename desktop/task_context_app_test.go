@@ -60,7 +60,7 @@ func TestTaskContextStoreRoundTripAndOwnedLists(t *testing.T) {
 		t.Fatalf("stored execution context = %+v", storedIssue.Executions)
 	}
 
-	reloaded := &appModel{contacts: contactsFromStore(store, "/tmp")}
+	reloaded := &appModel{contacts: contactsFromStore(store)}
 	reloaded.loadStoredTaskContexts(store)
 	reloaded.bindTaskContexts()
 	if len(reloaded.contacts[0].Context.snapshot()) != 1 || reloaded.contacts[0].Context.snapshot()[0].Text != "contact text" {
@@ -518,7 +518,7 @@ func TestTaskContextRestoredSubmittingIntentSurvivesAutomaticReload(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	reloaded := &appModel{store: store, contacts: contactsFromStore(store, "/tmp")}
+	reloaded := &appModel{store: store, contacts: contactsFromStore(store)}
 	reloaded.loadStoredTaskContexts(store)
 	reloaded.bindTaskContexts()
 	restored := reloaded.contacts[0]
@@ -551,7 +551,7 @@ func TestTaskContextUnknownSendSurvivesStoreRestartWithoutAutoReplay(t *testing.
 	if store.state.Version != contactStoreVersion {
 		t.Fatalf("store version = %d", store.state.Version)
 	}
-	reloaded := &appModel{store: store, contacts: contactsFromStore(store, "/tmp")}
+	reloaded := &appModel{store: store, contacts: contactsFromStore(store)}
 	reloaded.loadStoredTaskContexts(store)
 	reloaded.bindTaskContexts()
 	got := reloaded.contacts[0]

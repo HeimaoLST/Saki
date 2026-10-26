@@ -2,15 +2,19 @@
 use std::os::unix::process::CommandExt;
 use std::{
     process::Stdio,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::{io::AsyncReadExt, process::Command};
+use tokio::{
+    io::AsyncReadExt,
+    process::{Child, Command},
+    task::JoinHandle,
+};
 
-use super::tool_registry::{Tool, ToolError};
+use super::tool_registry::{Tool, ToolError, ToolRegistry};
 use super::{ToolContext, output::OutputAccumulator, parse_args};
 use crate::protocol::{ToolDefinition, ToolType};
 
@@ -25,6 +29,102 @@ struct BashArgs {
 
 fn default_timeout() -> u64 {
     120_000
+}
+
+// Dropping an executing handler cannot await Child::wait. Transfer ownership
+// to the existing task cleanup boundary before publishing its terminal.
+#[derive(Default)]
+struct Reaper {
+    pending: Mutex<Vec<JoinHandle<Result<(), ToolError>>>>,
+    #[cfg(all(test, unix))]
+    gate: Mutex<Option<ReapGate>>,
+}
+
+#[cfg(all(test, unix))]
+struct ReapGate {
+    started: tokio::sync::oneshot::Sender<()>,
+    resume: tokio::sync::oneshot::Receiver<()>,
+}
+
+impl Reaper {
+    #[cfg(unix)]
+    fn queue(&self, mut child: Child) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            // A standalone handler dropped after runtime shutdown retains
+            // kill_on_drop cleanup; a live task always has its runtime.
+            return;
+        };
+        let pid = child.id();
+        #[cfg(all(test, unix))]
+        let gate = self.gate.lock().unwrap().take();
+        let pending =
+            runtime.spawn(async move {
+                #[cfg(all(test, unix))]
+                if let Some(gate) = gate {
+                    let _ = gate.started.send(());
+                    let _ = gate.resume.await;
+                }
+                child.wait().await.map(|_| ()).map_err(|error| {
+                    ToolError::ExecutionFailed(format!("reap bash {pid:?}: {error}"))
+                })
+            });
+        self.pending.lock().unwrap().push(pending);
+    }
+
+    async fn finish(&self) -> Result<(), ToolError> {
+        let pending = std::mem::take(&mut *self.pending.lock().unwrap());
+        let mut failure = None;
+        for job in pending {
+            let result = match job.await {
+                Ok(result) => result,
+                Err(error) => Err(ToolError::ExecutionFailed(format!(
+                    "bash reaper failed: {error}"
+                ))),
+            };
+            if let Err(error) = result {
+                failure.get_or_insert(error);
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    }
+
+    #[cfg(all(test, unix))]
+    fn hold_next_reap(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (started, observed) = tokio::sync::oneshot::channel();
+        let (release, resume) = tokio::sync::oneshot::channel();
+        *self.gate.lock().unwrap() = Some(ReapGate { started, resume });
+        (observed, release)
+    }
+}
+
+#[cfg(unix)]
+struct ReapingChild {
+    child: Option<Child>,
+    group: GroupGuard,
+    reaper: Arc<Reaper>,
+}
+
+#[cfg(unix)]
+impl Drop for ReapingChild {
+    fn drop(&mut self) {
+        let _ = self.group.terminate();
+        if let Some(mut child) = self.child.take() {
+            // Child::id only consults Tokio's cached FusedChild state; it does
+            // not try_wait. An exited-but-unobserved child must still be queued
+            // so cleanup owns the wait and the terminal barrier.
+            if child.id().is_none() {
+                return;
+            }
+            // Preserve kill_on_drop's direct-child fallback if group signalling fails.
+            let _ = child.start_kill();
+            self.reaper.queue(child);
+        }
+    }
 }
 
 /// Owns the process group's cleanup. The timeout, the normal exit, the error
@@ -143,7 +243,7 @@ fn process_group_exited(pid: u32) -> bool {
 }
 
 #[cfg(unix)]
-async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
+async fn bash(args: Value, context: &ToolContext, reaper: Arc<Reaper>) -> Result<Value, ToolError> {
     let args: BashArgs = parse_args(args)?;
     if args.timeout_ms == 0 {
         return Err(ToolError::InvalidArgs(
@@ -178,11 +278,17 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
             Ok(())
         });
     }
-    let mut child = command
+    let child = command
         .spawn()
         .map_err(|error| ToolError::ExecutionFailed(format!("spawn bash: {error}")))?;
     let pid = child.id().unwrap();
-    let mut group = GroupGuard::new(pid);
+    let mut owned = ReapingChild {
+        child: Some(child),
+        group: GroupGuard::new(pid),
+        reaper,
+    };
+    let ReapingChild { child, group, .. } = &mut owned;
+    let child = child.as_mut().unwrap();
     let mut stdout = child.stdout.take().unwrap();
     let mut stdout_buffer = [0; 8192];
     let mut stdout_open = true;
@@ -231,13 +337,33 @@ async fn bash(args: Value, context: &ToolContext) -> Result<Value, ToolError> {
 }
 
 #[cfg(not(unix))]
-async fn bash(_: Value, _: &ToolContext) -> Result<Value, ToolError> {
+async fn bash(_: Value, _: &ToolContext, _: Arc<Reaper>) -> Result<Value, ToolError> {
     Err(ToolError::ExecutionFailed(
         "bash currently requires a Unix execution environment".to_owned(),
     ))
 }
 
 pub fn init(context: Arc<ToolContext>) -> Tool {
+    init_with_reaper(context, Arc::new(Reaper::default()))
+}
+
+pub(super) fn register_builtin(registry: &mut ToolRegistry, context: Arc<ToolContext>) {
+    register_with_reaper(registry, context, Arc::new(Reaper::default()));
+}
+
+fn register_with_reaper(
+    registry: &mut ToolRegistry,
+    context: Arc<ToolContext>,
+    reaper: Arc<Reaper>,
+) {
+    registry.registry(init_with_reaper(context, reaper.clone()));
+    registry.add_task_cleanup(move || {
+        let reaper = reaper.clone();
+        Box::pin(async move { reaper.finish().await })
+    });
+}
+
+fn init_with_reaper(context: Arc<ToolContext>, reaper: Arc<Reaper>) -> Tool {
     Tool {
         definition: ToolDefinition {
             tool_type: ToolType::Function,
@@ -247,10 +373,14 @@ pub fn init(context: Arc<ToolContext>) -> Tool {
                 "command":{"type":"string"}, "workdir":{"type":"string"},
                 "timeout_ms":{"type":"integer","minimum":1}}, "required":["command"], "additionalProperties":false}),
         },
-        handler: Arc::new(move |args| { let context = context.clone(); Box::pin(async move { bash(args, &context).await }) }),
+        handler: Arc::new(move |args| { let context = context.clone(); let reaper = reaper.clone(); Box::pin(async move { bash(args, &context, reaper).await }) }),
     }
 }
 
 #[cfg(all(test, target_os = "macos"))]
 #[path = "../../tests/tools/bash.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "../../tests/tools/bash_cleanup.rs"]
+mod cleanup_tests;

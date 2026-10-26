@@ -466,17 +466,18 @@ func TestStoreV2IssuesRemainReadableAndGainWorkSession(t *testing.T) {
 	}
 }
 
-func TestProfileLockObservesIssueWorkTarget(t *testing.T) {
+func TestContactActivityObservesIssueWorkTarget(t *testing.T) {
 	ct := &contact{ID: "x", Name: "X", Loaded: true}
 	a := &appModel{demo: false, contacts: []*contact{ct}, runtimeStatus: runtimeStateReady, rt: &runtimeClient{}}
-	if a.profileLocked(ct) {
-		t.Fatal("unbound contact with no issue work was locked")
+	if active, unknown := a.contactActivity(ct); active || unknown {
+		t.Fatal("contact with no issue work was active")
 	}
 	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "work", WorkSessionID: "work-session"}
-	issue.WorkSessionID = "work-session"
+	issue.Work.SendState = sendAccepted
+	issue.Work.ActiveTaskID = "task-1"
 	ct.Issues = []*productIssue{issue}
-	if !a.profileLocked(ct) {
-		t.Fatal("issue work session did not lock the contact profile")
+	if active, unknown := a.contactActivity(ct); !active || unknown {
+		t.Fatalf("active issue work was not observed: active=%v unknown=%v", active, unknown)
 	}
 }
 

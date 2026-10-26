@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::message::{ContextInput, UserMessage};
 use crate::protocol::ToolDefinition;
 use futures_util::FutureExt;
 use serde_json::json;
@@ -586,34 +587,82 @@ async fn async_callback_backpressure_holds_chat_deltas_until_released() {
 
 #[tokio::test]
 async fn reasoning_continuation_survives_json_sse_and_serialized_context() {
+    let tool =
+        json!({"id":"read-1", "type":"function", "function":{"name":"read", "arguments":"{}"}});
+    let context = ContextInput {
+        name: "named-context".to_owned(),
+        text: "context body".to_owned(),
+    };
+    let mut conversation = crate::agent::conversation::Conversation::new("system".to_owned());
+    conversation.add_user_message(UserMessage {
+        text: "read".to_owned(),
+        images: Vec::new(),
+        context: vec![context.clone()],
+    });
+    let base_input = conversation.items().to_vec();
+
     for streaming in [false, true] {
-        for reasoning in ["inspect file\nthen answer", ""] {
-            let tool = json!({"id":"read-1", "type":"function", "function":{"name":"read", "arguments":"{}"}});
+        for reasoning in [
+            None,
+            Some(serde_json::Value::Null),
+            Some(json!("")),
+            Some(json!("inspect file\nthen answer")),
+        ] {
+            let reasoning_text = reasoning
+                .as_ref()
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
             let (kind, body) = if streaming {
-                let cut = reasoning.len() / 2;
-                (
-                    "text/event-stream",
-                    format!(
-                        "{}{}{}data: [DONE]\n\n",
-                        sse(
-                            json!({"id":"r", "choices":[{"delta":{"reasoning_content": &reasoning[..cut]}}]})
-                        ),
-                        sse(
-                            json!({"id":"r", "choices":[{"delta":{"reasoning_content": &reasoning[cut..], "content":"checking", "tool_calls":[{"index":0,"id":"read-1","function":{"name":"read","arguments":"{}"}}]}}]})
-                        ),
-                        sse(
-                            json!({"id":"r", "choices":[{"delta":{},"finish_reason":"tool_calls"}]})
-                        )
-                    ),
-                )
+                let mut stream = String::new();
+                if !reasoning_text.is_empty() {
+                    let cut = reasoning_text.len() / 2;
+                    stream.push_str(&sse(
+                        json!({"id":"r", "choices":[{"delta":{"reasoning_content": null}}]}),
+                    ));
+                    stream.push_str(&sse(
+                        json!({"id":"r", "choices":[{"delta":{"reasoning_content": &reasoning_text[..cut]}}]}),
+                    ));
+                    stream.push_str(&sse(
+                        json!({"id":"r", "choices":[{"delta":{"reasoning_content": &reasoning_text[cut..], "content":"checking", "tool_calls":[{"index":0,"id":"read-1","function":{"name":"read","arguments":"{}"}}]}}]}),
+                    ));
+                } else {
+                    if let Some(marker) = reasoning.as_ref() {
+                        stream.push_str(&sse(
+                            json!({"id":"r", "choices":[{"delta":{"reasoning_content": marker}}]}),
+                        ));
+                    }
+                    stream.push_str(&sse(
+                        json!({"id":"r", "choices":[{"delta":{"content":"checking", "tool_calls":[{"index":0,"id":"read-1","function":{"name":"read","arguments":"{}"}}]}}]}),
+                    ));
+                }
+                let final_delta = if reasoning.is_none() {
+                    json!({})
+                } else {
+                    // A trailing native null must not erase an earlier marker or text.
+                    json!({"reasoning_content": null})
+                };
+                stream.push_str(&sse(
+                    json!({"id":"r", "choices":[{"delta": final_delta, "finish_reason":"tool_calls"}]}),
+                ));
+                stream.push_str("data: [DONE]\n\n");
+                ("text/event-stream", stream)
             } else {
-                ("application/json", json!({"id":"r", "choices":[{"message":{"reasoning_content":reasoning,"content":"checking","tool_calls":[tool.clone()]},"finish_reason":"tool_calls"}]}).to_string())
+                let mut message = json!({"content":"checking", "tool_calls":[tool.clone()]});
+                if let Some(marker) = reasoning.as_ref() {
+                    message["reasoning_content"] = marker.clone();
+                }
+                (
+                    "application/json",
+                    json!({"id":"r", "choices":[{"message":message,"finish_reason":"tool_calls"}]})
+                        .to_string(),
+                )
             };
+
             let (client, server) = mock_once(200, kind, body).await;
             let mut deltas = String::new();
             let response = client
                 .respond_stream(
-                    ModelRequest::new("m".into(), &[user("read")], vec![]),
+                    ModelRequest::new("m".into(), &base_input, vec![]),
                     |event| {
                         if let ModelStreamEvent::ReasoningDelta { delta, .. } = event {
                             deltas.push_str(&delta);
@@ -624,9 +673,10 @@ async fn reasoning_continuation_survives_json_sse_and_serialized_context() {
                 .unwrap();
             server.await.unwrap();
             if streaming {
-                assert_eq!(deltas, reasoning);
+                assert_eq!(deltas, reasoning_text);
             }
-            let mut input = vec![user("read")];
+
+            let mut input = base_input.clone();
             for item in response.output {
                 input.push(match item {
                     OutputItem::Reasoning {
@@ -664,11 +714,34 @@ async fn reasoning_continuation_survives_json_sse_and_serialized_context() {
             let restored: Vec<InputItem> =
                 serde_json::from_slice(&serde_json::to_vec(&input).unwrap()).unwrap();
             let messages = encode_messages(&restored).unwrap();
-            assert_eq!(messages, json!([
-                {"role":"user","content":"read"},
-                {"role":"assistant","content":"checking","reasoning_content":reasoning,"tool_calls":[tool]},
-                {"role":"tool","tool_call_id":"read-1","content":"marker"}
-            ]).as_array().unwrap().clone());
+
+            let context_text = serde_json::to_string(&json!({
+                "type": "caller_context",
+                "label": "Caller-provided context (user data)",
+                "name": context.name,
+                "text": context.text,
+            }))
+            .unwrap();
+            let mut assistant =
+                json!({"role":"assistant","content":"checking","tool_calls":[tool.clone()]});
+            if let Some(marker) = reasoning.as_ref() {
+                assistant["reasoning_content"] = marker.clone();
+            }
+            assert_eq!(
+                messages,
+                json!([
+                    {"role":"system","content":"system"},
+                    {"role":"user","content":[
+                        {"type":"text","text":"read"},
+                        {"type":"text","text":context_text}
+                    ]},
+                    assistant,
+                    {"role":"tool","tool_call_id":"read-1","content":"marker"}
+                ])
+                .as_array()
+                .unwrap()
+                .clone()
+            );
         }
     }
 }

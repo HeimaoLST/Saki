@@ -933,8 +933,18 @@ func (a *appModel) historyAll(sessionID string) ([]historyRecord, string, error)
 }
 
 func (a *appModel) historyAllFor(rt *runtimeClient, sessionID string) ([]historyRecord, string, error) {
+	history, err := a.historyAllForSession(rt, sessionID)
+	if err != nil {
+		return nil, "", err
+	}
+	return history.Records, history.Status, nil
+}
+
+// historyAllForSession keeps the Runtime session header so callers can verify
+// typed provenance instead of assuming which session a record slice came from.
+func (a *appModel) historyAllForSession(rt *runtimeClient, sessionID string) (runtimeHistory, error) {
 	if rt == nil {
-		return nil, "", errRuntimeDisconnected
+		return runtimeHistory{}, errRuntimeDisconnected
 	}
 	offset := 0
 	var all []historyRecord
@@ -942,19 +952,22 @@ func (a *appModel) historyAllFor(rt *runtimeClient, sessionID string) ([]history
 	for page := 0; page < 1000; page++ {
 		result, err := rt.historyPage(sessionID, offset, 100)
 		if err != nil {
-			return nil, "", err
+			return runtimeHistory{}, err
+		}
+		if result.SessionID != sessionID {
+			return runtimeHistory{}, errors.New("runtime history returned a different session")
 		}
 		all = append(all, result.Records...)
 		status = result.Status
 		if result.NextOffset == nil {
-			return all, status, nil
+			return runtimeHistory{SessionID: result.SessionID, Records: all, Status: status}, nil
 		}
 		if *result.NextOffset <= offset {
-			return nil, "", errors.New("history pagination did not advance")
+			return runtimeHistory{}, errors.New("history pagination did not advance")
 		}
 		offset = *result.NextOffset
 	}
-	return nil, "", errors.New("history pagination exceeded 1000 pages")
+	return runtimeHistory{}, errors.New("history pagination exceeded 1000 pages")
 }
 
 type historyProjection struct {
@@ -1654,6 +1667,9 @@ func (a *appModel) canSend(ct *contact) string {
 	if a.shutdownStarted {
 		return "The app is shutting down."
 	}
+	if ct.Archived {
+		return "This contact is archived. Restore it before sending a message."
+	}
 	if a.demo {
 		return ""
 	}
@@ -1684,6 +1700,9 @@ func (a *appModel) canSend(ct *contact) string {
 func (a *appModel) canStartIssue(ct *contact, issue *productIssue) string {
 	if a.shutdownStarted {
 		return "The app is shutting down."
+	}
+	if ct.Archived {
+		return "This contact is archived. Restore it before starting issue work."
 	}
 	if a.demo {
 		return ""
@@ -1720,6 +1739,10 @@ func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *i
 		issue.Work.SendError = "The app is shutting down."
 		return false
 	}
+	if ct.Archived {
+		issue.Work.SendError = "This contact is archived. Restore it before starting issue work."
+		return false
+	}
 	if a.connectionApplying {
 		issue.Work.SendError = "Connection settings are being applied; wait for the new helper to become ready."
 		return false
@@ -1734,7 +1757,7 @@ func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *i
 	}
 	// Capture immutable session inputs on the UI thread. The worker must not
 	// look up the contact/issue or read mutable profile/session fields later.
-	workspace := ct.Workspace
+	workspace := a.effectiveContactWorkspace(ct)
 	system := profileSystemPrompt(ct)
 	sessionID := issue.WorkSessionID
 	context := cloneTaskContextItems(execution.Context)
@@ -2015,7 +2038,7 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 	ct.pendingIssueExecution = issueExecutionID
 	contactID := ct.ID
 	sessionID := ct.SessionID
-	workspace := ct.Workspace
+	workspace := a.effectiveContactWorkspace(ct)
 	system := profileSystemPrompt(ct)
 	submittedContext := ct.Context.snapshot()
 	ct.historyGen++ // invalidate any in-flight reload
@@ -2348,21 +2371,6 @@ func (a *appModel) reloadSelected() {
 	}
 }
 
-func (a *appModel) profileLocked(ct *contact) bool {
-	if a.demo {
-		return false
-	}
-	if ct.SessionID != "" || ct.SendState == sendSubmitting {
-		return true
-	}
-	for _, issue := range ct.Issues {
-		if issue.WorkSessionID != "" || issue.Work.SendState == sendSubmitting || issue.Work.ActiveTaskID != "" {
-			return true
-		}
-	}
-	return false
-}
-
 func (a *appModel) addRuntimeContact() {
 	if !a.leaveIssueFormForSwitch() {
 		return
@@ -2378,6 +2386,8 @@ func (a *appModel) addRuntimeContact() {
 	c.Context.onChange = a.persist
 	a.contacts = append(a.contacts, c)
 	a.selected = len(a.contacts) - 1
+	a.contactScope = "active"
+	a.contactSearch = ""
 	a.screen = viewChat
 	a.aux = ""
 	a.focusComposer = true
@@ -2390,9 +2400,16 @@ func profileSystemPrompt(ct *contact) string {
 		parts = append(parts, "Purpose: "+strings.TrimSpace(ct.Purpose))
 	}
 	if strings.TrimSpace(ct.Instructions) != "" {
-		parts = append(parts, "Instructions: "+strings.TrimSpace(ct.Instructions))
+		parts = append(parts, "Instructions: "+ct.Instructions)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func (a *appModel) effectiveContactWorkspace(ct *contact) string {
+	if ct != nil && ct.Workspace != "" {
+		return ct.Workspace
+	}
+	return a.workDir
 }
 
 func (a *appModel) selectedID() string {

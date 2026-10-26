@@ -92,6 +92,9 @@ type contact struct {
 	History               []historyEntry
 	Revealed              []string
 	Draft                 string
+	Archived              bool
+	ArchivedAt            int64
+	PreviousSessions      []string
 	Context               taskContext
 	replyIndex            int
 	list                  ui.ListState
@@ -150,8 +153,20 @@ type appModel struct {
 	auxMessage      int
 	defaultContactN int
 	focusComposer   bool
-	settingsDraft   profileDraft
-	settingsError   bool
+
+	contactProfile           *contactProfileEditor
+	contactProfileID         string
+	contactSearch            string
+	contactScope             string
+	contactHistory           *contactHistoryResult
+	contactHistoryFull       *contactHistoryFull
+	contactHistoryBusy       bool
+	contactHistoryDetailBusy bool
+	contactHistoryError      string
+	contactHistoryGen        int
+	contactHistoryDetailGen  int
+	contactHistoryInFlight   int
+	resultInFlight           int
 
 	issueFormOpen                 bool
 	issueFormEditingID            string
@@ -210,6 +225,11 @@ type appModel struct {
 	connectionTestCancel   func()
 	startupDetailsOpen     bool
 	shutdownDrainStarted   bool
+
+	issueResult        issueResultPage
+	issueResultInspect func(issueResultFile) issueResultFileInspection
+	issueResultOpen    func(string) error
+	issueResultReveal  func(string) error
 
 	modelForm         *modelSelection
 	modelOpenToken    int
@@ -373,12 +393,15 @@ func (a *appModel) selectContact(i int) {
 	if !a.leaveIssueFormForSwitch() {
 		return
 	}
+	a.contacts[i].Unread = 0
+	a.selected = i
 	if !a.demo {
 		a.persist()
 	}
-	a.contacts[i].Unread = 0
-	a.selected = i
 	a.screen = viewChat
+	if a.issueResult.Open {
+		a.cancelIssueResultView()
+	}
 	a.aux = ""
 	a.highlight = ""
 	if !a.demo {
@@ -450,6 +473,8 @@ func (a *appModel) addDefaultContact() {
 	}
 	a.contacts = append(a.contacts, c)
 	a.selected = len(a.contacts) - 1
+	a.contactScope = "active"
+	a.contactSearch = ""
 	a.screen = viewChat
 	a.aux = ""
 	a.focusComposer = true
@@ -457,31 +482,7 @@ func (a *appModel) addDefaultContact() {
 
 func (a *appModel) openSettings() {
 	c := a.selectedContact()
-	a.settingsDraft = profileDraft{Name: c.Name, Purpose: c.Purpose, Instructions: c.Instructions, Workspace: c.Workspace}
-	a.settingsError = false
-	a.aux = "settings"
-}
-
-func (a *appModel) saveSettings() bool {
-	name := strings.TrimSpace(a.settingsDraft.Name)
-	if name == "" {
-		a.settingsError = true
-		return false
-	}
-	c := a.selectedContact()
-	c.Name = name
-	// Once a runtime session exists (or its first create is in flight), the
-	// profile was already used for session.create and cannot be hot-applied.
-	// Keep the stored values unchanged and only update the product name.
-	if !a.profileLocked(c) {
-		c.Purpose = strings.TrimSpace(a.settingsDraft.Purpose)
-		c.Instructions = strings.TrimSpace(a.settingsDraft.Instructions)
-		c.Workspace = strings.TrimSpace(a.settingsDraft.Workspace)
-	}
-	a.aux = ""
-	a.settingsError = false
-	a.persist()
-	return true
+	a.openContactProfile(c.ID)
 }
 
 func (a *appModel) closeAux() {
@@ -497,6 +498,8 @@ func (a *appModel) closeAux() {
 		a.modelForm = nil
 		a.modelPanelMessage = ""
 		a.modelPanelError = ""
+	case "issue-result":
+		a.cancelIssueResultView()
 	}
 	a.aux = ""
 }
@@ -510,6 +513,13 @@ func (a *appModel) openHistory() {
 	a.screen = viewHistory
 	a.aux = ""
 	a.historyQuery = ""
+	a.contactHistory = nil
+	a.contactHistoryFull = nil
+	a.contactHistoryBusy = false
+	a.contactHistoryDetailBusy = false
+	a.contactHistoryError = ""
+	a.contactHistoryGen++
+	a.contactHistoryDetailGen++
 	a.focusHistoryOpen = true
 }
 
