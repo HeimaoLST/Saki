@@ -174,7 +174,7 @@ func TestLegacyRequirementsBecomeStructuredAtStoreBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.state.Version != 4 || reloaded.state.Issues[0].Requirements != "" ||
+	if reloaded.state.Version != contactStoreVersion || reloaded.state.Issues[0].Requirements != "" ||
 		len(reloaded.state.Issues[0].RequirementItems) != 2 ||
 		reloaded.state.Issues[0].Executions[0].Prompt != "old prompt" {
 		t.Fatalf("v4 migration boundary = %+v", reloaded.state.Issues[0])

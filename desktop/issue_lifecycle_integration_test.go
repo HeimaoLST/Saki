@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -484,6 +485,114 @@ func TestIssueUIStatusFilterSelection(t *testing.T) {
 	if !tr.HasText("Completed · filtered issue") {
 		t.Fatalf("completed filter did not list issue: %v", tr.Texts())
 	}
+}
+
+func TestIssueContinuationCapturesRequirementsRevisionBeforeDispatch(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{}
+	h := startGUIHarness(t, binary, provider, "issue-revision-117")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	var issueID string
+	var setupErr error
+	h.pump.do(func() {
+		if !h.app.createIssue("first goal", "first requirement") {
+			setupErr = fmt.Errorf("createIssue: %s", h.app.issueFormError)
+			return
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		if !h.app.runIssue(issueID) {
+			setupErr = fmt.Errorf("first run: %s", h.app.issueFormError)
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
+	})
+	var first issueExecution
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		first = *issue.Executions[0]
+	})
+	if first.RequirementsRevision != 1 {
+		t.Fatalf("first execution revision = %d, want 1", first.RequirementsRevision)
+	}
+	firstBody := taskContextLastUserText(t, provider.body(0))
+	if !strings.Contains(firstBody, "first goal") || !strings.Contains(firstBody, "first requirement") || strings.Contains(firstBody, "second goal") {
+		t.Fatalf("first provider input = %q", firstBody)
+	}
+	h.pump.do(func() {
+		if !h.app.editIssue(issueID, "second goal", "second requirement") {
+			setupErr = fmt.Errorf("edit issue: %s", h.app.issueFormError)
+			return
+		}
+		if !h.app.runIssue(issueID) {
+			setupErr = fmt.Errorf("continue run: %s", h.app.issueFormError)
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 2 && issue.Executions[1].Status == issueExecutionCompleted
+	})
+	var second issueExecution
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		second = *issue.Executions[1]
+	})
+	if second.RequirementsRevision != 2 {
+		t.Fatalf("second execution revision = %d, want 2", second.RequirementsRevision)
+	}
+	secondBody := taskContextLastUserText(t, provider.body(1))
+	if !strings.Contains(secondBody, "second goal") || !strings.Contains(secondBody, "second requirement") || strings.Contains(secondBody, "first goal") {
+		t.Fatalf("second provider input = %q", secondBody)
+	}
+	if provider.count() != 2 {
+		t.Fatalf("provider requests before restart = %d", provider.count())
+	}
+	h.shutdown(t)
+
+	h2 := restartGUIHarness(t, binary)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.wait(func() bool {
+		issue := h2.app.contacts[0].issueByID(issueID)
+		return issue != nil && len(issue.Executions) == 2 && issue.Work.Loaded
+	})
+	var restartedFirst, restartedSecond issueExecution
+	h2.pump.do(func() {
+		issue := h2.app.selectedContact().issueByID(issueID)
+		restartedFirst = *issue.Executions[0]
+		restartedSecond = *issue.Executions[1]
+	})
+	if restartedFirst.RequirementsRevision != 1 || restartedSecond.RequirementsRevision != 2 {
+		t.Fatalf("restarted revisions = %d/%d", restartedFirst.RequirementsRevision, restartedSecond.RequirementsRevision)
+	}
+	if restartedFirst.Prompt != first.Prompt || restartedFirst.SessionID != first.SessionID ||
+		restartedFirst.TaskID != first.TaskID || restartedFirst.MessageID != first.MessageID {
+		t.Fatalf("first execution identity changed: before=%+v after=%+v", first, restartedFirst)
+	}
+	if restartedSecond.Prompt != second.Prompt || restartedSecond.SessionID != second.SessionID ||
+		restartedSecond.TaskID != second.TaskID || restartedSecond.MessageID != second.MessageID {
+		t.Fatalf("second execution identity changed: before=%+v after=%+v", second, restartedSecond)
+	}
+	if provider.count() != 2 {
+		t.Fatalf("restart resent a model request: %d", provider.count())
+	}
+	h2.shutdown(t)
 }
 
 func TestIssueRuntimeCompletedBeforeLateCancelStaysCompleted(t *testing.T) {

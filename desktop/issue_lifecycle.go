@@ -156,6 +156,9 @@ func (a *appModel) markIssueWaitingFor(ct *contact, issueID string) bool {
 	if issue.Work.ActiveTaskID != "" || issue.Work.SendState != sendIdle || issueRunBlocked(issue) != "" {
 		return false
 	}
+	if !a.setIssueSupplementAuto(ct, issue.ID, false) {
+		return false
+	}
 	return a.setIssueStatus(issue, issueStatusWaitingUser)
 }
 
@@ -174,7 +177,15 @@ func (a *appModel) resumeIssueFor(ct *contact, issueID string) bool {
 	if len(issue.Executions) == 0 {
 		next = issueStatusNotStarted
 	}
-	return a.setIssueStatus(issue, next)
+	if !a.setIssueStatus(issue, next) {
+		return false
+	}
+	if ledger := issue.Supplements; ledger != nil && ledger.pendingCount() > 0 {
+		if !a.setIssueSupplementAuto(ct, issue.ID, true) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *appModel) setIssueStatus(issue *productIssue, status string) bool {
@@ -200,6 +211,9 @@ func (a *appModel) completeIssueFor(ct *contact, issueID, evidence string) bool 
 		return false
 	}
 	if issue.Work.ActiveTaskID != "" || issue.Work.SendState != sendIdle {
+		return false
+	}
+	if !a.setIssueSupplementAuto(ct, issue.ID, false) {
 		return false
 	}
 	oldStatus, oldEvidence, oldUpdated := issue.Status, issue.Evidence, issue.UpdatedAt
@@ -293,7 +307,13 @@ func (a *appModel) cancelIssueProductFor(ct *contact, issueID string) bool {
 	issue.Status = issueStatusCanceled
 	issue.Work.cancelAfterAccept = pendingAccept
 	issue.UpdatedAt = nowMillis()
-	if err := a.persist(); err != nil {
+	ledger := issueSupplementLedgerFor(issue)
+	target := issueSupplementTargetFor(ct, issue)
+	var active *issueSupplementBatch
+	if ledger != nil {
+		active = ledger.activeBatch(target)
+	}
+	if ledger == nil || !ledger.StopAutoContinue(active, a.persist) {
 		issue.Status, issue.UpdatedAt, issue.Work.cancelAfterAccept = oldStatus, oldUpdated, oldCancelAfter
 		return false
 	}
@@ -310,6 +330,9 @@ func (a *appModel) cancelIssueProductFor(ct *contact, issueID string) bool {
 func (a *appModel) archiveIssueFor(ct *contact, issueID string) bool {
 	issue := issueForContact(ct, issueID)
 	if issue == nil || issue.Archived {
+		return false
+	}
+	if !a.setIssueSupplementAuto(ct, issue.ID, false) {
 		return false
 	}
 	old, oldUpdated := issue.Archived, issue.UpdatedAt
@@ -348,11 +371,17 @@ func (a *appModel) applyIssueTerminalLifecycle(issue *productIssue, taskID, stat
 		issue.Status = issueStatusInProgress
 	case "failed", "unknown":
 		issue.Status = issueStatusNeedsAttention
+		if issue.Supplements != nil {
+			issue.Supplements.AutoContinue = false
+		}
 	case "interrupted":
 		if issue.Work.StopRequestedTasks[taskID] {
 			issue.Status = issueStatusInProgress
 		} else {
 			issue.Status = issueStatusNeedsAttention
+			if issue.Supplements != nil {
+				issue.Supplements.AutoContinue = false
+			}
 		}
 	}
 	issue.UpdatedAt = nowMillis()
