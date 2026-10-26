@@ -190,12 +190,18 @@ func supplementTargetsEqual(a, b issueSupplementTarget) bool {
 	return a.ContactID == b.ContactID && a.IssueID == b.IssueID && a.RequirementsRevision == b.RequirementsRevision
 }
 
+func supplementTargetsSameIssue(a, b issueSupplementTarget) bool {
+	return a.ContactID == b.ContactID && a.IssueID == b.IssueID
+}
+
 func (l *issueSupplementLedger) pendingFor(target issueSupplementTarget) []*issueSupplement {
 	var out []*issueSupplement
 	for _, item := range l.Items {
 		if item != nil && item.State == supplementStatePending &&
-			item.ContactID == target.ContactID && item.IssueID == target.IssueID &&
-			item.RequirementsRevision == target.RequirementsRevision {
+			supplementTargetsSameIssue(issueSupplementTarget{
+				ContactID: item.ContactID, IssueID: item.IssueID,
+			}, target) &&
+			item.RequirementsRevision <= target.RequirementsRevision {
 			out = append(out, item)
 		}
 	}
@@ -204,7 +210,7 @@ func (l *issueSupplementLedger) pendingFor(target issueSupplementTarget) []*issu
 
 func (l *issueSupplementLedger) activeBatch(target issueSupplementTarget) *issueSupplementBatch {
 	for _, batch := range l.Batches {
-		if batch == nil || !supplementTargetsEqual(batch.Target, target) {
+		if batch == nil || !supplementTargetsSameIssue(batch.Target, target) {
 			continue
 		}
 		switch batch.State {
@@ -306,6 +312,32 @@ func (l *issueSupplementLedger) BeginDispatch(batch *issueSupplementBatch, save 
 	if err := save(); err != nil {
 		batch.State = old
 		l.restoreBatchItems(batch, oldItems)
+		return false
+	}
+	return true
+}
+
+// ReleasePrepared abandons only a local prepared batch that has not crossed the
+// BeginDispatch boundary. It returns the exact snapshot items to pending, keeps
+// AutoContinue unchanged, and leaves the canceled batch as audit history. It is
+// deliberately narrower than StopAutoContinue, which revokes user intent.
+func (l *issueSupplementLedger) ReleasePrepared(batch *issueSupplementBatch, save func() error) bool {
+	canonical := l.canonicalBatch(batch)
+	if save == nil || canonical == nil || canonical.State != supplementBatchPrepared {
+		return false
+	}
+	old := *canonical
+	oldItems := l.snapshotBatchItems(canonical)
+	for _, snapshot := range canonical.Snapshot {
+		if item := l.itemByID(snapshot.ID); item != nil {
+			item.State = supplementStatePending
+			item.BatchID = ""
+		}
+	}
+	canonical.State = supplementBatchCanceled
+	if err := save(); err != nil {
+		*canonical = old
+		l.restoreBatchItems(canonical, oldItems)
 		return false
 	}
 	return true

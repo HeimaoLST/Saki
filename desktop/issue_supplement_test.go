@@ -118,9 +118,19 @@ func TestIssueSupplementBatchSnapshotAndTargetVersionPersist(t *testing.T) {
 	if restored.Batches[0].Text != "support SMS\nshow errors" {
 		t.Fatalf("persisted batch followed mutable item: %q", restored.Batches[0].Text)
 	}
+	if _, err := restored.Prepare(otherVersion, persistLedger(restored, &data)); err == nil {
+		t.Fatal("an unreleased prepared batch was bypassed by a revision bump")
+	}
+	if !restored.ReleasePrepared(restored.Batches[0], persistLedger(restored, &data)) {
+		t.Fatal("releasing the locally prepared batch failed")
+	}
 	other, err := restored.Prepare(otherVersion, persistLedger(restored, &data))
-	if err != nil || other.Text != "added later" {
-		t.Fatalf("target version isolation = %+v / %v", other, err)
+	if err != nil || other.Text != "support SMS\nshow errors\nadded later" || len(other.Snapshot) != 3 {
+		t.Fatalf("current-revision batch after release = %+v / %v", other, err)
+	}
+	if restored.Batches[0].State != supplementBatchCanceled ||
+		restored.Batches[0].Target.RequirementsRevision != target.RequirementsRevision {
+		t.Fatalf("released audit batch = %+v", restored.Batches[0])
 	}
 }
 
@@ -419,5 +429,199 @@ func TestIssueSupplementStaleBatchPointerIsRejected(t *testing.T) {
 	}
 	if len(reloaded.Batches) != 1 || reloaded.Batches[0].State != supplementBatchPrepared {
 		t.Fatalf("stale pointer mutated reloaded batch: %+v", reloaded.Batches)
+	}
+}
+
+func TestIssueSupplementPendingEligibilityAcrossReceiptRevisions(t *testing.T) {
+	l := newIssueSupplementLedger()
+	data := []byte{}
+	received := supplementTarget()
+	first := addSupplement(t, l, received, "first r3", &data)
+	second := addSupplement(t, l, received, "second r3", &data)
+	current := received
+	current.RequirementsRevision++
+	batch, err := l.Prepare(current, persistLedger(l, &data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch.Target != current || batch.Text != "first r3\nsecond r3" || len(batch.Snapshot) != 2 {
+		t.Fatalf("current-revision batch = %+v / %q", batch.Target, batch.Text)
+	}
+	if first.RequirementsRevision != received.RequirementsRevision || second.RequirementsRevision != received.RequirementsRevision {
+		t.Fatalf("receipt revisions were rewritten: %d / %d", first.RequirementsRevision, second.RequirementsRevision)
+	}
+	restored := reloadLedger(t, data)
+	if len(restored.Batches) != 1 || restored.Batches[0].Target != current ||
+		restored.Batches[0].Snapshot[0].ID != first.ID ||
+		restored.Batches[0].Snapshot[1].ID != second.ID ||
+		restored.Items[0].RequirementsRevision != received.RequirementsRevision ||
+		restored.Items[1].RequirementsRevision != received.RequirementsRevision {
+		t.Fatalf("persisted current-revision selection = %+v / %+v", restored.Batches[0], restored.Items)
+	}
+
+	future := newIssueSupplementLedger()
+	futureData := []byte{}
+	futureTarget := received
+	futureTarget.RequirementsRevision += 2
+	futureItem := addSupplement(t, future, futureTarget, "future receipt", &futureData)
+	if _, err := future.Prepare(received, persistLedger(future, &futureData)); err == nil {
+		t.Fatal("a future receipt was selected before its revision")
+	}
+	futureBatch, err := future.Prepare(futureTarget, persistLedger(future, &futureData))
+	if err != nil || len(futureBatch.Snapshot) != 1 || futureItem.RequirementsRevision != futureTarget.RequirementsRevision {
+		t.Fatalf("future receipt at its own revision = %+v / %+v / %v", futureBatch, futureItem, err)
+	}
+}
+
+func TestIssueSupplementActiveBatchBlocksAcrossRevisions(t *testing.T) {
+	for _, mode := range []string{"dispatching", "unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			l := newIssueSupplementLedger()
+			data := []byte{}
+			received := supplementTarget()
+			addSupplement(t, l, received, "in flight", &data)
+			batch, err := l.Prepare(received, persistLedger(l, &data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !l.BeginDispatch(batch, persistLedger(l, &data)) {
+				t.Fatal("begin dispatch failed")
+			}
+			if mode == "unknown" && !l.Unknown(batch, "delivery unconfirmed", persistLedger(l, &data)) {
+				t.Fatal("unknown transition failed")
+			}
+			if !l.ResumeAutoContinue(persistLedger(l, &data)) {
+				t.Fatal("resume failed")
+			}
+			current := received
+			current.RequirementsRevision++
+			if _, err := l.Prepare(current, persistLedger(l, &data)); err == nil ||
+				!strings.Contains(err.Error(), "already") {
+				t.Fatalf("%s batch did not block a new revision: %v", mode, err)
+			}
+			reloaded := reloadLedger(t, data)
+			if reloaded.Batches[0].State != batch.State || !reloaded.AutoContinue {
+				t.Fatalf("persisted active batch = %+v auto=%v", reloaded.Batches[0], reloaded.AutoContinue)
+			}
+			if _, err := reloaded.Prepare(current, persistLedger(reloaded, &data)); err == nil ||
+				!strings.Contains(err.Error(), "already") {
+				t.Fatalf("reloaded %s batch did not block a new revision: %v", mode, err)
+			}
+		})
+	}
+}
+
+func TestIssueSupplementReleasePreparedReturnsPendingWithoutStoppingAuto(t *testing.T) {
+	l := newIssueSupplementLedger()
+	data := []byte{}
+	oldTarget := supplementTarget()
+	item := addSupplement(t, l, oldTarget, "release prepared", &data)
+	batch, err := l.Prepare(oldTarget, persistLedger(l, &data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !l.ReleasePrepared(batch, persistLedger(l, &data)) {
+		t.Fatal("release prepared failed")
+	}
+	released := reloadLedger(t, data)
+	if !released.AutoContinue || released.Batches[0].State != supplementBatchCanceled ||
+		released.Items[0].State != supplementStatePending || released.Items[0].BatchID != "" ||
+		released.Items[0].RequirementsRevision != oldTarget.RequirementsRevision {
+		t.Fatalf("released prepared state = auto=%v batch=%+v item=%+v", released.AutoContinue, released.Batches[0], released.Items[0])
+	}
+	if released.Items[0].ID != item.ID || released.Batches[0].Target != oldTarget {
+		t.Fatalf("release lost snapshot/audit identity: %+v / %+v", released.Items[0], released.Batches[0])
+	}
+	current := oldTarget
+	current.RequirementsRevision++
+	next, err := released.Prepare(current, persistLedger(released, &data))
+	if err != nil || next.Target != current || len(next.Snapshot) != 1 || next.Snapshot[0].ID != item.ID {
+		t.Fatalf("prepare after release = %+v / %v", next, err)
+	}
+	if released.Items[0].State != supplementStatePrepared || released.Items[0].RequirementsRevision != oldTarget.RequirementsRevision {
+		t.Fatalf("prepare after release rewrote receipt = %+v", released.Items[0])
+	}
+}
+
+func TestIssueSupplementReleasePreparedSaveFailureRollsBack(t *testing.T) {
+	l := newIssueSupplementLedger()
+	data := []byte{}
+	target := supplementTarget()
+	addSupplement(t, l, target, "rollback release", &data)
+	batch, err := l.Prepare(target, persistLedger(l, &data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.ReleasePrepared(batch, func() error { return errSupplementSaveRequired }) {
+		t.Fatal("failed release was reported as successful")
+	}
+	if !l.AutoContinue || batch.State != supplementBatchPrepared ||
+		l.Items[0].State != supplementStatePrepared || l.Items[0].BatchID != batch.ID {
+		t.Fatalf("failed release left partial state: auto=%v batch=%+v item=%+v", l.AutoContinue, batch, l.Items[0])
+	}
+	if !l.ReleasePrepared(batch, persistLedger(l, &data)) {
+		t.Fatal("release did not succeed after rollback")
+	}
+}
+
+func TestIssueSupplementReleaseRejectsDispatchedOrAccepted(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T, *issueSupplementLedger, *[]byte) *issueSupplementBatch
+	}{
+		{"dispatching", func(t *testing.T, l *issueSupplementLedger, data *[]byte) *issueSupplementBatch {
+			target := supplementTarget()
+			addSupplement(t, l, target, "keep dispatched", data)
+			return prepareSupplement(t, l, target, data)
+		}},
+		{"unknown", func(t *testing.T, l *issueSupplementLedger, data *[]byte) *issueSupplementBatch {
+			target := supplementTarget()
+			addSupplement(t, l, target, "keep unknown", data)
+			batch := prepareSupplement(t, l, target, data)
+			if !l.Unknown(batch, "unknown", persistLedger(l, data)) {
+				t.Fatal("unknown transition failed")
+			}
+			return batch
+		}},
+		{"accepted", func(t *testing.T, l *issueSupplementLedger, data *[]byte) *issueSupplementBatch {
+			return acceptedSupplement(t, l, supplementTarget(), data)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			l := newIssueSupplementLedger()
+			data := []byte{}
+			batch := test.setup(t, l, &data)
+			state, auto := batch.State, l.AutoContinue
+			if l.ReleasePrepared(batch, persistLedger(l, &data)) {
+				t.Fatalf("%s batch was released", test.name)
+			}
+			if batch.State != state || l.AutoContinue != auto {
+				t.Fatalf("%s release mutated batch/auto: %+v auto=%v", test.name, batch, l.AutoContinue)
+			}
+		})
+	}
+}
+
+func TestIssueSupplementSelectionAndActiveBatchStayPerIssue(t *testing.T) {
+	l := newIssueSupplementLedger()
+	data := []byte{}
+	targetA := supplementTarget()
+	targetB := targetA
+	targetB.IssueID = "issue-b"
+	itemA := addSupplement(t, l, targetA, "only a", &data)
+	itemB := addSupplement(t, l, targetB, "only b", &data)
+	batchA, err := l.Prepare(targetA, persistLedger(l, &data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batchA.Text != "only a" || len(batchA.Snapshot) != 1 || batchA.Snapshot[0].ID != itemA.ID {
+		t.Fatalf("issue A selected another issue: %+v", batchA)
+	}
+	if _, err := l.Prepare(targetB, persistLedger(l, &data)); err != nil {
+		t.Fatal("issue A batch blocked issue B")
+	}
+	if l.Items[1].ID != itemB.ID || l.Items[1].State != supplementStatePrepared {
+		t.Fatalf("issue B receipt = %+v", l.Items[1])
 	}
 }
