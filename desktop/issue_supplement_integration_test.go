@@ -281,3 +281,85 @@ func TestIssueSupplementDispatchSaveFailureStaysPendingAndOffline(t *testing.T) 
 	}
 	h.pump.do(func() { h.app.store.path = oldStore })
 }
+
+func TestIssueSupplementConfirmNotDispatchedThenExplicitRetryOnce(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startGUIHarness(t, binary, provider, "supplement-confirm-retry")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	var issueID string
+	var setupErr error
+	h.pump.do(func() {
+		if !h.app.createIssue("retry goal", "retry requirement") {
+			setupErr = errors.New(h.app.issueFormError)
+			return
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		issue := ct.issueByID(issueID)
+		if err := h.app.addIssueSupplement(ct, issueID, "retry original text"); err != nil {
+			setupErr = err
+			return
+		}
+		target := issueSupplementTargetFor(ct, issue)
+		execution := &issueExecution{ID: "execution-unknown", SessionID: "", Prompt: "unknown prompt", Status: issueExecutionPending, RequirementsRevision: issue.RequirementsRevision}
+		issue.Executions = append(issue.Executions, execution)
+		issue.Work.pendingExecutionID = execution.ID
+		batch, err := issue.Supplements.PrepareDispatch(target, execution, h.app.persist)
+		if err != nil {
+			setupErr = err
+			return
+		}
+		if !issue.Supplements.Unknown(batch, "delivery unknown", h.app.persist) {
+			setupErr = errors.New("unknown supplement transition failed")
+			return
+		}
+		execution.Status = issueExecutionUnknown
+		issue.Work.SendState = sendIdle
+		issue.Status = issueStatusInProgress
+		if !h.app.confirmIssueExecutionNotDispatched(issueID, execution.ID) {
+			setupErr = errors.New("confirm not dispatched failed")
+			return
+		}
+		if !h.app.retryIssueSupplementBatch(ct, issue, batch) {
+			setupErr = errors.New(h.app.issueActionError)
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 2 && issue.Executions[1].Status == issueExecutionCompleted
+	})
+	var originalRetry, finalState bool
+	var prompt string
+	var batches []string
+	h.snapshot(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		if issue == nil || issue.Supplements == nil {
+			return
+		}
+		originalRetry = issue.Supplements.Items[0].Text == "retry original text" &&
+			issue.Supplements.Items[0].State == supplementStateSubmitted
+		finalState = issue.Executions[0].Status == issueExecutionNotDispatched &&
+			issue.Executions[1].Status == issueExecutionCompleted
+		if len(issue.Supplements.Batches) > 0 {
+			prompt = issue.Executions[1].Prompt
+			for _, batch := range issue.Supplements.Batches {
+				batches = append(batches, batch.State)
+			}
+		}
+	})
+	if !originalRetry || !finalState || !strings.Contains(prompt, "retry original text") || len(batches) != 2 {
+		t.Fatalf("retry result = item=%v execution=%v prompt=%q batches=%v", originalRetry, finalState, prompt, batches)
+	}
+	if provider.count() != 1 {
+		t.Fatalf("explicit retry sent %d provider requests, want 1", provider.count())
+	}
+}

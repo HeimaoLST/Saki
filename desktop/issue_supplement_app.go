@@ -257,3 +257,94 @@ func issueSupplementBatchForID(issue *productIssue, batchID string) *issueSupple
 	}
 	return issue.Supplements.batchByID(batchID)
 }
+
+func (a *appModel) openIssueSupplementForm(issueID string) {
+	a.issueSupplementFormID = issueID
+}
+
+func (a *appModel) closeIssueSupplementForm() {
+	a.issueSupplementFormID = ""
+}
+
+func (a *appModel) issueSupplementDraft(issueID string) *string {
+	if a.issueSupplementDrafts == nil {
+		a.issueSupplementDrafts = map[string]*string{}
+	}
+	draft, ok := a.issueSupplementDrafts[issueID]
+	if !ok {
+		value := ""
+		draft = &value
+		a.issueSupplementDrafts[issueID] = draft
+	}
+	return draft
+}
+
+func (a *appModel) saveIssueSupplement(ct *contact, issueID, text string) bool {
+	issue := issueForContact(ct, issueID)
+	if issue == nil {
+		a.issueActionError = "Issue not found."
+		return false
+	}
+	if err := a.addIssueSupplement(ct, issueID, text); err != nil {
+		a.issueActionError = err.Error()
+		return false
+	}
+	a.issueActionError = ""
+	return true
+}
+
+func (a *appModel) retryIssueSupplementBatch(ct *contact, issue *productIssue, batch *issueSupplementBatch) bool {
+	if issue == nil || batch == nil || issue.Supplements == nil {
+		return false
+	}
+	if !issue.Supplements.RetryUnaccepted(batch, a.persist) {
+		a.issueActionError = "Could not save the retry intent; the old supplement receipt was left unchanged."
+		return false
+	}
+	if !a.issueRunCaptured(ct, issue) {
+		a.issueActionError = a.issueFormError
+		return false
+	}
+	return true
+}
+
+// normalizeRestoredSupplementBatches prevents restart from silently treating
+// an in-flight or unknown dispatch as a fresh automatic candidate. It does not
+// resend. If an execution association is missing, the batch becomes unknown.
+func (a *appModel) normalizeRestoredSupplementBatches() {
+	changed := false
+	for _, ct := range a.contacts {
+		for _, issue := range ct.Issues {
+			ledger := issue.Supplements
+			if ledger == nil {
+				continue
+			}
+			for _, batch := range ledger.Batches {
+				if batch == nil {
+					continue
+				}
+				switch batch.State {
+				case supplementBatchDispatching, supplementBatchUnknown:
+					if ledger.AutoContinue {
+						ledger.AutoContinue = false
+						changed = true
+					}
+					if batch.ExecutionID == "" && batch.State == supplementBatchDispatching {
+						batch.State = supplementBatchUnknown
+						for _, snapshot := range batch.Snapshot {
+							if item := ledger.itemByID(snapshot.ID); item != nil && item.State == supplementStateDispatching {
+								item.State = supplementStateUnknown
+							}
+						}
+						changed = true
+					}
+				}
+			}
+		}
+	}
+	if changed {
+		if err := a.persist(); err != nil {
+			a.issueActionError = "Could not save restored supplement integrity state: " + err.Error()
+		}
+	}
+}

@@ -401,7 +401,14 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 			ui.Text(c, a.issueActionError).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 		}
 		if editable {
-			ui.Button(c, "Edit issue").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openEditIssueForm(issue) })
+			ui.Row(c).Gap(6).Children(func() {
+				ui.Button(c, "Edit issue").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openEditIssueForm(issue) })
+				label := "Add supplement"
+				if issue.Supplements != nil && (issue.Supplements.pendingCount() > 0 || len(issue.Supplements.Batches) > 0) {
+					label = fmt.Sprintf("Supplements · %d", issue.Supplements.pendingCount()+len(issue.Supplements.Batches))
+				}
+				ui.Button(c, label).FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openIssueSupplementForm(issue.ID) })
+			})
 		}
 		ui.Text(c, fmt.Sprintf("Requirements · revision %d", issue.RequirementsRevision)).FontSize(11).FontWeight(500).TextColor(t.TextMuted)
 		if len(issue.Requirements) == 0 {
@@ -448,6 +455,7 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 		}
 		ui.Text(c, "Completion: "+completion).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 		a.issueActions(c, t, ct, issue, editable)
+		a.issueSupplementSection(c, t, ct, issue, editable)
 
 		ui.Divider(c)
 		ui.Text(c, "Executions").FontSize(11).FontWeight(500).TextColor(t.TextMuted)
@@ -560,6 +568,13 @@ func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *
 				label := "Start issue"
 				if len(issue.Executions) > 0 {
 					label = "Continue issue"
+				}
+				if issue.Supplements != nil && issue.Supplements.pendingCount() > 0 {
+					if len(issue.Executions) == 0 {
+						label = "Start with supplement"
+					} else {
+						label = "Continue with supplement"
+					}
 				}
 				ui.Button(c, label).FontSize(12).OnClick(func() {
 					if !a.runIssue(issue.ID) {

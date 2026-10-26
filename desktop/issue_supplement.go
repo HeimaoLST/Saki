@@ -383,6 +383,33 @@ func (l *issueSupplementLedger) PrepareDispatch(target issueSupplementTarget, ex
 	return batch, nil
 }
 
+// RetryUnaccepted is the explicit user retry for a batch already recorded as
+// rejected or not dispatched. It returns only those exact snapshot items to
+// pending and leaves the old batch as audit history. It must never be used for
+// unknown, dispatching, accepted, or in-flight data.
+func (l *issueSupplementLedger) RetryUnaccepted(batch *issueSupplementBatch, save func() error) bool {
+	canonical := l.canonicalBatch(batch)
+	if save == nil || canonical == nil ||
+		(canonical.State != supplementBatchRejected && canonical.State != supplementBatchNotDispatched) {
+		return false
+	}
+	old := *canonical
+	oldItems := l.snapshotBatchItems(canonical)
+	for _, snapshot := range canonical.Snapshot {
+		if item := l.itemByID(snapshot.ID); item != nil {
+			item.State = supplementStatePending
+			item.BatchID = ""
+		}
+	}
+	canonical.State = supplementBatchCanceled
+	if err := save(); err != nil {
+		*canonical = old
+		l.restoreBatchItems(canonical, oldItems)
+		return false
+	}
+	return true
+}
+
 // DeferDispatch is the local rollback for a dispatch that Runtime explicitly
 // rejected as busy/capacity before accepting a task. The immutable batch stays
 // as audit history, its items return to pending, and AutoContinue is unchanged
@@ -499,7 +526,8 @@ func (l *issueSupplementLedger) Reject(batch *issueSupplementBatch, detail strin
 func (l *issueSupplementLedger) NotDispatched(batch *issueSupplementBatch, detail string, save func() error) bool {
 	canonical := l.canonicalBatch(batch)
 	if save == nil || canonical == nil ||
-		(canonical.State != supplementBatchPrepared && canonical.State != supplementBatchDispatching) {
+		(canonical.State != supplementBatchPrepared && canonical.State != supplementBatchDispatching &&
+			canonical.State != supplementBatchUnknown) {
 		return false
 	}
 	batch = canonical

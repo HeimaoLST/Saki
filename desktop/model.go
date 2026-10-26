@@ -153,19 +153,23 @@ type appModel struct {
 	settingsDraft   profileDraft
 	settingsError   bool
 
-	issueFormOpen          bool
-	issueFormEditingID     string
-	issueGoal              string
-	issueRequirements      string
-	issueFormError         string
-	taskContextIssueID     string
-	focusIssueGoal         bool
-	focusIssueNew          bool
-	issueFilter            string
-	issueActionError       string
-	issueRequirementDrafts map[string]*string
-	issueCompletionDrafts  map[string]*string
-	supplementAutoPass     bool
+	issueFormOpen                 bool
+	issueFormEditingID            string
+	issueGoal                     string
+	issueRequirements             string
+	issueFormError                string
+	taskContextIssueID            string
+	focusIssueGoal                bool
+	focusIssueNew                 bool
+	issueFilter                   string
+	issueActionError              string
+	issueRequirementDrafts        map[string]*string
+	issueCompletionDrafts         map[string]*string
+	issueSupplementDrafts         map[string]*string
+	issueSupplementFormID         string
+	issueSupplementPreviewID      string
+	issueSupplementShowAllBatches bool
+	supplementAutoPass            bool
 
 	// Runtime mode. demo keeps the local fixture path for tests/screenshots;
 	// the shipped app is runtime-backed.

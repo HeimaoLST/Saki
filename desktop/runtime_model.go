@@ -80,6 +80,7 @@ func newRuntimeApp() (*appModel, error) {
 		a.selected = 0
 	}
 	a.bindTaskContexts()
+	a.normalizeRestoredSupplementBatches()
 	formConfig := startup.Config
 	if formConfig == nil {
 		formConfig = startup.FormConfig

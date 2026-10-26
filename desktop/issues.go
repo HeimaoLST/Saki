@@ -613,6 +613,7 @@ func (a *appModel) checkIssueExecution(rt *runtimeClient, contactID, issueID, ex
 			}
 			_ = a.persist()
 			a.reloadIssueWorkByID(contactID, issueID)
+			a.maybeAutoContinueAllIssues()
 		case "accepted", "running":
 			execution.Status = state.Status
 			execution.Detail = ""
@@ -629,11 +630,12 @@ func (a *appModel) checkIssueExecution(rt *runtimeClient, contactID, issueID, ex
 					w.State = workAccepted
 				}
 			}
+			_ = a.persist()
 		default:
 			execution.Status = issueExecutionUnknown
 			execution.Detail = "Runtime reports no trusted terminal state for this task; inspect the work record or confirm not dispatched. No automatic retry."
+			_ = a.persist()
 		}
-		_ = a.persist()
 	})
 }
 
@@ -655,12 +657,35 @@ func (a *appModel) confirmIssueExecutionNotDispatched(issueID, executionID strin
 	default:
 		return false
 	}
+	oldExecutionStatus, oldExecutionDetail := execution.Status, execution.Detail
+	oldWorkError, oldWorkPending := issue.Work.SendError, issue.Work.pendingExecutionID
+	oldAuto := false
+	if issue.Supplements != nil {
+		oldAuto = issue.Supplements.AutoContinue
+		issue.Supplements.AutoContinue = false
+	}
 	execution.Status = issueExecutionNotDispatched
 	execution.Detail = "User confirmed that no task was dispatched; the execution remains available for an explicit retry."
 	issue.Work.SendState = sendIdle
 	issue.Work.SendError = ""
 	issue.Work.pendingExecutionID = ""
-	_ = a.persist()
+	batch := issueSupplementBatchForExecution(issue, execution.ID)
+	saved := true
+	if batch != nil {
+		if issue.Supplements == nil || !issue.Supplements.NotDispatched(batch, execution.Detail, a.persist) {
+			saved = false
+		}
+	} else if err := a.persist(); err != nil {
+		saved = false
+	}
+	if !saved {
+		execution.Status, execution.Detail = oldExecutionStatus, oldExecutionDetail
+		issue.Work.SendError, issue.Work.pendingExecutionID = oldWorkError, oldWorkPending
+		if issue.Supplements != nil {
+			issue.Supplements.AutoContinue = oldAuto
+		}
+		return false
+	}
 	return true
 }
 

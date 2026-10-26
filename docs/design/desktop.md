@@ -613,7 +613,19 @@ type resolvedTheme struct {
 - **单次输入**：对话和事项 Run/Continue 都沿既有 sendTask 的可选 context 参数。派发前固定并保存该次输入；正文只放 message.text、资料只放 context，不拼进 system 或再次附进正文。每个 issueExecution.Context 是独立不可变快照；后续编辑/刷新不改旧执行。接纳只移除同ID同Revision待发项，后来的编辑仍保留；拒绝、容量满和派发前保存失败不清空。
 - **预算**：GUI检查序列化 caller_context 包装后的合计1MiB，包含名称和来源标签；不是裸文件大小。Go JSON转义相对Rust略保守，最终接纳验证仍由Runtime负责。不静默截断或部分读取后当成功。
 - **历史与复制**：用户资料保持字面文字，独立展示名称/来源和精确原文复制；历史资料是只读记录，不成为待发草稿。Runtime将资料编码为普通text part，本轮GUI保留非空正文首part，后续wrapper才按契约显示；这不提供通用的来源证明。外部context-only输入的首part无法仅凭形状判定，保留原始可读文字而不猜测。
-- **持久化**：contact store v5读原v1-v4，保留既有联系人/会话/事项与旧execution身份；新增待发资料、执行资料快照和未确认对话提交意图。旧v4程序拒绝v5，避免保存时静默丢新字段；降级使用升级前备份或隔离数据目录，不直接交旧程序重写v5。Runtime消息历史仍是执行记录权威，未另存一份消息库。
+- **持久化**：contact store v5读原v1-v4，保留既有联系人/会话/事项与旧execution身份；新增待发资料、执行资料快照和未确认对话提交意图。旧v4程序拒绝v5，避免保存时静默丢新字段；降级使用升级前备份或隔离数据目录，不直接交旧程序重写v5。当前 #142 进一步升到 v6，增加事项补充 ledger；新程序读 v1-v5，旧 v5 程序拒绝 v6，不静默丢补充 receipt。Runtime消息历史仍是执行记录权威，未另存一份消息库。
 - **未确认与恢复**：派发前保存的提交意图在接纳响应故障/重启后保持 unknown；有会话映射的 submitting 恢复为 unknown，没有映射则按“保存会话映射先于派发”的既有顺序视为未派发。自动历史刷新不清除该意图，不自动重发。用户明确 Reload 且成功读到闲置会话与历史后，才保存解除本地提交保护；保留资料并提示先检查记录再手动发送或移除。这不证明不确定消息已经送达/未送达，不按正文匹配猜 task。保存解除状态失败仍保留意图。
 - **验证范围**：`task_context_integration_test.go`通过实际GUI→Rust→本地受控provider及Runtime历史核对单次输入、移除、文件快照、事项/对话归属、重启和只读资料复制；stdio故障代理在真实Rust接纳后将回复替换为协议错误并屏蔽该连接事件，证明未知恢复与不自动重提，不冒称真实网络超时/磁盘故障。容量、派发前保存失败与受控接纳回调中的后续编辑分别覆盖。精确最终组合SHA、全包结果、原始失败与CI见PR170/issue117交付证据。明暗720/1040的对话、事项编辑、执行资料预览均为headless页面，非macOS原生通过。
 - **边界**：没有PDF/OCR/Office、扫描目录、索引、云附件或第二个执行循环。#142补充会消费同一资料快照与发送投影，其自动递交状态机不属于本单。原生文件选择器/IME/系统剪贴板行为仍须原生证据；headless截图和注入剪贴板不替代。
+
+
+## #142 事项补充与自动继续（候选实现，2026-10-26）
+
+代码来源：在本分支 `agent/gui/142-issue-supplements` 的 #117/#115/#153 组合上增量实现；`04e2caa` 为首片，后续 UI/恢复/错误边界与验证 SHA 以本单最终交付为准。本节只描述实际落地的补充 consumption，不表示完整 MVP、原生 CUA 或长期 QA 已通过。
+
+- **数据与原子派发**：`productIssue.Supplements` 持久化 receipt、batch 和自动意图；store v6 读 v1-v5，保留既有 Context/pendingSend/旧 execution 身份。新 `issueExecution` 记录 `RequirementsRevision`、不可变 Context 和 `SupplementBatchID`，batch 记录 `ExecutionID`。`PrepareDispatch` 在唯一 dispatch-before-send save 中同时写入 execution、dispatching batch、snapshot items 与 Work submitting；save 失败回滚未发出的 association，不调用 Runtime。
+- **单一输入**：普通 Run 与自动继续共用 `issueRunCaptured`/`runIssueFor` 的 captured 准备路径；`Prompt` 由当前 Goal/Requirements + 本批补充文本组成，Context 只走既有 `sendTask` 的可选参数，不拼进 system/正文，不复制聊天记录。每条 receipt 保留收到时的 `RequirementsRevision`；当前 batch target 是同一 contact/issue 的当前 revision，`pendingFor` 只取 `<= current`。同 issue 的 prepared/dispatching/unknown batch 跨 revision 阻塞新批次。
+- **自动边界**：已保存补充在已授权（至少一次 execution）的事项上由 Add/真实 terminal/容量/恢复边界做一次单次尝试；未运行事项必须显式 Start。没有 timer、第二 scheduler/queue/history parser；容量/busy 时保留 pending 和自动意图，确认拒绝/unknown/保存失败关闭自动并保留文字与真实 IDs。Stop/Cancel/waiting/failure 撤销未来自动意图，late accepted 仍记录关联，不重发。
+- **接受与回执**：accepted 绑定 session/task/message/execution 和 batch；同一 save 清 exact-ID+Revision 的 Context，之后才处理 buffered terminal/自动下一批。`Accept` 保存失败保留 accepted receipt/真实 IDs、automatic off，不回 pending/not_dispatched。UI 只显示“submitted to runtime execution”，不把 receipt 说成模型采用/要求满足。
+- **恢复与 UI**：重启把 dispatching/unknown ledger 标记为需核对并关闭自动；不自动重派。`Check execution` 先更新真实 execution/task 状态；仅凭 task.status 不把 batch 冒充完整输入已核对，只有可证明完整 Prompt+Context semantic history 时才收敛 receipt。用户“确认未派发”在同一 save 中收敛 execution、ledger batch 和 items；拒绝/未派发批次保留 snapshot，可由明确 Retry 把原文字放回待发并显式 Continue 一次；unknown/accepted 不走该 retry。事项卡新增 target revision、已保存/待递交/等待容量/递交到执行/unknown 列表、全文预览/复制、旧批次展开、Stop/Resume auto 与伴随说明；普通聊天不自动归入事项。prepared 过期只走 ReleasePrepared，不撤销用户 auto。
+- **验证边界**：首片真实受控测试覆盖初始 A 显式 Run 后在途 B、revision 变化、context 精确清理和保存失败不出网；它不是“当前执行中收两条合批”或联系人 B 隔离的最终矩阵证据。后续 UI/恢复/Stop/unknown/容量门禁及最终 full race/vet/build/预览 SHA 以交付日志为准。测试固定 Runtime `c738c633…`，不使用付费模型；原生窗口/CUA 仍未验证。
