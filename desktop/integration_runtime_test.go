@@ -1117,15 +1117,22 @@ func TestGUIOnlineSmoke(t *testing.T) {
 	}, 180*time.Second)
 
 	var status contactStatus
-	var detail string
+	var detail, taskID string
 	var sawTool, sawFinal bool
 	pump.do(func() {
 		ct := app.contacts[0]
-		status, detail = ct.Status, ct.StatusDetail
-		for _, m := range ct.Messages {
-			if m.ToolOutput != "" && strings.Contains(m.ToolOutput, marker) {
-				sawTool = true
+		status, detail, taskID = ct.Status, ct.StatusDetail, ct.LastTaskID
+		for _, work := range ct.Works {
+			if work.TaskID != taskID {
+				continue
 			}
+			for _, tool := range work.Tools {
+				if tool.Finished && strings.Contains(tool.Output, marker) {
+					sawTool = true
+				}
+			}
+		}
+		for _, m := range ct.Messages {
 			if m.Kind == msgContact && strings.Contains(m.Text, marker) && m.ToolName == "" {
 				sawFinal = true
 			}
