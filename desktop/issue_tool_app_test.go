@@ -1108,7 +1108,7 @@ func TestIssueToolQueryResponsesRespectByteBudgetAndUTF8(t *testing.T) {
 		}
 	}
 	issue := ct.issueByID(firstIssueID)
-	for i := 0; i < 80; i++ {
+	for i := 0; i < 32; i++ {
 		issue.Requirements = append(issue.Requirements, &issueRequirement{
 			ID: fmt.Sprintf("requirement-%02d", i), Text: fmt.Sprintf("%02d %s", i, longText), State: requirementUnverified,
 		})
@@ -1131,9 +1131,9 @@ func TestIssueToolQueryResponsesRespectByteBudgetAndUTF8(t *testing.T) {
 		if err != nil || listResponse.IsError {
 			t.Fatalf("budget list page %d = %+v err=%v", page, listResponse, err)
 		}
-		rawList, _ := json.Marshal(listResponse)
+		rawList, _ := json.Marshal(issueToolRPCResponse{JSONRPC: "2.0", ID: json.RawMessage(`"budget-probe"`), Result: listResponse})
 		if len(rawList) > issueToolQueryMaxBytes || !utf8.Valid(rawList) {
-			t.Fatalf("list response bytes=%d validUTF8=%v", len(rawList), utf8.Valid(rawList))
+			t.Fatalf("list MCP response bytes=%d validUTF8=%v", len(rawList), utf8.Valid(rawList))
 		}
 		var list IssueToolIssueListResult
 		if err := json.Unmarshal(issueToolResponseJSON(t, listResponse), &list); err != nil {
@@ -1161,15 +1161,16 @@ func TestIssueToolQueryResponsesRespectByteBudgetAndUTF8(t *testing.T) {
 	if err != nil || getResponse.IsError {
 		t.Fatalf("budget get = %+v err=%v", getResponse, err)
 	}
-	rawGet, _ := json.Marshal(getResponse)
+	rawGet, _ := json.Marshal(issueToolRPCResponse{JSONRPC: "2.0", ID: json.RawMessage(`"budget-probe"`), Result: getResponse})
 	if len(rawGet) > issueToolQueryMaxBytes || !utf8.Valid(rawGet) {
-		t.Fatalf("detail response bytes=%d validUTF8=%v", len(rawGet), utf8.Valid(rawGet))
+		t.Fatalf("detail MCP response bytes=%d validUTF8=%v", len(rawGet), utf8.Valid(rawGet))
 	}
 	var detail IssueToolIssueDetail
 	if err := json.Unmarshal(issueToolResponseJSON(t, getResponse), &detail); err != nil {
 		t.Fatal(err)
 	}
-	if detail.Issue.ID != firstIssueID || detail.Issue.RequirementsRevision != 9 || len(detail.Executions) > 20 {
+	if detail.Issue.ID != firstIssueID || detail.Issue.RequirementsRevision != 9 || len(detail.Executions) > 20 ||
+		detail.RequirementCount != 33 || len(detail.Requirements) >= 33 || !detail.RequirementsHasMore {
 		t.Fatalf("bounded detail identity/range = %+v", detail)
 	}
 }

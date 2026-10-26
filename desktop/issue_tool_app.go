@@ -19,14 +19,14 @@ import (
 )
 
 const (
-	issueToolSourceID              = "nagi_issue_tools"
-	issueToolScopeContextName      = "nagi.issue_tools.scope"
-	issueToolWaitTimeout           = 25 * time.Second
-	issueToolResultExcerptSize     = 4096
-	issueToolResultFilesLimit      = 50
-	issueToolQueryMaxBytes         = 50 * 1024
-	issueToolQueryTextLimit        = 512
-	issueToolQueryRequirementLimit = 32
+	issueToolSourceID           = "nagi_issue_tools"
+	issueToolScopeContextName   = "nagi.issue_tools.scope"
+	issueToolWaitTimeout        = 25 * time.Second
+	issueToolResultExcerptSize  = 4096
+	issueToolResultFilesLimit   = 50
+	issueToolQueryMaxBytes      = 16 * 1024
+	issueToolMCPEnvelopeReserve = 512
+	issueToolQueryTextLimit     = 512
 )
 
 func newIssueToolTurnID() string {
@@ -782,7 +782,7 @@ func issueToolResponseBytes(value any) int {
 	if err != nil {
 		return issueToolQueryMaxBytes + 1
 	}
-	return len(data)
+	return len(data) + issueToolMCPEnvelopeReserve
 }
 
 func boundIssueToolList(result IssueToolIssueListResult) IssueToolIssueListResult {
@@ -817,10 +817,11 @@ func boundIssueToolDetail(detail *IssueToolIssueDetail) *IssueToolIssueDetail {
 		detail.Executions[index].Detail = truncateIssueToolText(detail.Executions[index].Detail, issueToolQueryTextLimit)
 	}
 	detail.ResultExcerpt = truncateIssueToolText(detail.ResultExcerpt, issueToolResultExcerptSize)
+	detail.ResultUnavailable = truncateIssueToolText(detail.ResultUnavailable, issueToolQueryTextLimit)
 	if detail.RequirementCount == 0 {
 		detail.RequirementCount = len(detail.Requirements)
 	}
-	for len(detail.Requirements) > issueToolQueryRequirementLimit && issueToolResponseBytes(detail) > issueToolQueryMaxBytes {
+	for len(detail.Requirements) > 0 && issueToolResponseBytes(detail) > issueToolQueryMaxBytes {
 		detail.Requirements = detail.Requirements[:len(detail.Requirements)-1]
 		detail.RequirementsHasMore = true
 	}
