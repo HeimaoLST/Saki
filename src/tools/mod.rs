@@ -35,7 +35,7 @@ impl ToolContext {
 pub fn register_builtins(registry: &mut ToolRegistry, context: ToolContext) {
     let context = Arc::new(context);
     registry.registry(read::init(context.clone()));
-    registry.registry(bash::init(context.clone()));
+    bash::register_builtin(registry, context.clone());
     registry.registry(edit::init(context.clone()));
     registry.registry(write::init(context));
 }

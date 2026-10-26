@@ -98,7 +98,7 @@ impl PreparedTools {
         registry: &mut ToolRegistry,
     ) {
         let resources = self.resources.clone();
-        registry.set_task_cleanup(move || {
+        registry.add_task_cleanup(move || {
             let resources = resources.clone();
             Box::pin(async move {
                 resources.finish_task().await.map_err(|error| {

@@ -45,7 +45,7 @@ impl ToolCall {
 }
 pub struct ToolRegistry {
     tools: HashMap<String, Tool>,
-    task_cleanup: Option<TaskCleanup>,
+    task_cleanup: Vec<TaskCleanup>,
 }
 impl Default for ToolRegistry {
     fn default() -> Self {
@@ -56,7 +56,7 @@ impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
-            task_cleanup: None,
+            task_cleanup: Vec::new(),
         }
     }
     pub fn registry(&mut self, tool: Tool) {
@@ -76,17 +76,20 @@ impl ToolRegistry {
         self.tools.retain(|name, _| names.contains(name));
     }
 
-    pub(crate) fn set_task_cleanup(
+    pub(crate) fn add_task_cleanup(
         &mut self,
         cleanup: impl Fn() -> TaskCleanupFuture + Send + Sync + 'static,
     ) {
-        self.task_cleanup = Some(Arc::new(cleanup));
+        self.task_cleanup.push(Arc::new(cleanup));
     }
     pub(crate) async fn finish_task(&self) -> Result<(), ToolError> {
-        if let Some(cleanup) = &self.task_cleanup {
-            cleanup().await?;
+        let mut failure = None;
+        for cleanup in &self.task_cleanup {
+            if let Err(error) = cleanup().await {
+                failure.get_or_insert(error);
+            }
         }
-        Ok(())
+        failure.map_or(Ok(()), Err)
     }
     pub fn list_definition(&self) -> Vec<ToolDefinition> {
         let mut definitions: Vec<_> = self
