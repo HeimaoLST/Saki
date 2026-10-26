@@ -12,12 +12,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
-// v3 adds issue.work_session_id. v1/v2 remain readable here; older apps
-// reject v3, so they cannot load and silently save over the new field.
-const contactStoreVersion = 3
+// v3 added issue.work_session_id. v4 makes structured requirements the
+// persisted truth; v1-v3 remain readable here and older apps reject the new
+// version rather than silently dropping fields.
+const contactStoreVersion = 4
 
 type storedContact struct {
 	ID           string `json:"id"`
@@ -32,26 +34,38 @@ type storedContact struct {
 }
 
 type storedIssueExecution struct {
+	ID                   string `json:"id"`
+	SessionID            string `json:"session_id,omitempty"`
+	TaskID               string `json:"task_id,omitempty"`
+	MessageID            string `json:"message_id,omitempty"`
+	Prompt               string `json:"prompt,omitempty"`
+	Status               string `json:"status,omitempty"`
+	Detail               string `json:"detail,omitempty"`
+	RequirementsRevision int    `json:"requirements_revision,omitempty"`
+}
+
+type storedRequirement struct {
 	ID        string `json:"id"`
-	SessionID string `json:"session_id,omitempty"`
-	TaskID    string `json:"task_id,omitempty"`
-	MessageID string `json:"message_id,omitempty"`
-	Prompt    string `json:"prompt,omitempty"`
-	Status    string `json:"status,omitempty"`
-	Detail    string `json:"detail,omitempty"`
+	Text      string `json:"text"`
+	State     string `json:"state,omitempty"`
+	Evidence  string `json:"evidence,omitempty"`
+	UpdatedAt int64  `json:"updated_at,omitempty"`
 }
 
 type storedIssue struct {
-	ID            string                 `json:"id"`
-	ContactID     string                 `json:"contact_id"`
-	Goal          string                 `json:"goal"`
-	Requirements  string                 `json:"requirements,omitempty"`
-	Status        string                 `json:"status,omitempty"`
-	Evidence      string                 `json:"evidence,omitempty"`
-	CreatedAt     int64                  `json:"created_at,omitempty"`
-	UpdatedAt     int64                  `json:"updated_at,omitempty"`
-	WorkSessionID string                 `json:"work_session_id,omitempty"`
-	Executions    []storedIssueExecution `json:"executions,omitempty"`
+	ID                   string                 `json:"id"`
+	ContactID            string                 `json:"contact_id"`
+	Goal                 string                 `json:"goal"`
+	Requirements         string                 `json:"requirements,omitempty"` // legacy v1-v3 only
+	RequirementsRevision int                    `json:"requirements_revision,omitempty"`
+	RequirementItems     []storedRequirement    `json:"requirement_items,omitempty"`
+	Status               string                 `json:"status,omitempty"`
+	Archived             bool                   `json:"archived,omitempty"`
+	Evidence             string                 `json:"evidence,omitempty"`
+	CreatedAt            int64                  `json:"created_at,omitempty"`
+	UpdatedAt            int64                  `json:"updated_at,omitempty"`
+	WorkSessionID        string                 `json:"work_session_id,omitempty"`
+	Executions           []storedIssueExecution `json:"executions,omitempty"`
 }
 
 type storedState struct {
@@ -87,7 +101,7 @@ func openContactStore(path, defaultWorkspace string) (*contactStore, error) {
 		if err := json.Unmarshal(data, &store.state); err != nil {
 			return nil, fmt.Errorf("contact store %s is not readable: %w", path, err)
 		}
-		if store.state.Version != 1 && store.state.Version != 2 && store.state.Version != contactStoreVersion {
+		if store.state.Version < 1 || store.state.Version > contactStoreVersion {
 			return nil, fmt.Errorf("contact store %s has unsupported version %d", path, store.state.Version)
 		}
 		if len(store.state.Contacts) == 0 {
@@ -192,15 +206,25 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 		for _, issue := range c.Issues {
 			stored := storedIssue{
 				ID: issue.ID, ContactID: issue.ContactID, Goal: issue.Goal,
-				Requirements: issue.Requirements, Status: issue.Status,
+				Status: issue.Status, Archived: issue.Archived,
 				Evidence: issue.Evidence, CreatedAt: issue.CreatedAt, UpdatedAt: issue.UpdatedAt,
-				WorkSessionID: issue.WorkSessionID,
+				WorkSessionID: issue.WorkSessionID, RequirementsRevision: issue.RequirementsRevision,
+			}
+			for _, requirement := range issue.Requirements {
+				if requirement == nil || strings.TrimSpace(requirement.Text) == "" {
+					continue
+				}
+				stored.RequirementItems = append(stored.RequirementItems, storedRequirement{
+					ID: requirement.ID, Text: requirement.Text, State: requirement.State,
+					Evidence: requirement.Evidence, UpdatedAt: requirement.UpdatedAt,
+				})
 			}
 			for _, execution := range issue.Executions {
 				stored.Executions = append(stored.Executions, storedIssueExecution{
 					ID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID,
 					MessageID: execution.MessageID, Prompt: execution.Prompt,
 					Status: execution.Status, Detail: execution.Detail,
+					RequirementsRevision: execution.RequirementsRevision,
 				})
 			}
 			s.state.Issues = append(s.state.Issues, stored)

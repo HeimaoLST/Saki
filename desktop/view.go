@@ -196,6 +196,9 @@ func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 				history.Focus()
 				a.focusHistory = false
 			}
+			ui.Button(c, "Conversation model").FontSize(12).Padding(4, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+				a.openSessionModel(ct.SessionID, "conversation", ct.Name)
+			})
 			settings := ui.Button(c, "Settings").FontSize(12).Padding(4, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openSettings() })
 			if a.focusSettings {
 				settings.Focus()
@@ -573,7 +576,7 @@ func speakerLabel(c *contact, e historyEntry) string {
 func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 	returnAux := a.aux
 	width := float32(340)
-	if returnAux == "configuration" {
+	if returnAux == "configuration" || returnAux == "model" {
 		width = 560
 	}
 	open := true
@@ -587,6 +590,8 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 						a.sourcesPanel(c, t)
 					case "configuration":
 						a.configurationPanel(c, t)
+					case "model":
+						a.modelPanel(c, t)
 					default:
 						a.settingsPanel(c, t)
 					}
@@ -595,6 +600,9 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 		})
 	})
 	if !open {
+		if returnAux == "model" && a.modelOpActive {
+			return
+		}
 		a.aux = ""
 		switch returnAux {
 		case "settings":

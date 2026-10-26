@@ -61,7 +61,9 @@ func TestIssueStoreRoundTripAndV1Compatibility(t *testing.T) {
 	}
 	stored := reloaded.state.Issues[0]
 	if stored.ID == "" || stored.ContactID != "contact-old" || stored.Goal != "Implement login" ||
-		stored.Requirements != "Use SMS verification." || stored.Status != issueStatusOpen {
+		stored.Requirements != "" || len(stored.RequirementItems) != 1 ||
+		stored.RequirementItems[0].Text != "Use SMS verification." ||
+		stored.Status != issueStatusNotStarted {
 		t.Fatalf("stored issue = %+v", stored)
 	}
 	if reloaded.state.Contacts[0].Draft != "preserved draft" || reloaded.state.Contacts[0].SessionID != "session-old" {
@@ -86,7 +88,7 @@ func TestCreateIssueRequiresGoalAndPersistsBeforeAnyRun(t *testing.T) {
 		t.Fatalf("createIssue failed: %s", a.issueFormError)
 	}
 	issue := a.contacts[0].Issues[0]
-	if issue.ContactID != "c1" || issue.Goal != "Implement login" || issue.Requirements != "Must support SMS." {
+	if issue.ContactID != "c1" || issue.Goal != "Implement login" || issueRequirementsText(issue) != "Must support SMS." {
 		t.Fatalf("issue fields = %+v", issue)
 	}
 	if len(issue.Executions) != 0 {
@@ -98,7 +100,7 @@ func TestCreateIssueRequiresGoalAndPersistsBeforeAnyRun(t *testing.T) {
 }
 
 func TestIssueEvidenceDoesNotInferCompletion(t *testing.T) {
-	issue := &productIssue{ID: "i1", Goal: "draft", Requirements: "needs approval"}
+	issue := &productIssue{ID: "i1", Goal: "draft", Requirements: parseIssueRequirements("needs approval")}
 	text := issueEvidenceText(issue)
 	if !strings.Contains(text, "not recorded") || !strings.Contains(text, "not item completion") {
 		t.Fatalf("evidence text = %q", text)
@@ -214,7 +216,7 @@ func TestIssueFormCreatesExplicitItemWithoutTouchingComposer(t *testing.T) {
 		t.Fatalf("issue form did not create/select item: %+v", ct.Issues)
 	}
 	issue := ct.Issues[0]
-	if issue.Goal != "Implement login" || issue.Requirements != "Must use SMS." {
+	if issue.Goal != "Implement login" || issueRequirementsText(issue) != "Must use SMS." {
 		t.Fatalf("issue fields = %+v", issue)
 	}
 	if ct.Draft != "ordinary composer draft" {
@@ -223,7 +225,7 @@ func TestIssueFormCreatesExplicitItemWithoutTouchingComposer(t *testing.T) {
 	if !tr.Focused("New issue") {
 		t.Fatal("saving the issue did not return focus to New issue")
 	}
-	for _, want := range []string{"Implement login", "Must use SMS.", "Original requirements · unverified", "Run issue"} {
+	for _, want := range []string{"Implement login", "Must use SMS.", "Requirements · revision 1", "Unverified", "Start issue"} {
 		if !tr.HasText(want) {
 			t.Errorf("workspace missing %q", want)
 		}
@@ -307,8 +309,8 @@ func TestIssueResultAttributionFollowsSelectedIssue(t *testing.T) {
 	a, ct := workspaceTestApp(t)
 	ct.Workspace = t.TempDir()
 	ct.Issues = []*productIssue{
-		{ID: "i1", ContactID: "saki", Goal: "First issue", Status: issueStatusOpen, Executions: []*issueExecution{{ID: "e1", TaskID: "t1", Status: issueExecutionCompleted}}},
-		{ID: "i2", ContactID: "saki", Goal: "Second issue", Status: issueStatusOpen, Executions: []*issueExecution{{ID: "e2", TaskID: "t2", Status: issueExecutionRunning}}},
+		{ID: "i1", ContactID: "saki", Goal: "First issue", Status: issueStatusInProgress, Executions: []*issueExecution{{ID: "e1", TaskID: "t1", Status: issueExecutionCompleted}}},
+		{ID: "i2", ContactID: "saki", Goal: "Second issue", Status: issueStatusInProgress, Executions: []*issueExecution{{ID: "e2", TaskID: "t2", Status: issueExecutionRunning}}},
 	}
 	ct.SelectedIssueID = "i1"
 	ct.ActiveTaskID = "t2"
@@ -333,7 +335,7 @@ func TestIssueResultAttributionFollowsSelectedIssue(t *testing.T) {
 	if tr.HasText("No current work") {
 		t.Fatal("selected issue fell back to unrelated empty work")
 	}
-	if err := tr.Click("Second issue"); err != nil {
+	if err := tr.Click("In progress · Second issue"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()

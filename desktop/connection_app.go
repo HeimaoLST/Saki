@@ -216,6 +216,9 @@ func runtimeHasExited(rt *runtimeClient) bool {
 }
 
 func (a *appModel) connectionReloadBlocked() string {
+	if a.modelOpActive {
+		return "Wait for the in-flight session model operation to finish before applying a new connection."
+	}
 	if a.connectionApplying {
 		return "A new connection is already being applied."
 	}
@@ -346,6 +349,9 @@ func (a *appModel) applyConnectionWorker(gen int, path, sessionDir, helperHint s
 		}
 		installed = true
 		a.connectionGeneration = gen
+		a.modelRecovery = nil
+		a.modelForm = nil
+		a.modelOpenToken++
 		a.rt = rt
 		a.connectionLaunch = launch
 		a.connectionEffective = &config
@@ -649,7 +655,7 @@ func (a *appModel) connectionPanel(c *ui.Context, t *ui.Theme) {
 }
 
 func (a *appModel) finishShutdown() {
-	if a.quitReady || a.shutdownDrainStarted || a.connectionSaveInFlight || a.connectionApplying || a.connectionTesting {
+	if a.quitReady || a.shutdownDrainStarted || a.connectionSaveInFlight || a.connectionApplying || a.connectionTesting || a.modelOpActive {
 		return
 	}
 	if a.rt == nil {
