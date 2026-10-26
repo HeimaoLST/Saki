@@ -985,7 +985,11 @@ func TestQuitDrainsIssueAndConversationSessions(t *testing.T) {
 		issue := ct.issueByID(issueID)
 		return ct.ActiveTaskID != "" && issue != nil && issue.Work.ActiveTaskID != ""
 	})
-	h.pump.do(func() { h.app.beginShutdown() })
+	quit := make(chan struct{}, 1)
+	h.pump.do(func() {
+		h.app.requestQuit = func() { quit <- struct{}{} }
+		h.app.beginShutdown()
+	})
 	h.pump.wait(func() bool { return h.app.runtimeStatus == runtimeStateDraining })
 	provider.release("quit-A")
 	h.pump.wait(func() bool {
@@ -1005,6 +1009,11 @@ func TestQuitDrainsIssueAndConversationSessions(t *testing.T) {
 		issue := ct.issueByID(issueID)
 		return h.app.runtimeStatus == runtimeStateExited && ct.ActiveTaskID == "" && issue.Work.ActiveTaskID == ""
 	})
+	select {
+	case <-quit:
+	case <-time.After(5 * time.Second):
+		t.Fatal("final shutdown callback did not reach the UI pump")
+	}
 	h.snapshot(func() {
 		ct := h.app.selectedContact()
 		issue := ct.issueByID(issueID)
