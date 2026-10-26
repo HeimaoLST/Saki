@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
@@ -942,5 +944,55 @@ func TestIssueSupplementCancelDuringPendingAcceptRecordsLateReceiptAndStops(t *t
 	}
 	if provider.count() > 1 {
 		t.Fatalf("late accept/cancel resubmitted supplement: provider=%d", provider.count())
+	}
+}
+
+func TestIssueSupplementUIStartWithSupplementActuallyDispatches(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startGUIHarness(t, binary, provider, "supplement-ui-start")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	var issueID string
+	var setupErr error
+	h.pump.do(func() {
+		if !h.app.createIssue("UI start goal", "UI start requirement") {
+			setupErr = errors.New(h.app.issueFormError)
+			return
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		if err := h.app.addIssueSupplement(ct, issueID, "UI start supplement"); err != nil {
+			setupErr = err
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	var clickErr error
+	h.pump.do(func() {
+		h.app.windowWidth = 1040
+		tr := ui.NewTester(h.app.view, 1040, 720)
+		tr.Frame()
+		clickErr = tr.Click("Start with supplement")
+		tr.Frame()
+	})
+	if clickErr != nil {
+		t.Fatalf("UI Start with supplement: %v", clickErr)
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && len(issue.Executions) == 1 &&
+			issue.Executions[0].Status == issueExecutionCompleted &&
+			issue.Supplements.pendingCount() == 0
+	})
+	if provider.count() != 1 {
+		t.Fatalf("UI Start with supplement provider requests = %d", provider.count())
+	}
+	if !strings.Contains(taskContextLastUserText(t, provider.body(0)), "UI start supplement") {
+		t.Fatalf("UI Start with supplement provider body missing supplement: %s", provider.body(0))
 	}
 }

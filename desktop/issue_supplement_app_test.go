@@ -247,3 +247,58 @@ func TestIssueSupplementUITesterPreviewCopyAndSaveFailure(t *testing.T) {
 		t.Fatalf("save failure lost draft/added item: %q / %d", *a.issueSupplementDraft(issueID), issue.Supplements.pendingCount())
 	}
 }
+
+func TestIssueSupplementOwnerDraftsStayIsolatedAcrossContactSwitch(t *testing.T) {
+	a, ct := taskContextApp(t)
+	if !a.createIssue("owner draft goal", "owner draft requirement") {
+		t.Fatal(a.issueFormError)
+	}
+	issue := ct.selectedIssue()
+	issueID := issue.ID
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("Add supplement"); err != nil {
+		t.Fatal(err)
+	}
+	a.windowWidth = 1040
+	*a.issueSupplementDraft(issueID) = "draft for X owner"
+	a.addRuntimeContact()
+	if a.selectedContact().ID == ct.ID {
+		t.Fatal("owner switch did not select second contact")
+	}
+	a.selectContact(0)
+	if got := *a.issueSupplementDraft(issueID); got != "draft for X owner" {
+		t.Fatalf("owner-1 draft after switch = %q", got)
+	}
+}
+
+func TestIssueSupplementUnknownActionIsExposedWithoutFakeRecovery(t *testing.T) {
+	a, ct := taskContextApp(t)
+	if !a.createIssue("unknown UI goal", "unknown UI requirement") {
+		t.Fatal(a.issueFormError)
+	}
+	issue := ct.selectedIssue()
+	if err := a.addIssueSupplement(ct, issue.ID, "unknown UI text"); err != nil {
+		t.Fatal(err)
+	}
+	execution := &issueExecution{ID: "unknown-ui-exec", Prompt: "unknown UI prompt", Status: issueExecutionPending, RequirementsRevision: issue.RequirementsRevision}
+	issue.Executions = append(issue.Executions, execution)
+	batch, err := issue.Supplements.PrepareDispatch(issueSupplementTargetFor(ct, issue), execution, a.persist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !issue.Supplements.Unknown(batch, "unknown UI delivery", a.persist) {
+		t.Fatal("unknown transition failed")
+	}
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("Check execution"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.issueActionError == "" || batch.State != supplementBatchUnknown {
+		t.Fatalf("unknown action = error %q batch %q", a.issueActionError, batch.State)
+	}
+}
