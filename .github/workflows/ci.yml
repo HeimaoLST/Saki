@@ -85,7 +85,7 @@ jobs:
         timeout-minutes: 10
         working-directory: desktop
         env:
-          SAKI_TEST_RUNTIME_BIN: ${{ github.workspace }}/target/debug/Saki
+          SAKI_TEST_RUNTIME_BIN: ""
           SAKI_TEST_ONLINE: "0"
           CGO_ENABLED: "0"
         run: |
