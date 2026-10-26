@@ -295,6 +295,7 @@ type issueResultPanelState struct {
 // inspects, opens, reveals or starts a task by itself.
 type issueResultPanelActions struct {
 	Close        func()
+	Reload       func()
 	SelectFile   func(key string)
 	CheckFile    func(file issueResultFile)
 	OpenFile     func(file issueResultFile)
@@ -316,6 +317,9 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 	root.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			ui.Text(c, "Run results").FontSize(16).FontWeight(600).TextColor(th.Text).Grow(1)
+			if actions.Reload != nil {
+				ui.Button(c, "Reload result").FontSize(12).OnClick(actions.Reload)
+			}
 			if actions.Close != nil {
 				ui.Button(c, "Close results").FontSize(12).OnClick(actions.Close)
 			}
