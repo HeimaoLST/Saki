@@ -760,30 +760,28 @@ func TestIssueSupplementWaitingRequiresExplicitResumeAndSendsOnce(t *testing.T) 
 		return issue != nil && issue.Work.ActiveTaskID == "" && len(issue.Executions) == 1 &&
 			issue.Executions[0].Status == issueExecutionCompleted
 	})
-	var waitingOK bool
+	var waitingOK, answerPendingOK bool
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
 		issue := ct.issueByID(issueID)
-		if !h.app.setIssueSupplementAuto(ct, issueID, false) {
-			setupErr = errors.New("failed to stop auto")
-			return
-		}
-		if err := h.app.addIssueSupplement(ct, issueID, "waiting answer"); err != nil {
-			setupErr = err
-			return
-		}
 		if !h.app.markIssueWaiting(issueID) {
 			setupErr = errors.New("mark waiting failed")
 			return
 		}
-		waitingOK = issue.Status == issueStatusWaitingUser && !issue.Supplements.AutoContinue &&
+		waitingOK = issue.Status == issueStatusWaitingUser &&
+			(issue.Supplements == nil || !issue.Supplements.AutoContinue)
+		if err := h.app.addIssueSupplement(ct, issueID, "waiting answer"); err != nil {
+			setupErr = err
+			return
+		}
+		answerPendingOK = issue.Status == issueStatusWaitingUser && !issue.Supplements.AutoContinue &&
 			issue.Supplements.pendingCount() == 1
 	})
 	if setupErr != nil {
 		t.Fatal(setupErr)
 	}
-	if !waitingOK {
-		t.Fatal("waiting state or auto/pending state not retained")
+	if !waitingOK || !answerPendingOK {
+		t.Fatal("waiting did not revoke automatic continuation or retained answer pending")
 	}
 	if provider.count() != 1 {
 		t.Fatalf("waiting issue sent supplement automatically: provider=%d", provider.count())
@@ -865,51 +863,66 @@ func TestIssueSupplementCancelDuringPendingAcceptRecordsLateReceiptAndStops(t *t
 	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 1)
 	defer func() {
 		provider.release("cancel-late-supp")
+		h.app.setUIHook(func(fn func()) {
+			if !h.closed {
+				h.pump.q <- fn
+			}
+		})
 		if !h.closed {
 			h.shutdown(t)
 		}
 	}()
 	manual := make(chan func(), 8)
 	var issueID string
+	var setupErr error
 	h.pump.do(func() {
 		if !h.app.createIssue("cancel late supplement", "keep late receipt") {
-			t.Fatal(h.app.issueFormError)
+			setupErr = errors.New(h.app.issueFormError)
+			return
 		}
 		ct := h.app.selectedContact()
 		issueID = ct.SelectedIssueID
 		if err := h.app.addIssueSupplement(ct, issueID, "cancel-late-supp text"); err != nil {
-			t.Fatalf("add supplement: %v", err)
+			setupErr = err
+			return
 		}
 		h.app.setUIHook(func(fn func()) { manual <- fn })
 		if !h.app.runIssue(issueID) {
-			t.Fatalf("run issue: %s", h.app.issueFormError)
+			setupErr = errors.New(h.app.issueFormError)
 		}
 	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
 	var mapping func()
 	select {
 	case mapping = <-manual:
 	case <-time.After(15 * time.Second):
 		t.Fatal("issue session mapping callback did not arrive")
 	}
+	var cancelErr, latchErr error
 	h.pump.do(func() {
 		issue := h.app.selectedContact().issueByID(issueID)
 		if issue.Work.SendState != sendSubmitting {
-			t.Fatalf("expected pending acceptance, got %v", issue.Work.SendState)
-		}
-		if !h.app.cancelIssueProduct(issueID) {
-			t.Fatal("Cancel during pending supplement acceptance failed")
-		}
-		if issue.Status != issueStatusCanceled || !issue.Work.cancelAfterAccept {
-			t.Fatalf("cancel latch = status %q latch %v", issue.Status, issue.Work.cancelAfterAccept)
+			cancelErr = errors.New("issue was not pending acceptance")
+		} else if !h.app.cancelIssueProduct(issueID) {
+			cancelErr = errors.New("Cancel during pending supplement acceptance failed")
+		} else if issue.Status != issueStatusCanceled || !issue.Work.cancelAfterAccept {
+			latchErr = errors.New("cancel latch was not recorded")
 		}
 		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
 	})
-	h.pump.do(mapping)
-	select {
-	case <-provider.arrived["cancel-late-supp"]:
-	case <-time.After(15 * time.Second):
-		t.Fatal("late supplement task did not reach provider")
+	if cancelErr != nil || latchErr != nil {
+		t.Fatalf("cancel setup = %v / %v", cancelErr, latchErr)
 	}
+	h.pump.do(mapping)
+	// The cancellation intent is already latched before the accepted callback.
+	// Wait for the real accepted execution ID, not a model/provider HTTP call:
+	// cancel may stop the task before the provider is invoked.
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && len(issue.Executions) == 1 && issue.Executions[0].TaskID != ""
+	})
 	h.pump.wait(func() bool {
 		issue := h.app.selectedContact().issueByID(issueID)
 		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
@@ -927,7 +940,7 @@ func TestIssueSupplementCancelDuringPendingAcceptRecordsLateReceiptAndStops(t *t
 	if !lateOK {
 		t.Fatal("late accepted supplement did not retain real IDs or cancel intent")
 	}
-	if provider.count() != 1 {
+	if provider.count() > 1 {
 		t.Fatalf("late accept/cancel resubmitted supplement: provider=%d", provider.count())
 	}
 }

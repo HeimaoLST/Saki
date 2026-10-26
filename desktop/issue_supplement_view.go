@@ -28,18 +28,16 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 		return
 	}
 	ui.Divider(c)
-	ui.Row(c).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "Supplements").FontSize(12).FontWeight(600).TextColor(t.Text)
-		if pending > 0 {
-			ui.Text(c, fmt.Sprintf("%d pending", pending)).FontSize(10).TextColor(t.Warning)
-		}
-		ui.Spacer(c)
-		if auto {
-			ui.Text(c, "Automatic continuation on").FontSize(10).TextColor(t.TextMuted)
-		} else {
-			ui.Text(c, "Automatic continuation stopped").FontSize(10).TextColor(t.Warning)
-		}
-	})
+	title := "Supplements"
+	if pending > 0 {
+		title = fmt.Sprintf("Supplements · %d pending", pending)
+	}
+	ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(t.Text)
+	if auto {
+		ui.Text(c, "Automatic continuation on").FontSize(10).TextColor(t.TextMuted)
+	} else {
+		ui.Text(c, "Automatic continuation stopped").FontSize(10).TextColor(t.Warning)
+	}
 	ui.Text(c, fmt.Sprintf("Current target · revision %d · %s", issue.RequirementsRevision, truncate(issue.Goal, 100))).
 		FontSize(10).LineHeight(1.35).TextColor(t.TextMuted)
 	if ledger != nil {

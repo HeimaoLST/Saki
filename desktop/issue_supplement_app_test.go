@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func TestIssueSupplementBusyAdmissionKeepsPendingAndAutomaticIntent(t *testing.T) {
@@ -193,5 +195,55 @@ func TestIssueSupplementHistoryMatchesRealJournalShape(t *testing.T) {
 	assistantRecords[1].Record.Items[0].Role = "assistant"
 	if supplementHistoryMatches(execution, assistantRecords) {
 		t.Fatal("assistant text was accepted as recorded user input")
+	}
+}
+
+func TestIssueSupplementUITesterPreviewCopyAndSaveFailure(t *testing.T) {
+	a, ct := taskContextApp(t)
+	if !a.createIssue("UI supplement goal", "UI supplement requirement") {
+		t.Fatal(a.issueFormError)
+	}
+	issue := ct.selectedIssue()
+	issueID := issue.ID
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("Add supplement"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	*a.issueSupplementDraft(issueID) = "exact supplement text\n第二行"
+	if err := tr.Click("Save supplement"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if issue.Supplements == nil || issue.Supplements.pendingCount() != 1 {
+		t.Fatal("UI add did not persist pending supplement")
+	}
+	if err := tr.Click("Preview full text"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if err := tr.Click("Copy supplement text"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != "exact supplement text\n第二行" {
+		t.Fatalf("supplement copy = %q", got)
+	}
+	if err := tr.Click("Add supplement"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	*a.issueSupplementDraft(issueID) = "must survive save failure"
+	oldStore := a.store.path
+	a.store.path = t.TempDir()
+	if err := tr.Click("Save supplement"); err != nil {
+		t.Fatal(err)
+	}
+	a.store.path = oldStore
+	tr.Frame()
+	if *a.issueSupplementDraft(issueID) != "must survive save failure" ||
+		issue.Supplements.pendingCount() != 1 {
+		t.Fatalf("save failure lost draft/added item: %q / %d", *a.issueSupplementDraft(issueID), issue.Supplements.pendingCount())
 	}
 }

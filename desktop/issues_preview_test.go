@@ -217,7 +217,7 @@ func TestPreviewSupplementStates(t *testing.T) {
 		for _, size := range []struct {
 			name          string
 			width, height int
-		}{{"720", 720, 640}, {"960", 960, 640}, {"1040", 1040, 720}, {"1380", 1380, 900}} {
+		}{{"320", 320, 900}, {"360", 360, 800}, {"720", 720, 640}, {"960", 960, 640}, {"1040", 1040, 720}, {"1380", 1380, 900}} {
 			a := issuePreviewApp("supplement")
 			a.windowWidth = size.width
 			tr := ui.NewTester(a.view, size.width, size.height)
