@@ -440,7 +440,11 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 				}
 			})
 		}
-		ui.Text(c, "Completion: "+issueEvidenceText(issue)).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
+		completion := issueEvidenceText(issue)
+		if issue.Evidence != "" && issue.Status != issueStatusCompleted {
+			completion = "Previous completion evidence: " + issue.Evidence
+		}
+		ui.Text(c, "Completion: "+completion).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 		a.issueActions(c, t, ct, issue, editable)
 
 		ui.Divider(c)

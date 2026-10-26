@@ -494,6 +494,7 @@ func (a *appModel) selectIssue(issueID string) {
 	}
 	ct.SelectedIssueID = issueID
 	ct.SelectedWorkTaskID = ""
+	a.issueActionError = ""
 }
 
 func (a *appModel) showIssueWork(issueID, taskID string) {

@@ -717,6 +717,9 @@ func (a *appModel) restoreIssueWork(rt *runtimeClient, generation int, contactID
 			if execution := ct.executionByTask(session.ActiveTask.TaskID); execution != nil {
 				execution.Status = issueExecutionRunning
 			}
+			if issue.Status == issueStatusCanceled {
+				_ = a.cancelIssueFor(ct, issue.ID)
+			}
 			return
 		}
 		issue.Work.ActiveTaskID = ""
