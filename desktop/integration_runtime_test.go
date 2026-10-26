@@ -1324,3 +1324,106 @@ func TestGUIAppRejectedComposerSendKeepsInFlightIssueAssociation(t *testing.T) {
 	}
 	h.shutdown(t)
 }
+
+func TestGUIShutdownWaitsForFinalOwnerCallback(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startHarnessForShutdownBarrier(t, binary, provider)
+	callbacks := make(chan func(), 8)
+	h.pump.do(func() {
+		h.app.setUIHook(func(fn func()) { callbacks <- fn })
+	})
+	var quitCount int
+	h.pump.do(func() {
+		h.app.requestQuit = func() { quitCount++ }
+		h.app.beginShutdown()
+	})
+
+	var onExit func()
+	select {
+	case onExit = <-callbacks:
+	case <-time.After(15 * time.Second):
+		t.Fatal("OnExit callback did not arrive")
+	}
+	h.pump.do(onExit)
+	var exited, ready bool
+	h.pump.do(func() {
+		exited = h.app.runtimeStatus == runtimeStateExited
+		ready = h.app.quitReady
+	})
+	if !exited || ready {
+		t.Fatalf("after OnExit: exited=%v quitReady=%v", exited, ready)
+	}
+
+	var final func()
+	select {
+	case final = <-callbacks:
+	case <-time.After(15 * time.Second):
+		t.Fatal("final finishShutdown callback did not arrive")
+	}
+	cleanupDone := make(chan struct{})
+	go func() {
+		h.shutdown(t)
+		close(cleanupDone)
+	}()
+	select {
+	case <-cleanupDone:
+		t.Fatal("cleanup completed before final owner callback")
+	default:
+	}
+	h.pump.do(final)
+	select {
+	case <-cleanupDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cleanup did not complete after final callback")
+	}
+	if quitCount != 1 || !h.closed {
+		t.Fatalf("final owner callback count=%d closed=%v", quitCount, h.closed)
+	}
+	// The original requestQuit closure must be the one called; h.shutdown must
+	// not replace it with a fresh one-shot signal.
+	h.shutdown(t)
+	if quitCount != 1 {
+		t.Fatalf("idempotent cleanup changed quit callback count: %d", quitCount)
+	}
+	select {
+	case extra := <-callbacks:
+		t.Fatalf("unexpected callback after final owner completion: %p", extra)
+	default:
+	}
+}
+
+func startHarnessForShutdownBarrier(t *testing.T, binary string, provider *providerFixture) *guiHarness {
+	t.Helper()
+	server := httptest.NewServer(provider.handler(t, "shutdown-barrier"))
+	root := t.TempDir()
+	t.Setenv("SAKI_GUI_STORE", filepath.Join(root, "gui", "contacts.json"))
+	t.Setenv("SAKI_GUI_WORKDIR", root)
+	t.Setenv("SAKI_SESSION_DIR", filepath.Join(root, "sessions"))
+	t.Setenv("SAKI_RUNTIME_BIN", binary)
+	t.Setenv("API_KEY", "offline-fixture")
+	t.Setenv("SAKI_API", "openai-responses")
+	t.Setenv("SAKI_BASE_URL", server.URL+"/v1")
+	t.Setenv("SAKI_MODEL", "fixture")
+	t.Setenv("SAKI_CONTEXT_TOKENS", "131072")
+	app, err := newRuntimeApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pump := newUIPump(t, app)
+	h := &guiHarness{app: app, pump: pump, provider: provider, root: root}
+	app.startRuntime()
+	pump.wait(func() bool {
+		return app.runtimeStatus == runtimeStateReady && app.runtimeCapabilitiesLoaded
+	})
+	t.Cleanup(func() {
+		server.Close()
+		if !h.closed {
+			// Restore a normal hook only for a failing test's cleanup; normal
+			// successful completion closes through h.shutdown above.
+			app.setUIHook(func(fn func()) { pump.q <- fn })
+			h.shutdown(t)
+		}
+	})
+	return h
+}
