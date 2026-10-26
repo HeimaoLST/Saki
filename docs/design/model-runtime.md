@@ -46,12 +46,19 @@
 - 请求：公共 `InputItem` 转为 messages；连续 `ToolCall` 聚合为一条 assistant 的 `tool_calls`，`ToolResult` 转为 `tool` 消息并携带 `tool_call_id`；工具声明为 `{"type":"function","function":{…}}`。`max_output_tokens`→`max_tokens`，`temperature` 原样传递。`MessageRole::Developer` 保留原生 `developer` 角色，不做供应商降级。
 - 流式：`stream:true` 且请求 `stream_options.include_usage:true`；按 index 聚合跨 chunk／交错的工具参数分片，响应完成后才把完整调用交给 Agent；usage 可缺失并保持未知，不编造 0；支持空 choices 的 usage 尾块与网关直接返回 JSON 的 fallback。
 - 终止：只有 `stop` 与 `tool_calls` 视为完成（JSON 与 SSE 一致）；`length`、`content_filter`、未知原因或缺少 finish_reason 都在客户端失败，不把截断文本或其中的工具调用交给 Agent，已显示的文本不自动重播。[DONE] 单独出现不构成完成。
-- 推理续接（#121 候选，实现事实，尚未合入 dev）：JSON 与 SSE 的 `reasoning_content` 原样聚合并通过现有 Reasoning/ProviderData 写入上下文；下一轮与同一 assistant 的文本和完整工具调用重组，空字符串与缺失区分。无工具调用的历史 assistant 也保留该字段；不伪造供应商未返回的推理。增量使用既有 ReasoningDelta，最终响应仍是写入历史的依据。
+- 推理续接（#121 已通过 PR122 集成到 dev；#177 空值修复见下节）：JSON 与 SSE 的 `reasoning_content` 原样聚合并通过现有 Reasoning/ProviderData 写入上下文；下一轮与同一 assistant 的文本和完整工具调用重组，空字符串与缺失区分。无工具调用的历史 assistant 也保留该字段；不伪造供应商未返回的推理。增量使用既有 ReasoningDelta，最终响应仍是写入历史的依据。
 - 不可表示的数据：图片输入、其他 API 的 reasoning／ProviderItem continuation 在发请求前返回明确转换错误。Chat 的 `reasoning_effort` 仍明确拒绝；本次不开放任意厂商参数。
 
-### DeepSeek thinking 工具续接（#121 候选）
+### DeepSeek thinking 工具续接（#121 / #177）
 
-2026-10-22 Magpie 网关真实验收再次发现旧适配器丢弃 `reasoning_content`，read 已完成但第二轮返回 HTTP 400。候选修复复用已有带 API 身份的续接数据，不新增执行循环、存储 schema 或隐式模型降级。依据 [DeepSeek 官方 thinking 契约](https://api-docs.deepseek.com/guides/thinking_mode/)，携带 tools 时须保留此前各轮 assistant 的 reasoning_content。JSON/SSE、文本与工具同条消息、空推理、无工具的历史轮及序列化恢复有确定性覆盖；实际网关闭环证据随 PR 记录，不将其他网关或模型推定为通过。
+2026-10-22 Magpie 网关真实验收发现旧适配器丢弃 `reasoning_content`，read 已完成但第二轮返回 HTTP 400。PR122 已集成的修复复用已有带 API 身份的续接数据，不新增执行循环、存储 schema 或隐式模型降级。依据 [DeepSeek 官方 thinking 契约](https://api-docs.deepseek.com/guides/thinking_mode/)，携带 tools 时须保留此前各轮 assistant 的 reasoning_content。JSON/SSE、文本与工具同条消息、空推理、无工具的历史轮及序列化恢复有确定性覆盖；实际网关闭环证据随 PR 记录，不将其他网关或模型推定为通过。
+
+**#177 实现事实（本次候选，尚未集成）**：Chat JSON/SSE 解码区分字段不存在、原生 `null`、空字符串与非空字符串。原生空值仍通过同一 Reasoning/ProviderData 路径持久化，下一请求原样回传；真正不存在的字段不补 `null` 或推理文本。SSE 的 null 片段不会覆盖此前已聚合的字符串。只有实际文本产生可见推理事件，空续接标记仍保留在 journal；既有 journal 不需要迁移，历史上已经丢失的原生数据无法回填。assistant 文本和随后的完整工具调用按同一轮重组，即使原生 reasoning 字段不存在也不拆成两条 assistant 消息。工具仍只在完整响应通过终止检查后执行，不自动重试该 HTTP400。
+
+**2026-10-26 作者实测**：#177 原 GUI 样本（Runtime722de4b，Magpie `deepseek/deepseek-flash` / Chat / `127.0.0.1:3425`）首 task read 后400；保留的 journal 无 Reasoning，但原始 wire 未捕获。Runtime 独立隔离复现沿相同初次提示与命名 caller context，固定 helper SHA256 `c738c63374c0222b8e4397a15e1fb4109c8ff6bf34b89b8219cdecd7e0fa5516`：首 SSE 200中11个原生 `reasoning_content:null`，其余片段无该字段；模型此次选择两个 Bash 调用。续接丢失原生空值，并把 assistant 文本/两个工具调用拆开，随后400。本次 wire 证明 Runtime 的 null 丢失边界，与原 GUI read 任务不是同一个 task；不将旧样本未捕获的 wire 写成已知。证据位于 `/private/tmp/saki-reasoning-177/live-baseline-wire/`，限本机研究日志，不含 Authorization；不由此推定其他网关/模型兼容或原 GUI 已恢复。
+
+
+**修复候选作者实测（待 GUI 组合复验）**：在 QA323d996 组合的 Runtime 上只应用本单生产修复，保留已消费的 #160 错误凭据脱敏与 #146/#167 Bash 回收修复；helper SHA256 `79eef3082bac2a04abbaa610a6a3d679ef772991999ef99f4d96266828edf065`。一次有界 DeepSeek Flash / Chat 运行，工具选择显式限定内置 `read`：首 task 读取 probeA，release/load 同一会话后第二 task 读取 probeB并准确报告两个标记，均 completed，两个 read 各执行一次，4次 HTTP 全200。首工具响应原生 null 在续接与恢复后仍存在，无工具的最终 assistant 文本 reasoning 也保留，null 尾块未抹掉文本。relay 只缓冲 SSE 以保存线协议，无请求/响应重写；因此不把它当作 GUI 自动补充/native 或网络增量时序验收。日志在 `/private/tmp/saki-reasoning-177/live-fixed/`；原 GUI 的两条 pending 补充与完整候选消费需由 GUI 主责另验，旧失败会话不回填、不重跑。
 
 ## 流式响应契约
 
