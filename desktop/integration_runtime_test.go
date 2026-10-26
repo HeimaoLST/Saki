@@ -383,10 +383,7 @@ func startGUIHarness(t *testing.T, binary string, provider *providerFixture, mar
 		if h.closed {
 			return
 		}
-		if app.rt != nil {
-			_ = app.rt.shutdown()
-		}
-		pump.close()
+		h.shutdown(t)
 	})
 	return h
 }
@@ -409,25 +406,31 @@ func (h *guiHarness) shutdown(t *testing.T) {
 	if h.closed {
 		return
 	}
-	quit := make(chan struct{}, 1)
-	h.pump.do(func() {
-		h.app.requestQuit = func() { quit <- struct{}{} }
-		h.app.beginShutdown()
-	})
-	select {
-	case <-quit:
-	case <-time.After(15 * time.Second):
-		t.Fatal("runtime did not drain before quit")
-	}
-	if h.app.rt != nil {
-		h.pump.waitTimeout(func() bool { return h.app.runtimeStatus == runtimeStateExited }, 5*time.Second)
-	}
+	h.pump.do(func() { h.app.beginShutdown() })
+	h.pump.waitTimeout(func() bool {
+		if !h.app.quitReady {
+			return false
+		}
+		return h.app.rt == nil || h.app.runtimeStatus == runtimeStateExited
+	}, 15*time.Second)
 	h.pump.close()
 	h.closed = true
 }
 
 func (h *guiHarness) snapshot(fn func()) {
 	h.pump.do(fn)
+}
+
+func TestGUIShutdownAfterManualBeginIsIdempotent(t *testing.T) {
+	app := &appModel{}
+	pump := newUIPump(t, app)
+	h := &guiHarness{app: app, pump: pump}
+	h.pump.do(func() { h.app.beginShutdown() })
+	h.shutdown(t)
+	h.shutdown(t)
+	if !h.closed {
+		t.Fatal("idempotent harness shutdown did not finish")
+	}
 }
 
 func TestGUIAppRuntimeFlow(t *testing.T) {
@@ -1334,4 +1337,81 @@ func TestGUIAppRejectedComposerSendKeepsInFlightIssueAssociation(t *testing.T) {
 		t.Fatalf("in-flight issue produced %d provider requests, want 1", provider.count())
 	}
 	h.shutdown(t)
+}
+
+func TestGUIShutdownWaitsForFinalOwnerCallback(t *testing.T) {
+	for _, firstIndex := range []int{0, 1} {
+		firstIndex := firstIndex
+		t.Run(fmt.Sprintf("execute_collected_%d_first", firstIndex+1), func(t *testing.T) {
+			binary := requireRuntimeBinary(t)
+			h := startGUIHarness(t, binary, &providerFixture{ToolFirst: false}, fmt.Sprintf("shutdown-barrier-%d", firstIndex))
+			h.pump.wait(func() bool {
+				return h.app.runtimeStatus == runtimeStateReady && h.app.runtimeCapabilitiesLoaded
+			})
+			callbacks := make(chan func(), 8)
+			h.pump.do(func() {
+				h.app.setUIHook(func(fn func()) { callbacks <- fn })
+			})
+			var quitCount int
+			h.pump.do(func() {
+				h.app.requestQuit = func() { quitCount++ }
+				h.app.beginShutdown()
+			})
+
+			// finish() closes done before OnExit, but finishShutdown can enqueue the
+			// final callback before OnExit. Collect both owner callbacks without
+			// assuming their order; execute only one first.
+			var callbacksSeen [2]func()
+			for i := 0; i < len(callbacksSeen); i++ {
+				select {
+				case callbacksSeen[i] = <-callbacks:
+				case <-time.After(15 * time.Second):
+					t.Fatalf("shutdown owner callback %d did not arrive", i+1)
+				}
+			}
+			h.pump.do(callbacksSeen[firstIndex])
+			var exited, ready bool
+			h.pump.do(func() {
+				exited = h.app.runtimeStatus == runtimeStateExited
+				ready = h.app.quitReady
+			})
+			if exited == ready {
+				t.Fatalf("after first owner callback, expected exactly one completion fact: exited=%v quitReady=%v", exited, ready)
+			}
+			t.Logf("first executed owner point: exited=%v quitReady=%v", exited, ready)
+
+			cleanupDone := make(chan struct{})
+			go func() {
+				h.shutdown(t)
+				close(cleanupDone)
+			}()
+			select {
+			case <-cleanupDone:
+				t.Fatal("cleanup completed before both owner callbacks were applied")
+			default:
+			}
+			h.pump.do(func() {
+				callbacksSeen[1-firstIndex]()
+				exited = h.app.runtimeStatus == runtimeStateExited
+				ready = h.app.quitReady
+			})
+			select {
+			case <-cleanupDone:
+			case <-time.After(5 * time.Second):
+				t.Fatal("cleanup did not complete after both owner callbacks")
+			}
+			if !exited || !ready || quitCount != 1 || !h.closed {
+				t.Fatalf("final owner state: exited=%v quitReady=%v quitCount=%d closed=%v", exited, ready, quitCount, h.closed)
+			}
+			h.shutdown(t)
+			if quitCount != 1 {
+				t.Fatalf("idempotent cleanup changed quit callback count: %d", quitCount)
+			}
+			select {
+			case extra := <-callbacks:
+				t.Fatalf("unexpected callback after owner completion: %p", extra)
+			default:
+			}
+		})
+	}
 }
