@@ -246,7 +246,7 @@ type appModel struct {
 	issueToolWaiters         map[string]chan IssueToolReceipt
 	issueToolShutdown        chan struct{}
 	issueToolMu              sync.Mutex
-	issueToolSchemaOK        map[string]issueToolSchemaMark
+	issueToolRefresh         map[string]issueToolRefreshMark
 	issueToolReleaseInFlight int
 
 	modelForm         *modelSelection

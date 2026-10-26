@@ -827,27 +827,27 @@ func TestIssueToolReplacementQuestionSaveFailureKeepsOriginalOpen(t *testing.T) 
 	}
 }
 
-func TestIssueToolSchemaMarkerIsRuntimeGenerationBound(t *testing.T) {
+func TestIssueToolRefreshMarkerIsRuntimeGenerationBound(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	rt1, rt2 := &runtimeClient{}, &runtimeClient{}
 	a.connectionGeneration = 1
-	if a.issueToolSchemaReady(rt1, "session-schema") {
-		t.Fatal("empty schema marker was ready")
+	if a.issueToolRefreshRequired(rt1, "session-schema") {
+		t.Fatal("empty refresh marker was required")
 	}
-	a.markIssueToolSchemaReady(rt1, "session-schema")
-	if !a.issueToolSchemaReady(rt1, "session-schema") {
-		t.Fatal("same runtime/generation marker was not ready")
+	a.requireIssueToolRefresh(rt1, "session-schema")
+	if !a.issueToolRefreshRequired(rt1, "session-schema") {
+		t.Fatal("same runtime/generation refresh marker was not required")
 	}
-	if a.issueToolSchemaReady(rt2, "session-schema") {
-		t.Fatal("schema marker leaked to a different runtime")
+	if a.issueToolRefreshRequired(rt2, "session-schema") {
+		t.Fatal("refresh marker leaked to a different runtime")
 	}
 	a.connectionGeneration = 2
-	if a.issueToolSchemaReady(rt1, "session-schema") {
-		t.Fatal("schema marker leaked to a different generation")
+	if a.issueToolRefreshRequired(rt1, "session-schema") {
+		t.Fatal("refresh marker leaked to a different generation")
 	}
-	a.clearIssueToolSchemaReady("session-schema")
-	if a.issueToolSchemaReady(rt1, "session-schema") {
-		t.Fatal("schema marker survived clear")
+	a.clearIssueToolRefresh("session-schema")
+	if a.issueToolRefreshRequired(rt1, "session-schema") {
+		t.Fatal("refresh marker survived clear")
 	}
 }
 

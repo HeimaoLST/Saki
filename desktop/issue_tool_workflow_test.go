@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIssueToolExistingSessionGetsRoleWithoutRebindingProfile(t *testing.T) {
@@ -255,5 +256,101 @@ func TestIssueToolEnsureSkipsNoOpConfigUpdate(t *testing.T) {
 		!runtimeSelectionHasIssueTools(after.EffectiveConfig.ToolSelection) {
 		t.Fatalf("no-op ensure changed config: revision=%d/%d session=%q prompt=%q tools=%v",
 			before.ConfigRevision, after.ConfigRevision, after.SessionID, after.EffectiveConfig.SystemPrompt, after.EffectiveConfig.ToolSelection)
+	}
+	// A real typed schema-changed error must authorize exactly one refresh.
+	h.app.noteIssueToolTaskError(rt, sessionID, &runtimeError{Code: "tool_schema_changed", Message: "controlled schema change"})
+	if !h.app.issueToolRefreshRequired(rt, sessionID) {
+		t.Fatal("typed tool_schema_changed did not mark refresh required")
+	}
+	if configured, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false); err != nil || !configured {
+		t.Fatalf("refresh ensure = %v err=%v", configured, err)
+	}
+	refreshed, err := rt.connectionConfig(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.ConfigRevision == after.ConfigRevision || h.app.issueToolRefreshRequired(rt, sessionID) {
+		t.Fatalf("typed refresh did not update/clear: revision=%d/%d", after.ConfigRevision, refreshed.ConfigRevision)
+	}
+}
+
+func TestIssueToolTypedErrorOnlyMarksSchemaRefresh(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	rt := &runtimeClient{}
+	a.noteIssueToolTaskError(rt, "session-typed", &runtimeError{Code: "tool_error", Message: "not schema"})
+	if a.issueToolRefreshRequired(rt, "session-typed") {
+		t.Fatal("non-schema error marked refresh")
+	}
+	a.noteIssueToolTaskError(rt, "session-typed", &runtimeError{Code: "tool_schema_changed", Message: "schema"})
+	if !a.issueToolRefreshRequired(rt, "session-typed") {
+		t.Fatal("typed schema error did not mark refresh")
+	}
+}
+
+func TestIssueToolSchemaRefreshRefusalKeepsDraft(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	provider := &modelProviderFixture{opaque: true}
+	h := startIssueToolTestHarness(t, binary, http.HandlerFunc(provider.handler))
+	var firstTask string
+	var sendErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "native continuation seed"
+		if !h.app.sendCurrent() {
+			sendErr = ct.SendError
+		}
+	})
+	if sendErr != "" {
+		t.Fatal(sendErr)
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		return ct != nil && ct.SendState == sendIdle && ct.ActiveTaskID == "" && ct.LastTaskID != ""
+	})
+	var sessionID string
+	var rt *runtimeClient
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		firstTask, sessionID, rt = ct.LastTaskID, ct.SessionID, h.app.rt
+	})
+	if sessionID == "" || rt == nil {
+		t.Fatal("native continuation session was not established")
+	}
+	var sendOK bool
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		h.app.noteIssueToolTaskError(rt, sessionID, &runtimeError{Code: "tool_schema_changed", Message: "controlled typed refresh"})
+		ct.Draft = "retry after typed schema change"
+		sendOK = h.app.sendCurrent()
+	})
+	if !sendOK {
+		t.Fatal("sendCurrent rejected the retry before the controlled refresh attempt")
+	}
+	h.pump.waitTimeout(func() bool {
+		ct := h.app.selectedContact()
+		return ct != nil && ct.SendError != "" && ct.SendState == sendIdle
+	}, 15*time.Second)
+	var draft, sendError, active string
+	var pending bool
+	var refresh bool
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		draft, sendError, active = ct.Draft, ct.SendError, ct.ActiveTaskID
+		pending = ct.pendingSend != nil
+		refresh = h.app.issueToolRefreshRequired(rt, sessionID)
+	})
+	if !strings.Contains(sendError, "continuation_not_supported") {
+		t.Fatalf("refresh refusal error = %q", sendError)
+	}
+	if draft != "retry after typed schema change" || active != "" {
+		t.Fatalf("draft/active after refused refresh = draft=%q active=%q pending=%v", draft, active, pending)
+	}
+	if !refresh {
+		t.Fatal("typed refresh requirement was lost after the incompatible update")
+	}
+	if h.app.selectedContact().LastTaskID != firstTask {
+		t.Fatal("refused refresh dispatched a replacement task")
 	}
 }

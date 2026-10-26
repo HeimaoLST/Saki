@@ -211,7 +211,6 @@ func (a *appModel) issueToolMergedWorkSelection(current runtimeToolSelection) (m
 
 func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID, roleGuidance string, created bool) (bool, error) {
 	if created {
-		a.markIssueToolSchemaReady(rt, sessionID)
 		return true, nil
 	}
 	if rt == nil || sessionID == "" {
@@ -227,8 +226,8 @@ func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID, role
 	toolsReady := runtimeSelectionHasWorkWait(config.EffectiveConfig.ToolSelection)
 	desiredPrompt := addWorkflowGuidance(config.EffectiveConfig.SystemPrompt, roleGuidance)
 	promptReady := desiredPrompt == config.EffectiveConfig.SystemPrompt
-	if toolsReady && promptReady {
-		a.markIssueToolSchemaReady(rt, sessionID)
+	refresh := a.issueToolRefreshRequired(rt, sessionID)
+	if toolsReady && promptReady && !refresh {
 		return true, nil
 	}
 	selection, mergeErr := a.issueToolMergedWorkSelection(config.EffectiveConfig.ToolSelection)
@@ -238,7 +237,7 @@ func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID, role
 	if selection == nil {
 		return false, nil
 	}
-	if toolsReady {
+	if toolsReady && !refresh {
 		selection = nil
 	}
 	promptPatch := ""
@@ -258,7 +257,7 @@ func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID, role
 	if updated.EffectiveConfig.SystemPrompt != desiredPrompt {
 		return false, errors.New("Runtime did not confirm the work workflow prompt")
 	}
-	a.markIssueToolSchemaReady(rt, sessionID)
+	a.clearIssueToolRefresh(sessionID)
 	return true, nil
 }
 
@@ -390,39 +389,45 @@ func (a *appModel) issueToolMergedSelection(current runtimeToolSelection) (map[s
 // adds only the issue-tool bindings when absent. It deliberately does not
 // migrate schema 1 or guessed legacy ownership; those paths remain explicit
 // follow-ups.
-type issueToolSchemaMark struct {
+type issueToolRefreshMark struct {
 	runtime    *runtimeClient
 	generation int
 }
 
-// issueToolSchemaReady is only an app-level "we refreshed this session on this
-// Runtime generation" marker. It is not a second copy of Runtime's tool_schemas
-// truth; a new Runtime/generation or tool_schema_changed clears it.
-func (a *appModel) issueToolSchemaReady(rt *runtimeClient, sessionID string) bool {
+// issueToolRefreshRequired is the single app fact for a Runtime-issued
+// tool_schema_changed error. It is not a cache of the current tool schema; it
+// only authorizes the next explicit retry to refresh the persisted selection.
+func (a *appModel) issueToolRefreshRequired(rt *runtimeClient, sessionID string) bool {
 	a.issueToolMu.Lock()
 	defer a.issueToolMu.Unlock()
-	mark, ok := a.issueToolSchemaOK[sessionID]
+	mark, ok := a.issueToolRefresh[sessionID]
 	return ok && mark.runtime == rt && mark.generation == a.connectionGeneration
 }
 
-func (a *appModel) markIssueToolSchemaReady(rt *runtimeClient, sessionID string) {
+func (a *appModel) requireIssueToolRefresh(rt *runtimeClient, sessionID string) {
 	a.issueToolMu.Lock()
-	if a.issueToolSchemaOK == nil {
-		a.issueToolSchemaOK = map[string]issueToolSchemaMark{}
+	if a.issueToolRefresh == nil {
+		a.issueToolRefresh = map[string]issueToolRefreshMark{}
 	}
-	a.issueToolSchemaOK[sessionID] = issueToolSchemaMark{runtime: rt, generation: a.connectionGeneration}
+	a.issueToolRefresh[sessionID] = issueToolRefreshMark{runtime: rt, generation: a.connectionGeneration}
 	a.issueToolMu.Unlock()
 }
 
-func (a *appModel) clearIssueToolSchemaReady(sessionID string) {
+func (a *appModel) noteIssueToolTaskError(rt *runtimeClient, sessionID string, err error) {
+	var runtimeErr *runtimeError
+	if errors.As(err, &runtimeErr) && runtimeErr.Code == "tool_schema_changed" {
+		a.requireIssueToolRefresh(rt, sessionID)
+	}
+}
+
+func (a *appModel) clearIssueToolRefresh(sessionID string) {
 	a.issueToolMu.Lock()
-	delete(a.issueToolSchemaOK, sessionID)
+	delete(a.issueToolRefresh, sessionID)
 	a.issueToolMu.Unlock()
 }
 
 func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, sessionID, roleGuidance string, created bool) (bool, error) {
 	if created {
-		a.markIssueToolSchemaReady(rt, sessionID)
 		return true, nil
 	}
 	if rt == nil || sessionID == "" {
@@ -438,11 +443,11 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 	toolsReady := runtimeSelectionHasIssueTools(config.EffectiveConfig.ToolSelection)
 	desiredPrompt := addWorkflowGuidance(config.EffectiveConfig.SystemPrompt, roleGuidance)
 	promptReady := desiredPrompt == config.EffectiveConfig.SystemPrompt
-	if toolsReady && promptReady {
+	refresh := a.issueToolRefreshRequired(rt, sessionID)
+	if toolsReady && promptReady && !refresh {
 		// The session already has the exact selection and prompt. A no-op
 		// config.update after restart can be rejected for native continuation,
-		// so mark it ready without touching Runtime configuration.
-		a.markIssueToolSchemaReady(rt, sessionID)
+		// so do not touch Runtime configuration.
 		return true, nil
 	}
 	selection, mergeErr := a.issueToolMergedSelection(config.EffectiveConfig.ToolSelection)
@@ -452,12 +457,13 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 	if selection == nil {
 		return false, nil
 	}
-	if toolsReady {
+	if toolsReady && !refresh {
 		selection = nil
 	}
-	// Updating the full selection is only needed when it is not already present.
-	// The combined prompt preserves the user's
-	// saved profile; this changes no model/cwd/compaction setting.
+	// Updating the full selection is only needed when it is not already present
+	// or when Runtime explicitly requested a schema refresh. The combined prompt
+	// preserves the user's saved profile; this changes no model/cwd/compaction
+	// setting.
 	promptPatch := ""
 	if !promptReady {
 		promptPatch = desiredPrompt
@@ -475,7 +481,7 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 	if updated.EffectiveConfig.SystemPrompt != desiredPrompt {
 		return false, errors.New("Runtime did not confirm the conversation workflow prompt")
 	}
-	a.markIssueToolSchemaReady(rt, sessionID)
+	a.clearIssueToolRefresh(sessionID)
 	return true, nil
 }
 
