@@ -118,7 +118,11 @@ type issueToolIPCServer struct {
 	socketInfo os.FileInfo
 	handler    issueToolHandlerFunc
 	done       chan struct{}
+	closeDone  chan struct{}
 	closeOnce  sync.Once
+	mu         sync.Mutex
+	closing    bool
+	conns      map[net.Conn]struct{}
 	wg         sync.WaitGroup
 }
 
@@ -151,7 +155,8 @@ func startIssueToolIPCServer(endpoint string, handler issueToolHandlerFunc) (*is
 		return nil, fmt.Errorf("inspect issue tool IPC socket: %w", err)
 	}
 	server := &issueToolIPCServer{
-		endpoint: endpoint, listener: listener, socketInfo: info, handler: handler, done: make(chan struct{}),
+		endpoint: endpoint, listener: listener, socketInfo: info, handler: handler,
+		done: make(chan struct{}), closeDone: make(chan struct{}), conns: map[net.Conn]struct{}{},
 	}
 	go server.acceptLoop()
 	return server, nil
@@ -164,7 +169,15 @@ func (s *issueToolIPCServer) acceptLoop() {
 		if err != nil {
 			return
 		}
+		s.mu.Lock()
+		if s.closing {
+			s.mu.Unlock()
+			_ = conn.Close()
+			continue
+		}
+		s.conns[conn] = struct{}{}
 		s.wg.Add(1)
+		s.mu.Unlock()
 		go s.handle(conn)
 	}
 }
@@ -179,6 +192,11 @@ func issueToolIPCErrorResponse(code, message string) issueToolForwardResponse {
 
 func (s *issueToolIPCServer) handle(conn net.Conn) {
 	defer s.wg.Done()
+	defer func() {
+		s.mu.Lock()
+		delete(s.conns, conn)
+		s.mu.Unlock()
+	}()
 	defer conn.Close()
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 16*1024), issueToolMaxFrameBytes)
@@ -220,17 +238,33 @@ func (s *issueToolIPCServer) writeResponse(conn net.Conn, response issueToolForw
 // finish, and removes only the socket this server created. A handler that is
 // already running is not cancelled or replayed; the future adapter must keep
 // UI-state handler completion semantics explicit.
+// Close stops accepting, closes all currently accepted IO connections to
+// unblock idle reads/writes, waits for accepted handlers to complete their
+// side effects, and then removes only this server's socket. It is blocking and
+// must be called off the UI thread when handlers may wait on UI callbacks.
 func (s *issueToolIPCServer) Close() error {
 	if s == nil {
 		return nil
 	}
 	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.closing = true
+		conns := make([]net.Conn, 0, len(s.conns))
+		for conn := range s.conns {
+			conns = append(conns, conn)
+		}
+		s.mu.Unlock()
 		_ = s.listener.Close()
+		for _, conn := range conns {
+			_ = conn.Close()
+		}
 		<-s.done
 		s.wg.Wait()
 		if current, err := os.Lstat(s.endpoint); err == nil && s.socketInfo != nil && os.SameFile(current, s.socketInfo) {
 			_ = os.Remove(s.endpoint)
 		}
+		close(s.closeDone)
 	})
+	<-s.closeDone
 	return nil
 }

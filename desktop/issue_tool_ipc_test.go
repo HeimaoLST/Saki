@@ -93,6 +93,13 @@ func TestIssueToolServerCloseWaitsForActiveHandler(t *testing.T) {
 	path := issueToolSocketPath(t, "close-wait")
 	started := make(chan struct{})
 	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
 	server, err := startIssueToolIPCServer(path, func(_ context.Context, _ issueToolForwardRequest) (issueToolForwardResponse, error) {
 		close(started)
 		<-release
@@ -101,6 +108,14 @@ func TestIssueToolServerCloseWaitsForActiveHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		_ = server.Close()
+	})
 	clientResult := make(chan string, 1)
 	go func() {
 		response, err := issueToolIPCForwarder(path)(context.Background(), issueToolTestRequest("scope-close"))
@@ -259,4 +274,91 @@ func TestIssueToolServerOversizeResponseIsSmallErrorAndSingleHandler(t *testing.
 	if calls.Load() != 1 || !response.IsError || len(response.Content) != 1 || !strings.Contains(response.Content[0].Text, "response_too_large") {
 		t.Fatalf("oversize response = %+v / calls=%d", response, calls.Load())
 	}
+}
+
+func TestIssueToolServerCloseUnblocksIdleAndPartialFrameClients(t *testing.T) {
+	for _, partial := range []string{"", `{"tool":"issue_get"`} {
+		name := "idle"
+		if partial != "" {
+			name = "partial"
+		}
+		t.Run(name, func(t *testing.T) {
+			path := issueToolSocketPath(t, "idle-"+name)
+			var calls atomic.Int32
+			server, err := startIssueToolIPCServer(path, func(context.Context, issueToolForwardRequest) (issueToolForwardResponse, error) {
+				calls.Add(1)
+				return issueToolForwardResponse{Content: []issueToolContent{{Type: "text", Text: "unexpected"}}}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer server.Close()
+			conn, err := net.Dial("unix", path)
+			if err != nil {
+				_ = server.Close()
+				t.Fatal(err)
+			}
+			if partial != "" {
+				if _, err := conn.Write([]byte(partial)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			closed := make(chan struct{})
+			go func() {
+				_ = server.Close()
+				close(closed)
+			}()
+			select {
+			case <-closed:
+			case <-time.After(2 * time.Second):
+				t.Fatal("Close hung on idle/partial client")
+			}
+			_ = conn.Close()
+			if calls.Load() != 0 {
+				t.Fatal("idle/partial frame invoked handler")
+			}
+		})
+	}
+}
+
+func TestIssueToolServerCloseUnblocksUnreadLargeResponse(t *testing.T) {
+	path := issueToolSocketPath(t, "unread")
+	started := make(chan struct{})
+	server, err := startIssueToolIPCServer(path, func(context.Context, issueToolForwardRequest) (issueToolForwardResponse, error) {
+		close(started)
+		return issueToolForwardResponse{Content: []issueToolContent{{Type: "text", Text: strings.Repeat("z", 3*1024*1024)}}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("unix", path)
+	if err != nil {
+		_ = server.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = conn.Close()
+		_ = server.Close()
+	})
+	if _, err := conn.Write([]byte(`{"tool":"issue_get","arguments":{"scope":"s"}}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		_ = conn.Close()
+		_ = server.Close()
+		t.Fatal("handler did not start for unread response")
+	}
+	closed := make(chan struct{})
+	go func() {
+		_ = server.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close hung writing to an unread client")
+	}
+	_ = conn.Close()
 }
