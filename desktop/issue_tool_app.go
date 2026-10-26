@@ -285,7 +285,7 @@ func (a *appModel) issueToolScopeByRef(ref string) (IssueToolScope, error) {
 // authorization: a new turn, new session, archive, restart after terminal, or
 // failed send cannot use an old scope for a new side effect.
 func (a *appModel) issueToolScopeActive(captured IssueToolScope) bool {
-	if captured.Validate() != nil || a.issueToolScopes == nil {
+	if a.shutdownStarted || captured.Validate() != nil || a.issueToolScopes == nil {
 		return false
 	}
 	// The accepted task can bind after the handler captured its scope copy.

@@ -488,3 +488,32 @@ func TestIssueToolAcceptedSaveFailureKeepsKnownIDs(t *testing.T) {
 		t.Fatalf("accepted save failure receipt lost known identity: %+v", receipt)
 	}
 }
+
+func TestIssueToolShutdownRejectsNewActionButKeepsReceipt(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	a.issueToolShutdown = make(chan struct{})
+	ct := a.selectedContact()
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-shutdown", "turn-shutdown")
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateIssueToolTestScope(t, a, scope)
+	createArgs := issueToolActionArgs(t, *scope, issueToolActionCreate, map[string]any{"goal": "before shutdown"})
+	first, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: createArgs})
+	if err != nil || first.IsError {
+		t.Fatalf("pre-shutdown create = %+v err=%v", first, err)
+	}
+	issue := ct.Issues[0]
+	a.beginShutdown()
+	updateArgs := issueToolActionArgs(t, *scope, issueToolActionUpdate, map[string]any{
+		"issue_id": issue.ID, "expected_revision": issue.RequirementsRevision, "goal": "after shutdown",
+	})
+	blocked, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: updateArgs})
+	if err != nil || !blocked.IsError || len(ct.Issues) != 1 || len(a.issueToolLedger.Operations) != 1 {
+		t.Fatalf("shutdown action = %+v err=%v issues=%d ops=%d", blocked, err, len(ct.Issues), len(a.issueToolLedger.Operations))
+	}
+	duplicate, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: createArgs})
+	if err != nil || duplicate.IsError || len(a.issueToolLedger.Operations) != 1 {
+		t.Fatalf("shutdown old receipt = %+v err=%v ops=%d", duplicate, err, len(a.issueToolLedger.Operations))
+	}
+}
