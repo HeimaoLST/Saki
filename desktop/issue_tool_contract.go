@@ -197,6 +197,8 @@ type IssueToolReceipt struct {
 	MessageID            string          `json:"message_id,omitempty"`
 	RequirementsRevision *int            `json:"requirements_revision,omitempty"`
 	QuestionRef          string          `json:"question_ref,omitempty"`
+	QuestionState        string          `json:"question_state,omitempty"`
+	IssueStatus          string          `json:"issue_status,omitempty"`
 	SupplementID         string          `json:"supplement_id,omitempty"`
 	Error                *IssueToolError `json:"error,omitempty"`
 }

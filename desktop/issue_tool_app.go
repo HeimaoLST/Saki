@@ -187,24 +187,39 @@ func (a *appModel) issueToolMergedSelection(current runtimeToolSelection) (map[s
 // adds only the issue-tool bindings when absent. It deliberately does not
 // migrate schema 1 or guessed legacy ownership; those paths remain explicit
 // follow-ups.
-func (a *appModel) issueToolSchemaReady(sessionID string) bool {
-	a.issueToolMu.Lock()
-	defer a.issueToolMu.Unlock()
-	return a.issueToolSchemaOK[sessionID]
+type issueToolSchemaMark struct {
+	runtime    *runtimeClient
+	generation int
 }
 
-func (a *appModel) markIssueToolSchemaReady(sessionID string) {
+// issueToolSchemaReady is only an app-level "we refreshed this session on this
+// Runtime generation" marker. It is not a second copy of Runtime's tool_schemas
+// truth; a new Runtime/generation or tool_schema_changed clears it.
+func (a *appModel) issueToolSchemaReady(rt *runtimeClient, sessionID string) bool {
+	a.issueToolMu.Lock()
+	defer a.issueToolMu.Unlock()
+	mark, ok := a.issueToolSchemaOK[sessionID]
+	return ok && mark.runtime == rt && mark.generation == a.connectionGeneration
+}
+
+func (a *appModel) markIssueToolSchemaReady(rt *runtimeClient, sessionID string) {
 	a.issueToolMu.Lock()
 	if a.issueToolSchemaOK == nil {
-		a.issueToolSchemaOK = map[string]bool{}
+		a.issueToolSchemaOK = map[string]issueToolSchemaMark{}
 	}
-	a.issueToolSchemaOK[sessionID] = true
+	a.issueToolSchemaOK[sessionID] = issueToolSchemaMark{runtime: rt, generation: a.connectionGeneration}
+	a.issueToolMu.Unlock()
+}
+
+func (a *appModel) clearIssueToolSchemaReady(sessionID string) {
+	a.issueToolMu.Lock()
+	delete(a.issueToolSchemaOK, sessionID)
 	a.issueToolMu.Unlock()
 }
 
 func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, sessionID string, created bool) (bool, error) {
 	if created {
-		a.markIssueToolSchemaReady(sessionID)
+		a.markIssueToolSchemaReady(rt, sessionID)
 		return true, nil
 	}
 	if rt == nil || sessionID == "" {
@@ -217,7 +232,7 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 	if config.StorageSchema < 2 {
 		return false, nil
 	}
-	if runtimeSelectionHasIssueTools(config.EffectiveConfig.ToolSelection) && a.issueToolSchemaReady(sessionID) {
+	if runtimeSelectionHasIssueTools(config.EffectiveConfig.ToolSelection) && a.issueToolSchemaReady(rt, sessionID) {
 		return true, nil
 	}
 	selection, mergeErr := a.issueToolMergedSelection(config.EffectiveConfig.ToolSelection)
@@ -239,7 +254,7 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 	if !runtimeSelectionHasIssueTools(updated.EffectiveConfig.ToolSelection) {
 		return false, errors.New("Runtime did not confirm the conversation issue-tool selection")
 	}
-	a.markIssueToolSchemaReady(sessionID)
+	a.markIssueToolSchemaReady(rt, sessionID)
 	return true, nil
 }
 
@@ -836,7 +851,7 @@ func (a *appModel) issueToolCreate(scope IssueToolScope, request IssueToolAction
 		previousAllowed := append([]string(nil), scope.AllowedIssueIDs...)
 		_, callErr = a.createIssueForWithSave(ct, request.Goal, strings.Join(request.Requirements, "\n"), func(created *productIssue) error {
 			receipt = &IssueToolReceipt{
-				State: issueToolReceiptSaved, IssueID: created.ID,
+				State: issueToolReceiptSaved, IssueID: created.ID, IssueStatus: created.Status,
 				RequirementsRevision: issueToolRevisionPointer(created.RequirementsRevision),
 			}
 			operation.Receipt = receipt
@@ -881,7 +896,7 @@ func (a *appModel) issueToolUpdate(scope IssueToolScope, request IssueToolAction
 		}
 		revision = issue.RequirementsRevision
 		callErr = a.issueToolSetReceipt(operation, &IssueToolReceipt{
-			State: issueToolReceiptSaved, IssueID: issue.ID,
+			State: issueToolReceiptSaved, IssueID: issue.ID, IssueStatus: issue.Status,
 			RequirementsRevision: issueToolRevisionPointer(revision),
 		})
 	})
@@ -954,6 +969,7 @@ func (a *appModel) issueToolWait(scope IssueToolScope, request IssueToolActionRe
 			if open.RequirementsRevision == issue.RequirementsRevision && strings.TrimSpace(open.Text) == text {
 				receipt = &IssueToolReceipt{
 					State: issueToolReceiptSaved, IssueID: issue.ID, QuestionRef: open.Ref,
+					QuestionState: open.State, IssueStatus: issue.Status,
 					RequirementsRevision: issueToolRevisionPointer(open.RequirementsRevision),
 				}
 				callErr = a.issueToolSetReceipt(operation, receipt)
@@ -969,6 +985,7 @@ func (a *appModel) issueToolWait(scope IssueToolScope, request IssueToolActionRe
 		}
 		receipt = &IssueToolReceipt{
 			State: issueToolReceiptSaved, IssueID: issue.ID, QuestionRef: question.Ref,
+			QuestionState: issueQuestionOpen, IssueStatus: issueStatusWaitingUser,
 			RequirementsRevision: issueToolRevisionPointer(question.RequirementsRevision),
 		}
 		if !a.markIssueWaitingForQuestion(ct, issue.ID, supersedeRef, question, operation, receipt) {
@@ -1002,11 +1019,11 @@ func (a *appModel) issueToolResume(scope IssueToolScope, request IssueToolAction
 			return
 		}
 		receipt = &IssueToolReceipt{
-			State: issueToolReceiptSaved, IssueID: issue.ID,
+			State: issueToolReceiptSaved, IssueID: issue.ID, IssueStatus: issue.Status,
 			RequirementsRevision: issueToolRevisionPointer(issue.RequirementsRevision),
 		}
 		if question := issue.openQuestion(); question != nil {
-			receipt.QuestionRef = question.Ref
+			receipt.QuestionRef, receipt.QuestionState = question.Ref, question.State
 		}
 		callErr = a.issueToolSetReceipt(operation, receipt)
 	})
@@ -1051,6 +1068,7 @@ func (a *appModel) issueToolAnswerQuestion(scope IssueToolScope, request IssueTo
 			}
 			receipt = &IssueToolReceipt{
 				State: issueToolReceiptSaved, IssueID: issue.ID, QuestionRef: question.Ref,
+				QuestionState: question.State, IssueStatus: issue.Status,
 				SupplementID:         question.AnswerSupplementID,
 				RequirementsRevision: issueToolRevisionPointer(question.RequirementsRevision),
 			}
@@ -1079,6 +1097,7 @@ func (a *appModel) issueToolAnswerQuestion(scope IssueToolScope, request IssueTo
 			issue.UpdatedAt = nowMillis()
 			receipt = &IssueToolReceipt{
 				State: issueToolReceiptSaved, IssueID: issue.ID, QuestionRef: question.Ref,
+				QuestionState: issueQuestionAnswered, IssueStatus: issue.Status,
 				SupplementID: item.ID, RequirementsRevision: issueToolRevisionPointer(issue.RequirementsRevision),
 			}
 			operation.Receipt = receipt
@@ -1129,7 +1148,7 @@ func (a *appModel) issueToolRun(scope IssueToolScope, _ IssueToolActionRequest, 
 			return
 		}
 		if err := a.issueToolSetReceipt(operation, &IssueToolReceipt{
-			State: issueToolReceiptDispatching, IssueID: issue.ID, ExecutionID: execution.ID,
+			State: issueToolReceiptDispatching, IssueID: issue.ID, IssueStatus: issue.Status, ExecutionID: execution.ID,
 		}); err != nil {
 			callErr = err
 		}
@@ -1176,8 +1195,8 @@ func (a *appModel) issueToolStop(scope IssueToolScope, request IssueToolActionRe
 			return
 		}
 		receipt = &IssueToolReceipt{
-			State: issueToolReceiptStopRequested, IssueID: issue.ID, ExecutionID: execution.ID,
-			SessionID: execution.SessionID, TaskID: execution.TaskID,
+			State: issueToolReceiptStopRequested, IssueID: issue.ID, IssueStatus: issue.Status,
+			ExecutionID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID,
 		}
 		callErr = a.issueToolSetReceipt(operation, receipt)
 	})

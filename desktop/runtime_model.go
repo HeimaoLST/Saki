@@ -94,7 +94,7 @@ func newRuntimeApp() (*appModel, error) {
 		a.issueToolShutdown = make(chan struct{})
 	}
 	if a.issueToolSchemaOK == nil {
-		a.issueToolSchemaOK = map[string]bool{}
+		a.issueToolSchemaOK = map[string]issueToolSchemaMark{}
 	}
 	if err := a.startIssueToolService(); err != nil {
 		a.issueToolErr = err.Error()
@@ -2175,6 +2175,10 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 	}
 	result, err := rt.sendTask(sessionID, text, wireContext...)
 	if err != nil {
+		var runtimeErr *runtimeError
+		if errors.As(err, &runtimeErr) && runtimeErr.Code == "tool_schema_changed" {
+			a.clearIssueToolSchemaReady(sessionID)
+		}
 		a.failSubmit(contactID, err, true)
 		return
 	}

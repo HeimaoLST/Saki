@@ -897,8 +897,18 @@ func TestIssueToolWaitAnswerResumeRealChain(t *testing.T) {
 			return
 		}
 		question := issue.openQuestion()
-		if question == nil || question.Text == "" || question.RequirementsRevision != revision || question.SourceTaskID == "" {
-			waitStateErr = fmt.Sprintf("persisted question = %+v", question)
+		if question == nil || question.Text == "" || question.RequirementsRevision != revision ||
+			question.SourceScopeRef == "" || question.SourceTurnID == "" {
+			waitStateErr = fmt.Sprintf("persisted question source = %+v", question)
+			return
+		}
+		sourceScope, ok := h.app.issueToolScopes[question.SourceScopeRef]
+		if !ok || question.SourceScopeRef != scopeRef {
+			waitStateErr = fmt.Sprintf("question source scope is not the wait turn: question=%+v scopeRef=%q", question, scopeRef)
+			return
+		}
+		if question.SourceTaskID != "" && question.SourceTaskID != sourceScope.RuntimeTaskID {
+			waitStateErr = fmt.Sprintf("question task/scope mismatch: question=%+v scope=%+v", question, sourceScope)
 		}
 	})
 	if waitStateErr != "" {

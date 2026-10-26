@@ -549,8 +549,8 @@ func TestIssueToolWaitAnswerResumeUsesQuestionAnd142Ledger(t *testing.T) {
 	if err := json.Unmarshal(issueToolResponseJSON(t, first), &waitReceipt); err != nil {
 		t.Fatal(err)
 	}
-	if waitReceipt.QuestionRef == "" || issue.Status != issueStatusWaitingUser || issue.openQuestion() == nil ||
-		issue.Supplements.AutoContinue || len(issue.Questions) != 1 {
+	if waitReceipt.QuestionRef == "" || waitReceipt.IssueStatus != issueStatusWaitingUser || waitReceipt.QuestionState != issueQuestionOpen ||
+		issue.Status != issueStatusWaitingUser || issue.openQuestion() == nil || issue.Supplements.AutoContinue || len(issue.Questions) != 1 {
 		t.Fatalf("wait state = receipt=%+v question=%+v status=%q auto=%v", waitReceipt, issue.openQuestion(), issue.Status, issue.Supplements.AutoContinue)
 	}
 	questionRef := waitReceipt.QuestionRef
@@ -582,7 +582,8 @@ func TestIssueToolWaitAnswerResumeUsesQuestionAnd142Ledger(t *testing.T) {
 	}
 	question := issue.questionByRef(questionRef)
 	if question == nil || question.State != issueQuestionAnswered || question.AnswerSupplementID == "" ||
-		answerReceipt.SupplementID != question.AnswerSupplementID || issue.Supplements.pendingCount() != 1 ||
+		answerReceipt.SupplementID != question.AnswerSupplementID || answerReceipt.IssueStatus != issueStatusInProgress ||
+		answerReceipt.QuestionState != issueQuestionAnswered || issue.Supplements.pendingCount() != 1 ||
 		issue.Status != issueStatusInProgress || !issue.Supplements.AutoContinue {
 		t.Fatalf("answer state = question=%+v receipt=%+v pending=%d status=%q auto=%v", question, answerReceipt, issue.Supplements.pendingCount(), issue.Status, issue.Supplements.AutoContinue)
 	}
@@ -822,5 +823,75 @@ func TestIssueToolReplacementQuestionSaveFailureKeepsOriginalOpen(t *testing.T) 
 		issue.openQuestion().State != issueQuestionOpen || len(issue.Questions) != 1 ||
 		issue.Status != issueStatusWaitingUser || !issue.Supplements.AutoContinue || operation.Receipt != nil {
 		t.Fatalf("failed replacement lost original question: questions=%+v status=%q auto=%v receipt=%+v", issue.Questions, issue.Status, issue.Supplements.AutoContinue, operation.Receipt)
+	}
+}
+
+func TestIssueToolSchemaMarkerIsRuntimeGenerationBound(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	rt1, rt2 := &runtimeClient{}, &runtimeClient{}
+	a.connectionGeneration = 1
+	if a.issueToolSchemaReady(rt1, "session-schema") {
+		t.Fatal("empty schema marker was ready")
+	}
+	a.markIssueToolSchemaReady(rt1, "session-schema")
+	if !a.issueToolSchemaReady(rt1, "session-schema") {
+		t.Fatal("same runtime/generation marker was not ready")
+	}
+	if a.issueToolSchemaReady(rt2, "session-schema") {
+		t.Fatal("schema marker leaked to a different runtime")
+	}
+	a.connectionGeneration = 2
+	if a.issueToolSchemaReady(rt1, "session-schema") {
+		t.Fatal("schema marker leaked to a different generation")
+	}
+	a.clearIssueToolSchemaReady("session-schema")
+	if a.issueToolSchemaReady(rt1, "session-schema") {
+		t.Fatal("schema marker survived clear")
+	}
+}
+
+func TestIssueToolWaitBeforeTaskBindingUsesScopeThenRealTask(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	issue, err := a.createIssueFor(ct, "wait before accept", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct.SessionID = "conversation-pre-bind"
+	ct.SendState = sendSubmitting
+	ct.pendingSend = &pendingSend{}
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-pre-bind", "turn-pre-bind")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct.pendingSend.ToolScopeRef = scope.Ref
+	if !a.issueToolScopeActive(*scope) {
+		t.Fatal("submitting scope not active before accept")
+	}
+	response, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *scope, issueToolActionWait, map[string]any{
+		"issue_id": issue.ID, "expected_revision": issue.RequirementsRevision, "text": "question before accept",
+	})})
+	if err != nil || response.IsError {
+		t.Fatalf("pre-accept wait = %+v err=%v", response, err)
+	}
+	question := issue.openQuestion()
+	if question == nil || question.SourceTaskID != "" || question.SourceScopeRef != scope.Ref || question.SourceTurnID != scope.TurnID {
+		t.Fatalf("pre-accept question source = %+v", question)
+	}
+	a.issueToolBindTask(scope.Ref, "task-after-accept")
+	if question.SourceTaskID != "task-after-accept" {
+		t.Fatalf("question task was not bound to the real accepted task: %+v", question)
+	}
+	if err := a.persist(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := openContactStore(a.store.path, a.workDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloadedIssue := contactsFromStore(reloaded)[0].Issues[0]
+	reloadedQuestion := reloadedIssue.questionByRef(question.Ref)
+	if reloadedQuestion == nil || reloadedQuestion.SourceTaskID != "task-after-accept" || reloadedQuestion.SourceScopeRef != scope.Ref {
+		t.Fatalf("reloaded bound question = %+v", reloadedQuestion)
 	}
 }
