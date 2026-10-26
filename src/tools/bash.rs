@@ -114,7 +114,10 @@ impl Drop for ReapingChild {
     fn drop(&mut self) {
         let _ = self.group.terminate();
         if let Some(mut child) = self.child.take() {
-            if matches!(child.try_wait(), Ok(Some(_))) {
+            // Child::id only consults Tokio's cached FusedChild state; it does
+            // not try_wait. An exited-but-unobserved child must still be queued
+            // so cleanup owns the wait and the terminal barrier.
+            if child.id().is_none() {
                 return;
             }
             // Preserve kill_on_drop's direct-child fallback if group signalling fails.
