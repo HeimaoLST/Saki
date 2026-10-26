@@ -1075,3 +1075,19 @@ func TestIssueToolLateWaitStopCannotCancelNewExecution(t *testing.T) {
 		t.Fatal("late wait stop recorded a user Stop on any task")
 	}
 }
+
+func TestIssueToolReleaseCallbackParticipatesInShutdownDrain(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	quit := false
+	a.requestQuit = func() { quit = true }
+	a.issueToolReleaseInFlight = 1
+	a.beginShutdown()
+	if a.quitReady || quit {
+		t.Fatal("shutdown completed while a work release callback was in flight")
+	}
+	a.issueToolReleaseInFlight = 0
+	a.finishShutdown()
+	if !a.quitReady || !quit {
+		t.Fatal("shutdown did not complete after the final release callback")
+	}
+}
