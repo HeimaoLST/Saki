@@ -1,6 +1,6 @@
 # CI governance（Runtime／TUI／GUI）
 
-更新日期：2026-10-24。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。当前 workflow 基线为 `dev@fd58ec2`（2026-10-24，含 #80 Python 门禁、#82/#84 Runtime stdio、#88/#87 五项 GUI→Runtime 测试，以及 #143 macOS arm64 工程候选构建）。本文职责调整本身不修改 workflow 或分支保护。
+更新日期：2026-10-26。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。当前 CI 事实基线：`dev@fd58ec2` + 本 PR 候选 `8f2cf422`（stacked 到 `agent/pm/156-mvp-candidate`；含 GUI/Runtime 固定输入）。本文职责调整本身不修改 workflow 或分支保护。
 
 ## 目的与范围
 
@@ -31,7 +31,7 @@
 | Runtime + TUI | `rust` | `cargo test --locked --all-targets` | 单元、集成与 example target；测试数量以对应 SHA 的实际 run 为准 |
 | TUI（真实 PTY） | `rust` | `cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1` | 真实 PTY 上进入／退出终端并验证 panic 后 cooked mode 恢复 |
 | Runtime stdio（真实子进程） | `rust` | `cargo build --locked --bin Saki`；`python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki` | 两个真实 OS 进程、临时 read、task/message/journal 关联、恢复/history 零重放、继续前文与 stdout 断连 drain；driver 自带本地 fixture，无外部 provider/key |
-| GUI→Runtime（五个离线测试） | `rust` | 见下方「GUI→Runtime 进程集成」权威命令（与 workflow 使用同一命令） | Go 客户端→真实 Saki `--stdio`、本地 httptest provider、真实 read、事件/工具关联、应用层流程、profile snapshot、mapping 保存顺序/失败边界、跨进程恢复零重放与继续；逐项断言 PASS（非 Skip/空跑）；线上 smoke 不接入 |
+| GUI→Runtime（完整离线 desktop 包） | `rust` | `go test -json ./...` + `scripts/check-gui-runtime-results.py`（见下方权威命令） | 真实 Saki `--stdio` 双进程、首用 Save/Apply/Test/重启、活动配置变更/失败重载保留 helper、工作/对话并发、定向停止、容量与恢复；18 个必须场景逐项 PASS；仅 8 个显式预览/线上 opt-in Skip 可接受；线上 smoke 不接入 |
 | macOS arm64 工程候选 | `macos-app` | `bash scripts/build-macos-app.sh /absolute/out`（输出在 checkout 外） | Go GUI + Rust `Saki-runtime` helper、`Saki.app/Contents/MacOS/{Saki,Saki-runtime}`、Info.plist `dev.saki.desktop`、arm64 Mach-O、ad-hoc 签名；manifest/zip/SHA256SUMS；工程候选，不是 Nagi MVP |
 | GUI（独立 Go module） | `gui` | `gofmt -l .`（必须为空）、`CGO_ENABLED=0 go vet ./...`、`go test ./... -count=1`、`go build` | 格式、vet、测试、构建 |
 | GUI（可复现图像） | `gui` | `SAKI_PREVIEW_DIR=... go test -run TestPreviewImages -count=1 .` | headless `ui.Tester` 生成 light/dark add／settings 等场景 PNG，作为 artifact 保留 14 天 |
@@ -54,17 +54,58 @@ python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
 
 driver 自建本地 fixture HTTP 服务，不需要外部 provider/key；其断言覆盖两个真实 OS 进程、临时文件 read、task/message/journal 关联、跨进程保存/恢复/history 零模型重放、继续前文，以及 stdout 断连且 stdin 仍打开时的 drain/exit。Python 由 `actions/setup-python@v7` 显式固定为 3.12；step 使用 `set -o pipefail` + `tee`，step 超时 5 分钟，非零退出不会被后续命令吞掉。该步骤属于既有 `rust` job，失败沿 `rust` → `ci-required` 传播，不使用 if-file-exists、continue-on-error 或 skip。
 
-## GUI→Runtime 进程集成（2026-10-20 已启用）
+## GUI→Runtime 完整离线 package（2026-10-26 已启用）
 
-当前 dev 的 GUI 交付提供五个已有离线入口，均在 `rust` job 的真实 binary 构建之后、用同一 `SAKI_TEST_RUNTIME_BIN` 运行：
+`rust` job 在构建本次真实 `target/debug/Saki` 后，运行**完整离线 desktop Go package**，不靠手写 selector 只选少数测试：
 
 ```sh
 cd desktop
-SAKI_TEST_RUNTIME_BIN="$GITHUB_WORKSPACE/target/debug/Saki" CGO_ENABLED=0 \
-  go test -run '^(TestRuntimeProcessIntegration|TestGUIAppRuntimeFlow|TestGUIFirstCreateUsesProfileSnapshot|TestGUIAppPersistsMappingBeforeSend|TestGUIAppSaveFailureStopsBeforeSend)$' -count=1 -v .
+SAKI_TEST_RUNTIME_BIN="$GITHUB_WORKSPACE/target/debug/Saki" \
+SAKI_TEST_ONLINE=0 CGO_ENABLED=0 \
+  go test -json ./... -count=1 > "$RUNNER_TEMP/desktop-go-test.json"
+python3 "$GITHUB_WORKSPACE/scripts/check-gui-runtime-results.py" \
+  "$RUNNER_TEMP/desktop-go-test.json"
 ```
 
-覆盖：真实 `Saki --stdio` 双进程、真实 read、事件/工具关联、应用层 UI 流程、首建 profile snapshot、session mapping 持久化顺序/保存失败边界、跨进程恢复/history 零重放与继续。五个测试都通过 `requireRuntimeBinary`：未设置 `SAKI_TEST_RUNTIME_BIN` 会 Skip，设置但 binary 不存在会失败；测试自带本地 httptest provider，不需要真实凭据/外部 provider。Go 由 `actions/setup-go@v7` 按 `desktop/go.mod` 提供并缓存 `desktop/go.sum`；`-count=1` 禁止缓存替代新 binary。step 使用 `pipefail`+`tee`，并逐项检查 `--- PASS: <test> `；任何一项 Skip、未匹配/空跑或失败都会失败。`TestGUIOnlineSmoke` 保持 opt-in（`SAKI_TEST_ONLINE=1` + 宿主凭据），不进入本 CI。超时 5 分钟；Linux/headless，不覆盖真实窗口/IME。失败留在既有 `rust` job，沿 `rust` → `ci-required` 传播；无 if-file-exists、continue-on-error 或 skip。
+`go test` 的 stderr 直接进入 CI 日志，stdout 才是 JSON；不使用会混入 stderr 的 `2>&1`。`SAKI_TEST_RUNTIME_BIN` 必须指向本次构建的绝对 binary，`SAKI_TEST_ONLINE=0` 显式关闭线上入口，`-count=1` 禁止缓存替代新 binary。Go test 非零直接失败；checker 再验证 package PASS 与场景合同，任一不符都失败。
+
+checker（`scripts/check-gui-runtime-results.py`）的**必须 PASS** 清单（原 #87 五项 + 当前 Nagi 场景）：
+
+```text
+TestRuntimeProcessIntegration
+TestGUIAppRuntimeFlow
+TestGUIFirstCreateUsesProfileSnapshot
+TestGUIAppPersistsMappingBeforeSend
+TestGUIAppSaveFailureStopsBeforeSend
+TestConnectionGUIFirstSaveApplyTestSendAndRestart
+TestConnectionGUISaveDuringIssueAndReloadFailurePreservesHelper
+TestConnectionGUIFailedTestCanBeCorrectedWithoutSaving
+TestConnectionGUISaveFailureAndUnknownExecutionRecovery
+TestConnectionGUIEndpointChangePreservesOldContextAndNewDefaults
+TestConnectionProcessProbeBothProtocolsAndRepair
+TestConnectionProcessSavedChangeKeepsActiveSnapshotAndHistory
+TestIndependentIssueWorkAndConversationCapacityTwo
+TestIndependentExecutionCapacityOneSerializesConversation
+TestStoppingIssueWorkDoesNotStopConversation
+TestCapacityTwoReservesOneSlotForConversation
+TestUnknownIssueExecutionIsRecoveredFromHistoryAfterRestart
+TestIssueWorkStopButtonStopsIssueNotConversation
+```
+
+checker 还要求至少一个 PASS、`saki/desktop` package 最终 PASS、无任何 FAIL；缺任一必须用例、关键用例 Skip、未知 Skip、零执行/空 JSON 都会失败。明确允许的 opt-in Skip 仅这 8 个：
+
+```text
+TestGUIOnlineSmoke
+TestIntegratedMarkdownPreview
+TestMarkdownReaderScreenshot
+TestPreviewConnectionSettings
+TestPreviewImages
+TestPreviewIssueStates
+TestPreviewRuntimeStates
+TestPreviewStartupDiagnostics
+```
+
+这些预览测试只在显式目录 opt-in 时运行；线上 smoke 仍需 `SAKI_TEST_ONLINE=1` + 宿主凭据，不进入本 CI。完整 package 让未来新增离线测试自然执行；若新增合法 opt-in，必须同步检查脚本 allowlist，不能静默放开未知 Skip。step 超时 10 分钟；Linux/headless，不覆盖真实窗口/IME。失败留在既有 `rust` job，沿 `rust` → `ci-required` 传播；无 if-file-exists/continue-on-error/skip。
 
 ## macOS arm64 工程候选（2026-10-24）
 
@@ -190,11 +231,12 @@ python3 scripts/test_collaboration_check.py
 cargo build --locked --bin Saki
 python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
 
-# GUI→Runtime 进程集成（五个离线入口；子 shell 保持后续命令仍在仓库根）
+# GUI→Runtime 完整离线 desktop package（子 shell 保持后续命令仍在仓库根）
 (
   cd desktop
-  SAKI_TEST_RUNTIME_BIN="$PWD/../target/debug/Saki" CGO_ENABLED=0 \
-    go test -run '^(TestRuntimeProcessIntegration|TestGUIAppRuntimeFlow|TestGUIFirstCreateUsesProfileSnapshot|TestGUIAppPersistsMappingBeforeSend|TestGUIAppSaveFailureStopsBeforeSend)$' -count=1 -v .
+  SAKI_TEST_RUNTIME_BIN="$PWD/../target/debug/Saki" SAKI_TEST_ONLINE=0 CGO_ENABLED=0 \
+    go test -json ./... -count=1 > /tmp/desktop-go-test.json
+  python3 ../scripts/check-gui-runtime-results.py /tmp/desktop-go-test.json
 )
 
 # macOS arm64 engineering candidate（需 macOS arm64；输出在 checkout 外）
