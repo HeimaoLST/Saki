@@ -717,6 +717,11 @@ func (a *appModel) restoreIssueWork(rt *runtimeClient, generation int, contactID
 			if execution := ct.executionByTask(session.ActiveTask.TaskID); execution != nil {
 				execution.Status = issueExecutionRunning
 			}
+			if issue.Status == issueStatusCanceled {
+				_ = a.cancelIssueFor(ct, issue.ID)
+			} else if issue.Status != issueStatusCompleted && issue.Status != issueStatusWaitingUser {
+				issue.Status = issueStatusInProgress
+			}
 			return
 		}
 		issue.Work.ActiveTaskID = ""
@@ -1155,6 +1160,39 @@ func (a *appModel) applyIssueWorkHistory(ct *contact, issue *productIssue, recor
 	issue.Work.Loaded = true
 	issue.Work.SessionState = status
 	issue.Work.HistoryDirty = false
+	a.applyIssueRecoveredLifecycle(issue)
+}
+
+func (a *appModel) applyIssueRecoveredLifecycle(issue *productIssue) {
+	if issue == nil || issue.Status == issueStatusCompleted || issue.Status == issueStatusCanceled ||
+		issue.Status == issueStatusWaitingUser {
+		return
+	}
+	if issue.Work.ActiveTaskID != "" {
+		issue.Status = issueStatusInProgress
+		issue.UpdatedAt = nowMillis()
+		return
+	}
+	if len(issue.Executions) == 0 {
+		return
+	}
+	latest := issue.Executions[len(issue.Executions)-1]
+	switch latest.Status {
+	case issueExecutionCompleted:
+		issue.Status = issueStatusInProgress
+	case issueExecutionFailed, issueExecutionUnknown, issueExecutionPending,
+		issueExecutionNotDispatched, issueExecutionRejected:
+		issue.Status = issueStatusNeedsAttention
+	case issueExecutionInterrupted:
+		if issue.Work.StopRequestedTasks[latest.TaskID] {
+			issue.Status = issueStatusInProgress
+		} else {
+			issue.Status = issueStatusNeedsAttention
+		}
+	case issueExecutionAccepted, issueExecutionRunning:
+		issue.Status = issueStatusInProgress
+	}
+	issue.UpdatedAt = nowMillis()
 }
 
 func historyWorkDetail(status string, errText *string) string {
@@ -1372,6 +1410,7 @@ func (a *appModel) applyIssueEvent(ct *contact, issue *productIssue, event runti
 			execution.Status = issueExecutionStatusFromWork(workStateFromTask(payload.Status))
 			execution.Detail = detail
 		}
+		a.applyIssueTerminalLifecycle(issue, event.TaskID, payload.Status)
 		_ = a.persist()
 		a.reloadIssueWorkByID(ct.ID, issue.ID)
 	}
@@ -1748,6 +1787,13 @@ func (a *appModel) acceptIssueTask(ct *contact, issue *productIssue, execution *
 		}
 		issue.Work.SendError = "Task accepted, but its issue association could not be saved; reload before retrying."
 	}
+	if (issue.Work.cancelAfterAccept || issue.Status == issueStatusCanceled) && issue.Work.ActiveTaskID != "" {
+		if a.cancelIssueFor(ct, issue.ID) {
+			issue.Work.cancelAfterAccept = false
+		} else {
+			issue.Work.SendError = "The accepted task could not be cancelled; do not retry it automatically."
+		}
+	}
 }
 
 func (a *appModel) failIssueSubmit(contactID, issueID string, err error, submitted bool) {
@@ -1785,6 +1831,10 @@ func (a *appModel) failIssueSubmit(contactID, issueID string, err error, submitt
 				execution.Status = issueExecutionNotDispatched
 				execution.Detail = issue.Work.SendError
 			}
+		}
+		if issue.Status != issueStatusCanceled && issue.Status != issueStatusCompleted && !issue.Archived {
+			issue.Status = issueStatusNeedsAttention
+			issue.UpdatedAt = nowMillis()
 		}
 		_ = a.persist()
 	})
@@ -1979,8 +2029,11 @@ func (a *appModel) cancelSelected() {
 }
 
 func (a *appModel) cancelIssue(issueID string) bool {
-	ct := a.selectedContact()
-	if a.rt == nil {
+	return a.cancelIssueFor(a.selectedContact(), issueID)
+}
+
+func (a *appModel) cancelIssueFor(ct *contact, issueID string) bool {
+	if a.rt == nil || ct == nil {
 		return false
 	}
 	issue := ct.issueByID(issueID)
@@ -1997,15 +2050,9 @@ func (a *appModel) cancelIssue(issueID string) bool {
 	}
 	issue.Work.StopRequestedTasks[taskID] = true
 	issue.Work.SendError = "Cancellation requested"
-	rt := a.rt
 	go func() {
-		status, err := rt.cancelTask(sessionID, taskID)
-		a.updateUI(func() {
-			if a.rt != rt {
-				return
-			}
-			a.applyIssueCancelResult(ct.ID, issueID, taskID, status, err)
-		})
+		status, err := a.rt.cancelTask(sessionID, taskID)
+		a.updateUI(func() { a.applyIssueCancelResult(ct.ID, issueID, taskID, status, err) })
 	}()
 	return true
 }

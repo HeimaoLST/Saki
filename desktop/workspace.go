@@ -350,15 +350,15 @@ func (a *appModel) issueWorkEmptyState(c *ui.Context, t *ui.Theme, ct *contact, 
 
 func (a *appModel) issueSection(c *ui.Context, t *ui.Theme, ct *contact) {
 	if a.issueFormOpen {
+		title := "New issue"
+		if a.issueFormEditingID != "" {
+			title = "Edit issue"
+		}
 		ui.Column(c).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(6).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "New issue").FontSize(13).FontWeight(600).TextColor(t.Text)
+				ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(t.Text)
 				ui.Spacer(c)
-				ui.Button(c, "Cancel").FontSize(12).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
-					a.issueFormOpen = false
-					a.issueFormError = ""
-					a.focusIssueNew = true
-				})
+				ui.Button(c, "Cancel").FontSize(12).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.cancelIssueForm() })
 			})
 			ui.Text(c, "Goal").FontSize(11).FontWeight(500).TextColor(t.Text)
 			goal := ui.TextArea(c, &a.issueGoal).Label("Issue goal").FontSize(13).Placeholder("What should this issue accomplish?").Height(56)
@@ -367,113 +367,315 @@ func (a *appModel) issueSection(c *ui.Context, t *ui.Theme, ct *contact) {
 				a.focusIssueGoal = false
 			}
 			ui.Text(c, "Requirements").FontSize(11).FontWeight(500).TextColor(t.Text)
-			ui.TextArea(c, &a.issueRequirements).Label("Issue requirements").FontSize(13).Placeholder("Original requirements; one per line or a short note").Height(72)
+			ui.TextArea(c, &a.issueRequirements).Label("Issue requirements").FontSize(13).Placeholder("One requirement per line; edits start unverified").Height(72)
 			if a.issueFormError != "" {
 				ui.Text(c, a.issueFormError).FontSize(11).LineHeight(1.4).TextColor(t.Danger)
 			}
 			ui.Row(c).Gap(8).Children(func() {
-				ui.PrimaryButton(c, "Save issue").FontSize(12).OnClick(func() { a.createIssue(a.issueGoal, a.issueRequirements) })
+				ui.PrimaryButton(c, "Save issue").FontSize(12).OnClick(func() { a.saveIssueForm() })
 			})
 		})
 	}
 	if issue := ct.selectedIssue(); issue != nil {
-		ui.Column(c).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(5).Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-				ui.Text(c, "Issue · "+issue.Goal).FontSize(13).FontWeight(600).TextColor(t.Text).MaxLines(2)
-				ui.Spacer(c)
-				ui.Text(c, "Open").FontSize(11).TextColor(t.Warning)
-			})
-			ui.Text(c, "Original requirements · unverified").FontSize(11).FontWeight(500).TextColor(t.TextMuted)
-			ui.Text(c, issueRequirementsSummary(issue)).FontSize(11).LineHeight(1.45).TextColor(t.TextMuted)
-			ui.Text(c, "Completion: "+issueEvidenceText(issue)).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
-			for index, execution := range issue.Executions {
-				execution := execution
-				w := workFor(ct, execution.TaskID)
-				resultText := ct.resultTextForExecution(execution)
-				ui.Column(c).Padding(8).Radius(8).Background(t.Surface).Gap(2).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, fmt.Sprintf("Run %d · %s", index+1, issueExecutionLabel(execution))).FontSize(11).TextColor(t.TextMuted)
+		a.issueCard(c, t, ct, issue)
+	} else if !a.issueFormOpen {
+		ui.Text(c, "No product issues yet. Use New issue to explicitly create one.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	}
+	a.issueList(c, t, ct)
+}
+
+func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue) {
+	editable := !issue.Archived && issue.Status != issueStatusCompleted && issue.Status != issueStatusCanceled
+	ui.Column(c).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(5).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+			ui.Text(c, "Issue · "+issue.Goal).FontSize(13).FontWeight(600).TextColor(t.Text).MaxLines(2)
+			ui.Spacer(c)
+			ui.Text(c, issueStatusLabel(issue)).FontSize(11).TextColor(a.issueStatusColor(t, issue))
+		})
+		if a.issueActionError != "" {
+			ui.Text(c, a.issueActionError).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
+		}
+		if editable {
+			ui.Button(c, "Edit issue").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openEditIssueForm(issue) })
+		}
+		ui.Text(c, fmt.Sprintf("Requirements · revision %d", issue.RequirementsRevision)).FontSize(11).FontWeight(500).TextColor(t.TextMuted)
+		if len(issue.Requirements) == 0 {
+			ui.Text(c, "No requirements recorded.").FontSize(11).TextColor(t.TextMuted)
+		}
+		for _, requirement := range issue.Requirements {
+			requirement := requirement
+			if requirement == nil {
+				continue
+			}
+			ui.Column(c).Padding(7).Radius(7).Background(t.Surface).Gap(3).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(5).Children(func() {
+					ui.Text(c, requirement.Text).FontSize(11).LineHeight(1.4).TextColor(t.Text).Grow(1)
+					ui.Text(c, requirementStateLabel(requirement.State)).FontSize(10).TextColor(requirementStateColor(t, requirement.State))
+				})
+				if editable {
+					draft := a.requirementDraft(requirement)
+					ui.TextInput(c, draft).Label("Evidence for " + requirement.Text).FontSize(11).Placeholder("Evidence or user judgment")
+					ui.Row(c).Gap(4).Children(func() {
+						ui.Button(c, "Satisfied").FontSize(10).Padding(2, 6).Background(ui.Transparent).BorderWidth(0).TextColor(t.Success).OnClick(func() {
+							if !a.setIssueRequirementState(issue.ID, requirement.ID, requirementSatisfied, *draft) {
+								a.issueActionError = "Could not save the requirement state."
+							}
+						})
+						ui.Button(c, "Unmet").FontSize(10).Padding(2, 6).Background(ui.Transparent).BorderWidth(0).TextColor(t.Warning).OnClick(func() {
+							if !a.setIssueRequirementState(issue.ID, requirement.ID, requirementUnmet, *draft) {
+								a.issueActionError = "Could not save the requirement state."
+							}
+						})
+						ui.Button(c, "Unverified").FontSize(10).Padding(2, 6).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+							if !a.setIssueRequirementState(issue.ID, requirement.ID, requirementUnverified, *draft) {
+								a.issueActionError = "Could not save the requirement state."
+							}
+						})
 					})
-					if execution.Detail != "" {
-						ui.Text(c, execution.Detail).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
-					}
-					if execution.Status == issueExecutionUnknown || execution.Status == issueExecutionPending {
-						ui.Row(c).Gap(6).Children(func() {
-							if execution.TaskID != "" {
-								ui.Button(c, "Check execution").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
-									a.reconcileIssueExecution(issue.ID, execution.ID)
-								})
-							} else {
-								ui.Button(c, "Check execution").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
-									a.reconcileIssueExecution(issue.ID, execution.ID)
-								})
-								if issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle {
-									ui.Button(c, "Confirm not dispatched").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
-										a.confirmIssueExecutionNotDispatched(issue.ID, execution.ID)
-									})
-								}
-							}
-						})
-					}
-					if resultText != "" {
-						label := "Result preview"
-						if execution.Status == issueExecutionAccepted || execution.Status == issueExecutionRunning {
-							label = "Partial result preview"
-						}
-						ui.Text(c, label+": "+truncate(resultText, 300)).FontSize(11).LineHeight(1.4).TextColor(t.Text).MaxLines(4)
-					} else if w != nil {
-						switch {
-						case len(w.Tools) > 0:
-							last := w.Tools[len(w.Tools)-1]
-							lead := "No assistant message recorded for this run; tool output only: "
-							if execution.Status == issueExecutionAccepted || execution.Status == issueExecutionRunning {
-								lead = "No assistant message yet; tool output only: "
-							}
-							ui.Text(c, lead+toolTitleFor(last.Name, last.Args)+" · "+toolOutputSummary(last.Output)).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted).MaxLines(3)
-						case execution.Status == issueExecutionCompleted:
-							ui.Text(c, "No assistant message was recorded for this run. Use View execution to inspect its tool activity.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
-						}
-					}
-					if w != nil {
-						label := "View result"
-						if resultText == "" {
-							label = "View execution"
-						}
-						ui.Button(c, label).FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
-							a.showIssueWork(issue.ID, execution.TaskID)
-						})
+				} else if requirement.Evidence != "" {
+					ui.Text(c, "Evidence: "+requirement.Evidence).FontSize(10).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
+				}
+			})
+		}
+		completion := issueEvidenceText(issue)
+		if issue.Evidence != "" && issue.Status != issueStatusCompleted {
+			completion = "Previous completion evidence: " + issue.Evidence
+		}
+		ui.Text(c, "Completion: "+completion).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
+		a.issueActions(c, t, ct, issue, editable)
+
+		ui.Divider(c)
+		ui.Text(c, "Executions").FontSize(11).FontWeight(500).TextColor(t.TextMuted)
+		for index, execution := range issue.Executions {
+			execution := execution
+			w := workFor(ct, execution.TaskID)
+			resultText := ct.resultTextForExecution(execution)
+			ui.Column(c).Padding(8).Radius(8).Background(t.Surface).Gap(2).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, fmt.Sprintf("Run %d · %s", index+1, issueExecutionLabel(execution))).FontSize(11).TextColor(t.TextMuted)
+					ui.Spacer(c)
+					if execution.RequirementsRevision > 0 {
+						ui.Text(c, fmt.Sprintf("req r%d", execution.RequirementsRevision)).FontSize(10).TextColor(t.TextMuted)
 					}
 				})
+				if execution.Prompt != "" {
+					ui.Text(c, "Sent snapshot: "+truncate(execution.Prompt, 240)).FontSize(10).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
+				}
+				if execution.Detail != "" {
+					ui.Text(c, execution.Detail).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
+				}
+				if execution.Status == issueExecutionUnknown || execution.Status == issueExecutionPending {
+					ui.Row(c).Gap(6).Children(func() {
+						ui.Button(c, "Check execution").FontSize(10).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+							if !a.reconcileIssueExecution(issue.ID, execution.ID) {
+								a.issueActionError = execution.Detail
+							}
+						})
+						if execution.TaskID == "" && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle {
+							ui.Button(c, "Confirm not dispatched").FontSize(10).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+								if !a.confirmIssueExecutionNotDispatched(issue.ID, execution.ID) {
+									a.issueActionError = "Could not confirm this execution."
+								}
+							})
+						}
+					})
+				}
+				if resultText != "" {
+					label := "Result preview"
+					if execution.Status == issueExecutionAccepted || execution.Status == issueExecutionRunning {
+						label = "Partial result preview"
+					}
+					ui.Text(c, label+": "+truncate(resultText, 300)).FontSize(11).LineHeight(1.4).TextColor(t.Text).MaxLines(4)
+				} else if w != nil {
+					switch {
+					case len(w.Tools) > 0:
+						last := w.Tools[len(w.Tools)-1]
+						lead := "No assistant message recorded for this run; tool output only: "
+						if execution.Status == issueExecutionAccepted || execution.Status == issueExecutionRunning {
+							lead = "No assistant message yet; tool output only: "
+						}
+						ui.Text(c, lead+toolTitleFor(last.Name, last.Args)+" · "+toolOutputSummary(last.Output)).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted).MaxLines(3)
+					case execution.Status == issueExecutionCompleted:
+						ui.Text(c, "No assistant message was recorded for this run. Use View execution to inspect its tool activity.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+					}
+				}
+				if w != nil {
+					label := "View result"
+					if resultText == "" {
+						label = "View execution"
+					}
+					ui.Button(c, label).FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.showIssueWork(issue.ID, execution.TaskID) })
+				}
+			})
+		}
+		if executionHasUnknownRecovery(issue) {
+			ui.Text(c, "Recovery is available for an execution without a trusted terminal state.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+		}
+	})
+}
+
+func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue, editable bool) {
+	if issue.Archived {
+		ui.Button(c, "Restore issue").FontSize(12).OnClick(func() {
+			if !a.restoreIssue(issue.ID) {
+				a.issueActionError = "Could not restore this issue."
+			} else {
+				a.issueFilter = "active"
 			}
-			reason := a.canStartIssue(ct, issue)
+		})
+		return
+	}
+	if editable {
+		ui.Row(c).Gap(6).Children(func() {
+			reason := issueLifecycleStartBlocked(issue)
+			if reason == "" {
+				reason = a.canStartIssue(ct, issue)
+			}
 			if reason == "" {
 				reason = issueRunBlocked(issue)
 			}
 			if reason == "" {
-				ui.Button(c, "Run issue").FontSize(12).OnClick(func() { a.runIssue(issue.ID) })
+				label := "Start issue"
+				if len(issue.Executions) > 0 {
+					label = "Continue issue"
+				}
+				ui.Button(c, label).FontSize(12).OnClick(func() {
+					if !a.runIssue(issue.ID) {
+						a.issueActionError = a.issueFormError
+					}
+				})
 			} else {
-				ui.Text(c, "Run unavailable: "+reason).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+				ui.Text(c, "Start unavailable: "+reason).FontSize(10).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
 			}
-			if executionHasUnknownRecovery(issue) {
-				ui.Text(c, "Recovery is available for an execution without a trusted terminal state.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+			if issue.Status == issueStatusWaitingUser || issue.Status == issueStatusNeedsAttention {
+				ui.Button(c, "Resume").FontSize(11).Padding(2, 7).OnClick(func() {
+					if !a.resumeIssue(issue.ID) {
+						a.issueActionError = "Could not resume this issue."
+					}
+				})
+			} else if issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle {
+				ui.Button(c, "Mark waiting").FontSize(11).Padding(2, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+					if !a.markIssueWaiting(issue.ID) {
+						a.issueActionError = "Could not mark this issue waiting."
+					}
+				})
 			}
 		})
-	} else if !a.issueFormOpen {
-		ui.Text(c, "No product issues yet. Use New issue to explicitly create one.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 	}
-	open := ct.openIssues()
-	if len(open) > 1 {
-		ui.Text(c, "Open issues").FontSize(11).FontWeight(500).TextColor(t.TextMuted)
-		ui.Column(c).Gap(4).Children(func() {
-			for _, candidate := range open {
+	ui.Row(c).Gap(6).Children(func() {
+		if editable {
+			ui.Button(c, "Cancel issue").FontSize(11).Padding(2, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.Warning).OnClick(func() {
+				if !a.cancelIssueProduct(issue.ID) {
+					a.issueActionError = "Could not cancel this issue; its state was not changed."
+				}
+			})
+		}
+		ui.Button(c, "Archive").FontSize(11).Padding(2, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+			if !a.archiveIssue(issue.ID) {
+				a.issueActionError = "Could not archive this issue."
+			} else {
+				a.issueFilter = "archived"
+			}
+		})
+	})
+	if issue.Status == issueStatusCompleted || issue.Status == issueStatusCanceled {
+		ui.Button(c, "Reopen issue").FontSize(12).OnClick(func() {
+			if !a.reopenIssue(issue.ID) {
+				a.issueActionError = "Could not reopen this issue."
+			} else {
+				a.issueFilter = "active"
+			}
+		})
+		return
+	}
+	if editable && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle && issueRunBlocked(issue) == "" {
+		ui.Text(c, "Completion evidence").FontSize(10).TextColor(t.TextMuted)
+		draft := a.completionDraft(issue)
+		ui.TextInput(c, draft).Label("Completion evidence").FontSize(11).Placeholder("What proves this issue is complete?")
+		ui.Button(c, "Mark complete").FontSize(11).OnClick(func() {
+			if !a.completeIssue(issue.ID, *draft) {
+				a.issueActionError = "Could not complete this issue."
+			}
+		})
+	}
+}
+
+func (a *appModel) issueList(c *ui.Context, t *ui.Theme, ct *contact) {
+	filter := a.issueFilter
+	if filter == "" {
+		filter = "active"
+	}
+	filters := []string{"active", "waiting", "attention", "completed", "canceled", "archived"}
+	for start := 0; start < len(filters); start += 3 {
+		end := start + 3
+		if end > len(filters) {
+			end = len(filters)
+		}
+		ui.Row(c).Gap(4).Children(func() {
+			for _, candidate := range filters[start:end] {
 				candidate := candidate
-				label := truncate(candidate.Goal, 40)
-				if selected := ct.selectedIssue(); selected != nil && selected.ID == candidate.ID {
+				label := issueFilterActionLabel(candidate)
+				if candidate == filter {
 					label = "• " + label
 				}
-				ui.Button(c, label).FontSize(11).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.selectIssue(candidate.ID) })
+				ui.Button(c, label).FontSize(10).Padding(2, 6).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.issueFilter = candidate })
 			}
 		})
+	}
+	issues := ct.issuesForFilter(filter)
+	if len(issues) == 0 {
+		ui.Text(c, "No issues in "+issueFilterLabel(filter)+".").FontSize(11).TextColor(t.TextMuted)
+		return
+	}
+	ui.Text(c, "Issues · "+issueFilterLabel(filter)).FontSize(11).FontWeight(500).TextColor(t.TextMuted)
+	ui.Column(c).Gap(3).Children(func() {
+		for _, candidate := range issues {
+			candidate := candidate
+			label := issueStatusLabel(candidate) + " · " + truncate(candidate.Goal, 34)
+			if selected := ct.selectedIssue(); selected != nil && selected.ID == candidate.ID {
+				label = "• " + label
+			}
+			ui.Button(c, label).FontSize(10).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.selectIssue(candidate.ID) })
+		}
+	})
+}
+
+func (a *appModel) issueStatusColor(t *ui.Theme, issue *productIssue) ui.Color {
+	if issue == nil {
+		return t.TextMuted
+	}
+	if issue.Archived {
+		return t.TextMuted
+	}
+	switch issue.Status {
+	case issueStatusNeedsAttention, issueStatusWaitingUser:
+		return t.Warning
+	case issueStatusCompleted, issueStatusInProgress:
+		return t.Success
+	default:
+		return t.TextMuted
+	}
+}
+
+func requirementStateLabel(state string) string {
+	switch state {
+	case requirementSatisfied:
+		return "Satisfied"
+	case requirementUnmet:
+		return "Unmet"
+	default:
+		return "Unverified"
+	}
+}
+
+func requirementStateColor(t *ui.Theme, state string) ui.Color {
+	switch state {
+	case requirementSatisfied:
+		return t.Success
+	case requirementUnmet:
+		return t.Warning
+	default:
+		return t.TextMuted
 	}
 }
 
