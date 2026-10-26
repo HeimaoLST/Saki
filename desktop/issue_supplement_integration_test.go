@@ -628,3 +628,104 @@ func TestIssueSupplementCancelKeepsPendingAndRequiresReopenResume(t *testing.T) 
 		t.Fatalf("Cancel/resume sent %d requests, want 2", provider.count())
 	}
 }
+
+func TestIssueSupplementLostSendReceiptRestartKeepsUnknownWithoutResend(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	proxy, countPath := taskContextProxy(t, binary)
+	provider := &providerFixture{ToolFirst: false, Arrived: make(chan struct{})}
+	h := startGUIHarness(t, proxy, provider, "supplement-lost-receipt")
+	var issueID string
+	var setupErr error
+	h.pump.do(func() {
+		if !h.app.createIssue("lost receipt goal", "lost receipt requirement") {
+			setupErr = errors.New(h.app.issueFormError)
+			return
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		if err := h.app.addIssueSupplement(ct, issueID, "lost receipt supplement"); err != nil {
+			setupErr = err
+			return
+		}
+		if !h.app.runIssue(issueID) {
+			setupErr = errors.New(h.app.issueFormError)
+		}
+	})
+	if setupErr != nil {
+		if !h.closed {
+			h.shutdown(t)
+		}
+		t.Fatal(setupErr)
+	}
+	select {
+	case <-provider.Arrived:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive the accepted supplement task")
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && (issue.Work.SendError != "" || issue.Work.ActiveTaskID != "")
+	})
+	var originalText, batchText, executionID string
+	var batchExecutionID string
+	var receiptRevision int
+	var unknownAuto bool
+	h.snapshot(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		if issue == nil || issue.Supplements == nil || len(issue.Supplements.Items) == 0 || len(issue.Supplements.Batches) == 0 {
+			return
+		}
+		item := issue.Supplements.Items[0]
+		batch := issue.Supplements.Batches[0]
+		originalText, batchText, receiptRevision = item.Text, batch.Text, batch.Snapshot[0].RequirementsRevision
+		batchExecutionID = batch.ExecutionID
+		unknownAuto = issue.Supplements.AutoContinue
+		if len(issue.Executions) > 0 {
+			executionID = issue.Executions[0].ID
+		}
+	})
+	if originalText != "lost receipt supplement" || batchText != originalText || receiptRevision != 1 ||
+		executionID == "" || batchExecutionID != executionID || unknownAuto {
+		t.Fatalf("unknown receipt = text %q batch %q revision %d execution %q/%q auto %v",
+			originalText, batchText, receiptRevision, executionID, batchExecutionID, unknownAuto)
+	}
+	if provider.count() != 1 {
+		t.Fatalf("lost receipt provider requests = %d, want 1", provider.count())
+	}
+	if got, err := os.ReadFile(countPath); err != nil || string(got) != "task.send\n" {
+		t.Fatalf("task.send count before restart = %q, %v", got, err)
+	}
+	h.shutdown(t)
+
+	h2 := restartGUIHarness(t, proxy)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.wait(func() bool {
+		ct := h2.app.contacts[0]
+		return len(ct.Issues) == 1 && ct.Issues[0].Supplements != nil && len(ct.Issues[0].Supplements.Batches) == 1
+	})
+	var restoredOK bool
+	h2.snapshot(func() {
+		issue := h2.app.contacts[0].Issues[0]
+		if issue.Supplements == nil || len(issue.Supplements.Items) == 0 || len(issue.Supplements.Batches) == 0 {
+			return
+		}
+		item := issue.Supplements.Items[0]
+		batch := issue.Supplements.Batches[0]
+		restoredOK = item.Text == originalText && item.State == supplementStateUnknown &&
+			batch.Text == batchText && batch.State == supplementBatchUnknown &&
+			batch.ExecutionID == batchExecutionID && !issue.Supplements.AutoContinue
+	})
+	if !restoredOK {
+		t.Fatal("restart lost unknown supplement text/snapshot/association or re-enabled auto")
+	}
+	if provider.count() != 1 {
+		t.Fatalf("restart resent task after lost receipt: provider=%d", provider.count())
+	}
+	if got, err := os.ReadFile(countPath); err != nil || string(got) != "task.send\n" {
+		t.Fatalf("task.send count after restart = %q, %v", got, err)
+	}
+}

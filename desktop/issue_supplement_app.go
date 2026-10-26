@@ -311,7 +311,7 @@ func supplementHistoryMatches(execution *issueExecution, records []historyRecord
 	projection := parseHistory(execution.SessionID, records, nil)
 	for index := len(projection.messages) - 1; index >= 0; index-- {
 		message := projection.messages[index]
-		if message.TaskID != execution.TaskID || message.MessageID != execution.MessageID ||
+		if message.Kind != msgUser || message.TaskID != execution.TaskID || message.MessageID != execution.MessageID ||
 			message.Text != execution.Prompt || len(message.Context) != len(execution.Context) {
 			continue
 		}

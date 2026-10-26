@@ -189,4 +189,9 @@ func TestIssueSupplementHistoryMatchesRealJournalShape(t *testing.T) {
 	if supplementHistoryMatches(execution, supplementRawHistoryRecords(t, execution.TaskID, execution.MessageID, execution.Prompt, execution.Context, false)) {
 		t.Fatal("missing TaskStarted ownership matched")
 	}
+	assistantRecords := supplementRawHistoryRecords(t, execution.TaskID, execution.MessageID, execution.Prompt, execution.Context, true)
+	assistantRecords[1].Record.Items[0].Role = "assistant"
+	if supplementHistoryMatches(execution, assistantRecords) {
+		t.Fatal("assistant text was accepted as recorded user input")
+	}
 }
