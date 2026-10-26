@@ -390,6 +390,11 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 			ui.Text(c, "Issue · "+issue.Goal).FontSize(13).FontWeight(600).TextColor(t.Text).MaxLines(2)
 			ui.Spacer(c)
+			if issue.WorkSessionID != "" {
+				ui.Button(c, "Issue model").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+					a.openSessionModel(issue.WorkSessionID, "work", issue.Goal)
+				})
+			}
 			ui.Text(c, issueStatusLabel(issue)).FontSize(11).TextColor(a.issueStatusColor(t, issue))
 		})
 		if a.issueActionError != "" {
@@ -461,6 +466,18 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 				if execution.Prompt != "" {
 					ui.Text(c, "Sent snapshot: "+truncate(execution.Prompt, 240)).FontSize(10).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
 				}
+				if count := len(executionTaskContextItems(ct, issue, execution)); count > 0 {
+					label := fmt.Sprintf("Sent task context · %d", count)
+					if execution.ContextExpanded {
+						label = "Hide sent task context"
+					}
+					ui.Button(c, label).FontSize(10).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+						execution.ContextExpanded = !execution.ContextExpanded
+					})
+					if execution.ContextExpanded {
+						a.executionTaskContextView(c, t, ct, issue, execution)
+					}
+				}
 				if execution.Detail != "" {
 					ui.Text(c, execution.Detail).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 				}
@@ -527,6 +544,11 @@ func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *
 	}
 	if editable {
 		ui.Row(c).Gap(6).Children(func() {
+			label := "Task context"
+			if count := issue.Context.count(); count > 0 {
+				label = fmt.Sprintf("Task context · %d", count)
+			}
+			ui.Button(c, label).FontSize(11).Padding(2, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openIssueTaskContext(issue.ID) })
 			reason := issueLifecycleStartBlocked(issue)
 			if reason == "" {
 				reason = a.canStartIssue(ct, issue)

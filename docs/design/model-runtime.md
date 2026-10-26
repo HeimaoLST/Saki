@@ -1,6 +1,6 @@
 # Model runtime：协议、客户端与模型目录
 
-更新日期：2026-10-23。状态：已实施职责拆分、Responses 流式响应，以及 M1 的 Chat Completions 调用边界；主 Agent 默认流式，compact 与实验保留完整响应接口。参考依据见 [Pi 分层研究](../research/systems/model-runtime.md)。
+更新日期：2026-10-26。状态：已实施职责拆分、Responses 流式响应，以及 M1 的 Chat Completions 调用边界；主 Agent 默认流式，compact 与实验保留完整响应接口。参考依据见 [Pi 分层研究](../research/systems/model-runtime.md)。
 
 ## 模块与依赖
 
@@ -34,6 +34,8 @@
 `ResponsesClient::request_body` 返回非流式 HTTP JSON body，`respond_stream` 使用相同内容并添加 `stream: true`；公共请求的 Serialize 表示不等同于服务端 body。成长实验继续用该适配入口记录实际请求，响应 output 改为记录公共结果表示。
 
 默认端点、`.env` 加载和环境变量配置沿用原有行为；客户端按实际协议由 DeepseekClient 更名为 ResponsesClient。`respond` 仍对传输失败、408／429／5xx 最多尝试三次；context overflow 与其他请求错误立即返回，成功 HTTP 响应的解析失败不重试。
+
+实现事实（#160）：两协议共用的 HTTP transport 在发布非成功 HTTP 错误前，将正文中当前连接 key 的原文精确替换为 `[redacted]`；stdio 错误、stderr 和持久历史因而沿同一错误出口取得处理后的正文。HTTP 状态和其余诊断内容保留，overflow 仍先依据原始结构化错误分类，重试次数及条件不变。范围只涵盖该已知 key 在 HTTP 错误正文中的原文，不代表对任意内容或变换形式的通用敏感信息过滤。
 
 请求格式转换在发送前完成，失败不重试。`respond_once` 最多发出一次 HTTP 请求，转换失败返回 `attempts=0`；发送后无论成功或失败都返回 `attempts=1`。Responses 的 context overflow 由结构化 `error.code == "context_length_exceeded"` 判定；错误文本中的 "context length" 字样不参与分类。
 

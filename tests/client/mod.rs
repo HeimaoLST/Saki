@@ -1,8 +1,152 @@
 use super::*;
 use crate::agent::conversation::Conversation;
+use crate::client::{ClientConfig, ModelApi, ModelClient};
 use serde_json::json;
 
-use crate::test_support::{completed, overflow, requests, scripted_http};
+use crate::test_support::{completed, overflow, requests, scripted_http, scripted_server};
+
+fn request(conversation: &Conversation) -> ModelRequest<'_> {
+    ModelRequest::new("test".to_owned(), conversation.items(), vec![])
+}
+
+#[tokio::test]
+async fn http_401_redacts_the_current_key_from_body_and_error_format_for_both_protocols() {
+    const KEY: &str = "fixture-current-connection-key-160";
+    let body = json!({
+        "error": {
+            "code": "invalid_api_key",
+            "message": format!(
+                "Incorrect API key provided: {KEY}. Retry without the rejected key: {KEY}",
+            ),
+            "key": KEY,
+        }
+    })
+    .to_string();
+    assert!(body.matches(KEY).count() >= 3);
+    let conversation = Conversation::new("system".to_owned());
+
+    for api in [ModelApi::Responses, ModelApi::ChatCompletions] {
+        let (base_url, server) =
+            scripted_server(vec![(401, "application/json", body.clone().into_bytes())]).await;
+        let config = ClientConfig::new(api, KEY, base_url);
+        let error = ModelClient::new(&config)
+            .unwrap()
+            .respond(request(&conversation))
+            .await
+            .unwrap_err();
+        let Some(ApiError::Http {
+            status,
+            body: error_body,
+        }) = error.downcast_ref::<ApiError>()
+        else {
+            panic!("expected an HTTP API error");
+        };
+        assert_eq!(*status, reqwest::StatusCode::UNAUTHORIZED);
+        assert!(!error_body.contains(KEY));
+        assert!(error_body.contains("invalid_api_key"));
+        assert!(error_body.contains("Incorrect API key"));
+        assert!(!error.to_string().contains(KEY));
+        assert!(!format!("{error:?}").contains(KEY));
+        assert_eq!(requests(server).await.len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn error_body_without_the_key_is_unchanged_for_test_empty_and_configured_key_clients() {
+    const KEY: &str = "fixture-current-connection-key-160";
+    let wire_body =
+        json!({"error":{"code":"invalid_request_error","message":"model not found"}}).to_string();
+    let conversation = Conversation::new("system".to_owned());
+
+    let (without_key_url, without_key_server) = scripted_server(vec![(
+        400,
+        "application/json",
+        wire_body.clone().into_bytes(),
+    )])
+    .await;
+    let error = ModelClient::for_test(without_key_url)
+        .respond(request(&conversation))
+        .await
+        .unwrap_err();
+    let Some(ApiError::Http { status, body }) = error.downcast_ref::<ApiError>() else {
+        panic!("expected an HTTP API error");
+    };
+    assert_eq!(*status, reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(body, &wire_body);
+    assert_eq!(requests(without_key_server).await.len(), 1);
+
+    let (empty_key_url, empty_key_server) = scripted_server(vec![(
+        400,
+        "application/json",
+        wire_body.clone().into_bytes(),
+    )])
+    .await;
+    let empty_key = ClientConfig::new(ModelApi::Responses, "", empty_key_url);
+    let error = ModelClient::new(&empty_key)
+        .unwrap()
+        .respond(request(&conversation))
+        .await
+        .unwrap_err();
+    let Some(ApiError::Http { status, body }) = error.downcast_ref::<ApiError>() else {
+        panic!("expected an HTTP API error");
+    };
+    assert_eq!(*status, reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(body, &wire_body);
+    assert_eq!(requests(empty_key_server).await.len(), 1);
+
+    let (configured_key_url, configured_key_server) = scripted_server(vec![(
+        400,
+        "application/json",
+        wire_body.clone().into_bytes(),
+    )])
+    .await;
+    let configured_key = ClientConfig::new(ModelApi::Responses, KEY, configured_key_url);
+    let error = ModelClient::new(&configured_key)
+        .unwrap()
+        .respond(request(&conversation))
+        .await
+        .unwrap_err();
+    let Some(ApiError::Http { status, body }) = error.downcast_ref::<ApiError>() else {
+        panic!("expected an HTTP API error");
+    };
+    assert_eq!(*status, reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(body, &wire_body);
+    assert_eq!(requests(configured_key_server).await.len(), 1);
+}
+
+#[tokio::test]
+async fn overflow_is_classified_from_the_raw_body_before_key_redaction() {
+    // The key deliberately equals the structured overflow code: classification
+    // must inspect the original body, not the redacted representation.
+    const KEY: &str = "context_length_exceeded";
+    let body = json!({
+        "error": {
+            "code": KEY,
+            "message": format!("request rejected because {KEY}"),
+        }
+    })
+    .to_string();
+    let (base_url, server) =
+        scripted_server(vec![(400, "application/json", body.into_bytes())]).await;
+    let config = ClientConfig::new(ModelApi::Responses, KEY, base_url);
+    let conversation = Conversation::new("system".to_owned());
+    let error = ModelClient::new(&config)
+        .unwrap()
+        .respond(request(&conversation))
+        .await
+        .unwrap_err();
+    let Some(ApiError::ContextOverflow {
+        status,
+        body: error_body,
+    }) = error.downcast_ref::<ApiError>()
+    else {
+        panic!("expected a typed context overflow");
+    };
+    assert_eq!(*status, reqwest::StatusCode::BAD_REQUEST);
+    assert!(!error_body.contains(KEY));
+    assert!(error_body.contains("[redacted]"));
+    assert_eq!(requests(server).await.len(), 1);
+}
 
 #[tokio::test]
 async fn overflow_is_typed_and_is_not_retried() {

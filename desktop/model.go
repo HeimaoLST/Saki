@@ -26,6 +26,12 @@ const (
 	msgActivity
 )
 
+type pendingSend struct {
+	Draft   string            `json:"draft,omitempty"`
+	Context []taskContextItem `json:"context,omitempty"`
+	State   string            `json:"state,omitempty"`
+}
+
 type sendState int
 
 const (
@@ -36,10 +42,11 @@ const (
 )
 
 type historyEntry struct {
-	ID   string
-	Date string
-	From string // "me" or "contact"
-	Text string
+	ID      string
+	Date    string
+	From    string // "me" or "contact"
+	Text    string
+	Context []taskContextItem
 }
 
 type message struct {
@@ -67,6 +74,7 @@ type message struct {
 	ToolOutput string
 	History    bool
 	Streaming  bool
+	Context    []taskContextItem
 }
 
 type contact struct {
@@ -84,6 +92,7 @@ type contact struct {
 	History               []historyEntry
 	Revealed              []string
 	Draft                 string
+	Context               taskContext
 	replyIndex            int
 	list                  ui.ListState
 	Works                 []*workItem
@@ -106,6 +115,7 @@ type contact struct {
 	SendError         string
 	SubmittedDraft    string
 	SubmittedRev      int
+	pendingSend       *pendingSend
 	draftRev          int
 	HistoryDirty      bool
 	StatusDetail      string
@@ -148,6 +158,7 @@ type appModel struct {
 	issueGoal              string
 	issueRequirements      string
 	issueFormError         string
+	taskContextIssueID     string
 	focusIssueGoal         bool
 	focusIssueNew          bool
 	issueFilter            string
@@ -195,6 +206,14 @@ type appModel struct {
 	connectionTestCancel   func()
 	startupDetailsOpen     bool
 	shutdownDrainStarted   bool
+
+	modelForm         *modelSelection
+	modelOpenToken    int
+	modelPanelMessage string
+	modelPanelError   string
+	modelOpActive     bool
+	modelOpSessionID  string
+	modelRecovery     map[string]modelRecoveryState
 
 	// Layout is native runtime state, not product configuration. Width is
 	// updated from the window so the same view can choose three-pane,
@@ -361,7 +380,7 @@ func (a *appModel) selectContact(i int) {
 	if !a.demo {
 		ct := a.contacts[i]
 		if ct.SessionID != "" && (!ct.Loaded || ct.HistoryDirty) && ct.ActiveTaskID == "" {
-			a.reloadContactByID(ct.ID)
+			a.reloadContactByID(ct.ID, false)
 		}
 	}
 }
@@ -462,11 +481,18 @@ func (a *appModel) saveSettings() bool {
 }
 
 func (a *appModel) closeAux() {
+	if a.aux == "model" && a.modelOpActive {
+		return
+	}
 	switch a.aux {
 	case "settings":
 		a.focusSettings = true
 	case "sources":
 		a.focusHistory = false
+	case "model":
+		a.modelForm = nil
+		a.modelPanelMessage = ""
+		a.modelPanelError = ""
 	}
 	a.aux = ""
 }
@@ -504,7 +530,7 @@ func (a *appModel) historyMatches() []historyEntry {
 	// Live text can exist before the journal projection is reloaded. Keep it
 	// readable in History without duplicating an already-projected item.
 	for _, m := range c.Messages {
-		if m.Kind != msgUser && m.Kind != msgContact || strings.TrimSpace(m.Text) == "" {
+		if m.Kind != msgUser && m.Kind != msgContact || (strings.TrimSpace(m.Text) == "" && len(m.Context) == 0) {
 			continue
 		}
 		id := m.Key
@@ -518,7 +544,7 @@ func (a *appModel) historyMatches() []historyEntry {
 		if m.Kind == msgUser {
 			from = "me"
 		}
-		entries = append(entries, historyEntry{ID: id, Date: m.Time, From: from, Text: m.Text})
+		entries = append(entries, historyEntry{ID: id, Date: m.Time, From: from, Text: m.Text, Context: m.Context})
 		seen[id] = true
 	}
 	out := make([]historyEntry, 0, len(entries))

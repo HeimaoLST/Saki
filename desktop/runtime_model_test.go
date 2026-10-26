@@ -141,11 +141,11 @@ func TestStaleReloadCannotClobberNewSubmit(t *testing.T) {
 	bound.historyGen = 5
 	bound.SendState = sendSubmitting
 	before := len(bound.Messages)
-	a.applyReload(bound.ID, "s1", 4, runtimeSession{SessionID: "s1"}, nil, "completed", nil)
+	a.applyReload(bound.ID, "s1", 4, runtimeSession{SessionID: "s1"}, nil, "completed", nil, false)
 	if len(bound.Messages) != before || bound.SendState != sendSubmitting {
 		t.Fatal("stale reload changed a newer submit")
 	}
-	a.applyReload(bound.ID, "s1", 5, runtimeSession{SessionID: "s1"}, nil, "completed", nil)
+	a.applyReload(bound.ID, "s1", 5, runtimeSession{SessionID: "s1"}, nil, "completed", nil, false)
 	if len(bound.Messages) != before || bound.SendState != sendSubmitting {
 		t.Fatal("reload applied while a submit was in flight")
 	}
@@ -157,7 +157,7 @@ func TestReloadRecoversUnknownOnlyAfterIdleConfirmation(t *testing.T) {
 	bound.SendState = sendUnknown
 	bound.SendError = "Delivery not confirmed"
 	active := runtimeSession{SessionID: "s1", ActiveTask: &runtimeActiveTask{TaskID: "t9", MessageID: "m9"}}
-	a.applyReload(bound.ID, "s1", 7, active, nil, "running", nil)
+	a.applyReload(bound.ID, "s1", 7, active, nil, "running", nil, false)
 	if bound.SendState != sendAccepted || bound.ActiveTaskID != "t9" {
 		t.Fatalf("running task not restored: %+v", bound)
 	}
@@ -171,7 +171,7 @@ func TestReloadRecoversUnknownOnlyAfterIdleConfirmation(t *testing.T) {
 		}}}},
 		{Offset: 2, Record: journalRecord{Type: "task_finished", TaskID: "t9", Status: "completed"}},
 	}
-	a.applyReload(bound.ID, "s1", 7, runtimeSession{SessionID: "s1"}, records, "completed", nil)
+	a.applyReload(bound.ID, "s1", 7, runtimeSession{SessionID: "s1"}, records, "completed", nil, false)
 	if bound.SendState != sendIdle || bound.ActiveTaskID != "" || bound.SendError != "" {
 		t.Fatalf("idle reload did not recover: %+v", bound)
 	}
@@ -192,7 +192,7 @@ func TestHistoryFailureDetailSurvivesReload(t *testing.T) {
 	if bound.Status != statusAttention || !strings.Contains(bound.StatusDetail, reason) {
 		t.Fatalf("status=%v detail=%q", bound.Status, bound.StatusDetail)
 	}
-	a.applyReload(bound.ID, "s1", 1, runtimeSession{SessionID: "s1"}, records, "failed", nil)
+	a.applyReload(bound.ID, "s1", 1, runtimeSession{SessionID: "s1"}, records, "failed", nil, false)
 	if !strings.Contains(bound.StatusDetail, reason) {
 		t.Fatalf("reload wiped the failure reason: %q", bound.StatusDetail)
 	}
