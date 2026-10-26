@@ -347,7 +347,7 @@ func (a *appModel) reloadModelSession() {
 					if ct := a.contactByID(contactID); ct != nil {
 						ct.Loaded = false
 					}
-					a.reloadContactByID(contactID)
+					a.reloadContactByID(contactID, false)
 				}
 			}
 			if a.shutdownStarted {

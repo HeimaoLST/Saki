@@ -448,6 +448,7 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 		}
 		ui.Text(c, "Completion: "+completion).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 		a.issueActions(c, t, ct, issue, editable)
+		a.issueSupplementSection(c, t, ct, issue, editable)
 
 		ui.Divider(c)
 		ui.Text(c, "Executions").FontSize(11).FontWeight(500).TextColor(t.TextMuted)
@@ -465,6 +466,18 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 				})
 				if execution.Prompt != "" {
 					ui.Text(c, "Sent snapshot: "+truncate(execution.Prompt, 240)).FontSize(10).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
+				}
+				if count := len(executionTaskContextItems(ct, issue, execution)); count > 0 {
+					label := fmt.Sprintf("Sent task context · %d", count)
+					if execution.ContextExpanded {
+						label = "Hide sent task context"
+					}
+					ui.Button(c, label).FontSize(10).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+						execution.ContextExpanded = !execution.ContextExpanded
+					})
+					if execution.ContextExpanded {
+						a.executionTaskContextView(c, t, ct, issue, execution)
+					}
 				}
 				if execution.Detail != "" {
 					ui.Text(c, execution.Detail).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
@@ -504,13 +517,14 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 						ui.Text(c, "No assistant message was recorded for this run. Use View execution to inspect its tool activity.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 					}
 				}
-				if w != nil {
-					label := "View result"
-					if resultText == "" {
-						label = "View execution"
+				ui.Row(c).Gap(10).Children(func() {
+					ui.Button(c, "Open result").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+						a.openIssueResult(issue.ID, execution.ID)
+					})
+					if w != nil {
+						ui.Button(c, "View execution").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.showIssueWork(issue.ID, execution.TaskID) })
 					}
-					ui.Button(c, label).FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.showIssueWork(issue.ID, execution.TaskID) })
-				}
+				})
 			})
 		}
 		if executionHasUnknownRecovery(issue) {
@@ -531,27 +545,49 @@ func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *
 		return
 	}
 	if editable {
-		ui.Row(c).Gap(6).Children(func() {
-			reason := issueLifecycleStartBlocked(issue)
-			if reason == "" {
-				reason = a.canStartIssue(ct, issue)
+		taskContextButton := func() {
+			label := "Task context"
+			if count := issue.Context.count(); count > 0 {
+				label = fmt.Sprintf("Task context · %d", count)
 			}
-			if reason == "" {
-				reason = issueRunBlocked(issue)
+			ui.Button(c, label).FontSize(11).Padding(2, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openIssueTaskContext(issue.ID) })
+		}
+		addSupplementButton := func() {
+			label := "Add supplement"
+			if issue.Supplements != nil && (issue.Supplements.pendingCount() > 0 || len(issue.Supplements.Batches) > 0) {
+				label = fmt.Sprintf("Supplements · %d", issue.Supplements.pendingCount()+len(issue.Supplements.Batches))
 			}
-			if reason == "" {
-				label := "Start issue"
-				if len(issue.Executions) > 0 {
-					label = "Continue issue"
+			ui.Button(c, label).FontSize(11).Padding(2, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openIssueSupplementForm(issue.ID) })
+		}
+		reason := issueLifecycleStartBlocked(issue)
+		if reason == "" {
+			reason = a.canStartIssue(ct, issue)
+		}
+		if reason == "" {
+			reason = issueRunBlocked(issue)
+		}
+		var startButton func()
+		if reason == "" {
+			label := "Start issue"
+			if len(issue.Executions) > 0 {
+				label = "Continue issue"
+			}
+			if issue.Supplements != nil && issue.Supplements.pendingCount() > 0 {
+				if len(issue.Executions) == 0 {
+					label = "Start with supplement"
+				} else {
+					label = "Continue with supplement"
 				}
+			}
+			startButton = func() {
 				ui.Button(c, label).FontSize(12).OnClick(func() {
 					if !a.runIssue(issue.ID) {
 						a.issueActionError = a.issueFormError
 					}
 				})
-			} else {
-				ui.Text(c, "Start unavailable: "+reason).FontSize(10).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
 			}
+		}
+		waitButton := func() {
 			if issue.Status == issueStatusWaitingUser || issue.Status == issueStatusNeedsAttention {
 				ui.Button(c, "Resume").FontSize(11).Padding(2, 7).OnClick(func() {
 					if !a.resumeIssue(issue.ID) {
@@ -565,8 +601,20 @@ func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *
 					}
 				})
 			}
+		}
+		if startButton != nil {
+			ui.Row(c).Gap(6).Children(startButton)
+		}
+		if reason != "" {
+			ui.Text(c, "Start unavailable: "+reason).FontSize(10).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
+		}
+		ui.Row(c).Gap(6).Children(func() {
+			taskContextButton()
+			addSupplementButton()
+			waitButton()
 		})
 	}
+
 	ui.Row(c).Gap(6).Children(func() {
 		if editable {
 			ui.Button(c, "Cancel issue").FontSize(11).Padding(2, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.Warning).OnClick(func() {

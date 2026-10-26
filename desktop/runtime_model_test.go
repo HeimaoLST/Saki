@@ -32,46 +32,42 @@ func testRuntimeModel(t *testing.T) (*appModel, *contact, *contact) {
 	return a, bound, unbound
 }
 
-func TestSettingsBoundOnlyRenamesAndKeepsIdentity(t *testing.T) {
+func TestProfileEditsFutureDefaultsWithoutReplacingCurrentSession(t *testing.T) {
 	a, bound, _ := testRuntimeModel(t)
+	workspace := t.TempDir()
+	bound.SessionWorkingDir = "/old"
 	a.openSettings()
-	a.settingsDraft.Name = "Renamed"
-	a.settingsDraft.Purpose = "new purpose"
-	a.settingsDraft.Instructions = "new instructions"
-	a.settingsDraft.Workspace = "/new"
-	if !a.saveSettings() {
-		t.Fatal("save should succeed")
+	if !a.saveContactProfileDraft(profileDraft{
+		Name: "Renamed", Purpose: "new purpose", Instructions: "new instructions",
+		Workspace: workspace,
+	}, false) {
+		t.Fatalf("save failed: %+v", a.contactProfile)
 	}
-	if bound.Name != "Renamed" {
-		t.Fatalf("name = %q", bound.Name)
+	if bound.Name != "Renamed" || bound.Purpose != "new purpose" || bound.Instructions != "new instructions" || bound.Workspace != workspace {
+		t.Fatalf("future profile = %+v", bound)
 	}
-	if bound.Purpose != "old purpose" || bound.Instructions != "old instructions" || bound.Workspace != "/old" {
-		t.Fatalf("bound profile changed: %+v", bound)
-	}
-	if bound.SessionID != "s1" || bound.Draft != "keep me" || len(bound.Messages) != 1 || len(bound.History) != 1 {
-		t.Fatalf("identity/history/draft changed: %+v", bound)
+	if bound.SessionID != "s1" || bound.SessionWorkingDir != "/old" || bound.Draft != "keep me" || len(bound.Messages) != 1 || len(bound.History) != 1 {
+		t.Fatalf("current session snapshot changed: %+v", bound)
 	}
 	reloaded, err := openContactStore(a.store.path, "/tmp")
 	if err != nil {
 		t.Fatal(err)
 	}
 	stored := reloaded.state.Contacts[0]
-	if stored.Name != "Renamed" || stored.Purpose != "old purpose" || stored.SessionID != "s1" {
+	if stored.Name != "Renamed" || stored.Purpose != "new purpose" || stored.Workspace != workspace || stored.SessionID != "s1" {
 		t.Fatalf("stored = %+v", stored)
 	}
 }
 
 func TestSettingsUnboundProfileIsUsedBeforeFirstSession(t *testing.T) {
 	a, _, unbound := testRuntimeModel(t)
+	workspace := t.TempDir()
 	a.selected = 1
 	a.openSettings()
-	a.settingsDraft.Purpose = "p"
-	a.settingsDraft.Instructions = "i"
-	a.settingsDraft.Workspace = "/work"
-	if !a.saveSettings() {
-		t.Fatal("save should succeed")
+	if !a.saveContactProfileDraft(profileDraft{Name: unbound.Name, Purpose: "p", Instructions: "i", Workspace: workspace}, false) {
+		t.Fatalf("save failed: %+v", a.contactProfile)
 	}
-	if unbound.Purpose != "p" || unbound.Instructions != "i" || unbound.Workspace != "/work" {
+	if unbound.Purpose != "p" || unbound.Instructions != "i" || unbound.Workspace != workspace {
 		t.Fatalf("profile = %+v", unbound)
 	}
 	if unbound.SessionID != "" {
@@ -86,15 +82,17 @@ func TestSettingsDuringFirstCreateKeepsSubmittedSnapshot(t *testing.T) {
 	a, _, unbound := testRuntimeModel(t)
 	a.selected = 1
 	unbound.SendState = sendSubmitting
-	unbound.Purpose = "snapshot"
+	unbound.SubmittedDraft = "submitted snapshot"
+	unbound.pendingSend = &pendingSend{Draft: "submitted snapshot", State: "submitting"}
 	a.openSettings()
-	a.settingsDraft.Name = "Still Renamable"
-	a.settingsDraft.Purpose = "later edit"
-	if !a.saveSettings() {
-		t.Fatal("save should succeed")
+	if !a.saveContactProfileDraft(profileDraft{Name: "Still Editable", Purpose: "later edit", Workspace: unbound.Workspace}, false) {
+		t.Fatalf("save failed: %+v", a.contactProfile)
 	}
-	if unbound.Name != "Still Renamable" || unbound.Purpose != "snapshot" {
-		t.Fatalf("contact = %+v", unbound)
+	if unbound.Name != "Still Editable" || unbound.Purpose != "later edit" {
+		t.Fatalf("future profile was not saved: %+v", unbound)
+	}
+	if unbound.SubmittedDraft != "submitted snapshot" || unbound.pendingSend == nil || unbound.pendingSend.Draft != "submitted snapshot" {
+		t.Fatalf("submitted request snapshot changed: %+v", unbound.pendingSend)
 	}
 }
 
@@ -141,11 +139,11 @@ func TestStaleReloadCannotClobberNewSubmit(t *testing.T) {
 	bound.historyGen = 5
 	bound.SendState = sendSubmitting
 	before := len(bound.Messages)
-	a.applyReload(bound.ID, "s1", 4, runtimeSession{SessionID: "s1"}, nil, "completed", nil)
+	a.applyReload(bound.ID, "s1", 4, runtimeSession{SessionID: "s1"}, nil, "completed", nil, false)
 	if len(bound.Messages) != before || bound.SendState != sendSubmitting {
 		t.Fatal("stale reload changed a newer submit")
 	}
-	a.applyReload(bound.ID, "s1", 5, runtimeSession{SessionID: "s1"}, nil, "completed", nil)
+	a.applyReload(bound.ID, "s1", 5, runtimeSession{SessionID: "s1"}, nil, "completed", nil, false)
 	if len(bound.Messages) != before || bound.SendState != sendSubmitting {
 		t.Fatal("reload applied while a submit was in flight")
 	}
@@ -157,7 +155,7 @@ func TestReloadRecoversUnknownOnlyAfterIdleConfirmation(t *testing.T) {
 	bound.SendState = sendUnknown
 	bound.SendError = "Delivery not confirmed"
 	active := runtimeSession{SessionID: "s1", ActiveTask: &runtimeActiveTask{TaskID: "t9", MessageID: "m9"}}
-	a.applyReload(bound.ID, "s1", 7, active, nil, "running", nil)
+	a.applyReload(bound.ID, "s1", 7, active, nil, "running", nil, false)
 	if bound.SendState != sendAccepted || bound.ActiveTaskID != "t9" {
 		t.Fatalf("running task not restored: %+v", bound)
 	}
@@ -171,7 +169,7 @@ func TestReloadRecoversUnknownOnlyAfterIdleConfirmation(t *testing.T) {
 		}}}},
 		{Offset: 2, Record: journalRecord{Type: "task_finished", TaskID: "t9", Status: "completed"}},
 	}
-	a.applyReload(bound.ID, "s1", 7, runtimeSession{SessionID: "s1"}, records, "completed", nil)
+	a.applyReload(bound.ID, "s1", 7, runtimeSession{SessionID: "s1"}, records, "completed", nil, false)
 	if bound.SendState != sendIdle || bound.ActiveTaskID != "" || bound.SendError != "" {
 		t.Fatalf("idle reload did not recover: %+v", bound)
 	}
@@ -192,7 +190,7 @@ func TestHistoryFailureDetailSurvivesReload(t *testing.T) {
 	if bound.Status != statusAttention || !strings.Contains(bound.StatusDetail, reason) {
 		t.Fatalf("status=%v detail=%q", bound.Status, bound.StatusDetail)
 	}
-	a.applyReload(bound.ID, "s1", 1, runtimeSession{SessionID: "s1"}, records, "failed", nil)
+	a.applyReload(bound.ID, "s1", 1, runtimeSession{SessionID: "s1"}, records, "failed", nil, false)
 	if !strings.Contains(bound.StatusDetail, reason) {
 		t.Fatalf("reload wiped the failure reason: %q", bound.StatusDetail)
 	}

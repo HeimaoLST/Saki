@@ -502,29 +502,33 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 		t.Fatalf("zero-profile send changed purpose: %q", aProfile)
 	}
 
-	// Bound settings: only the name changes; no create/send, history/draft kept.
+	// Bound profile edits update future defaults; they must not create/send or
+	// replace the current conversation, draft or history.
 	before := provider.count()
+	futureWorkspace := h.root
 	h.pump.do(func() {
 		h.app.selectContact(0)
 		ct := h.app.contacts[0]
 		ct.Draft = "keep after restart"
 		h.app.draftChanged(ct)
 		h.app.openSettings()
-		h.app.settingsDraft.Name = "Renamed"
-		h.app.settingsDraft.Purpose = "should not apply"
-		h.app.settingsDraft.Instructions = "should not apply"
-		h.app.settingsDraft.Workspace = "/should-not-apply"
-		h.app.saveSettings()
+		draft := h.app.contactProfile.Draft
+		draft.Name = "Renamed"
+		draft.Purpose = "future purpose"
+		draft.Instructions = "future instructions"
+		draft.Workspace = futureWorkspace
+		if !h.app.saveContactProfileDraft(draft, false) {
+			t.Errorf("profile save failed: %s", h.app.contactProfile.Error)
+		}
 	})
-	var name, sessionAfter, draftAfter string
-	var purposeAfter string
+	var name, sessionAfter, draftAfter, purposeAfter, workspaceAfter string
 	var messagesAfter int
 	h.pump.do(func() {
 		ct := h.app.contacts[0]
-		name, sessionAfter, draftAfter, purposeAfter, messagesAfter = ct.Name, ct.SessionID, ct.Draft, ct.Purpose, len(ct.Messages)
+		name, sessionAfter, draftAfter, purposeAfter, workspaceAfter, messagesAfter = ct.Name, ct.SessionID, ct.Draft, ct.Purpose, ct.Workspace, len(ct.Messages)
 	})
-	if name != "Renamed" || sessionAfter != aSession || purposeAfter != "" || draftAfter != "keep after restart" || messagesAfter != aMessages {
-		t.Fatalf("bound settings changed identity: name=%q session=%q purpose=%q draft=%q messages=%d", name, sessionAfter, purposeAfter, draftAfter, messagesAfter)
+	if name != "Renamed" || sessionAfter != aSession || purposeAfter != "future purpose" || workspaceAfter != futureWorkspace || draftAfter != "keep after restart" || messagesAfter != aMessages {
+		t.Fatalf("profile edit changed the current session: name=%q session=%q purpose=%q workspace=%q draft=%q messages=%d", name, sessionAfter, purposeAfter, workspaceAfter, draftAfter, messagesAfter)
 	}
 	if provider.count() != before {
 		t.Fatalf("settings save issued runtime work: %d -> %d", before, provider.count())
@@ -571,7 +575,7 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 		t.Fatalf("restored metadata/state = state %q model %q api %q cwd %q; runtime = %+v",
 			restoredState, restoredModel, restoredAPI, restoredWorkingDir, runtimeTruth)
 	}
-	if restoredSession != aSession || restoredName != "Renamed" || restoredPurpose != "" || restoredDraft != "keep after restart" {
+	if restoredSession != aSession || restoredName != "Renamed" || restoredPurpose != "future purpose" || restoredDraft != "keep after restart" {
 		t.Fatalf("restored contact: session=%q name=%q purpose=%q draft=%q", restoredSession, restoredName, restoredPurpose, restoredDraft)
 	}
 	if restoredBDraft != "draft for B" {
@@ -1029,11 +1033,14 @@ func TestGUIFirstCreateUsesProfileSnapshot(t *testing.T) {
 		h.app.addDefaultContact()
 		ct := h.app.selectedContact()
 		h.app.openSettings()
-		h.app.settingsDraft.Name = "Writer"
-		h.app.settingsDraft.Purpose = "B purpose"
-		h.app.settingsDraft.Instructions = "B instructions"
-		h.app.settingsDraft.Workspace = h.root
-		h.app.saveSettings()
+		draft := h.app.contactProfile.Draft
+		draft.Name = "Writer"
+		draft.Purpose = "B purpose"
+		draft.Instructions = "B instructions"
+		draft.Workspace = h.root
+		if !h.app.saveContactProfileDraft(draft, false) {
+			t.Errorf("profile save failed: %s", h.app.contactProfile.Error)
+		}
 		ct.Draft = "hello profile"
 		h.app.sendCurrent()
 	})
@@ -1117,15 +1124,22 @@ func TestGUIOnlineSmoke(t *testing.T) {
 	}, 180*time.Second)
 
 	var status contactStatus
-	var detail string
+	var detail, taskID string
 	var sawTool, sawFinal bool
 	pump.do(func() {
 		ct := app.contacts[0]
-		status, detail = ct.Status, ct.StatusDetail
-		for _, m := range ct.Messages {
-			if m.ToolOutput != "" && strings.Contains(m.ToolOutput, marker) {
-				sawTool = true
+		status, detail, taskID = ct.Status, ct.StatusDetail, ct.LastTaskID
+		for _, work := range ct.Works {
+			if work.TaskID != taskID {
+				continue
 			}
+			for _, tool := range work.Tools {
+				if tool.Finished && strings.Contains(tool.Output, marker) {
+					sawTool = true
+				}
+			}
+		}
+		for _, m := range ct.Messages {
 			if m.Kind == msgContact && strings.Contains(m.Text, marker) && m.ToolName == "" {
 				sawFinal = true
 			}
