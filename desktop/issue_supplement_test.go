@@ -55,10 +55,10 @@ func acceptedSupplement(t *testing.T, l *issueSupplementLedger, target issueSupp
 	t.Helper()
 	addSupplement(t, l, target, "accepted supplement", dst)
 	batch := prepareSupplement(t, l, target, dst)
-	if !l.Accept(batch, issueSupplementAssociation{
+	if accepted, err := l.Accept(batch, issueSupplementAssociation{
 		SessionID: "session-1", TaskID: "task-1", MessageID: "message-1", ExecutionID: "execution-1",
-	}, persistLedger(l, dst)) {
-		t.Fatal("accept failed")
+	}, persistLedger(l, dst)); !accepted || err != nil {
+		t.Fatalf("accept failed: accepted=%v err=%v", accepted, err)
 	}
 	return batch
 }
@@ -141,10 +141,10 @@ func TestIssueSupplementDurableTransitionStatesAndAcceptance(t *testing.T) {
 	if !restored.BeginDispatch(restored.Batches[0], persistLedger(restored, &data)) {
 		t.Fatal("begin dispatch failed")
 	}
-	if !restored.Accept(restored.Batches[0], issueSupplementAssociation{
+	if accepted, err := restored.Accept(restored.Batches[0], issueSupplementAssociation{
 		SessionID: "s", TaskID: "t", MessageID: "m", ExecutionID: "e",
-	}, persistLedger(restored, &data)) {
-		t.Fatal("accepted did not persist")
+	}, persistLedger(restored, &data)); !accepted || err != nil {
+		t.Fatalf("accepted did not persist: %v", err)
 	}
 	accepted := reloadLedger(t, data)
 	if accepted.Batches[0].State != supplementBatchAccepted || accepted.Items[0].State != supplementStateSubmitted ||
@@ -244,10 +244,10 @@ func TestIssueSupplementStopAfterDispatchRetainsIdentityAndLateAccept(t *testing
 		reloaded.Items[0].State != supplementStateDispatching {
 		t.Fatalf("stopping dispatch lost identity or changed to pending: %+v / %+v", reloaded.Batches[0], reloaded.Items[0])
 	}
-	if !reloaded.Accept(reloaded.Batches[0], issueSupplementAssociation{
+	if accepted, err := reloaded.Accept(reloaded.Batches[0], issueSupplementAssociation{
 		SessionID: "late-s", TaskID: "late-t", MessageID: "late-m", ExecutionID: "late-e",
-	}, persistLedger(reloaded, &data)) {
-		t.Fatal("late accepted dispatch was rejected after stop")
+	}, persistLedger(reloaded, &data)); !accepted || err != nil {
+		t.Fatalf("late accepted dispatch was rejected after stop: %v", err)
 	}
 	accepted := reloadLedger(t, data)
 	if accepted.Batches[0].State != supplementBatchAccepted || accepted.Items[0].State != supplementStateSubmitted ||
@@ -275,10 +275,10 @@ func TestIssueSupplementUnknownAndLateAccepted(t *testing.T) {
 	if reloaded.AutoContinue || reloaded.Batches[0].State != supplementBatchUnknown {
 		t.Fatalf("unknown state = auto=%v batch=%+v", reloaded.AutoContinue, reloaded.Batches[0])
 	}
-	if !reloaded.Accept(reloaded.Batches[0], issueSupplementAssociation{
+	if accepted, err := reloaded.Accept(reloaded.Batches[0], issueSupplementAssociation{
 		SessionID: "s2", TaskID: "t2", MessageID: "m2", ExecutionID: "e2",
-	}, persistLedger(reloaded, &data)) {
-		t.Fatal("late accepted unknown batch was rejected")
+	}, persistLedger(reloaded, &data)); !accepted || err != nil {
+		t.Fatalf("late accepted unknown batch was rejected: %v", err)
 	}
 	if reloaded.AutoContinue || reloaded.Batches[0].State != supplementBatchAccepted {
 		t.Fatalf("late accepted unknown state = auto=%v batch=%+v", reloaded.AutoContinue, reloaded.Batches[0])
@@ -349,7 +349,7 @@ func TestIssueSupplementBoundsAndSaveFailureRollback(t *testing.T) {
 	}
 }
 
-func TestIssueSupplementDurableTransitionSaveFailureRollsBack(t *testing.T) {
+func TestIssueSupplementDurableTransitionSaveFailures(t *testing.T) {
 	failSave := func() error { return errSupplementSaveRequired }
 	l := newIssueSupplementLedger()
 	data := []byte{}
@@ -366,12 +366,29 @@ func TestIssueSupplementDurableTransitionSaveFailureRollsBack(t *testing.T) {
 		t.Fatal("begin did not succeed after rollback")
 	}
 	association := issueSupplementAssociation{SessionID: "s", TaskID: "t", MessageID: "m", ExecutionID: "e"}
-	if l.Accept(batch, association, failSave) || batch.State != supplementBatchDispatching ||
-		batch.SessionID != "" || l.Items[0].State != supplementStateDispatching || l.Items[0].SessionID != "" {
-		t.Fatalf("failed accept left partial state: %+v / %+v", batch, l.Items[0])
+	var failedSnapshot []byte
+	failAfterMarshal := func() error {
+		data, marshalErr := json.Marshal(l)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		failedSnapshot = append(failedSnapshot[:0], data...)
+		return errSupplementSaveRequired
 	}
-	if !l.Accept(batch, association, persistLedger(l, &data)) {
-		t.Fatal("accept did not recover after rollback")
+	accepted, err := l.Accept(batch, association, failAfterMarshal)
+	if !accepted || err == nil || batch.State != supplementBatchAccepted ||
+		batch.TaskID != "t" || l.Items[0].State != supplementStateSubmitted || l.Items[0].TaskID != "t" ||
+		!strings.Contains(batch.SaveError, "save") || l.AutoContinue {
+		t.Fatalf("accepted-but-unsaved state was rolled back: accepted=%v err=%v batch=%+v item=%+v", accepted, err, batch, l.Items[0])
+	}
+	if !l.ResumeAutoContinue(persistLedger(l, &data)) {
+		t.Fatal("resume after accepted save failure failed")
+	}
+	if len(failedSnapshot) == 0 {
+		t.Fatal("failed JSON save did not expose the accepted receipt snapshot")
+	}
+	if _, err := l.Prepare(target, persistLedger(l, &data)); err == nil {
+		t.Fatal("resume after accepted save failure resent the same supplement")
 	}
 
 	l2 := newIssueSupplementLedger()
@@ -384,5 +401,23 @@ func TestIssueSupplementDurableTransitionSaveFailureRollsBack(t *testing.T) {
 	if l2.StopAutoContinue(batch2, failSave) || !l2.AutoContinue || batch2.State != supplementBatchPrepared ||
 		l2.Items[0].State != supplementStatePrepared || l2.Items[0].BatchID != batch2.ID {
 		t.Fatalf("failed stop left partial state: auto=%v batch=%+v item=%+v", l2.AutoContinue, batch2, l2.Items[0])
+	}
+}
+
+func TestIssueSupplementStaleBatchPointerIsRejected(t *testing.T) {
+	l := newIssueSupplementLedger()
+	data := []byte{}
+	target := supplementTarget()
+	addSupplement(t, l, target, "stale batch", &data)
+	batch, err := l.Prepare(target, persistLedger(l, &data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded := reloadLedger(t, data)
+	if reloaded.BeginDispatch(batch, persistLedger(reloaded, &data)) {
+		t.Fatal("stale batch pointer was accepted after reload")
+	}
+	if len(reloaded.Batches) != 1 || reloaded.Batches[0].State != supplementBatchPrepared {
+		t.Fatalf("stale pointer mutated reloaded batch: %+v", reloaded.Batches)
 	}
 }

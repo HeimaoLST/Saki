@@ -81,6 +81,7 @@ type issueSupplementBatch struct {
 	TaskID      string                    `json:"task_id,omitempty"`
 	MessageID   string                    `json:"message_id,omitempty"`
 	ExecutionID string                    `json:"execution_id,omitempty"`
+	SaveError   string                    `json:"save_error,omitempty"`
 }
 
 type issueSupplementAssociation struct {
@@ -289,9 +290,11 @@ func (l *issueSupplementLedger) restoreBatchItems(batch *issueSupplementBatch, o
 // may the app start the RPC. A stopped/unknown dispatching batch must never be
 // folded back into pending.
 func (l *issueSupplementLedger) BeginDispatch(batch *issueSupplementBatch, save func() error) bool {
-	if save == nil || batch == nil || batch.State != supplementBatchPrepared || !l.AutoContinue || l.batchByID(batch.ID) == nil {
+	canonical := l.canonicalBatch(batch)
+	if save == nil || canonical == nil || canonical.State != supplementBatchPrepared || !l.AutoContinue {
 		return false
 	}
+	batch = canonical
 	old := batch.State
 	oldItems := l.snapshotBatchItems(batch)
 	batch.State = supplementBatchDispatching
@@ -311,19 +314,22 @@ func (l *issueSupplementLedger) BeginDispatch(batch *issueSupplementBatch, save 
 // Accept records a real Runtime acceptance with all four identities. It remains
 // valid even if auto-continuation was stopped after dispatch; submission does
 // not claim adoption, understanding, or requirement satisfaction.
-func (l *issueSupplementLedger) Accept(batch *issueSupplementBatch, association issueSupplementAssociation, save func() error) bool {
-	if save == nil || batch == nil || l.batchByID(batch.ID) == nil ||
-		(batch.State != supplementBatchDispatching && batch.State != supplementBatchUnknown) {
-		return false
+func (l *issueSupplementLedger) Accept(batch *issueSupplementBatch, association issueSupplementAssociation, save func() error) (bool, error) {
+	canonical := l.canonicalBatch(batch)
+	if canonical == nil || (canonical.State != supplementBatchDispatching && canonical.State != supplementBatchUnknown) {
+		return false, nil
+	}
+	batch = canonical
+	if save == nil {
+		return false, errSupplementSaveRequired
 	}
 	if strings.TrimSpace(association.SessionID) == "" || strings.TrimSpace(association.TaskID) == "" ||
 		strings.TrimSpace(association.MessageID) == "" || strings.TrimSpace(association.ExecutionID) == "" {
-		return false
+		return false, errors.New("accepted supplement requires session, task, message and execution ids")
 	}
-	old := *batch
-	oldItems := l.snapshotBatchItems(batch)
 	batch.State = supplementBatchAccepted
 	batch.SessionID, batch.TaskID, batch.MessageID, batch.ExecutionID = association.SessionID, association.TaskID, association.MessageID, association.ExecutionID
+	batch.SaveError = ""
 	for _, snapshot := range batch.Snapshot {
 		if item := l.itemByID(snapshot.ID); item != nil {
 			item.State = supplementStateSubmitted
@@ -331,18 +337,23 @@ func (l *issueSupplementLedger) Accept(batch *issueSupplementBatch, association 
 		}
 	}
 	if err := save(); err != nil {
-		*batch = old
-		l.restoreBatchItems(batch, oldItems)
-		return false
+		// Runtime acceptance is an external fact and cannot be rolled back.
+		// Keep the accepted snapshot and association, stop automatic
+		// continuation, and expose the persistence failure to the app.
+		batch.SaveError = err.Error()
+		l.AutoContinue = false
+		return true, fmt.Errorf("runtime accepted supplement, but saving the association failed: %w", err)
 	}
-	return true
+	return true, nil
 }
 
 func (l *issueSupplementLedger) Reject(batch *issueSupplementBatch, detail string, save func() error) bool {
-	if save == nil || batch == nil || l.batchByID(batch.ID) == nil ||
-		(batch.State != supplementBatchPrepared && batch.State != supplementBatchDispatching) {
+	canonical := l.canonicalBatch(batch)
+	if save == nil || canonical == nil ||
+		(canonical.State != supplementBatchPrepared && canonical.State != supplementBatchDispatching) {
 		return false
 	}
+	batch = canonical
 	old := *batch
 	oldItems := l.snapshotBatchItems(batch)
 	batch.State = supplementBatchRejected
@@ -361,10 +372,12 @@ func (l *issueSupplementLedger) Reject(batch *issueSupplementBatch, detail strin
 }
 
 func (l *issueSupplementLedger) NotDispatched(batch *issueSupplementBatch, detail string, save func() error) bool {
-	if save == nil || batch == nil || l.batchByID(batch.ID) == nil ||
-		(batch.State != supplementBatchPrepared && batch.State != supplementBatchDispatching) {
+	canonical := l.canonicalBatch(batch)
+	if save == nil || canonical == nil ||
+		(canonical.State != supplementBatchPrepared && canonical.State != supplementBatchDispatching) {
 		return false
 	}
+	batch = canonical
 	old := *batch
 	oldItems := l.snapshotBatchItems(batch)
 	batch.State = supplementBatchNotDispatched
@@ -383,10 +396,12 @@ func (l *issueSupplementLedger) NotDispatched(batch *issueSupplementBatch, detai
 }
 
 func (l *issueSupplementLedger) Unknown(batch *issueSupplementBatch, detail string, save func() error) bool {
-	if save == nil || batch == nil || l.batchByID(batch.ID) == nil ||
-		(batch.State != supplementBatchPrepared && batch.State != supplementBatchDispatching) {
+	canonical := l.canonicalBatch(batch)
+	if save == nil || canonical == nil ||
+		(canonical.State != supplementBatchPrepared && canonical.State != supplementBatchDispatching) {
 		return false
 	}
+	batch = canonical
 	old := *batch
 	oldAuto, oldItems := l.AutoContinue, l.snapshotBatchItems(batch)
 	batch.State = supplementBatchUnknown
@@ -413,11 +428,17 @@ func (l *issueSupplementLedger) StopAutoContinue(batch *issueSupplementBatch, sa
 	if save == nil {
 		return false
 	}
+	if batch != nil {
+		batch = l.canonicalBatch(batch)
+		if batch == nil {
+			return false
+		}
+	}
 	oldAuto := l.AutoContinue
 	oldBatch := issueSupplementBatch{}
 	var oldItems map[string]issueSupplement
 	l.AutoContinue = false
-	if batch != nil && l.batchByID(batch.ID) != nil {
+	if batch != nil {
 		oldBatch = *batch
 		oldItems = l.snapshotBatchItems(batch)
 		if batch.State == supplementBatchPrepared {
@@ -432,7 +453,7 @@ func (l *issueSupplementLedger) StopAutoContinue(batch *issueSupplementBatch, sa
 	}
 	if err := save(); err != nil {
 		l.AutoContinue = oldAuto
-		if batch != nil && l.batchByID(batch.ID) != nil {
+		if batch != nil {
 			*batch = oldBatch
 			l.restoreBatchItems(batch, oldItems)
 		}
@@ -470,6 +491,17 @@ func (l *issueSupplementLedger) batchByID(id string) *issueSupplementBatch {
 		}
 	}
 	return nil
+}
+
+func (l *issueSupplementLedger) canonicalBatch(batch *issueSupplementBatch) *issueSupplementBatch {
+	if batch == nil {
+		return nil
+	}
+	canonical := l.batchByID(batch.ID)
+	if canonical != batch {
+		return nil
+	}
+	return canonical
 }
 
 // MatchProvidedHistory matches a caller-supplied complete send input and
