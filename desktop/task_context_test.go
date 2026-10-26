@@ -429,6 +429,7 @@ func taskContextTester(tc *taskContext, dark bool) *ui.Tester {
 func taskContextTesterSize(tc *taskContext, dark bool, width, height int) *ui.Tester {
 	return ui.NewTester(func(c *ui.Context) {
 		theme := resolveWorkbenchTheme(dark)
+		c.SetTheme(theme.Theme)
 		ui.Scroll(c).Fill().Padding(16).Background(theme.Theme.Background).Children(func() {
 			tc.view(c, theme)
 		})
