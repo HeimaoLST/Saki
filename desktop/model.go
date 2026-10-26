@@ -237,16 +237,17 @@ type appModel struct {
 
 	// #154 conversation issue tools. The scope/operation records live in the
 	// same contact store, not in a second database or queue.
-	issueToolLedger   *IssueToolOperationLedger
-	issueToolScopes   map[string]IssueToolScope
-	issueToolServer   *issueToolIPCServer
-	issueToolEndpoint string
-	issueToolHelper   string
-	issueToolErr      string
-	issueToolWaiters  map[string]chan IssueToolReceipt
-	issueToolShutdown chan struct{}
-	issueToolMu       sync.Mutex
-	issueToolSchemaOK map[string]issueToolSchemaMark
+	issueToolLedger          *IssueToolOperationLedger
+	issueToolScopes          map[string]IssueToolScope
+	issueToolServer          *issueToolIPCServer
+	issueToolEndpoint        string
+	issueToolHelper          string
+	issueToolErr             string
+	issueToolWaiters         map[string]chan IssueToolReceipt
+	issueToolShutdown        chan struct{}
+	issueToolMu              sync.Mutex
+	issueToolSchemaOK        map[string]issueToolSchemaMark
+	issueToolReleaseInFlight int
 
 	modelForm         *modelSelection
 	modelOpenToken    int

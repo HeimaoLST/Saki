@@ -245,24 +245,34 @@ func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID strin
 }
 
 func (a *appModel) releaseIssueWorkSession(ct *contact, issue *productIssue) {
-	if a == nil || a.rt == nil || ct == nil || issue == nil || !a.issueToolEnabled() ||
-		issue.WorkSessionID == "" || issue.Work.ActiveTaskID != "" || issue.Work.Releasing {
+	if a == nil || a.rt == nil || ct == nil || issue == nil || !a.issueToolEnabled() || a.shutdownStarted ||
+		issue.WorkSessionID == "" || issue.Work.ActiveTaskID != "" || issue.Work.Releasing ||
+		issue.Work.SendState != sendIdle || issue.Work.pendingExecutionID != "" || len(issue.Work.pendingEvents) > 0 {
 		return
 	}
-	sessionID := issue.WorkSessionID
+	sessionID, contactID, issueID := issue.WorkSessionID, ct.ID, issue.ID
 	rt, generation := a.rt, a.connectionGeneration
 	issue.Work.Releasing = true
+	a.issueToolReleaseInFlight++
 	go func() {
 		err := rt.releaseSession(sessionID)
 		a.updateUI(func() {
+			if a.issueToolReleaseInFlight > 0 {
+				a.issueToolReleaseInFlight--
+			}
+			defer func() {
+				if a.shutdownStarted {
+					a.finishShutdown()
+				}
+			}()
 			if a.rt != rt || a.connectionGeneration != generation {
 				return
 			}
-			contactOwner := a.contactByID(ct.ID)
+			contactOwner := a.contactByID(contactID)
 			if contactOwner == nil {
 				return
 			}
-			owner := contactOwner.issueByID(issue.ID)
+			owner := contactOwner.issueByID(issueID)
 			if owner == nil || owner.WorkSessionID != sessionID {
 				return
 			}
@@ -270,10 +280,10 @@ func (a *appModel) releaseIssueWorkSession(ct *contact, issue *productIssue) {
 			owner.Work.ReleasePending = false
 			if err != nil {
 				owner.Work.SendError = "Could not release idle work tool process: " + a.connectionRuntimeMessage(err)
-				return
+			} else {
+				owner.Work.Released = true
+				owner.Work.Loaded = true
 			}
-			owner.Work.Released = true
-			owner.Work.Loaded = true
 			a.maybeAutoContinueIssue(contactOwner, owner)
 		})
 	}()

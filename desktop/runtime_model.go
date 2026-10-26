@@ -1230,7 +1230,8 @@ func (a *appModel) applyIssueWorkHistory(ct *contact, issue *productIssue, recor
 	}
 	issue.Work.Loaded = true
 	issue.Work.SessionState = status
-	if issue.Work.ReleasePending && issue.Work.ActiveTaskID == "" && !issue.Work.Releasing {
+	if issue.Work.ReleasePending && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+		issue.Work.pendingExecutionID == "" && len(issue.Work.pendingEvents) == 0 && !issue.Work.Releasing {
 		a.releaseIssueWorkSession(ct, issue)
 	}
 	issue.Work.HistoryDirty = false
@@ -1490,7 +1491,9 @@ func (a *appModel) applyIssueEvent(ct *contact, issue *productIssue, event runti
 			execution.Detail = detail
 		}
 		a.applyIssueTerminalLifecycle(issue, event.TaskID, payload.Status)
-		issue.Work.ReleasePending = true
+		if a.issueToolEnabled() {
+			issue.Work.ReleasePending = true
+		}
 		_ = a.persist()
 		a.reloadIssueWorkByID(ct.ID, issue.ID)
 		a.maybeAutoContinueAllIssues()
@@ -1751,7 +1754,7 @@ func (a *appModel) canStartIssue(ct *contact, issue *productIssue) string {
 	if sessionBusy(issue.Work.SendState, issue.Work.ActiveTaskID) {
 		return "This issue already has an active execution."
 	}
-	if issue.Work.Releasing {
+	if issue.Work.Releasing || issue.Work.ReleasePending {
 		return "This issue's work session is still being released; retry after it completes."
 	}
 	if issue.WorkSessionID != "" && !issue.Work.Loaded && !issue.Work.Released {
