@@ -1344,8 +1344,9 @@ func TestGUIShutdownWaitsForFinalOwnerCallback(t *testing.T) {
 				h.app.beginShutdown()
 			})
 
-			// finish() may close done before or after OnExit. Collect both owner
-			// callbacks without assuming their order; execute only one first.
+			// finish() closes done before OnExit, but finishShutdown can enqueue the
+			// final callback before OnExit. Collect both owner callbacks without
+			// assuming their order; execute only one first.
 			var callbacksSeen [2]func()
 			for i := 0; i < len(callbacksSeen); i++ {
 				select {
