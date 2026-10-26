@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func TestDeriveIssueResultFilesOnlyFromSuccessfulWriteEditResults(t *testing.T) {
@@ -335,5 +337,400 @@ func TestIssueResultPathRetainsTrailingSpaceFilename(t *testing.T) {
 	})
 	if action.Err != "" || action.Notice != "" || opened != path {
 		t.Fatalf("open action = %+v opened=%q, want %q", action, opened, path)
+	}
+}
+
+func issueResultPanelTester(state *issueResultPanelState, actions issueResultPanelActions, width, height int, dark bool) *ui.Tester {
+	return ui.NewTester(func(c *ui.Context) {
+		c.SetTheme(resolveWorkbenchTheme(dark).Theme)
+		issueResultPanel(c, state, actions)
+	}, width, height)
+}
+
+func issueResultPanelFixtureFile(key, path, raw string) issueResultFile {
+	return issueResultFile{
+		ExecutionID: "exec-" + key, SessionID: "session-" + key, TaskID: "task-" + key, MessageID: "msg-" + key,
+		CallID: "call-" + key, ToolName: "write", Path: path, WorkingDirectory: "/workspace/" + key, RawResult: raw,
+	}
+}
+
+func TestIssueResultPanelCopiesExactResultMarkdownAndCode(t *testing.T) {
+	source := "# Result\n\nExact **raw** source.\n\n```go\nfunc main() {\n  println(\"hi\")\n}\n```\n"
+	state := &issueResultPanelState{
+		RunLabel:  "Run 2 · result · Ship the issue result panel",
+		RunStatus: "Completed",
+		Response:  source,
+		Files: []issueResultFile{
+			issueResultPanelFixtureFile("one", "/tmp/workspace/report.md", `{"path":"/tmp/workspace/report.md","bytes_written":12}`),
+		},
+	}
+	tr := issueResultPanelTester(state, issueResultPanelActions{SelectFile: func(string) {}}, 600, 900, false)
+	tr.Frame()
+	for _, want := range []string{"Run results", "Run 2 · result · Ship the issue result panel", "Completed", "Result", "Reported files", "report.md", "Reported by write", "View file 1"} {
+		if !tr.HasText(want) {
+			t.Fatalf("missing %q in %q", want, tr.Texts())
+		}
+	}
+	if err := tr.Click("Copy result"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != source {
+		t.Fatalf("result copy = %q, want exact %q", got, source)
+	}
+	if err := tr.Click("Copy code"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := tr.Clipboard(), "func main() {\n  println(\"hi\")\n}\n"; got != want {
+		t.Fatalf("code copy = %q, want %q", got, want)
+	}
+	if tr.HasText("Session:") || tr.HasText("Task:") || tr.HasText("call-one") {
+		t.Fatalf("debug identity was visible by default: %q", tr.Texts())
+	}
+}
+
+func TestIssueResultPanelNoResponseStillShowsReportedFilesAndClose(t *testing.T) {
+	file := issueResultPanelFixtureFile("one", "/tmp/workspace/created.txt", `{"path":"/tmp/workspace/created.txt","bytes_written":1}`)
+	state := &issueResultPanelState{
+		RunLabel:  "Run 1 · result · No response case",
+		RunStatus: "Completed",
+		Files:     []issueResultFile{file},
+	}
+	closed := 0
+	tr := issueResultPanelTester(state, issueResultPanelActions{Close: func() { closed++ }}, 600, 700, false)
+	tr.Frame()
+	for _, want := range []string{"No assistant response was recorded for this run.", "Reported files", "created.txt", file.Path, "Working directory: /workspace/one", "Reported by write"} {
+		if !tr.HasText(want) {
+			t.Fatalf("missing %q in %q", want, tr.Texts())
+		}
+	}
+	if err := tr.Click("Close results"); err != nil {
+		t.Fatal(err)
+	}
+	if closed != 1 {
+		t.Fatalf("close calls = %d", closed)
+	}
+}
+
+func TestIssueResultPanelPreviewReadsCurrentFileAndCopiesExactPath(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "current.txt")
+	if err := os.WriteFile(path, []byte("alpha-current\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file := issueResultPanelFixtureFile("one", path, fmt.Sprintf(`{"path":%q,"bytes_written":14}`, path))
+	state := &issueResultPanelState{
+		RunLabel: "Run 1 · result · Current file", RunStatus: "Completed", Response: "Result body.",
+		Files: []issueResultFile{file}, Selected: issueResultFileKey(file),
+	}
+	inspection := inspectIssueResultFile(file)
+	state.Inspection, state.InspectFor = &inspection, issueResultFileKey(file)
+	tr := issueResultPanelTester(state, issueResultPanelActions{CheckFile: func(issueResultFile) {}}, 600, 900, false)
+	tr.Frame()
+	for _, want := range []string{"Current file", "alpha-current", "Copy current file", "Copy path", "Check again"} {
+		if !tr.HasText(want) {
+			t.Fatalf("missing %q in %q", want, tr.Texts())
+		}
+	}
+	if err := os.WriteFile(path, []byte("beta-current\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	updated := inspectIssueResultFile(file)
+	state.Inspection = &updated
+	tr.Frame()
+	if !tr.HasText("beta-current") || tr.HasText("alpha-current") {
+		t.Fatalf("preview did not follow current disk content: %q", tr.Texts())
+	}
+	if err := tr.Click("Copy current file"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != "beta-current\n" {
+		t.Fatalf("current file copy = %q", got)
+	}
+	if err := tr.Click("Copy path"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != path {
+		t.Fatalf("path copy = %q, want exact %q", got, path)
+	}
+}
+
+func TestIssueResultPanelMissingFileKeepsPathAndRecordCopyAndRetries(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "missing.txt")
+	raw := `{"path":"` + path + `","bytes_written":7}`
+	file := issueResultPanelFixtureFile("one", path, raw)
+	key := issueResultFileKey(file)
+	inspection := inspectIssueResultFile(file)
+	state := &issueResultPanelState{
+		RunLabel: "Run 1 · result · Missing file", RunStatus: "Completed", Response: "Created a file.",
+		Files: []issueResultFile{file}, Selected: key, Inspection: &inspection, InspectFor: key, Checking: true,
+		ActionFor: key, Action: issueResultFileAction{Path: path, Err: "Could not open the current file: no handler"},
+	}
+	checks := 0
+	actions := issueResultPanelActions{
+		ToggleSource: func(got string) { state.SourceFor = got },
+		CheckFile: func(got issueResultFile) {
+			checks++
+			if err := os.WriteFile(path, []byte("restored\n"), 0o600); err != nil {
+				return
+			}
+			fresh := inspectIssueResultFile(got)
+			state.Checking, state.Inspection, state.InspectFor = false, &fresh, issueResultFileKey(got)
+			state.ActionFor, state.Action = "", issueResultFileAction{}
+		},
+	}
+	tr := issueResultPanelTester(state, actions, 600, 900, false)
+	tr.Frame()
+	for _, want := range []string{"Checking the current file…", "Current file", "No file exists at the reported path", "Could not open the current file: no handler", "Copy path", "Check again", "Source & raw record"} {
+		if !tr.HasText(want) {
+			t.Fatalf("missing %q in %q", want, tr.Texts())
+		}
+	}
+	if tr.HasText("Open file") || tr.HasText("Show in Finder") {
+		t.Fatalf("missing file exposed OS actions: %q", tr.Texts())
+	}
+	if err := tr.Click("Copy path"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != path {
+		t.Fatalf("missing path copy = %q, want %q", got, path)
+	}
+	if err := tr.Click("Source & raw record"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.HasText("Session: session-one") || !tr.HasText("Call: call-one") {
+		t.Fatalf("expanded source identity missing: %q", tr.Texts())
+	}
+	if err := tr.Click("Copy tool record"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != raw {
+		t.Fatalf("raw record copy = %q, want exact %q", got, raw)
+	}
+	if err := tr.Click("Check again"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if checks != 1 || !tr.HasText("restored") {
+		t.Fatalf("retry checks=%d texts=%q", checks, tr.Texts())
+	}
+}
+
+func TestIssueResultPanelUnsupportedAndOversizeOfferExternalOpen(t *testing.T) {
+	root := t.TempDir()
+	binaryPath := filepath.Join(root, "binary.bin")
+	if err := os.WriteFile(binaryPath, []byte{0xff, 0xfe}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	largePath := filepath.Join(root, "large.txt")
+	if err := os.WriteFile(largePath, []byte(strings.Repeat("a", issueResultPreviewLimit+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{"binary", binaryPath, "not UTF-8"},
+		{"oversize", largePath, "preview limit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := issueResultPanelFixtureFile(tc.name, tc.path, fmt.Sprintf(`{"path":%q,"bytes_written":1}`, tc.path))
+			inspection := inspectIssueResultFile(file)
+			state := &issueResultPanelState{
+				RunLabel: "Run 1 · result · " + tc.name, RunStatus: "Completed", Files: []issueResultFile{file},
+				Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
+			}
+			opened, revealed := 0, 0
+			tr := issueResultPanelTester(state, issueResultPanelActions{
+				OpenFile:   func(issueResultFile) { opened++ },
+				RevealFile: func(issueResultFile) { revealed++ },
+			}, 600, 800, false)
+			tr.Frame()
+			if !tr.HasText(tc.want) || !tr.HasText("Open file") || !tr.HasText("Show in Finder") {
+				t.Fatalf("unsupported state missing: %q", tr.Texts())
+			}
+			if err := tr.Click("Open file"); err != nil {
+				t.Fatal(err)
+			}
+			if err := tr.Click("Show in Finder"); err != nil {
+				t.Fatal(err)
+			}
+			tr.Frame()
+			if opened != 1 || revealed != 1 {
+				t.Fatalf("opened=%d revealed=%d", opened, revealed)
+			}
+			if tr.HasText("Opened") || tr.HasText("Found in Finder") {
+				t.Fatalf("component claimed an unverified OS outcome: %q", tr.Texts())
+			}
+		})
+	}
+}
+
+func TestIssueResultPanelEmptyFilePreviewAndCopyAreValid(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "empty.txt")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file := issueResultPanelFixtureFile("empty", path, fmt.Sprintf(`{"path":%q,"bytes_written":0}`, path))
+	inspection := inspectIssueResultFile(file)
+	if !inspection.Exists || !inspection.Regular || inspection.Preview != "" || inspection.Notice != "" || inspection.ReadError != "" {
+		t.Fatalf("empty inspection = %+v", inspection)
+	}
+	state := &issueResultPanelState{
+		RunLabel: "Run 1 · result · Empty file", RunStatus: "Completed", Files: []issueResultFile{file},
+		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
+	}
+	tr := issueResultPanelTester(state, issueResultPanelActions{}, 600, 700, false)
+	tr.Frame()
+	if !tr.HasText("Current file") || !tr.HasText("Copy current file") {
+		t.Fatalf("empty file preview missing: %q", tr.Texts())
+	}
+	tr.SetClipboard("sentinel")
+	if err := tr.Click("Copy current file"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != "" {
+		t.Fatalf("empty file copy = %q, want empty", got)
+	}
+}
+
+func TestIssueResultPanelRepeatedPathKeepsCallIdentity(t *testing.T) {
+	path := "/tmp/workspace/shared.txt"
+	first := issueResultPanelFixtureFile("one", path, `{"path":"/tmp/workspace/shared.txt","bytes_written":1}`)
+	second := issueResultPanelFixtureFile("two", path, `{"path":"/tmp/workspace/shared.txt","bytes_written":2}`)
+	state := &issueResultPanelState{
+		RunLabel: "Run 1 · result · Repeated path", RunStatus: "Completed",
+		Files: []issueResultFile{first, second},
+	}
+	tr := issueResultPanelTester(state, issueResultPanelActions{
+		SelectFile:   func(key string) { state.Selected = key },
+		ToggleSource: func(key string) { state.SourceFor = key },
+	}, 600, 900, false)
+	tr.Frame()
+	for _, want := range []string{"View file 1", "View file 2", "Reported by write", path} {
+		if !tr.HasText(want) {
+			t.Fatalf("missing %q in %q", want, tr.Texts())
+		}
+	}
+	if tr.HasText("call-one") || tr.HasText("call-two") {
+		t.Fatalf("call IDs were visible before source expansion: %q", tr.Texts())
+	}
+	if err := tr.Click("View file 2"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if state.Selected != issueResultFileKey(second) {
+		t.Fatalf("selected key = %q, want second call", state.Selected)
+	}
+	if err := tr.Click("Source & raw record"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if err := tr.Click("Copy tool record"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != second.RawResult {
+		t.Fatalf("raw record = %q, want second call %q", got, second.RawResult)
+	}
+}
+
+func TestIssueResultPanelLongContentWrapsAtNarrowWidth(t *testing.T) {
+	longToken := strings.Repeat("narrow-token-", 18)
+	path := "/tmp/workspace/" + strings.Repeat("very-long-directory-", 6) + "result.txt"
+	file := issueResultPanelFixtureFile("long", path, fmt.Sprintf(`{"path":%q,"bytes_written":1}`, path))
+	inspection := issueResultFileInspection{
+		Path: path, WorkingDirectory: file.WorkingDirectory, Exists: true, Regular: true,
+		Preview: longToken + "\n",
+	}
+	state := &issueResultPanelState{
+		RunLabel:  "Run 1 · result · " + strings.Repeat("A long run label that must wrap. ", 6),
+		RunStatus: "Completed with a long status line that still wraps quietly", Response: longToken,
+		Files: []issueResultFile{file}, Selected: issueResultFileKey(file),
+		Inspection: &inspection, InspectFor: issueResultFileKey(file), SourceFor: issueResultFileKey(file),
+	}
+	tr := issueResultPanelTester(state, issueResultPanelActions{Close: func() {}, CheckFile: func(issueResultFile) {}, ToggleSource: func(string) {}}, 340, 900, false)
+	tr.Frame()
+	for _, want := range []string{"Run results", "Close results", state.RunLabel, state.RunStatus, path, "Copy path", "Check again", "Source & raw record", "Hide source & raw record"} {
+		bounds, ok := tr.Find(want)
+		if !ok {
+			t.Fatalf("missing %q in %q", want, tr.Texts())
+		}
+		if bounds.X < 0 || bounds.X+bounds.W > 340 {
+			t.Fatalf("%q overflows 340px: %+v", want, bounds)
+		}
+	}
+}
+
+func TestIssueResultPanelPreviewsAlwaysWriteHeadlessPNGs(t *testing.T) {
+	dir := os.Getenv("SAKI_PREVIEW_DIR")
+	if dir == "" {
+		dir = t.TempDir()
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := "/tmp/workspace/report with a long name that still wraps.txt"
+	file := issueResultPanelFixtureFile("preview", path, fmt.Sprintf(`{"path":%q,"bytes_written":1}`, path))
+	inspection := issueResultFileInspection{Path: path, WorkingDirectory: file.WorkingDirectory, Exists: true, Regular: true, Preview: "current preview\n"}
+	state := &issueResultPanelState{
+		RunLabel: "Run 1 · result · Preview", RunStatus: "Completed",
+		Response: "# Result\n\nPreview body with `code`.\n\n```go\nfunc main() {}\n```\n",
+		Files:    []issueResultFile{file}, Selected: issueResultFileKey(file),
+		Inspection: &inspection, InspectFor: issueResultFileKey(file),
+	}
+	for _, width := range []int{340, 600} {
+		for _, dark := range []bool{false, true} {
+			dark := dark
+			tr := issueResultPanelTester(state, issueResultPanelActions{}, width, 900, dark)
+			tr.SetDark(dark)
+			tr.Frame()
+			theme := "light"
+			if dark {
+				theme = "dark"
+			}
+			writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("issue-result-panel-%s-%d.png", theme, width)), tr.Image())
+		}
+	}
+}
+
+func TestIssueResultPanelCopyPathShowsReaderFailureFeedback(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "copy-source.txt")
+	if err := os.WriteFile(path, []byte("content\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file := issueResultPanelFixtureFile("copy", path, fmt.Sprintf(`{"path":%q,"bytes_written":8}`, path))
+	inspection := inspectIssueResultFile(file)
+	state := &issueResultPanelState{
+		RunLabel: "Run 1 · result · Copy failure", RunStatus: "Completed", Files: []issueResultFile{file},
+		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
+	}
+	copyErr := errors.New("clipboard unavailable")
+	fail := true
+	calls := 0
+	actions := issueResultPanelActions{CopyText: func(string) error {
+		calls++
+		if fail {
+			return copyErr
+		}
+		return nil
+	}}
+	tr := issueResultPanelTester(state, actions, 600, 800, false)
+	tr.Frame()
+	if err := tr.Click("Copy path"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || !tr.HasText("Copy failed") {
+		t.Fatalf("copy failure was swallowed or not shown: calls=%d texts=%q", calls, tr.Texts())
+	}
+	fail = false
+	if err := tr.Click("Copy path"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || !tr.HasText("Copied") {
+		t.Fatalf("copy success was not shown after retry: calls=%d texts=%q", calls, tr.Texts())
 	}
 }
