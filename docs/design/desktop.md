@@ -1,6 +1,6 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-26。本文保留各阶段的实现与验证记录；连接配置见末尾 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
+更新日期：2026-10-26。本文保留各阶段的实现与验证记录；连接配置见末尾 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118，资料快照与递交见 **#117 资料快照、阅读与递交**。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
 
 [previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。当前代码仍使用 Main/Dawn 派生色；#92 设计目标是用户确认的 Moon/Dawn，但本轮只交付设计，不代表换色功能已实现。concurrency、`search_history`／`read_history`、附件、模型切换等仍是后续独立任务，不在首轮。
 
@@ -578,7 +578,7 @@ type resolvedTheme struct {
 代码来源：`agent/gui/153-issue-lifecycle`，base `885fb1f`（#116 配置组合），生产代码最终为 `817d9c9`（生命周期实现 `23929d9`，之后仅有归档标题/截图测试整理）。只描述 #153 范围，不等于完整 MVP；#142/#154、看板、日程和跨人转交未随本阶段完成。设置模块仍由 #115/#116 负责，本单未改 `connection_app.go` 或 `runtime.go`。
 
 - **状态**：事项使用持久化 `not_started / in_progress / waiting_user / needs_attention / completed / canceled`；`Archived` 是独立组织状态，不并入生命周期。旧 v1-v3 的 `open` 在加载时收敛为对应初始/进行状态；运行时 completed 不自动把 issue 设为 completed。
-- **持久化**：store 升到 v4，写入结构化 `requirement_items`、`requirements_revision`、`archived`、execution 的 `requirements_revision`；v1-v3 仍可读。旧整段 `requirements` 只在迁移/序列化边界解析，运行时 live 状态只有 `productIssue.Requirements []*issueRequirement`，不长期双写两套真相。新版本写入后旧 app 明确拒绝，不静默覆盖。
+- **持久化**：store 升到 v4，写入结构化 `requirement_items`、`requirements_revision`、`archived`、execution 的 `requirements_revision` 字段；原 `1700f8d` 创建新执行时漏赋值，后由 #117 组合在派发前捕获当前 revision；已有 0 保留为未记录，不按当前要求回填。v1-v3 仍可读。旧整段 `requirements` 只在迁移/序列化边界解析，运行时 live 状态只有 `productIssue.Requirements []*issueRequirement`，不长期双写两套真相。新版本写入后旧 app 明确拒绝，不静默覆盖。
 - **要求与证据**：每项要求有稳定 ID、text、`satisfied/unmet/unverified`、evidence；证据可由用户判断、可核对执行/task 或文件/检查来源；不新增 Source 枚举或自动审批关卡。用户可修正状态与证据，完成由用户显式动作产生，不要求逐项审批，也不因 execution completed 自动 satisfied/Done。
 - **编辑诚实性**：保存 Goal/Requirements 递增 `RequirementsRevision`；旧 execution 的 `Prompt`、SessionID/TaskID/MessageID 和 revision 不被编辑改写。Goal 改变时旧的 issue Evidence 清空，同文本要求也只保留为“Previous evidence (goal changed)”并回到 unverified；需求文本改变的新项为 unverified。旧 execution 仍以 sent snapshot 展示。
 - **动作**：创建、编辑、Start/Continue、Stop issue task、Cancel issue、Mark waiting、Resume、Complete、Reopen、Archive/Restore 均落到同一 `productIssue` 与现有 `runIssue`/`cancelIssue` 路径；Continue 复用同一 `WorkSessionID` 追加 execution，不复制 issue。完成 evidence 由用户输入或明确用户判断；没有自动完成。
@@ -603,3 +603,31 @@ type resolvedTheme struct {
 - **验证边界**：`model_selection_integration_test.go`验证真实双协议模型请求、目录容量与provider ID分离、失败保持、丢回复和显式Release/Load；`model_selection_app_integration_test.go`从实际app视图/动作验证对话与事项隔离、重启、拒绝/冲突/取消、未知恢复、退出互锁及逆序读取。故障代理在真实Rust提交后丢弃或替换指定回复；`commit_unknown`代理只验证GUI消费语义，Runtime磁盘故障由其既有测试覆盖。使用固定#160 binary与本地受控HTTP provider，不声称任意外部模型或真实付费模型已验证。
 - **本机组合结果**：以#160 binary（SHA256 `c738c63374c0222b8e4397a15e1fb4109c8ff6bf34b89b8219cdecd7e0fa5516`）执行全部Go race并开启预览，240 PASS / 0 FAIL / 3 opt-in SKIP，136.672s；`go vet`、GUI build、diff检查通过。实际app明暗960/1280预览24张，选择器560/320预览8张；这些是受控数据下的headless页面。此前一次Chat子用例等待/quit超时未稳定复现，原日志保留，不能将本次通过写成已修复所有退出问题。
 - **原生限制**：2026-10-26再次读取CUA状态仍返回`Sky Computer Use native pipe startup failed`，未取得本候选原生点击/键盘/输入法证据。headless布局与真实进程消费者验收独立记录，不替代#114原生验收。最终验证SHA、门禁和日志随PR165/issue #115更新；尚未集成dev不标done。
+
+## #117 资料快照、阅读与递交（候选实现，2026-10-26）
+
+代码来源：reader/reader-iris 的 agent/gui/117-task-context，固定 settings #115 d9872e8（含 #153 1700f8d 与 Runtime #160 722de4b）之上。最终源码、门禁和交付 SHA 以 PR170 为准；本节不等于完整 MVP 或已集成 dev。
+
+- **输入与快照**：命名文字和用户明确填写路径的 UTF-8 文件使用唯一 taskContextItem 值模型。Name/Source/Text/ID/Revision 保存当次快照；Source为明确导入的绝对路径，显示名称和原始来源一起投影到 Runtime context.name，text 不改写。文件变化不会自动重读；Refresh from file 才生成新版本，编辑只改变快照不写源文件，刷新/读取/格式/总预算错误保留原值。PDF/Office/二进制容器不做提取。
+- **界面与归属**：对话 composer 和事项详情各有轻量 Task context 入口，编辑在既有有界侧面板，联系人与每个事项各自保存待发清单。未保存编辑在联系人/页面切换时留在原对象，只有明确保存成功的快照保证重启恢复。英文提示沿用 Paper/Moss 主题；不新增附件平台。
+- **单次输入**：对话和事项 Run/Continue 都沿既有 sendTask 的可选 context 参数。派发前固定并保存该次输入；正文只放 message.text、资料只放 context，不拼进 system 或再次附进正文。每个 issueExecution.Context 是独立不可变快照；后续编辑/刷新不改旧执行。接纳只移除同ID同Revision待发项，后来的编辑仍保留；拒绝、容量满和派发前保存失败不清空。
+- **预算**：GUI检查序列化 caller_context 包装后的合计1MiB，包含名称和来源标签；不是裸文件大小。Go JSON转义相对Rust略保守，最终接纳验证仍由Runtime负责。不静默截断或部分读取后当成功。
+- **历史与复制**：用户资料保持字面文字，独立展示名称/来源和精确原文复制；历史资料是只读记录，不成为待发草稿。Runtime将资料编码为普通text part，本轮GUI保留非空正文首part，后续wrapper才按契约显示；这不提供通用的来源证明。外部context-only输入的首part无法仅凭形状判定，保留原始可读文字而不猜测。
+- **持久化**：contact store v5读原v1-v4，保留既有联系人/会话/事项与旧execution身份；新增待发资料、执行资料快照和未确认对话提交意图。旧v4程序拒绝v5，避免保存时静默丢新字段；降级使用升级前备份或隔离数据目录，不直接交旧程序重写v5。当前 #142 进一步升到 v6，增加事项补充 ledger；新程序读 v1-v5，旧 v5 程序拒绝 v6，不静默丢补充 receipt。Runtime消息历史仍是执行记录权威，未另存一份消息库。
+- **未确认与恢复**：派发前保存的提交意图在接纳响应故障/重启后保持 unknown；有会话映射的 submitting 恢复为 unknown，没有映射则按“保存会话映射先于派发”的既有顺序视为未派发。自动历史刷新不清除该意图，不自动重发。用户明确 Reload 且成功读到闲置会话与历史后，才保存解除本地提交保护；保留资料并提示先检查记录再手动发送或移除。这不证明不确定消息已经送达/未送达，不按正文匹配猜 task。保存解除状态失败仍保留意图。
+- **验证范围**：`task_context_integration_test.go`通过实际GUI→Rust→本地受控provider及Runtime历史核对单次输入、移除、文件快照、事项/对话归属、重启和只读资料复制；stdio故障代理在真实Rust接纳后将回复替换为协议错误并屏蔽该连接事件，证明未知恢复与不自动重提，不冒称真实网络超时/磁盘故障。容量、派发前保存失败与受控接纳回调中的后续编辑分别覆盖。精确最终组合SHA、全包结果、原始失败与CI见PR170/issue117交付证据。明暗720/1040的对话、事项编辑、执行资料预览均为headless页面，非macOS原生通过。
+- **边界**：没有PDF/OCR/Office、扫描目录、索引、云附件或第二个执行循环。#142补充会消费同一资料快照与发送投影，其自动递交状态机不属于本单。原生文件选择器/IME/系统剪贴板行为仍须原生证据；headless截图和注入剪贴板不替代。
+
+
+## #142 事项补充与自动继续（候选实现，2026-10-26）
+
+代码来源：在本分支 `agent/gui/142-issue-supplements` 的 #117/#115/#153 组合上增量实现；`04e2caa` 为首片，后续 UI/恢复/错误边界与验证 SHA 以本单最终交付为准。本节只描述实际落地的补充 consumption，不表示完整 MVP、原生 CUA 或长期 QA 已通过。
+
+- **数据与原子派发**：`productIssue.Supplements` 持久化 receipt、batch 和自动意图；store v6 读 v1-v5，保留既有 Context/pendingSend/旧 execution 身份。新 `issueExecution` 记录 `RequirementsRevision`、不可变 Context 和 `SupplementBatchID`，batch 记录 `ExecutionID`。`PrepareDispatch` 在唯一 dispatch-before-send save 中同时写入 execution、dispatching batch、snapshot items 与 Work submitting；save 失败回滚未发出的 association，不调用 Runtime。
+- **单一输入**：普通 Run 与自动继续共用 `issueRunCaptured`/`runIssueFor` 的 captured 准备路径；`Prompt` 由当前 Goal/Requirements + 本批补充文本组成，Context 只走既有 `sendTask` 的可选参数，不拼进 system/正文，不复制聊天记录。每条 receipt 保留收到时的 `RequirementsRevision`；当前 batch target 是同一 contact/issue 的当前 revision，`pendingFor` 只取 `<= current`。同 issue 的 dispatching/unknown batch 跨 revision 阻塞新批次。
+- **自动边界**：已保存补充在已授权（至少一次 execution）的事项上由 Add/真实 terminal/容量/恢复边界做一次单次尝试；未运行事项必须显式 Start。没有 timer、第二 scheduler/queue/history parser；容量/busy 时保留 pending 和自动意图，确认拒绝/unknown/保存失败关闭自动并保留文字与真实 IDs。Stop/Cancel/waiting/failure 撤销未来自动意图，late accepted 仍记录关联，不重发。
+- **接受与回执**：accepted 绑定 session/task/message/execution 和 batch；同一 save 清 exact-ID+Revision 的 Context，之后才处理 buffered terminal/自动下一批。`Accept` 保存失败保留 accepted receipt/真实 IDs、automatic off，不回 pending/not_dispatched。UI 只显示“submitted to runtime execution”，不把 receipt 说成模型采用/要求满足。
+- **恢复与 UI**：重启把 dispatching/unknown ledger 标记为需核对并关闭自动；不自动重派。`Check execution` 先更新真实 execution/task 状态；仅凭 task.status 不把 batch 冒充完整输入已核对，只有可证明完整 Prompt+Context semantic history 时才收敛 receipt。用户“确认未派发”在同一 save 中收敛 execution、ledger batch 和 items；拒绝/未派发批次保留 snapshot，可由明确 Retry 把原文字放回待发并显式 Continue 一次；unknown/accepted 不走该 retry。事项卡新增 target revision、已保存/待递交/等待容量/递交到执行/unknown 列表、全文预览/复制、旧批次展开、Stop/Resume auto 与伴随说明；普通聊天不自动归入事项。不再保留无生产窗口的 prepared/ReleasePrepared 双路径；admission 只使用 PrepareDispatch。
+- **验证边界**：真实 Runtime 测试覆盖初始 A 显式 Run 后在途 B+C、revision 变化、同 contact 对话与独立 contact Y 隔离、A terminal 后唯一自动后续；Stop/Cancel pending/auto、显式 Resume 一次、waiting 答案、真实 failed、Cancel 前延迟 accept 的真实 IDs、lost task.send 回包→unknown→restart 不重派、实际 Runtime history 的完整 Prompt+Context 匹配，以及 MyGo UI Tester 的 Save failure/确认未派发 save 失败/全文 preview+copy/owner draft 隔离/unknown Check 控件。preview 明暗 320/360/720/960/1040/1380 共 12 张，其中 320/360 是独立工作栏组件 layout，不是应用承诺支持 320 窗口。固定 Runtime `c738c633…`；历史 d4e 完整 race 的 320 PASS 是旧精确源，不是本最终 SHA 的计数。当前实现/受控测试与在线/原生分层记录；native/CUA 仍未验证。
+- **Magpie 实际尝试（未通过）**：使用隔离 connection/store/session，Runtime effective config 实测 `model=deepseek/deepseek-flash`、`api=openai-chat-completions`、`endpoint=http://127.0.0.1:3425/v1`、`connection_id=default`；首轮只读 probeA，补充在首 execution 后加入。第一个真实 task 随即 `failed`，Runtime 错误为 `HTTP 400 invalid_request_error: DeepSeek: reasoning_content in the thinking mode must be passed back`。此时 pending=2、issue needs_attention、auto off、requirement unverified，未产生第二 task；验收 trace 保存在 `/private/tmp/saki-gui-142/magpie-acceptance/20261026-161209/trace.json`；该 trace 的 `raw_history` 不能作为原始 SSE/wire 证据，持久 session 的 `history.jsonl` 保留 actual Runtime shape（父已核）。这不是模型质量结论，且未再重试/换 provider。旧的 OpenCode 在线失败日志保留，旧 trace 未保留 raw tool 明细。
+- **当前结论/后续**：首 task failed 时的 GUI 行为（needs_attention、auto off、pending 保留）按设计工作；完整真实模型两 task 验收保持未通过。Magpie 400 已正式交 Runtime 路由 [#177](https://github.com/HeimaoLST/Saki/issues/177) 并由 PM/Runtime 跟进，不由本 GUI 单修改 Runtime/prefix、不重试付费请求、不扩称 A/B 工具读取或完整在线验收。

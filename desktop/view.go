@@ -284,8 +284,13 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 	}
 	if e.From == "me" {
 		ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
-			markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy message"}).
-				FontSize(14).LineHeight(1.5).Padding(8, 12).Radius(12).Background(bg).TextColor(t.Text).MaxWidth(460).MinWidth(0)
+			ui.Column(c).MaxWidth(460).MinWidth(0).Gap(4).Children(func() {
+				if e.Text != "" {
+					markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy message"}).
+						FontSize(14).LineHeight(1.5).Padding(8, 12).Radius(12).Background(bg).TextColor(t.Text)
+				}
+				taskContextReadOnlyView(c, a.workTheme, e.Context)
+			})
 		})
 		return
 	}
@@ -357,8 +362,11 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 				if m.Key != "" && m.Key == a.highlight {
 					ui.Text(c, "Located in history").FontSize(11).TextColor(t.TextMuted)
 				}
-				markdownReader(c, m.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy message"}).
-					FontSize(14).LineHeight(1.55).Padding(10, 14).Radius(14).Background(a.workTheme.BubbleUser).TextColor(t.Text)
+				if m.Text != "" {
+					markdownReader(c, m.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy message"}).
+						FontSize(14).LineHeight(1.55).Padding(10, 14).Radius(14).Background(a.workTheme.BubbleUser).TextColor(t.Text)
+				}
+				taskContextReadOnlyView(c, a.workTheme, m.Context)
 			})
 		})
 	default:
@@ -450,6 +458,11 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 			if !a.demo {
 				sendDisabled = strings.TrimSpace(ct.Draft) == "" || a.canSend(ct) != ""
 			}
+			label := "Task context"
+			if count := ct.Context.count(); count > 0 {
+				label = fmt.Sprintf("Task context · %d", count)
+			}
+			ui.Button(c, label).FontSize(11).Padding(2, 6).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openConversationTaskContext() })
 			send := ui.PrimaryButton(c, "Send").FontSize(12).Padding(3, 10).Disabled(sendDisabled)
 			if send.Clicked() {
 				a.sendCurrent()
@@ -550,6 +563,7 @@ func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 							} else {
 								markdownReader(c, e.Text, markdownReaderOptions{CopyLabel: "Copy history message"})
 							}
+							taskContextReadOnlyView(c, a.workTheme, e.Context)
 							ui.Row(c).Children(func() {
 								ui.Button(c, "View in conversation").FontSize(12).OnClick(func() { a.viewInConversation(e.ID) })
 							})
@@ -576,7 +590,7 @@ func speakerLabel(c *contact, e historyEntry) string {
 func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 	returnAux := a.aux
 	width := float32(340)
-	if returnAux == "configuration" || returnAux == "model" {
+	if returnAux == "configuration" || returnAux == "model" || returnAux == "task-context" {
 		width = 560
 	}
 	open := true
@@ -592,6 +606,8 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 						a.configurationPanel(c, t)
 					case "model":
 						a.modelPanel(c, t)
+					case "task-context":
+						a.taskContextPanel(c, t)
 					default:
 						a.settingsPanel(c, t)
 					}
@@ -604,6 +620,9 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 			return
 		}
 		a.aux = ""
+		if returnAux == "task-context" {
+			a.taskContextIssueID = ""
+		}
 		switch returnAux {
 		case "settings":
 			a.focusSettings = true

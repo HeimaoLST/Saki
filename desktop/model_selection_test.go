@@ -290,7 +290,7 @@ func TestModelSelectionCleanDraftAdoptsReadbackAndFiltersCandidates(t *testing.T
 func TestPreviewModelSelectionStates(t *testing.T) {
 	dir := os.Getenv("SAKI_PREVIEW_DIR")
 	if dir == "" {
-		t.Skip("set SAKI_PREVIEW_DIR to write model-selection previews")
+		dir = t.TempDir()
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
