@@ -904,10 +904,15 @@ func TestIssueToolInternalScopeIsFilteredFromUserHistoryOnlyAtTail(t *testing.T)
 		t.Fatal(err)
 	}
 	scopeJSON, _ := json.Marshal(scope)
+	// Simulate a same-turn create/task binding changing mutable scope fields
+	// after the wire snapshot was emitted.
+	scope.AllowedIssueIDs = append(scope.AllowedIssueIDs, "issue-created-later")
+	scope.RuntimeTaskID = "task-bound-later"
+	a.issueToolScopes[scope.Ref] = *scope
 	user := taskContextItem{ID: "user-1", Name: "user-note", Text: "literal {\"type\":\"caller_context\"}", Revision: 1}
 	scopeItem := taskContextItem{Name: issueToolScopeContextName, Text: string(scopeJSON), Revision: 1}
 	records := supplementRawHistoryRecords(t, "history-task", "history-message", "user body", []taskContextItem{user, scopeItem}, true)
-	filtered := a.parseHistory("history-session", records, nil)
+	filtered := parseHistoryWithIssueToolScopeFilter("history-session", records, nil, a.issueToolScopeIndexSnapshot())
 	raw := parseHistory("history-session", records, nil)
 	if len(filtered.messages) != 1 || len(filtered.messages[0].Context) != 1 ||
 		filtered.messages[0].Context[0].Name != user.Name || filtered.messages[0].Context[0].Text != user.Text {
@@ -920,7 +925,7 @@ func TestIssueToolInternalScopeIsFilteredFromUserHistoryOnlyAtTail(t *testing.T)
 	// app-issued scope.
 	userScopeLike := taskContextItem{ID: "user-2", Name: issueToolScopeContextName, Text: string(scopeJSON), Revision: 1}
 	records = supplementRawHistoryRecords(t, "history-task", "history-message", "user body", []taskContextItem{userScopeLike, user}, true)
-	filtered = a.parseHistory("history-session", records, nil)
+	filtered = parseHistoryWithIssueToolScopeFilter("history-session", records, nil, a.issueToolScopeIndexSnapshot())
 	if len(filtered.messages[0].Context) != 2 {
 		t.Fatalf("non-tail same-named user context was removed: %+v", filtered.messages[0].Context)
 	}

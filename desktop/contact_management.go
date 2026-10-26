@@ -382,13 +382,14 @@ func (a *appModel) searchContactHistoryAsync(query string) {
 	contactID := ct.ID
 	rt, runtimeGeneration := a.rt, a.connectionGeneration
 	sessionIDs := a.contactHistorySessionIDs(ct)
+	scopeIndex := a.issueToolScopeIndexSnapshot()
 	a.contactHistoryBusy = true
 	a.contactHistoryDetailBusy = false
 	a.contactHistoryFull = nil
 	a.contactHistoryError = ""
 	a.historyAsyncStarted()
 	go func() {
-		result := a.searchContactHistory(rt, sessionIDs, query)
+		result := a.searchContactHistory(rt, sessionIDs, query, scopeIndex)
 		a.updateUI(func() {
 			a.historyAsyncFinished()
 			if a.rt != rt || a.connectionGeneration != runtimeGeneration || generation != a.contactHistoryGen || a.selectedContact().ID != contactID {
@@ -425,6 +426,7 @@ func (a *appModel) openContactHistoryMatch(match contactHistoryMatch) bool {
 	}
 	contactID := ct.ID
 	rt, runtimeGeneration := a.rt, a.connectionGeneration
+	scopeIndex := a.issueToolScopeIndexSnapshot()
 	searchGen := a.contactHistoryGen
 	a.contactHistoryDetailGen++
 	detailGen := a.contactHistoryDetailGen
@@ -439,7 +441,7 @@ func (a *appModel) openContactHistoryMatch(match contactHistoryMatch) bool {
 		if err != nil {
 			errorText = "Could not read this saved context."
 		} else {
-			for _, entry := range a.parseHistory(match.SessionID, records, nil).entries {
+			for _, entry := range parseHistoryWithIssueToolScopeFilter(match.SessionID, records, nil, scopeIndex).entries {
 				if entry.ID == match.EntryID {
 					full = &contactHistoryFull{
 						SessionID: match.SessionID, EntryID: match.EntryID, Date: entry.Date,

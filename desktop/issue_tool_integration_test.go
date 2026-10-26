@@ -390,6 +390,19 @@ func TestIssueToolConversationRealChainQueryCreateRun(t *testing.T) {
 	if provider.count() != 6 {
 		t.Fatalf("provider requests = %d, want create/get/run/final + issue work write/final", provider.count())
 	}
+	var scopeLeaks int
+	h.pump.do(func() {
+		for _, message := range h.app.contactByID(contactID).Messages {
+			for _, context := range message.Context {
+				if context.Name == issueToolScopeContextName {
+					scopeLeaks++
+				}
+			}
+		}
+	})
+	if scopeLeaks != 0 {
+		t.Fatalf("create-mutated scope leaked into GUI user history %d times", scopeLeaks)
+	}
 	if !strings.Contains(provider.body(0), issueToolScopeContextName) || !strings.Contains(provider.body(0), scopeRef) {
 		t.Fatal("first conversation request did not carry the app-issued scope context")
 	}
@@ -494,6 +507,30 @@ func TestIssueToolConversationRealChainQueryCreateRun(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.root, "issue-tool-helper")); err == nil {
 		t.Fatal("unexpected helper fixture created in workdir")
+	}
+	h.shutdown(t)
+	restarted := restartGUIHarness(t, binary)
+	t.Cleanup(func() {
+		if !restarted.closed {
+			restarted.shutdown(t)
+		}
+	})
+	restarted.pump.wait(func() bool {
+		ct := restarted.app.contactByID(contactID)
+		return ct != nil && ct.Loaded
+	})
+	var restartScopeLeaks int
+	restarted.pump.do(func() {
+		for _, message := range restarted.app.contactByID(contactID).Messages {
+			for _, context := range message.Context {
+				if context.Name == issueToolScopeContextName {
+					restartScopeLeaks++
+				}
+			}
+		}
+	})
+	if restartScopeLeaks != 0 {
+		t.Fatalf("create-mutated scope leaked after restart %d times", restartScopeLeaks)
 	}
 }
 

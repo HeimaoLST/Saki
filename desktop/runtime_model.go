@@ -1166,7 +1166,7 @@ func mergeWorks(ct *contact, existing, incoming []*workItem, targetSession strin
 }
 
 func (a *appModel) applyHistory(ct *contact, records []historyRecord, status string) {
-	projection := a.parseHistory(ct.SessionID, records, ct.StopRequestedTasks)
+	projection := parseHistoryWithIssueToolScopeFilter(ct.SessionID, records, ct.StopRequestedTasks, a.issueToolScopeIndexSnapshot())
 	ct.Messages = projection.messages
 	ct.History = projection.entries
 	ct.UnlinkedTools = projection.unlinked
@@ -1211,7 +1211,7 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 
 func (a *appModel) applyIssueWorkHistory(ct *contact, issue *productIssue, records []historyRecord, status string) {
 	sessionID := issue.WorkSessionID
-	projection := a.parseHistory(sessionID, records, issue.Work.StopRequestedTasks)
+	projection := parseHistoryWithIssueToolScopeFilter(sessionID, records, issue.Work.StopRequestedTasks, a.issueToolScopeIndexSnapshot())
 	issue.Work.Messages = projection.messages
 	issue.Work.UnlinkedTools = projection.unlinked
 	ct.Works = mergeWorks(ct, ct.Works, projection.works, sessionID)

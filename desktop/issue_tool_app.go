@@ -424,11 +424,29 @@ func (a *appModel) issueToolReserveForTurn(scope IssueToolScope, request IssueTo
 	return operation, created, existing, receipt, resultErr
 }
 
-// filterIssueToolContext removes only the final app-issued scope input that is
-// still present in the persisted scope map. Earlier user inputs, including a
-// literal item with the same name, remain untouched. Raw Runtime history is
-// never rewritten.
-func (a *appModel) filterIssueToolContext(sessionID string, items []taskContextItem) []taskContextItem {
+type issueToolScopeIdentity struct {
+	Ref                   string
+	ContactID             string
+	ConversationSessionID string
+	TurnID                string
+	CreatedAt             int64
+}
+
+// issueToolScopeIndexSnapshot copies only immutable issued-scope identity. It
+// must be called on the UI actor before handing history parsing to a goroutine.
+func (a *appModel) issueToolScopeIndexSnapshot() map[string]issueToolScopeIdentity {
+	index := make(map[string]issueToolScopeIdentity, len(a.issueToolScopes))
+	for ref, scope := range a.issueToolScopes {
+		index[ref] = issueToolScopeIdentity{
+			Ref: ref, ContactID: scope.ContactID,
+			ConversationSessionID: scope.ConversationSessionID,
+			TurnID:                scope.TurnID, CreatedAt: scope.CreatedAt,
+		}
+	}
+	return index
+}
+
+func filterIssueToolContextWithIndex(index map[string]issueToolScopeIdentity, sessionID string, items []taskContextItem) []taskContextItem {
 	if len(items) == 0 {
 		return items
 	}
@@ -440,24 +458,18 @@ func (a *appModel) filterIssueToolContext(sessionID string, items []taskContextI
 	if json.Unmarshal([]byte(last.Text), &input) != nil || input.Validate() != nil {
 		return items
 	}
-	stored, ok := a.issueToolScopes[input.Ref]
-	if !ok || stored.ConversationSessionID != sessionID || stored.ContactID != input.ContactID ||
-		stored.TurnID != input.TurnID || stored.CreatedAt != input.CreatedAt {
+	identity, ok := index[input.Ref]
+	if !ok || identity.ContactID != input.ContactID || identity.ConversationSessionID != sessionID ||
+		identity.TurnID != input.TurnID || identity.CreatedAt != input.CreatedAt {
 		return items
-	}
-	if len(stored.AllowedIssueIDs) != len(input.AllowedIssueIDs) {
-		return items
-	}
-	for index := range stored.AllowedIssueIDs {
-		if stored.AllowedIssueIDs[index] != input.AllowedIssueIDs[index] {
-			return items
-		}
 	}
 	return append([]taskContextItem(nil), items[:len(items)-1]...)
 }
 
-func (a *appModel) parseHistory(sessionID string, records []historyRecord, stopRequested map[string]bool) historyProjection {
-	return parseHistoryWithContextFilter(sessionID, records, stopRequested, a.filterIssueToolContext)
+func parseHistoryWithIssueToolScopeFilter(sessionID string, records []historyRecord, stopRequested map[string]bool, index map[string]issueToolScopeIdentity) historyProjection {
+	return parseHistoryWithContextFilter(sessionID, records, stopRequested, func(recordSession string, items []taskContextItem) []taskContextItem {
+		return filterIssueToolContextWithIndex(index, recordSession, items)
+	})
 }
 
 func cloneIssueToolReceipt(receipt *IssueToolReceipt) *IssueToolReceipt {
