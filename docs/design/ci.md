@@ -1,6 +1,6 @@
 # CI governance（Runtime／TUI／GUI）
 
-更新日期：2026-10-20。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。当前 workflow 基线为 `dev@50d6b9c`（2026-10-20，含 [PR #80](https://github.com/HeimaoLST/Saki/pull/80) 的 Python 门禁、[PR #82](https://github.com/HeimaoLST/Saki/pull/82) 的 Runtime stdio driver、[PR #86](https://github.com/HeimaoLST/Saki/pull/86) 的 stdio required 接线与 [PR #88](https://github.com/HeimaoLST/Saki/pull/88) 的 GUI→Runtime 五个离线测试）。本文职责调整本身不修改 workflow 或分支保护。
+更新日期：2026-10-24。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。当前 workflow 基线为 `dev@fd58ec2`（2026-10-24，含 #80 Python 门禁、#82/#84 Runtime stdio、#88/#87 五项 GUI→Runtime 测试，以及 #143 macOS arm64 工程候选构建）。本文职责调整本身不修改 workflow 或分支保护。
 
 ## 目的与范围
 
@@ -32,13 +32,14 @@
 | TUI（真实 PTY） | `rust` | `cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1` | 真实 PTY 上进入／退出终端并验证 panic 后 cooked mode 恢复 |
 | Runtime stdio（真实子进程） | `rust` | `cargo build --locked --bin Saki`；`python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki` | 两个真实 OS 进程、临时 read、task/message/journal 关联、恢复/history 零重放、继续前文与 stdout 断连 drain；driver 自带本地 fixture，无外部 provider/key |
 | GUI→Runtime（五个离线测试） | `rust` | 见下方「GUI→Runtime 进程集成」权威命令（与 workflow 使用同一命令） | Go 客户端→真实 Saki `--stdio`、本地 httptest provider、真实 read、事件/工具关联、应用层流程、profile snapshot、mapping 保存顺序/失败边界、跨进程恢复零重放与继续；逐项断言 PASS（非 Skip/空跑）；线上 smoke 不接入 |
+| macOS arm64 工程候选 | `macos-app` | `bash scripts/build-macos-app.sh /absolute/out`（输出在 checkout 外） | Go GUI + Rust `Saki-runtime` helper、`Saki.app/Contents/MacOS/{Saki,Saki-runtime}`、Info.plist `dev.saki.desktop`、arm64 Mach-O、ad-hoc 签名；manifest/zip/SHA256SUMS；工程候选，不是 Nagi MVP |
 | GUI（独立 Go module） | `gui` | `gofmt -l .`（必须为空）、`CGO_ENABLED=0 go vet ./...`、`go test ./... -count=1`、`go build` | 格式、vet、测试、构建 |
 | GUI（可复现图像） | `gui` | `SAKI_PREVIEW_DIR=... go test -run TestPreviewImages -count=1 .` | headless `ui.Tester` 生成 light/dark add／settings 等场景 PNG，作为 artifact 保留 14 天 |
 | 协作检查 | `python` | `python3 scripts/test_collaboration_check.py`；断言运行测试数非零 | 既有协作检查回归；pipefail 保留失败，空套件不能静默通过 |
 
-聚合检查：`ci-required`（`if: always()`，依赖 `rust`、`gui` 与 `python`）只在三者结果都为 `success` 时通过。`cancelled`／`failed`／`skipped` 都不算成功。若未来新增 job，必须同时更新 `ci-required` 的 `needs` 与判定。
+聚合检查：`ci-required`（`if: always()`，依赖 `rust`、`gui`、`python` 与 `macos-app`）只在四者结果都为 `success` 时通过。`cancelled`／`failed`／`skipped` 都不算成功。若未来新增 job，必须同时更新 `ci-required` 的 `needs` 与判定。
 
-稳定检查名：`rust`、`gui`、`python`、`ci-required`。分支保护只需要引用聚合检查 `ci-required`，避免逐个维护子 job 名称。
+稳定检查名：`rust`、`gui`、`python`、`macos-app`、`ci-required`。分支保护只需要引用聚合检查 `ci-required`，避免逐个维护子 job 名称。
 
 Python 门禁的真实失败传播：临时探针 `9480847` 的 [run 39381934207](https://github.com/HeimaoLST/Saki/actions/runs/39381934207) 中 Python 与聚合均失败，Rust／Go 成功；恢复探针并同步后的最终候选 `96ad987` 的 [run 39384000031](https://github.com/HeimaoLST/Saki/actions/runs/39384000031) 四个 job 均成功。探针已用追加提交撤回，不在最终树中。
 
@@ -65,6 +66,37 @@ SAKI_TEST_RUNTIME_BIN="$GITHUB_WORKSPACE/target/debug/Saki" CGO_ENABLED=0 \
 
 覆盖：真实 `Saki --stdio` 双进程、真实 read、事件/工具关联、应用层 UI 流程、首建 profile snapshot、session mapping 持久化顺序/保存失败边界、跨进程恢复/history 零重放与继续。五个测试都通过 `requireRuntimeBinary`：未设置 `SAKI_TEST_RUNTIME_BIN` 会 Skip，设置但 binary 不存在会失败；测试自带本地 httptest provider，不需要真实凭据/外部 provider。Go 由 `actions/setup-go@v7` 按 `desktop/go.mod` 提供并缓存 `desktop/go.sum`；`-count=1` 禁止缓存替代新 binary。step 使用 `pipefail`+`tee`，并逐项检查 `--- PASS: <test> `；任何一项 Skip、未匹配/空跑或失败都会失败。`TestGUIOnlineSmoke` 保持 opt-in（`SAKI_TEST_ONLINE=1` + 宿主凭据），不进入本 CI。超时 5 分钟；Linux/headless，不覆盖真实窗口/IME。失败留在既有 `rust` job，沿 `rust` → `ci-required` 传播；无 if-file-exists、continue-on-error 或 skip。
 
+## macOS arm64 工程候选（2026-10-24）
+
+`macos-app` 在标准 `macos-15`（arm64）runner 上运行 `scripts/build-macos-app.sh <checkout 外的绝对目录>`。脚本要求 clean checkout、外部输出目录，显式构建：
+
+```sh
+cargo build --locked --release --bin Saki
+# desktop/:
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -mod=readonly -buildvcs=true -o <app>/Contents/MacOS/Saki .
+```
+
+产物为 `Saki.app`，其中 `Contents/MacOS/Saki` 为 GUI、`Saki-runtime` 为 Rust helper；Info.plist 使用既有 `dev.saki.desktop` / `Saki` / `0.1.0` / build `1` / minimum 11.0 契约。脚本校验 `uname -m`、`go env GOOS/GOARCH`、`rustc` host、`file`/`lipo` 为 arm64，`plutil` 字段，先签 helper 再签 app，分别 `codesign --verify --strict`，app 再 `--deep --strict`；对已签名 bundle 内 helper 调用现有 `examples/runtime_stdio.py --self-test`。`ditto` 生成保留权限/签名的 `Saki.app.zip`；`manifest.json`、`SHA256SUMS`、`codesign.log`、`validation.log`、`helper-smoke.log` 与 `build.log` 一并上传，artifact 名含实际 source SHA，保留 14 天，`if-no-files-found: error`。
+
+- artifact 只含 `Saki.app.zip`、`manifest.json`、`SHA256SUMS` 与日志；下载后先在**新目录**执行 `ditto -x -k Saki.app.zip .` 解包，再 `shasum -a 256 -c SHA256SUMS`（此时 app/helper/plist/zip/manifest 的相对路径均存在）。manifest 记录 actual checkout/source SHA、CI event SHA、run URL、`uname`/macOS/runner image、Go/Rust/cargo/Xcode/SDK、app/helper/Info.plist/zip SHA256、签名与文件清单；build log 在脚本结束后由 CI 完整保存，不作为“写入中”的 hash 对象。
+- ad-hoc only；不做证书/公证/Gatekeeper 承诺；minimumOS 字段不表示已在旧 OS 或真实 Finder/IME 实测。
+- 当前 dev 未含 #141/PR126/PR132 产品切片，因此该 artifact 只能称 **CI 工程候选**，不是 Nagi MVP 完成；真实窗口/IME、外部 provider、用户试用由对应 owner/PM 负责。
+- 本地构建与下载核验命令（macOS arm64）：
+
+```sh
+bash scripts/build-macos-app.sh /private/tmp/saki-macos-candidate
+# download artifact 到新目录后，先解包再校验：
+ditto -x -k Saki.app.zip .
+shasum -a 256 -c SHA256SUMS
+plutil -p Saki.app/Contents/Info.plist
+file Saki.app/Contents/MacOS/Saki Saki.app/Contents/MacOS/Saki-runtime
+lipo -archs Saki.app/Contents/MacOS/Saki Saki.app/Contents/MacOS/Saki-runtime
+codesign --verify --strict Saki.app
+codesign --verify --deep --strict Saki.app
+```
+
+首次候选历史证据：run 40107805903，source `04d579a`；最终 head/run/artifact 以 PR 正式过程记录为准，失败时不以计划或本地 exit 冒充 CI 证据。
+
 ## 触发、并发与权限
 
 - 触发：所有 `pull_request`；`push` 到 `dev`／`master`；`workflow_dispatch`。发布 PR（`dev` → `master`）、hotfix PR（→ `master`）与回流 PR（`master` → `dev`）因此都跑全量检查。
@@ -74,7 +106,7 @@ SAKI_TEST_RUNTIME_BIN="$GITHUB_WORKSPACE/target/debug/Saki" CGO_ENABLED=0 \
 - 工具链：Rust 固定 `1.99.0`（rustfmt + clippy，官方 rustup 安装，已验证该版本可从 static.rust-lang.org 下载）；Go 由 `desktop/go.mod`（当前 `1.27.1`）通过 `actions/setup-go` 的 `go-version-file` 决定，不使用本机未来版本随意钉死不可下载版本。
 - 缓存：Cargo registry／git／`target` 以 `runner.os + Rust 版本 + Cargo.lock` 为 key；Go 使用 `actions/setup-go` 内置缓存（`desktop/go.sum`）。缓存只加速，不改变 `--locked` 校验。
 - Python：`actions/setup-python@v7` 显式提供 3.12；协作检查 job 运行现有 stdlib unittest，rust job 的 stdio self-test 使用同一版本，不依赖 runner 偶然环境。
-- 超时：Rust 30 分钟（含 stdio self-test step 的 5 分钟上限），GUI 20 分钟，Python 10 分钟，聚合 5 分钟。
+- 超时：Rust 30 分钟（含 stdio self-test step 的 5 分钟上限），GUI 20 分钟，Python 10 分钟，macOS candidate 25 分钟，聚合 5 分钟。
 
 ## 失败处理与责任
 
@@ -164,6 +196,9 @@ python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
   SAKI_TEST_RUNTIME_BIN="$PWD/../target/debug/Saki" CGO_ENABLED=0 \
     go test -run '^(TestRuntimeProcessIntegration|TestGUIAppRuntimeFlow|TestGUIFirstCreateUsesProfileSnapshot|TestGUIAppPersistsMappingBeforeSend|TestGUIAppSaveFailureStopsBeforeSend)$' -count=1 -v .
 )
+
+# macOS arm64 engineering candidate（需 macOS arm64；输出在 checkout 外）
+bash scripts/build-macos-app.sh /private/tmp/saki-macos-candidate
 
 # GUI
 cd desktop
