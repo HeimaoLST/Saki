@@ -330,8 +330,7 @@ func TestConnectionGUIQuitWaitsForTestCleanup(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("connection test cancellation did not allow quit")
 	}
-	h.pump.close()
-	h.closed = true
+	h.shutdown(t)
 	release()
 }
 

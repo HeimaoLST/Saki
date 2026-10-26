@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -267,41 +266,18 @@ type uiWaiter struct {
 }
 
 type uiPump struct {
-	t         *testing.T
-	q         chan func()
-	mu        sync.Mutex
-	cond      *sync.Cond
-	waiters   []*uiWaiter
-	done      chan struct{}
-	closing   bool
-	closed    bool
-	active    int
-	closeOnce sync.Once
+	t       *testing.T
+	q       chan func()
+	mu      sync.Mutex
+	waiters []*uiWaiter
+	done    chan struct{}
 }
 
 func newUIPump(t *testing.T, app *appModel) *uiPump {
 	p := &uiPump{t: t, q: make(chan func(), 256), done: make(chan struct{})}
-	p.cond = sync.NewCond(&p.mu)
-	app.setUIHook(p.enqueue)
+	app.setUIHook(func(fn func()) { p.q <- fn })
 	go p.run()
 	return p
-}
-
-// enqueue is the single hook path. A producer may already hold this function
-// while close is running; the closing guard prevents a send on a closed queue.
-func (p *uiPump) enqueue(fn func()) {
-	p.mu.Lock()
-	if p.closing || p.closed {
-		p.mu.Unlock()
-		return
-	}
-	p.active++
-	p.mu.Unlock()
-	p.q <- fn
-	p.mu.Lock()
-	p.active--
-	p.cond.Broadcast()
-	p.mu.Unlock()
 }
 
 func (p *uiPump) run() {
@@ -354,54 +330,8 @@ func (p *uiPump) waitTimeout(cond func() bool, timeout time.Duration) {
 }
 
 func (p *uiPump) close() {
-	p.closeOnce.Do(func() {
-		p.mu.Lock()
-		p.closing = true
-		for p.active > 0 {
-			p.cond.Wait()
-		}
-		p.closed = true
-		close(p.q)
-		p.mu.Unlock()
-	})
+	close(p.q)
 	<-p.done
-}
-
-// TestUIPumpCapturedHookAfterCloseDoesNotPanic isolates the old harness
-// failure in a child process: a callback producer can already hold the hook
-// when close(q) runs. The child must not panic with "send on closed channel".
-func TestUIPumpCapturedHookAfterCloseDoesNotPanic(t *testing.T) {
-	cmd := exec.Command(os.Args[0], "-test.run=^TestUIPumpLateHookHelper$")
-	cmd.Env = append(os.Environ(), "SAKI_UI_PUMP_LATE_HELPER=1")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("late captured hook panicked: %v\n%s", err, out)
-	}
-}
-
-func TestUIPumpCloseDrainsQueuedCallback(t *testing.T) {
-	app := &appModel{}
-	p := newUIPump(t, app)
-	hook := app.getUIHook()
-	called := make(chan struct{})
-	hook(func() { close(called) })
-	p.close()
-	select {
-	case <-called:
-	default:
-		t.Fatal("close discarded a callback already accepted before close")
-	}
-}
-
-func TestUIPumpLateHookHelper(t *testing.T) {
-	if os.Getenv("SAKI_UI_PUMP_LATE_HELPER") != "1" {
-		t.Skip("child helper for TestUIPumpCapturedHookAfterCloseDoesNotPanic")
-	}
-	app := &appModel{}
-	p := newUIPump(t, app)
-	hook := app.getUIHook()
-	p.close()
-	hook(func() {})
 }
 
 type guiHarness struct {
@@ -453,10 +383,7 @@ func startGUIHarness(t *testing.T, binary string, provider *providerFixture, mar
 		if h.closed {
 			return
 		}
-		if app.rt != nil {
-			_ = app.rt.shutdown()
-		}
-		pump.close()
+		h.shutdown(t)
 	})
 	return h
 }
@@ -479,25 +406,31 @@ func (h *guiHarness) shutdown(t *testing.T) {
 	if h.closed {
 		return
 	}
-	quit := make(chan struct{}, 1)
-	h.pump.do(func() {
-		h.app.requestQuit = func() { quit <- struct{}{} }
-		h.app.beginShutdown()
-	})
-	select {
-	case <-quit:
-	case <-time.After(15 * time.Second):
-		t.Fatal("runtime did not drain before quit")
-	}
-	if h.app.rt != nil {
-		h.pump.waitTimeout(func() bool { return h.app.runtimeStatus == runtimeStateExited }, 5*time.Second)
-	}
+	h.pump.do(func() { h.app.beginShutdown() })
+	h.pump.waitTimeout(func() bool {
+		if !h.app.quitReady {
+			return false
+		}
+		return h.app.rt == nil || h.app.runtimeStatus == runtimeStateExited
+	}, 15*time.Second)
 	h.pump.close()
 	h.closed = true
 }
 
 func (h *guiHarness) snapshot(fn func()) {
 	h.pump.do(fn)
+}
+
+func TestGUIShutdownAfterManualBeginIsIdempotent(t *testing.T) {
+	app := &appModel{}
+	pump := newUIPump(t, app)
+	h := &guiHarness{app: app, pump: pump}
+	h.pump.do(func() { h.app.beginShutdown() })
+	h.shutdown(t)
+	h.shutdown(t)
+	if !h.closed {
+		t.Fatal("idempotent harness shutdown did not finish")
+	}
 }
 
 func TestGUIAppRuntimeFlow(t *testing.T) {

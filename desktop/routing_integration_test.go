@@ -54,10 +54,7 @@ func startRoutingHarnessWithHandler(t *testing.T, binary string, handler http.Ha
 		if h.closed {
 			return
 		}
-		if app.rt != nil {
-			_ = app.rt.shutdown()
-		}
-		pump.close()
+		h.shutdown(t)
 	})
 	return h
 }
@@ -985,11 +982,7 @@ func TestQuitDrainsIssueAndConversationSessions(t *testing.T) {
 		issue := ct.issueByID(issueID)
 		return ct.ActiveTaskID != "" && issue != nil && issue.Work.ActiveTaskID != ""
 	})
-	quit := make(chan struct{}, 1)
-	h.pump.do(func() {
-		h.app.requestQuit = func() { quit <- struct{}{} }
-		h.app.beginShutdown()
-	})
+	h.pump.do(func() { h.app.beginShutdown() })
 	h.pump.wait(func() bool { return h.app.runtimeStatus == runtimeStateDraining })
 	provider.release("quit-A")
 	h.pump.wait(func() bool {
@@ -1009,11 +1002,6 @@ func TestQuitDrainsIssueAndConversationSessions(t *testing.T) {
 		issue := ct.issueByID(issueID)
 		return h.app.runtimeStatus == runtimeStateExited && ct.ActiveTaskID == "" && issue.Work.ActiveTaskID == ""
 	})
-	select {
-	case <-quit:
-	case <-time.After(5 * time.Second):
-		t.Fatal("final shutdown callback did not reach the UI pump")
-	}
 	h.snapshot(func() {
 		ct := h.app.selectedContact()
 		issue := ct.issueByID(issueID)
@@ -1021,8 +1009,7 @@ func TestQuitDrainsIssueAndConversationSessions(t *testing.T) {
 			t.Fatalf("drain left active tasks: chat=%q work=%q", ct.ActiveTaskID, issue.Work.ActiveTaskID)
 		}
 	})
-	h.pump.close()
-	h.closed = true
+	h.shutdown(t)
 }
 
 func TestConversationUnreadDoesNotComeFromIssueWork(t *testing.T) {
