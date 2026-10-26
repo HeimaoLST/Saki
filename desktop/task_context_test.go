@@ -510,3 +510,34 @@ func TestTaskContextHeadlessPreviews(t *testing.T) {
 		}
 	}
 }
+
+func TestTaskContextSaveFailureKeepsEditorAndValues(t *testing.T) {
+	tc := &taskContext{onChange: func() error { return errors.New("store unavailable") }}
+	tr := taskContextTester(tc, false)
+	tr.Frame()
+	if err := tr.Click("Add snippet"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if err := tr.Click("Context name"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Type("Unsaved name")
+	if err := tr.Click("Context text"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Type("Unsaved body")
+	if err := tr.Click("Save snippet"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tc.formOpen || tc.formName != "Unsaved name" || tc.formText != "Unsaved body" {
+		t.Fatalf("save failure lost the editor: %+v", tc)
+	}
+	if len(tc.snapshot()) != 0 {
+		t.Fatalf("save failure committed an item: %+v", tc.snapshot())
+	}
+	if !tr.HasText("store unavailable") || !tr.HasText("Save snippet") {
+		t.Fatalf("save failure was not visible inline: %v", tr.Texts())
+	}
+}

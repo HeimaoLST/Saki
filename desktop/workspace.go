@@ -532,6 +532,11 @@ func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *
 	}
 	if editable {
 		ui.Row(c).Gap(6).Children(func() {
+			label := "Task context"
+			if count := issue.Context.count(); count > 0 {
+				label = fmt.Sprintf("Task context · %d", count)
+			}
+			ui.Button(c, label).FontSize(11).Padding(2, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openIssueTaskContext(issue.ID) })
 			reason := issueLifecycleStartBlocked(issue)
 			if reason == "" {
 				reason = a.canStartIssue(ct, issue)

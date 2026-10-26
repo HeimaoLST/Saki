@@ -17,31 +17,35 @@ import (
 )
 
 // v3 added issue.work_session_id. v4 makes structured requirements the
-// persisted truth; v1-v3 remain readable here and older apps reject the new
-// version rather than silently dropping fields.
-const contactStoreVersion = 4
+// persisted truth. v5 adds owned task-context snapshots and pending-send
+// intent. v1-v4 remain readable here. Older v4 apps reject v5 instead of
+// saving over it and silently discarding context materials.
+const contactStoreVersion = 5
 
 type storedContact struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Role         string `json:"role,omitempty"`
-	Purpose      string `json:"purpose,omitempty"`
-	Instructions string `json:"instructions,omitempty"`
-	Workspace    string `json:"workspace,omitempty"`
-	SessionID    string `json:"session_id,omitempty"`
-	Draft        string `json:"draft,omitempty"`
-	UpdatedAt    int64  `json:"updated_at,omitempty"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Role         string            `json:"role,omitempty"`
+	Purpose      string            `json:"purpose,omitempty"`
+	Instructions string            `json:"instructions,omitempty"`
+	Workspace    string            `json:"workspace,omitempty"`
+	SessionID    string            `json:"session_id,omitempty"`
+	Draft        string            `json:"draft,omitempty"`
+	TaskContext  []taskContextItem `json:"task_context,omitempty"`
+	PendingSend  *pendingSend      `json:"pending_send,omitempty"`
+	UpdatedAt    int64             `json:"updated_at,omitempty"`
 }
 
 type storedIssueExecution struct {
-	ID                   string `json:"id"`
-	SessionID            string `json:"session_id,omitempty"`
-	TaskID               string `json:"task_id,omitempty"`
-	MessageID            string `json:"message_id,omitempty"`
-	Prompt               string `json:"prompt,omitempty"`
-	Status               string `json:"status,omitempty"`
-	Detail               string `json:"detail,omitempty"`
-	RequirementsRevision int    `json:"requirements_revision,omitempty"`
+	ID                   string            `json:"id"`
+	SessionID            string            `json:"session_id,omitempty"`
+	TaskID               string            `json:"task_id,omitempty"`
+	MessageID            string            `json:"message_id,omitempty"`
+	Prompt               string            `json:"prompt,omitempty"`
+	Status               string            `json:"status,omitempty"`
+	Detail               string            `json:"detail,omitempty"`
+	RequirementsRevision int               `json:"requirements_revision,omitempty"`
+	Context              []taskContextItem `json:"context,omitempty"`
 }
 
 type storedRequirement struct {
@@ -65,6 +69,7 @@ type storedIssue struct {
 	CreatedAt            int64                  `json:"created_at,omitempty"`
 	UpdatedAt            int64                  `json:"updated_at,omitempty"`
 	WorkSessionID        string                 `json:"work_session_id,omitempty"`
+	TaskContext          []taskContextItem      `json:"task_context,omitempty"`
 	Executions           []storedIssueExecution `json:"executions,omitempty"`
 }
 
@@ -192,7 +197,7 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 		Contacts: make([]storedContact, 0, len(contacts)),
 	}
 	for _, c := range contacts {
-		s.state.Contacts = append(s.state.Contacts, storedContact{
+		storedContact := storedContact{
 			ID:           c.ID,
 			Name:         c.Name,
 			Role:         c.Role,
@@ -201,14 +206,18 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 			Workspace:    c.Workspace,
 			SessionID:    c.SessionID,
 			Draft:        c.Draft,
+			TaskContext:  c.Context.snapshot(),
+			PendingSend:  clonePendingSend(c.pendingSend),
 			UpdatedAt:    nowMillis(),
-		})
+		}
+		s.state.Contacts = append(s.state.Contacts, storedContact)
 		for _, issue := range c.Issues {
 			stored := storedIssue{
 				ID: issue.ID, ContactID: issue.ContactID, Goal: issue.Goal,
 				Status: issue.Status, Archived: issue.Archived,
 				Evidence: issue.Evidence, CreatedAt: issue.CreatedAt, UpdatedAt: issue.UpdatedAt,
 				WorkSessionID: issue.WorkSessionID, RequirementsRevision: issue.RequirementsRevision,
+				TaskContext: issue.Context.snapshot(),
 			}
 			for _, requirement := range issue.Requirements {
 				if requirement == nil || strings.TrimSpace(requirement.Text) == "" {
@@ -225,6 +234,7 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 					MessageID: execution.MessageID, Prompt: execution.Prompt,
 					Status: execution.Status, Detail: execution.Detail,
 					RequirementsRevision: execution.RequirementsRevision,
+					Context:              cloneTaskContextItems(execution.Context),
 				})
 			}
 			s.state.Issues = append(s.state.Issues, stored)

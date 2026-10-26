@@ -63,6 +63,10 @@ type taskContext struct {
 
 	previewID   string
 	actionError string
+
+	// onChange is the single app-owned persistence path for committed snapshots.
+	// UI editor state is intentionally not persisted.
+	onChange func() error
 }
 
 func newTaskContextID() string {
@@ -79,10 +83,30 @@ func (item taskContextItem) inputName() string {
 	return item.Name + " · file " + item.Source
 }
 
-func (tc *taskContext) snapshot() []taskContextItem {
-	out := make([]taskContextItem, len(tc.items))
-	copy(out, tc.items)
+func cloneTaskContextItems(items []taskContextItem) []taskContextItem {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]taskContextItem, len(items))
+	copy(out, items)
 	return out
+}
+
+func (tc *taskContext) count() int { return len(tc.items) }
+
+func (tc *taskContext) snapshot() []taskContextItem {
+	return cloneTaskContextItems(tc.items)
+}
+
+func (tc *taskContext) persistChange(previous []taskContextItem) error {
+	if tc.onChange == nil {
+		return nil
+	}
+	if err := tc.onChange(); err != nil {
+		tc.items = previous
+		return err
+	}
+	return nil
 }
 
 func (tc *taskContext) itemByID(id string) (taskContextItem, bool) {
@@ -99,11 +123,15 @@ func (tc *taskContext) addItem(name, source, text string) (taskContextItem, erro
 		ID: newTaskContextID(), Name: strings.TrimSpace(name), Source: source,
 		Text: text, Revision: 1,
 	}
-	next := append(tc.snapshot(), item)
+	previous := tc.snapshot()
+	next := append(previous, item)
 	if err := validateTaskContext(next); err != nil {
 		return taskContextItem{}, err
 	}
 	tc.items = next
+	if err := tc.persistChange(previous); err != nil {
+		return taskContextItem{}, err
+	}
 	return item, nil
 }
 
@@ -140,14 +168,18 @@ func (tc *taskContext) Refresh(id string) (taskContextItem, error) {
 		if err != nil {
 			return taskContextItem{}, err
 		}
+		previous := tc.snapshot()
 		next := current
 		next.Source, next.Text, next.Revision = source, text, current.Revision+1
-		items := tc.snapshot()
+		items := cloneTaskContextItems(previous)
 		items[index] = next
 		if err := validateTaskContext(items); err != nil {
 			return taskContextItem{}, err
 		}
 		tc.items = items
+		if err := tc.persistChange(previous); err != nil {
+			return taskContextItem{}, err
+		}
 		return next, nil
 	}
 	return taskContextItem{}, errTaskContextMissing
@@ -159,14 +191,18 @@ func (tc *taskContext) Edit(id, name, text string) (taskContextItem, error) {
 		if current.ID != id {
 			continue
 		}
+		previous := tc.snapshot()
 		next := current
 		next.Name, next.Text, next.Revision = strings.TrimSpace(name), text, current.Revision+1
-		items := tc.snapshot()
+		items := cloneTaskContextItems(previous)
 		items[index] = next
 		if err := validateTaskContext(items); err != nil {
 			return taskContextItem{}, err
 		}
 		tc.items = items
+		if err := tc.persistChange(previous); err != nil {
+			return taskContextItem{}, err
+		}
 		return next, nil
 	}
 	return taskContextItem{}, errTaskContextMissing
@@ -177,7 +213,12 @@ func (tc *taskContext) Remove(id string) bool {
 		if item.ID != id {
 			continue
 		}
+		previous := tc.snapshot()
 		tc.items = append(tc.items[:index], tc.items[index+1:]...)
+		if err := tc.persistChange(previous); err != nil {
+			tc.actionError = err.Error()
+			return false
+		}
 		if tc.previewID == id {
 			tc.previewID = ""
 		}
@@ -355,6 +396,90 @@ func readTaskContextFile(path string) (text, source string, err error) {
 		return "", "", fmt.Errorf("%w: %s", errTaskContextNotText, filepath.Base(absolute))
 	}
 	return string(data), absolute, nil
+}
+
+// taskContextInputs is the single snapshot-to-wire projection used by every
+// sender (conversation, issue run/continue, and module tests).
+func taskContextInputs(items []taskContextItem) []runtimeContextInput {
+	inputs := make([]runtimeContextInput, 0, len(items))
+	for _, item := range items {
+		inputs = append(inputs, runtimeContextInput{Name: item.inputName(), Text: item.Text})
+	}
+	return inputs
+}
+
+// taskContextUserContent separates a Runtime user message's ordinary text from
+// actual caller_context parts. Ordinary text that merely resembles JSON stays
+// text; only the Runtime envelope type and label are recognized.
+func taskContextUserContent(raw json.RawMessage) (string, []taskContextItem) {
+	var plain string
+	if err := json.Unmarshal(raw, &plain); err == nil {
+		return plain, nil
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return "", nil
+	}
+	var text strings.Builder
+	var items []taskContextItem
+	for _, part := range parts {
+		switch part.Type {
+		case "image":
+			text.WriteString("[image]")
+		case "text":
+			if item, ok := taskContextEnvelope(part.Text); ok {
+				items = append(items, item)
+			} else {
+				text.WriteString(part.Text)
+			}
+		}
+	}
+	return text.String(), items
+}
+
+func taskContextEnvelope(text string) (taskContextItem, bool) {
+	var envelope struct {
+		Type  string `json:"type"`
+		Label string `json:"label"`
+		Name  string `json:"name"`
+		Text  string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(text), &envelope); err != nil {
+		return taskContextItem{}, false
+	}
+	if envelope.Type != "caller_context" || envelope.Label != "Caller-provided context (user data)" {
+		return taskContextItem{}, false
+	}
+	return taskContextItem{Name: envelope.Name, Text: envelope.Text, Revision: 1}, true
+}
+
+// taskContextReadOnlyView renders history materials without editor/resend
+// controls. The item shape is the same immutable snapshot value type.
+func taskContextReadOnlyView(c *ui.Context, theme workbenchTheme, items []taskContextItem) {
+	if len(items) == 0 {
+		return
+	}
+	t := theme.Theme
+	ui.Column(c).Gap(4).Children(func() {
+		ui.Text(c, fmt.Sprintf("Task context · %d %s", len(items), taskContextItemWord(len(items)))).FontSize(10).FontWeight(500).TextColor(t.TextMuted)
+		for index, item := range items {
+			item := item
+			key := item.ID
+			if key == "" {
+				key = fmt.Sprintf("readonly-context-%d", index)
+			}
+			ui.Column(c).Key(key).Padding(7).Radius(7).Background(t.Surface).Gap(3).Children(func() {
+				ui.Text(c, item.inputName()).FontSize(10).LineHeight(1.3).TextColor(t.TextMuted)
+				ui.Scroll(c).Height(96).Padding(6).Radius(5).Background(t.SurfaceHover).Children(func() {
+					markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy context text"}).
+						FontSize(11).LineHeight(1.4).TextColor(t.Text)
+				})
+			})
+		}
+	})
 }
 
 // view renders the compact list and its explicit editor. It depends only on

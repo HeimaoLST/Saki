@@ -85,7 +85,7 @@ func TestTaskContextRuntimeSendRefreshAndRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first, err := live.client.sendTask(session.SessionID, "Use the saved context.", taskContextRuntimeInputs(submitted)...)
+	first, err := live.client.sendTask(session.SessionID, "Use the saved context.", taskContextInputs(submitted)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestTaskContextRuntimeSendRefreshAndRemoval(t *testing.T) {
 		t.Fatalf("accepted snapshots remained: %+v", tc.snapshot())
 	}
 
-	second, err := live.client.sendTask(session.SessionID, "Follow up without new context.", taskContextRuntimeInputs(tc.snapshot())...)
+	second, err := live.client.sendTask(session.SessionID, "Follow up without new context.", taskContextInputs(tc.snapshot())...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,14 +208,6 @@ func TestTaskContextRuntimeSendRefreshAndRemoval(t *testing.T) {
 	if strings.Contains(string(historyJSON), removed.Text) {
 		t.Fatal("removed context reached later runtime history")
 	}
-}
-
-func taskContextRuntimeInputs(items []taskContextItem) []runtimeContextInput {
-	inputs := make([]runtimeContextInput, 0, len(items))
-	for _, item := range items {
-		inputs = append(inputs, runtimeContextInput{Name: item.inputName(), Text: item.Text})
-	}
-	return inputs
 }
 
 func taskContextCallerContexts(t *testing.T, body string) []taskContextCallerContext {
@@ -369,4 +361,286 @@ func firstContextsText(contexts []taskContextCallerContext) []string {
 		out = append(out, context.Text)
 	}
 	return out
+}
+
+func TestTaskContextGUIAppConversationAndIssueRuntimeSend(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{}
+	h := startGUIHarness(t, binary, provider, "task-context-gui-117")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+
+	filePath := filepath.Join(h.root, "gui-brief.txt")
+	fileText := "GUI file snapshot — 你好\nsecond line"
+	if err := os.WriteFile(filePath, []byte(fileText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if _, err := ct.Context.AddSnippet("GUI release notes", "GUI snippet\n第一行"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ct.Context.ImportFile(filePath, ""); err != nil {
+			t.Fatal(err)
+		}
+		ct.Draft = "Use the GUI context."
+		if !h.app.sendCurrent() {
+			t.Fatalf("conversation send was rejected: %s", ct.SendError)
+		}
+	})
+	// The snapshot must stay at the bytes read at import even if the source
+	// changes before the runtime request is made.
+	if err := os.WriteFile(filePath, []byte("changed after snapshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		return ct.LastTaskID != "" && ct.ActiveTaskID == "" && ct.SendState == sendIdle &&
+			strings.Contains(lastMessageText(ct.Messages), "task-context-gui-117 answer")
+	})
+	if provider.count() != 1 {
+		t.Fatalf("conversation provider requests = %d", provider.count())
+	}
+	firstBody := provider.body(0)
+	firstContexts := taskContextCallerContexts(t, firstBody)
+	if len(firstContexts) != 2 {
+		t.Fatalf("conversation contexts = %+v", firstContexts)
+	}
+	if !strings.Contains(firstBody, "Use the GUI context.") || strings.Contains(firstBody, "changed after snapshot") {
+		t.Fatal("conversation body did not use the captured snapshot")
+	}
+	for _, context := range firstContexts {
+		if context.Type != "caller_context" || !strings.Contains(context.Name, "GUI release notes") && !strings.Contains(context.Name, "gui-brief.txt") {
+			t.Fatalf("conversation context shape = %+v", context)
+		}
+	}
+	if !strings.Contains(firstContexts[1].Name, filePath) || firstContexts[1].Text != fileText {
+		t.Fatalf("conversation file context = %+v", firstContexts[1])
+	}
+
+	var conversationSession string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		conversationSession = ct.SessionID
+		if len(ct.Context.snapshot()) != 0 {
+			t.Fatalf("accepted conversation context was not cleared: %+v", ct.Context.snapshot())
+		}
+	})
+	history, err := h.app.rt.historyPage(conversationSession, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contexts := taskContextHistoryCallerContexts(t, history); len(contexts) != 2 {
+		t.Fatalf("conversation history contexts = %+v", contexts)
+	}
+
+	issueID := ""
+	h.pump.do(func() {
+		if !h.app.createIssue("Context issue", "Use the issue context.") {
+			t.Fatalf("createIssue: %s", h.app.issueFormError)
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		issue := ct.issueByID(issueID)
+		if issue == nil {
+			t.Fatal("created issue missing")
+		}
+		if _, err := issue.Context.AddSnippet("Issue release notes", "issue snippet"); err != nil {
+			t.Fatal(err)
+		}
+		ct.Draft = "ordinary conversation draft"
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue: %s", h.app.issueFormError)
+		}
+	})
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		if issue == nil || len(issue.Executions) == 0 {
+			return false
+		}
+		return issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle && issue.Work.Loaded &&
+			issue.Executions[len(issue.Executions)-1].Status == issueExecutionCompleted
+	})
+	if provider.count() != 2 {
+		t.Fatalf("issue provider requests = %d", provider.count())
+	}
+	secondBody := provider.body(1)
+	secondContexts := taskContextCallerContexts(t, secondBody)
+	if len(secondContexts) != 1 || secondContexts[0].Name != "Issue release notes" || secondContexts[0].Text != "issue snippet" {
+		t.Fatalf("issue contexts = %+v", secondContexts)
+	}
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		if len(issue.Context.snapshot()) != 0 {
+			t.Fatalf("accepted issue context was not cleared: %+v", issue.Context.snapshot())
+		}
+		execution := issue.Executions[len(issue.Executions)-1]
+		if len(execution.Context) != 1 || execution.Context[0].Text != "issue snippet" {
+			t.Fatalf("issue execution snapshot = %+v", execution.Context)
+		}
+		if ct.Draft != "ordinary conversation draft" {
+			t.Fatalf("issue run changed conversation draft: %q", ct.Draft)
+		}
+	})
+	issueHistory, err := h.app.rt.historyPage(h.app.selectedContact().issueByID(issueID).WorkSessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contexts := taskContextHistoryCallerContexts(t, issueHistory); len(contexts) != 1 || contexts[0].Text != "issue snippet" {
+		t.Fatalf("issue history contexts = %+v", contexts)
+	}
+}
+
+func lastMessageText(messages []*message) string {
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Kind == msgContact && messages[index].Text != "" {
+			return messages[index].Text
+		}
+	}
+	return ""
+}
+
+func TestTaskContextGUIAppPendingContextSurvivesRestartAndAcceptedClearPersists(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{}
+	h := startGUIHarness(t, binary, provider, "task-context-restart-117")
+	filePath := filepath.Join(h.root, "restart-brief.txt")
+	fileText := "restart snapshot\nsecond line"
+	if err := os.WriteFile(filePath, []byte(fileText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if _, err := ct.Context.AddSnippet("Restart notes", "restart snippet"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ct.Context.ImportFile(filePath, ""); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var source string
+	h.pump.do(func() { source = h.app.selectedContact().Context.snapshot()[1].Source })
+	h.shutdown(t)
+
+	h2 := restartGUIHarness(t, binary)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.do(func() {
+		ct := h2.app.selectedContact()
+		items := ct.Context.snapshot()
+		if len(items) != 2 || items[0].Name != "Restart notes" || items[1].Text != fileText || items[1].Source != source {
+			t.Fatalf("restart pending context = %+v", items)
+		}
+		ct.Draft = "Send restored context."
+		if !h2.app.sendCurrent() {
+			t.Fatalf("restart send: %s", ct.SendError)
+		}
+	})
+	h2.pump.wait(func() bool {
+		ct := h2.app.selectedContact()
+		return ct.LastTaskID != "" && ct.ActiveTaskID == "" && ct.SendState == sendIdle
+	})
+	if provider.count() != 1 {
+		t.Fatalf("restart send provider requests = %d", provider.count())
+	}
+	body := provider.body(0)
+	if contexts := taskContextCallerContexts(t, body); len(contexts) != 2 {
+		t.Fatalf("restart contexts = %+v", contexts)
+	}
+	h2.pump.do(func() {
+		ct := h2.app.selectedContact()
+		if len(ct.Context.snapshot()) != 0 {
+			t.Fatalf("accepted restart context was not cleared: %+v", ct.Context.snapshot())
+		}
+	})
+	h2.shutdown(t)
+
+	h3 := restartGUIHarness(t, binary)
+	defer func() {
+		if !h3.closed {
+			h3.shutdown(t)
+		}
+	}()
+	h3.pump.wait(func() bool {
+		ct := h3.app.contacts[0]
+		return ct.Loaded && len(ct.Messages) > 0
+	})
+	h3.pump.do(func() {
+		ct := h3.app.selectedContact()
+		if len(ct.Context.snapshot()) != 0 {
+			t.Fatalf("accepted clear did not persist: %+v", ct.Context.snapshot())
+		}
+		found := false
+		for _, m := range ct.Messages {
+			if len(m.Context) == 2 && m.Context[0].Text == "restart snippet" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("runtime history did not restore conversation context: %+v", ct.Messages)
+		}
+	})
+	h3.shutdown(t)
+}
+
+func TestTaskContextGUIAppUnknownSendRestartKeepsWarningWithoutReplay(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{}
+	h := startGUIHarness(t, binary, provider, "task-context-unknown-117")
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "Establish the session."
+		if !h.app.sendCurrent() {
+			t.Fatalf("initial send: %s", ct.SendError)
+		}
+	})
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		return ct.LastTaskID != "" && ct.ActiveTaskID == "" && ct.SendState == sendIdle
+	})
+	if provider.count() != 1 {
+		t.Fatalf("initial provider requests = %d", provider.count())
+	}
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if _, err := ct.Context.AddSnippet("Maybe sent", "possibly delivered"); err != nil {
+			t.Fatal(err)
+		}
+		ct.pendingSend = &pendingSend{Draft: "uncertain prompt", Context: ct.Context.snapshot(), State: "unknown"}
+		ct.SendState = sendUnknown
+		ct.SendError = "Delivery not confirmed."
+		if err := h.app.persist(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	h.shutdown(t)
+
+	h2 := restartGUIHarness(t, binary)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.wait(func() bool { return h2.app.contacts[0].Loaded })
+	h2.pump.do(func() {
+		ct := h2.app.selectedContact()
+		if ct.SendState != sendUnknown || ct.pendingSend == nil || ct.pendingSend.State != "unknown" {
+			t.Fatalf("restart lost unknown send intent: state=%v pending=%+v", ct.SendState, ct.pendingSend)
+		}
+		if len(ct.Context.snapshot()) != 1 || !strings.Contains(ct.SendError, "may have been sent") {
+			t.Fatalf("restart context/warning = %+v / %q", ct.Context.snapshot(), ct.SendError)
+		}
+	})
+	if provider.count() != 1 {
+		t.Fatalf("restart replayed a send: %d provider requests", provider.count())
+	}
+	h2.shutdown(t)
 }

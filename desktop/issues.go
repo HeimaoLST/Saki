@@ -23,6 +23,10 @@ type productIssue struct {
 	Executions           []*issueExecution
 	RequirementsRevision int
 
+	// Context is the pending context for the next Run/Continue. Each execution
+	// stores its own immutable Context snapshot before dispatch.
+	Context taskContext
+
 	// WorkSessionID is the issue-owned execution context. It is intentionally
 	// separate from contact.SessionID (the ongoing conversation). Old
 	// executions keep their actual SessionID and are never migrated in place.
@@ -73,6 +77,7 @@ type issueExecution struct {
 	Status               string
 	Detail               string
 	RequirementsRevision int
+	Context              []taskContextItem
 }
 
 const (
@@ -303,6 +308,7 @@ func (a *appModel) createIssue(goal, requirements string) bool {
 		Requirements: parseIssueRequirements(requirements), RequirementsRevision: 1,
 		Status: issueStatusNotStarted, CreatedAt: now, UpdatedAt: now,
 	}
+	item.Context.onChange = a.persist
 	previousSelected := ct.SelectedIssueID
 	ct.Issues = append(ct.Issues, item)
 	ct.SelectedIssueID = item.ID
@@ -365,6 +371,7 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 			Archived: stored.Archived, RequirementsRevision: stored.RequirementsRevision,
 			Evidence: stored.Evidence, CreatedAt: stored.CreatedAt, UpdatedAt: stored.UpdatedAt,
 			WorkSessionID: stored.WorkSessionID,
+			Context:       taskContext{items: cloneTaskContextItems(stored.TaskContext)},
 		}
 		if len(stored.RequirementItems) > 0 {
 			for _, item := range stored.RequirementItems {
@@ -407,6 +414,7 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 				ID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID,
 				MessageID: execution.MessageID, Prompt: execution.Prompt,
 				Status: status, Detail: detail, RequirementsRevision: execution.RequirementsRevision,
+				Context: cloneTaskContextItems(execution.Context),
 			})
 		}
 		issue.Status = normalizeIssueStatus(stored.Status, issue.Executions)
@@ -453,6 +461,7 @@ func (a *appModel) runIssueFor(ct *contact, issueID string) bool {
 	ct.SelectedWorkTaskID = ""
 	execution := &issueExecution{
 		ID: newIssueExecutionID(), SessionID: issue.WorkSessionID, Prompt: prompt, Status: issueExecutionPending,
+		Context: issue.Context.snapshot(),
 	}
 	issue.Executions = append(issue.Executions, execution)
 	issue.UpdatedAt = nowMillis()
