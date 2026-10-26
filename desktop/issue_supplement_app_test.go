@@ -320,4 +320,10 @@ func TestIssueSupplementHistoryMatchesPersistedScopeWire(t *testing.T) {
 	if supplementHistoryMatches(&withoutScope, records) {
 		t.Fatal("missing persisted scope was ignored")
 	}
+	tokenExecution := *execution
+	tokenExecution.ToolScopeInput = "scope-test"
+	tokenRecords := supplementRawHistoryRecords(t, execution.TaskID, execution.MessageID, execution.Prompt, []taskContextItem{user, taskContextItem{Name: issueToolScopeContextName, Text: "scope-test"}}, true)
+	if !supplementHistoryMatches(&tokenExecution, tokenRecords) {
+		t.Fatal("opaque token scope wire did not match exact history")
+	}
 }

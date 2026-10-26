@@ -25,15 +25,16 @@ const issueToolTestIssueGoal = "ISSUE-TOOL-GOAL"
 const issueToolWaitGoal = "WAIT-A-GOAL"
 
 type issueToolChainProvider struct {
-	mu           sync.Mutex
-	conversation int
-	issueWork    int
-	bodies       []string
-	scope        string
-	arrived      chan struct{}
-	release      chan struct{}
-	releaseOnce  sync.Once
-	once         sync.Once
+	mu               sync.Mutex
+	conversation     int
+	issueWork        int
+	bodies           []string
+	scope            string
+	scopeFromContext bool
+	arrived          chan struct{}
+	release          chan struct{}
+	releaseOnce      sync.Once
+	once             sync.Once
 }
 
 func newIssueToolChainProvider() *issueToolChainProvider {
@@ -75,6 +76,11 @@ func (p *issueToolChainProvider) handler() http.HandlerFunc {
 			p.issueWork++
 		}
 		scope := issueToolTestScope(string(body))
+		if p.scopeFromContext {
+			if named := issueToolTestNamedContext(string(body), issueToolScopeContextName); named != "" {
+				scope = named
+			}
+		}
 		if scope == "" {
 			scope = p.scope
 		}
@@ -237,6 +243,36 @@ func issueToolTestIssueID(body string) string {
 		}
 	}
 	return ""
+}
+
+func issueToolTestNamedContext(body, name string) string {
+	var root any
+	if json.Unmarshal([]byte(body), &root) != nil {
+		return ""
+	}
+	var found string
+	var walk func(any)
+	walk = func(value any) {
+		switch current := value.(type) {
+		case string:
+			if strings.Contains(current, `"caller_context"`) {
+				var context taskContextCallerContext
+				if json.Unmarshal([]byte(current), &context) == nil && context.Name == name && found == "" {
+					found = context.Text
+				}
+			}
+		case []any:
+			for _, item := range current {
+				walk(item)
+			}
+		case map[string]any:
+			for _, item := range current {
+				walk(item)
+			}
+		}
+	}
+	walk(root)
+	return found
 }
 
 func issueToolTestScope(body string) string {
@@ -1515,5 +1551,69 @@ func TestIssueToolReleaseCallbackRunsBeforeQuit(t *testing.T) {
 	}
 	if len(order) < 2 || order[len(order)-1] != "quit" || order[len(order)-2] != "release-callback" {
 		t.Fatalf("release/quit callback order = %v", order)
+	}
+}
+
+func TestIssueToolScopeTokenRealChain(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	provider := newIssueToolChainProvider()
+	provider.scopeFromContext = true
+	h := startIssueToolTestHarness(t, binary, provider.handler())
+	t.Cleanup(provider.releaseFixture)
+	material := "TOKEN-WIRE-MATERIAL\n青岚\n"
+	var sendErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if _, err := ct.Context.AddSnippet("token-wire-material", material); err != nil {
+			sendErr = err.Error()
+			return
+		}
+		ct.Draft = issueToolTestMarker
+		if !h.app.sendCurrent() {
+			sendErr = ct.SendError
+		}
+	})
+	if sendErr != "" {
+		t.Fatal(sendErr)
+	}
+	select {
+	case <-provider.arrived:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive the conversation request")
+	}
+	h.pump.wait(func() bool { return len(h.app.issueToolScopes) == 1 })
+	var scopeRef string
+	h.pump.do(func() {
+		for ref := range h.app.issueToolScopes {
+			scopeRef = ref
+		}
+	})
+	if scopeRef == "" {
+		t.Fatal("no app-issued scope")
+	}
+	provider.mu.Lock()
+	provider.scope = scopeRef
+	provider.mu.Unlock()
+	provider.releaseFixture()
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		if ct == nil || ct.SendState != sendIdle || ct.ActiveTaskID != "" || len(ct.Issues) != 1 || len(ct.Issues[0].Executions) != 1 {
+			return false
+		}
+		return ct.Issues[0].Executions[0].Status == issueExecutionCompleted && ct.Issues[0].Work.ActiveTaskID == ""
+	})
+	var issue *productIssue
+	h.pump.do(func() { issue = h.app.selectedContact().Issues[0] })
+	if issue == nil || len(issue.Executions) != 1 {
+		t.Fatal("token-wire issue did not complete")
+	}
+	if got := issueToolTestNamedContext(provider.body(0), issueToolScopeContextName); got != scopeRef || strings.Contains(got, "{") {
+		t.Fatalf("named scope context = %q, want opaque ref %q", got, scopeRef)
+	}
+	execution := issue.Executions[0]
+	if len(execution.Context) != 1 || execution.Context[0].Name != "token-wire-material" || execution.Context[0].Text != material {
+		t.Fatalf("token-wire execution context = %+v", execution.Context)
 	}
 }

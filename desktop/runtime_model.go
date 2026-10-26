@@ -1894,7 +1894,7 @@ func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID
 					return
 				}
 				execution.ToolScopeRef = scope.Ref
-				execution.ToolScopeInput = issueToolScopeText(scope)
+				execution.ToolScopeInput = issueToolScopeToken(scope)
 				if err := a.persist(); err != nil {
 					scopeErr = err
 				}

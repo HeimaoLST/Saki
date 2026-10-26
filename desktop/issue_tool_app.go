@@ -516,26 +516,22 @@ func (a *appModel) issueToolNewScope(contactID, sessionID, turnID string) (*Issu
 	return &scope, nil
 }
 
-func issueToolScopeText(scope *IssueToolScope) string {
+// issueToolScopeToken is the only model-facing projection of an app-issued
+// scope. The full object stays in the app map/store for authorization and
+// source checking; the model receives only this opaque ref.
+func issueToolScopeToken(scope *IssueToolScope) string {
 	if scope == nil {
 		return ""
 	}
-	data, err := json.Marshal(scope)
-	if err != nil {
-		return ""
-	}
-	return string(data)
+	return scope.Ref
 }
 
 func issueToolScopeInput(scope *IssueToolScope) (runtimeContextInput, bool) {
-	if scope == nil {
+	token := issueToolScopeToken(scope)
+	if token == "" {
 		return runtimeContextInput{}, false
 	}
-	data, err := json.Marshal(scope)
-	if err != nil {
-		return runtimeContextInput{}, false
-	}
-	return runtimeContextInput{Name: issueToolScopeContextName, Text: string(data)}, true
+	return runtimeContextInput{Name: issueToolScopeContextName, Text: token}, true
 }
 
 func (a *appModel) issueToolScopeByRef(ref string) (IssueToolScope, error) {
@@ -708,13 +704,21 @@ func filterIssueToolContextWithIndex(index map[string]issueToolScopeIdentity, se
 	if last.Name != issueToolScopeContextName {
 		return items
 	}
+	text := strings.TrimSpace(last.Text)
 	var input IssueToolScope
-	if json.Unmarshal([]byte(last.Text), &input) != nil || input.Validate() != nil {
-		return items
+	if json.Unmarshal([]byte(text), &input) == nil && input.Validate() == nil {
+		identity, ok := index[input.Ref]
+		if !ok || identity.ContactID != input.ContactID || identity.RuntimeSessionID != sessionID ||
+			identity.TurnID != input.TurnID || identity.CreatedAt != input.CreatedAt {
+			return items
+		}
+		return append([]taskContextItem(nil), items[:len(items)-1]...)
 	}
-	identity, ok := index[input.Ref]
-	if !ok || identity.ContactID != input.ContactID || identity.RuntimeSessionID != sessionID ||
-		identity.TurnID != input.TurnID || identity.CreatedAt != input.CreatedAt {
+	// New wire form: the model-facing scope value is only the opaque ref.
+	// Legacy persisted JSON above is still recognized; unknown/same-named user
+	// material is never filtered merely by its name.
+	identity, ok := index[text]
+	if !ok || identity.ContactID == "" || identity.RuntimeSessionID != sessionID {
 		return items
 	}
 	return append([]taskContextItem(nil), items[:len(items)-1]...)

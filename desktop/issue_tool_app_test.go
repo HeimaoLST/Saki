@@ -932,6 +932,54 @@ func TestIssueToolInternalScopeIsFilteredFromUserHistoryOnlyAtTail(t *testing.T)
 	}
 }
 
+func TestIssueToolScopeWireIsOpaqueToken(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	scope, err := a.issueToolNewScope(ct.ID, "token-session", "token-turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, ok := issueToolScopeInput(scope)
+	if !ok || input.Text != scope.Ref || strings.Contains(input.Text, "{") {
+		t.Fatalf("model-facing scope = %+v scope=%q", input, scope.Ref)
+	}
+	a.issueToolScopes[scope.Ref] = *scope
+	user := taskContextItem{ID: "user-token", Name: "user-note", Text: "user material", Revision: 1}
+	tokenItem := taskContextItem{Name: issueToolScopeContextName, Text: scope.Ref, Revision: 1}
+	records := supplementRawHistoryRecords(t, "token-task", "token-message", "body", []taskContextItem{user, tokenItem}, true)
+	filtered := parseHistoryWithIssueToolScopeFilter("token-session", records, nil, a.issueToolScopeIndexSnapshot())
+	if len(filtered.messages) != 1 || len(filtered.messages[0].Context) != 1 || filtered.messages[0].Context[0].Name != user.Name {
+		t.Fatalf("token wire filter = %+v", filtered.messages)
+	}
+	unknown := taskContextItem{Name: issueToolScopeContextName, Text: "scope-unknown-user", Revision: 1}
+	records = supplementRawHistoryRecords(t, "token-task", "token-message", "body", []taskContextItem{user, unknown}, true)
+	filtered = parseHistoryWithIssueToolScopeFilter("token-session", records, nil, a.issueToolScopeIndexSnapshot())
+	if len(filtered.messages[0].Context) != 2 {
+		t.Fatalf("unknown token was filtered: %+v", filtered.messages[0].Context)
+	}
+}
+
+func TestIssueToolLegacyJSONScopeIsRejected(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	scope, err := a.issueToolNewScope(ct.ID, "legacy-json-session", "legacy-json-turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateIssueToolTestScope(t, a, scope)
+	legacyJSON, _ := json.Marshal(scope)
+	args, _ := json.Marshal(map[string]any{
+		"scope": string(legacyJSON), "action": issueToolActionCreate, "goal": "legacy scope",
+	})
+	response, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: args})
+	if err != nil || !response.IsError {
+		t.Fatalf("legacy JSON scope was accepted: %+v err=%v", response, err)
+	}
+	if len(ct.Issues) != 0 {
+		t.Fatalf("legacy JSON scope created issue: %+v", ct.Issues)
+	}
+}
+
 func TestIssueToolContextWireBudgetIncludesInternalScope(t *testing.T) {
 	userText := strings.Repeat("x", taskContextMaxBytes-64)
 	inputs := taskContextInputs([]taskContextItem{{ID: "u", Name: "user", Text: userText, Revision: 1}})
@@ -1015,7 +1063,7 @@ func TestIssueToolWorkWaitBeforeAcceptLatchesRealTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	execution.ToolScopeRef = scope.Ref
-	execution.ToolScopeInput = issueToolScopeText(scope)
+	execution.ToolScopeInput = issueToolScopeToken(scope)
 	if !a.issueToolScopeActive(*scope) {
 		t.Fatal("work scope was not active while awaiting accept")
 	}
