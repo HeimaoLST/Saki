@@ -208,3 +208,52 @@ func TestIssueToolExistingWorkSessionGetsRoleWithoutRebindingProfile(t *testing.
 		t.Fatal("work session was rebound to the current contact profile")
 	}
 }
+
+func TestIssueToolEnsureSkipsNoOpConfigUpdate(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unexpected model request", http.StatusInternalServerError)
+	})
+	h := startIssueToolTestHarness(t, binary, handler)
+	var sessionID string
+	var rt *runtimeClient
+	var setupErr error
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		session, err := h.app.rt.createConfiguredConversationSession(h.root, issueToolConversationGuidance, h.app.issueToolConversationSelection())
+		if err != nil {
+			setupErr = err
+			return
+		}
+		sessionID, rt = session.SessionID, h.app.rt
+		ct.SessionID, ct.Loaded = sessionID, true
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	before, err := rt.connectionConfig(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeSelectionHasIssueTools(before.EffectiveConfig.ToolSelection) || before.EffectiveConfig.SystemPrompt != issueToolConversationGuidance {
+		t.Fatalf("precondition = tools=%v prompt=%q", before.EffectiveConfig.ToolSelection, before.EffectiveConfig.SystemPrompt)
+	}
+	// A new Runtime/app instance has no in-memory ready mark. Because the
+	// persisted selection/prompt are already exact, ensure must not issue a
+	// no-op session.config.update (which native continuation rejects).
+	if configured, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false); err != nil || !configured {
+		t.Fatalf("ensure = %v err=%v", configured, err)
+	}
+	after, err := rt.connectionConfig(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ConfigRevision != before.ConfigRevision || after.SessionID != before.SessionID ||
+		after.EffectiveConfig.SystemPrompt != before.EffectiveConfig.SystemPrompt ||
+		!runtimeSelectionHasIssueTools(after.EffectiveConfig.ToolSelection) {
+		t.Fatalf("no-op ensure changed config: revision=%d/%d session=%q prompt=%q tools=%v",
+			before.ConfigRevision, after.ConfigRevision, after.SessionID, after.EffectiveConfig.SystemPrompt, after.EffectiveConfig.ToolSelection)
+	}
+}

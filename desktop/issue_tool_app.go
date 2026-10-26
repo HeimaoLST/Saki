@@ -227,7 +227,8 @@ func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID, role
 	toolsReady := runtimeSelectionHasWorkWait(config.EffectiveConfig.ToolSelection)
 	desiredPrompt := addWorkflowGuidance(config.EffectiveConfig.SystemPrompt, roleGuidance)
 	promptReady := desiredPrompt == config.EffectiveConfig.SystemPrompt
-	if toolsReady && promptReady && a.issueToolSchemaReady(rt, sessionID) {
+	if toolsReady && promptReady {
+		a.markIssueToolSchemaReady(rt, sessionID)
 		return true, nil
 	}
 	selection, mergeErr := a.issueToolMergedWorkSelection(config.EffectiveConfig.ToolSelection)
@@ -237,7 +238,7 @@ func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID, role
 	if selection == nil {
 		return false, nil
 	}
-	if toolsReady && a.issueToolSchemaReady(rt, sessionID) {
+	if toolsReady {
 		selection = nil
 	}
 	promptPatch := ""
@@ -437,7 +438,11 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 	toolsReady := runtimeSelectionHasIssueTools(config.EffectiveConfig.ToolSelection)
 	desiredPrompt := addWorkflowGuidance(config.EffectiveConfig.SystemPrompt, roleGuidance)
 	promptReady := desiredPrompt == config.EffectiveConfig.SystemPrompt
-	if toolsReady && promptReady && a.issueToolSchemaReady(rt, sessionID) {
+	if toolsReady && promptReady {
+		// The session already has the exact selection and prompt. A no-op
+		// config.update after restart can be rejected for native continuation,
+		// so mark it ready without touching Runtime configuration.
+		a.markIssueToolSchemaReady(rt, sessionID)
 		return true, nil
 	}
 	selection, mergeErr := a.issueToolMergedSelection(config.EffectiveConfig.ToolSelection)
@@ -447,11 +452,11 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 	if selection == nil {
 		return false, nil
 	}
-	if toolsReady && a.issueToolSchemaReady(rt, sessionID) {
+	if toolsReady {
 		selection = nil
 	}
-	// Updating the full (merged) selection also reconfirms the current helper's
-	// tool declaration after restart. The combined prompt preserves the user's
+	// Updating the full selection is only needed when it is not already present.
+	// The combined prompt preserves the user's
 	// saved profile; this changes no model/cwd/compaction setting.
 	promptPatch := ""
 	if !promptReady {
