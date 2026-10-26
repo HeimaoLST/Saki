@@ -109,6 +109,29 @@ async fn wait_for_cleanup_start(started: oneshot::Receiver<()>) {
         .expect("reaper start signal was dropped");
 }
 
+fn wait_for_exit_without_reaping(pid: i32) {
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    loop {
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        if result == 0 {
+            return;
+        }
+        let error = std::io::Error::last_os_error();
+        assert_eq!(
+            error.raw_os_error(),
+            Some(libc::EINTR),
+            "waitid failed for {pid}: {error}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn dropped_bash_future_is_reaped_before_task_cleanup_completes() {
     let directory = ContextDir::new();
@@ -201,106 +224,118 @@ async fn earlier_cleanup_error_does_not_skip_bash_reap() {
 // before the reaper gate is released. current_thread makes a missing cleanup
 // barrier deterministic: the agent can finish and enqueue its terminal before
 // the test observes the gate. No yield/sleep is used.
+//
+// Exercise a live child and an exited-but-unreaped child. WNOWAIT forces
+// the latter state without letting the agent poll its wait before cancellation.
 #[tokio::test(flavor = "current_thread")]
 async fn agent_cancellation_waits_for_bash_reap_before_one_interrupted_terminal() {
-    let directory = ContextDir::new();
-    let reaper = Arc::new(Reaper::default());
-    let mut registry = ToolRegistry::new();
-    register_with_reaper(&mut registry, directory.context.clone(), reaper.clone());
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let command = blocking_command(listener.local_addr().unwrap().port());
-    let response = json!({
-        "id":"bash-response",
-        "status":"completed",
-        "output":[{
-            "type":"function_call",
+    for child_exited_before_cancel in [false, true] {
+        let directory = ContextDir::new();
+        let reaper = Arc::new(Reaper::default());
+        let mut registry = ToolRegistry::new();
+        register_with_reaper(&mut registry, directory.context.clone(), reaper.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let command = blocking_command(listener.local_addr().unwrap().port());
+        let response = json!({
+            "id":"bash-response",
             "status":"completed",
-            "id":"bash-item",
-            "call_id":"bash-call",
-            "name":"bash",
-            "arguments":serde_json::to_string(&json!({"command":command})).unwrap()
-        }]
-    });
-    let (client, server) = scripted_http(vec![(200, response)]).await;
-    let (event_tx, mut events) = mpsc::unbounded_channel();
-    let (cancel_tx, cancel_rx) = watch::channel(false);
-    let (input_tx, input_rx) = mpsc::unbounded_channel();
-    let agent = Agent::new(client, registry, Conversation::new("system".to_owned()))
-        .with_model("test".to_owned())
-        .with_events(event_tx)
-        .with_cancel(cancel_rx);
-    let mut task = tokio::spawn(run_agent(agent, input_rx));
-    input_tx
-        .send(UserMessage::text("run the blocked bash"))
-        .unwrap();
-    drop(input_tx);
+            "output":[{
+                "type":"function_call",
+                "status":"completed",
+                "id":"bash-item",
+                "call_id":"bash-call",
+                "name":"bash",
+                "arguments":serde_json::to_string(&json!({"command":command})).unwrap()
+            }]
+        });
+        let (client, server) = scripted_http(vec![(200, response)]).await;
+        let (event_tx, mut events) = mpsc::unbounded_channel();
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let (input_tx, input_rx) = mpsc::unbounded_channel();
+        let agent = Agent::new(client, registry, Conversation::new("system".to_owned()))
+            .with_model("test".to_owned())
+            .with_events(event_tx)
+            .with_cancel(cancel_rx);
+        let mut task = tokio::spawn(run_agent(agent, input_rx));
+        input_tx
+            .send(UserMessage::text("run the blocked bash"))
+            .unwrap();
+        drop(input_tx);
 
-    let (socket, _) = tokio::select! {
-        result = listener.accept() => result.expect("accept bash handshake"),
-        result = &mut task => panic!("agent finished before its bash handshake: {result:?}"),
-    };
-    let mut reader = BufReader::new(socket);
-    let mut line = String::new();
-    tokio::time::timeout(WIRE_TIMEOUT, reader.read_line(&mut line))
-        .await
-        .expect("PID handshake timed out")
-        .expect("read PID handshake");
-    let pid: i32 = line.trim().parse().expect("numeric PID");
+        let (socket, _) = tokio::select! {
+            result = listener.accept() => result.expect("accept bash handshake"),
+            result = &mut task => panic!("agent finished before its bash handshake: {result:?}"),
+        };
+        let mut reader = BufReader::new(socket);
+        let mut line = String::new();
+        tokio::time::timeout(WIRE_TIMEOUT, reader.read_line(&mut line))
+            .await
+            .expect("PID handshake timed out")
+            .expect("read PID handshake");
+        let pid: i32 = line.trim().parse().expect("numeric PID");
 
-    let (started, resume) = reaper.hold_next_reap();
-    let mut gate = ReapGate {
-        resume: Some(resume),
-        pid,
-    };
-    cancel_tx.send(true).unwrap();
-    wait_for_cleanup_start(started).await;
+        let (started, resume) = reaper.hold_next_reap();
+        let mut gate = ReapGate {
+            resume: Some(resume),
+            pid,
+        };
+        if child_exited_before_cancel {
+            // Keep Tokio's Child unpolled while making its OS exit observable.
+            unsafe {
+                assert_eq!(libc::kill(pid, libc::SIGKILL), 0, "kill blocked bash child");
+            }
+            wait_for_exit_without_reaping(pid);
+        }
+        cancel_tx.send(true).unwrap();
+        wait_for_cleanup_start(started).await;
 
-    while let Ok(event) = events.try_recv() {
-        assert!(
-            !matches!(
-                event,
-                AgentEvent::TurnCompleted
-                    | AgentEvent::TurnInterrupted
-                    | AgentEvent::TurnFailed { .. }
-            ),
-            "terminal event escaped before bash reap: {event:?}"
-        );
-    }
-    // On this runtime the agent has already yielded to the gated reaper.
-    // Its join handle must remain pending until cleanup is released.
-    assert!(
-        futures_util::poll!(&mut task).is_pending(),
-        "agent returned before the bash reaper was released"
-    );
-
-    gate.release();
-    tokio::time::timeout(WIRE_TIMEOUT, &mut task)
-        .await
-        .expect("agent did not finish after reap release")
-        .expect("agent task panicked");
-    assert_eq!(
-        unsafe { libc::kill(pid, 0) },
-        -1,
-        "bash child remained after agent termination"
-    );
-
-    let mut terminals = Vec::new();
-    loop {
-        match tokio::time::timeout(WIRE_TIMEOUT, events.recv()).await {
-            Ok(Some(event)) => {
-                if matches!(
+        while let Ok(event) = events.try_recv() {
+            assert!(
+                !matches!(
                     event,
                     AgentEvent::TurnCompleted
                         | AgentEvent::TurnInterrupted
                         | AgentEvent::TurnFailed { .. }
-                ) {
-                    terminals.push(event);
-                }
-            }
-            Ok(None) => break,
-            Err(_) => panic!("agent event channel did not close"),
+                ),
+                "terminal event escaped before bash reap: {event:?}"
+            );
         }
+        // On this runtime the agent has already yielded to the gated reaper.
+        // Its join handle must remain pending until cleanup is released.
+        assert!(
+            futures_util::poll!(&mut task).is_pending(),
+            "agent returned before the bash reaper was released"
+        );
+
+        gate.release();
+        tokio::time::timeout(WIRE_TIMEOUT, &mut task)
+            .await
+            .expect("agent did not finish after reap release")
+            .expect("agent task panicked");
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "bash child remained after agent termination"
+        );
+
+        let mut terminals = Vec::new();
+        loop {
+            match tokio::time::timeout(WIRE_TIMEOUT, events.recv()).await {
+                Ok(Some(event)) => {
+                    if matches!(
+                        event,
+                        AgentEvent::TurnCompleted
+                            | AgentEvent::TurnInterrupted
+                            | AgentEvent::TurnFailed { .. }
+                    ) {
+                        terminals.push(event);
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => panic!("agent event channel did not close"),
+            }
+        }
+        assert_eq!(terminals, vec![AgentEvent::TurnInterrupted]);
+        assert_eq!(requests(server).await.len(), 1);
     }
-    assert_eq!(terminals, vec![AgentEvent::TurnInterrupted]);
-    assert_eq!(requests(server).await.len(), 1);
 }
