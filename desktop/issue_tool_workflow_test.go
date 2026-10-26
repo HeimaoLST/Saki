@@ -354,3 +354,52 @@ func TestIssueToolSchemaRefreshRefusalKeepsDraft(t *testing.T) {
 		t.Fatal("refused refresh dispatched a replacement task")
 	}
 }
+
+func TestIssueToolWorkRefreshUsesSameTypedMarker(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unexpected model request", http.StatusInternalServerError)
+	})
+	h := startIssueToolTestHarness(t, binary, handler)
+	var sessionID string
+	var rt *runtimeClient
+	var setupErr error
+	h.pump.do(func() {
+		session, err := h.app.rt.createConfiguredConversationSession(h.root, issueToolWorkGuidance, h.app.issueToolWorkSelection())
+		if err != nil {
+			setupErr = err
+			return
+		}
+		sessionID, rt = session.SessionID, h.app.rt
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	before, err := rt.connectionConfig(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configured, err := h.app.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, false); err != nil || !configured {
+		t.Fatalf("work no-op ensure = %v err=%v", configured, err)
+	}
+	after, err := rt.connectionConfig(sessionID)
+	if err != nil || after.ConfigRevision != before.ConfigRevision {
+		t.Fatalf("work no-op changed revision: before=%d after=%d err=%v", before.ConfigRevision, after.ConfigRevision, err)
+	}
+	h.app.noteIssueToolTaskError(rt, sessionID, &runtimeError{Code: "tool_schema_changed", Message: "controlled work schema change"})
+	if !h.app.issueToolRefreshRequired(rt, sessionID) {
+		t.Fatal("work typed schema error did not mark refresh")
+	}
+	if configured, err := h.app.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, false); err != nil || !configured {
+		t.Fatalf("work refresh ensure = %v err=%v", configured, err)
+	}
+	refreshed, err := rt.connectionConfig(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.app.issueToolRefreshRequired(rt, sessionID) {
+		t.Fatalf("work refresh did not clear marker: revision=%d/%d", after.ConfigRevision, refreshed.ConfigRevision)
+	}
+}

@@ -1914,6 +1914,7 @@ func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID
 	}
 	result, err := rt.sendTask(sessionID, prompt, wireContext...)
 	if err != nil {
+		a.noteIssueToolTaskError(rt, sessionID, err)
 		a.failIssueSubmit(contactID, issueID, err, true)
 		return
 	}
