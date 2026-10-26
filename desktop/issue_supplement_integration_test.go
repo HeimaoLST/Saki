@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -863,21 +864,18 @@ func TestIssueSupplementCancelDuringPendingAcceptRecordsLateReceiptAndStops(t *t
 	binary := requireRuntimeBinary(t)
 	provider := newGatedProvider("cancel-late-supp")
 	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 1)
+	gate := newHeldCallbackGate(h.pump)
 	defer func() {
 		provider.release("cancel-late-supp")
-		h.app.setUIHook(func(fn func()) {
-			if !h.closed {
-				h.pump.q <- fn
-			}
-		})
+		gate.enable()
 		if !h.closed {
 			h.shutdown(t)
 		}
 	}()
-	manual := make(chan func(), 8)
 	var issueID string
 	var setupErr error
 	h.pump.do(func() {
+		h.app.setUIHook(gate.hold)
 		if !h.app.createIssue("cancel late supplement", "keep late receipt") {
 			setupErr = errors.New(h.app.issueFormError)
 			return
@@ -888,7 +886,6 @@ func TestIssueSupplementCancelDuringPendingAcceptRecordsLateReceiptAndStops(t *t
 			setupErr = err
 			return
 		}
-		h.app.setUIHook(func(fn func()) { manual <- fn })
 		if !h.app.runIssue(issueID) {
 			setupErr = errors.New(h.app.issueFormError)
 		}
@@ -896,9 +893,8 @@ func TestIssueSupplementCancelDuringPendingAcceptRecordsLateReceiptAndStops(t *t
 	if setupErr != nil {
 		t.Fatal(setupErr)
 	}
-	var mapping func()
 	select {
-	case mapping = <-manual:
+	case <-gate.notify:
 	case <-time.After(15 * time.Second):
 		t.Fatal("issue session mapping callback did not arrive")
 	}
@@ -912,15 +908,14 @@ func TestIssueSupplementCancelDuringPendingAcceptRecordsLateReceiptAndStops(t *t
 		} else if issue.Status != issueStatusCanceled || !issue.Work.cancelAfterAccept {
 			latchErr = errors.New("cancel latch was not recorded")
 		}
-		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
 	})
 	if cancelErr != nil || latchErr != nil {
 		t.Fatalf("cancel setup = %v / %v", cancelErr, latchErr)
 	}
-	h.pump.do(mapping)
-	// The cancellation intent is already latched before the accepted callback.
-	// Wait for the real accepted execution ID, not a model/provider HTTP call:
-	// cancel may stop the task before the provider is invoked.
+	// Forward all callbacks held before the latch, then every later callback
+	// directly to the pump. The accepted TaskID is the real signal here;
+	// cancellation may stop the task before the model provider is invoked.
+	gate.enable()
 	h.pump.wait(func() bool {
 		issue := h.app.selectedContact().issueByID(issueID)
 		return issue != nil && len(issue.Executions) == 1 && issue.Executions[0].TaskID != ""
@@ -944,6 +939,56 @@ func TestIssueSupplementCancelDuringPendingAcceptRecordsLateReceiptAndStops(t *t
 	}
 	if provider.count() > 1 {
 		t.Fatalf("late accept/cancel resubmitted supplement: provider=%d", provider.count())
+	}
+}
+
+// heldCallbackGate keeps UI callbacks produced before the cancellation latch
+// in a local ordered list. enable() atomically forwards all held callbacks and
+// then every later callback to the real pump; no callback is dropped on cleanup.
+type heldCallbackGate struct {
+	pump       *uiPump
+	deliveryMu sync.Mutex
+	mu         sync.Mutex
+	forward    bool
+	held       []func()
+	notify     chan struct{}
+}
+
+func newHeldCallbackGate(pump *uiPump) *heldCallbackGate {
+	return &heldCallbackGate{pump: pump, notify: make(chan struct{}, 1)}
+}
+
+func (g *heldCallbackGate) hold(fn func()) {
+	g.deliveryMu.Lock()
+	defer g.deliveryMu.Unlock()
+	g.mu.Lock()
+	if !g.forward {
+		g.held = append(g.held, fn)
+		g.mu.Unlock()
+		select {
+		case g.notify <- struct{}{}:
+		default:
+		}
+		return
+	}
+	g.mu.Unlock()
+	g.pump.q <- fn
+}
+
+func (g *heldCallbackGate) enable() {
+	g.deliveryMu.Lock()
+	defer g.deliveryMu.Unlock()
+	g.mu.Lock()
+	if g.forward {
+		g.mu.Unlock()
+		return
+	}
+	g.forward = true
+	held := append([]func(){}, g.held...)
+	g.held = nil
+	g.mu.Unlock()
+	for _, fn := range held {
+		g.pump.q <- fn
 	}
 }
 
@@ -986,8 +1031,7 @@ func TestIssueSupplementUIStartWithSupplementActuallyDispatches(t *testing.T) {
 	h.pump.wait(func() bool {
 		issue := h.app.selectedContact().issueByID(issueID)
 		return issue != nil && issue.Work.ActiveTaskID == "" && len(issue.Executions) == 1 &&
-			issue.Executions[0].Status == issueExecutionCompleted &&
-			issue.Supplements.pendingCount() == 0
+			issue.Executions[0].Status == issueExecutionCompleted && issue.Supplements.pendingCount() == 0
 	})
 	if provider.count() != 1 {
 		t.Fatalf("UI Start with supplement provider requests = %d", provider.count())
