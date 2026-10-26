@@ -601,6 +601,7 @@ func (a *appModel) restoreIssueWorks(rt *runtimeClient, generation int) {
 			}
 			contactID, issueID, sessionID := ct.ID, issue.ID, issue.WorkSessionID
 			issue.Work.Loaded = false
+			a.historyAsyncStarted()
 			go a.restoreIssueWork(rt, generation, contactID, issueID, sessionID)
 		}
 	}
@@ -613,6 +614,7 @@ func (a *appModel) restoreContacts(rt *runtimeClient, generation int) {
 		}
 		contactID, sessionID := ct.ID, ct.SessionID
 		ct.Loaded = false
+		a.historyAsyncStarted()
 		go a.restoreSession(rt, generation, contactID, sessionID)
 	}
 }
@@ -625,6 +627,7 @@ func (a *appModel) restoreSession(rt *runtimeClient, generation int, contactID, 
 	}
 	pages, status, err := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
+		defer a.historyAsyncFinished()
 		if generation != a.connectionGeneration || a.rt != rt {
 			return
 		}
@@ -675,6 +678,7 @@ func (a *appModel) restoreContactReadOnly(rt *runtimeClient, generation int, con
 	pages, status, historyErr := a.historyAllFor(rt, sessionID)
 	config, configErr := rt.connectionConfig(sessionID)
 	a.updateUI(func() {
+		defer a.historyAsyncFinished()
 		if generation != a.connectionGeneration || a.rt != rt {
 			return
 		}
@@ -712,6 +716,7 @@ func (a *appModel) restoreIssueWork(rt *runtimeClient, generation int, contactID
 	}
 	pages, status, err := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
+		defer a.historyAsyncFinished()
 		if generation != a.connectionGeneration || a.rt != rt {
 			return
 		}
@@ -759,6 +764,7 @@ func (a *appModel) restoreIssueWork(rt *runtimeClient, generation int, contactID
 func (a *appModel) restoreIssueReadOnly(rt *runtimeClient, generation int, contactID, issueID, sessionID string, loadErr error) {
 	pages, status, historyErr := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
+		defer a.historyAsyncFinished()
 		if generation != a.connectionGeneration || a.rt != rt {
 			return
 		}
@@ -799,6 +805,7 @@ func (a *appModel) reloadIssueWorkByID(contactID, issueID string) {
 	gen := issue.Work.historyGen
 	sessionID := issue.WorkSessionID
 	rt, runtimeGeneration := a.rt, a.connectionGeneration
+	a.historyAsyncStarted()
 	go a.reloadIssueWork(rt, runtimeGeneration, contactID, issueID, sessionID, gen)
 }
 
@@ -810,6 +817,7 @@ func (a *appModel) reloadIssueWork(rt *runtimeClient, runtimeGeneration int, con
 	}
 	pages, status, err := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
+		defer a.historyAsyncFinished()
 		if runtimeGeneration != a.connectionGeneration || a.rt != rt {
 			return
 		}
@@ -867,6 +875,7 @@ func (a *appModel) reloadContactByID(contactID string, explicit bool) {
 	gen := ct.historyGen
 	sessionID := ct.SessionID
 	rt, runtimeGeneration := a.rt, a.connectionGeneration
+	a.historyAsyncStarted()
 	go a.reloadSession(rt, runtimeGeneration, contactID, sessionID, gen, explicit)
 }
 
@@ -878,6 +887,7 @@ func (a *appModel) reloadSession(rt *runtimeClient, runtimeGeneration int, conta
 	}
 	pages, status, err := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
+		defer a.historyAsyncFinished()
 		if runtimeGeneration != a.connectionGeneration || a.rt != rt {
 			return
 		}
