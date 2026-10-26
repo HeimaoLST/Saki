@@ -80,7 +80,9 @@ func contactsFromStore(store *contactStore, fallbackWorkDir string) []*contact {
 			ID: stored.ID, Name: stored.Name, Role: stored.Role,
 			Purpose: stored.Purpose, Instructions: stored.Instructions,
 			Workspace: workspace, SessionID: stored.SessionID, Draft: stored.Draft,
-			Status: statusReady, WorkLabel: "Preparing a reply",
+			Archived: stored.Archived, ArchivedAt: stored.ArchivedAt,
+			PreviousSessions: append([]string(nil), stored.PreviousSessions...),
+			Status:           statusReady, WorkLabel: "Preparing a reply",
 		}
 		ct.Issues = issuesForStoredContact(store.state.Issues, ct.ID)
 		if issue := ct.selectedIssue(); issue != nil {
@@ -111,6 +113,9 @@ func applyStoreSelection(a *appModel, store *contactStore) {
 	if len(a.contacts) == 0 {
 		a.contacts = []*contact{placeholderContact(a.workDir)}
 		a.selected = 0
+	}
+	if a.selectedContact().Archived {
+		a.contactScope = "archived"
 	}
 }
 
@@ -655,7 +660,7 @@ func (a *appModel) connectionPanel(c *ui.Context, t *ui.Theme) {
 }
 
 func (a *appModel) finishShutdown() {
-	if a.quitReady || a.shutdownDrainStarted || a.connectionSaveInFlight || a.connectionApplying || a.connectionTesting || a.modelOpActive {
+	if a.quitReady || a.shutdownDrainStarted || a.connectionSaveInFlight || a.connectionApplying || a.connectionTesting || a.modelOpActive || a.contactHistoryInFlight > 0 {
 		return
 	}
 	if a.rt == nil {

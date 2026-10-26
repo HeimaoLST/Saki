@@ -1654,6 +1654,9 @@ func (a *appModel) canSend(ct *contact) string {
 	if a.shutdownStarted {
 		return "The app is shutting down."
 	}
+	if ct.Archived {
+		return "This contact is archived. Restore it before sending a message."
+	}
 	if a.demo {
 		return ""
 	}
@@ -1684,6 +1687,9 @@ func (a *appModel) canSend(ct *contact) string {
 func (a *appModel) canStartIssue(ct *contact, issue *productIssue) string {
 	if a.shutdownStarted {
 		return "The app is shutting down."
+	}
+	if ct.Archived {
+		return "This contact is archived. Restore it before starting issue work."
 	}
 	if a.demo {
 		return ""
@@ -1718,6 +1724,10 @@ func (a *appModel) canStartIssue(ct *contact, issue *productIssue) string {
 func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *issueExecution, prompt string) bool {
 	if a.shutdownStarted {
 		issue.Work.SendError = "The app is shutting down."
+		return false
+	}
+	if ct.Archived {
+		issue.Work.SendError = "This contact is archived. Restore it before starting issue work."
 		return false
 	}
 	if a.connectionApplying {
@@ -2378,6 +2388,8 @@ func (a *appModel) addRuntimeContact() {
 	c.Context.onChange = a.persist
 	a.contacts = append(a.contacts, c)
 	a.selected = len(a.contacts) - 1
+	a.contactScope = "active"
+	a.contactSearch = ""
 	a.screen = viewChat
 	a.aux = ""
 	a.focusComposer = true
@@ -2390,7 +2402,7 @@ func profileSystemPrompt(ct *contact) string {
 		parts = append(parts, "Purpose: "+strings.TrimSpace(ct.Purpose))
 	}
 	if strings.TrimSpace(ct.Instructions) != "" {
-		parts = append(parts, "Instructions: "+strings.TrimSpace(ct.Instructions))
+		parts = append(parts, "Instructions: "+ct.Instructions)
 	}
 	return strings.Join(parts, "\n")
 }

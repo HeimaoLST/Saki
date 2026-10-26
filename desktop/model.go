@@ -92,6 +92,9 @@ type contact struct {
 	History               []historyEntry
 	Revealed              []string
 	Draft                 string
+	Archived              bool
+	ArchivedAt            int64
+	PreviousSessions      []string
 	Context               taskContext
 	replyIndex            int
 	list                  ui.ListState
@@ -152,6 +155,19 @@ type appModel struct {
 	focusComposer   bool
 	settingsDraft   profileDraft
 	settingsError   bool
+
+	contactProfile           *contactProfileEditor
+	contactProfileID         string
+	contactSearch            string
+	contactScope             string
+	contactHistory           *contactHistoryResult
+	contactHistoryFull       *contactHistoryFull
+	contactHistoryBusy       bool
+	contactHistoryDetailBusy bool
+	contactHistoryError      string
+	contactHistoryGen        int
+	contactHistoryDetailGen  int
+	contactHistoryInFlight   int
 
 	issueFormOpen                 bool
 	issueFormEditingID            string
@@ -450,6 +466,8 @@ func (a *appModel) addDefaultContact() {
 	}
 	a.contacts = append(a.contacts, c)
 	a.selected = len(a.contacts) - 1
+	a.contactScope = "active"
+	a.contactSearch = ""
 	a.screen = viewChat
 	a.aux = ""
 	a.focusComposer = true
@@ -457,12 +475,14 @@ func (a *appModel) addDefaultContact() {
 
 func (a *appModel) openSettings() {
 	c := a.selectedContact()
-	a.settingsDraft = profileDraft{Name: c.Name, Purpose: c.Purpose, Instructions: c.Instructions, Workspace: c.Workspace}
-	a.settingsError = false
-	a.aux = "settings"
+	a.openContactProfile(c.ID)
 }
 
 func (a *appModel) saveSettings() bool {
+	if !a.demo && a.store == nil {
+		a.settingsError = true
+		return false
+	}
 	name := strings.TrimSpace(a.settingsDraft.Name)
 	if name == "" {
 		a.settingsError = true
@@ -510,6 +530,13 @@ func (a *appModel) openHistory() {
 	a.screen = viewHistory
 	a.aux = ""
 	a.historyQuery = ""
+	a.contactHistory = nil
+	a.contactHistoryFull = nil
+	a.contactHistoryBusy = false
+	a.contactHistoryDetailBusy = false
+	a.contactHistoryError = ""
+	a.contactHistoryGen++
+	a.contactHistoryDetailGen++
 	a.focusHistoryOpen = true
 }
 
