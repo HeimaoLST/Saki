@@ -54,10 +54,7 @@ func startRoutingHarnessWithHandler(t *testing.T, binary string, handler http.Ha
 		if h.closed {
 			return
 		}
-		if app.rt != nil {
-			_ = app.rt.shutdown()
-		}
-		pump.close()
+		h.shutdown(t)
 	})
 	return h
 }
@@ -1012,8 +1009,7 @@ func TestQuitDrainsIssueAndConversationSessions(t *testing.T) {
 			t.Fatalf("drain left active tasks: chat=%q work=%q", ct.ActiveTaskID, issue.Work.ActiveTaskID)
 		}
 	})
-	h.pump.close()
-	h.closed = true
+	h.shutdown(t)
 }
 
 func TestConversationUnreadDoesNotComeFromIssueWork(t *testing.T) {
