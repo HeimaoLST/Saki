@@ -206,6 +206,61 @@ func TestModelSelectionLowerOutputKeepsFullPolicyAndDoesNotFakeAppliedResult(t *
 	}
 }
 
+func TestModelSelectionUnconfirmedRequiresRefreshAndPreservesDraft(t *testing.T) {
+	s := newModelSelection(selectionTarget(), selectionCatalog())
+	s.Draft.Model = "provider-model-needs-confirmation"
+	s.Draft.CapacityMode = modelCapacityExplicit
+	updated, refreshed := 0, 0
+	actions := modelSelectionActions{
+		Update: func(modelSelectionRequest) { updated++ },
+		Refresh: func(modelSelectionTarget) {
+			refreshed++
+			s.SetEffective(selectionConfig("provider-model-a", 131072, 8192, 5))
+		},
+	}
+	if _, ok := s.Request(); !ok {
+		// The valid draft is requestable before the readback becomes uncertain.
+		t.Fatal(s.Error)
+	}
+	s.SetUnconfirmed("Runtime could not confirm the current model configuration.")
+	if !s.Unconfirmed || s.Effective.Config.EffectiveConfig.Model != "provider-model-a" {
+		t.Fatal("unconfirmed state lost the last read effective value")
+	}
+	if request, ok := s.Request(); ok {
+		t.Fatalf("unconfirmed state submitted a request: %+v", request)
+	}
+
+	tr := modelSelectionTester(s, actions, 560, 720)
+	tr.Frame()
+	for _, text := range []string{"Last read model: provider-model-a", "Last read limits:", "Runtime could not confirm"} {
+		if !tr.HasText(text) {
+			t.Fatalf("unconfirmed view missing %q", text)
+		}
+	}
+	if err := tr.Click("Update model"); err != nil {
+		t.Fatal(err)
+	}
+	if updated != 0 {
+		t.Fatal("Update was actionable while the effective config was unconfirmed")
+	}
+	if err := tr.Click("Refresh"); err != nil {
+		t.Fatal(err)
+	}
+	if refreshed != 1 || s.Unconfirmed || s.Effective.Config.ConfigRevision != 5 {
+		t.Fatal("Refresh did not recover a confirmed effective config")
+	}
+	if s.Draft.Model != "provider-model-needs-confirmation" {
+		t.Fatal("Refresh discarded the uncertain draft")
+	}
+	tr.Frame()
+	if err := tr.Click("Update model"); err != nil {
+		t.Fatal(err)
+	}
+	if updated != 1 {
+		t.Fatal("Update remained disabled after a confirmed refresh")
+	}
+}
+
 func TestModelSelectionCleanDraftAdoptsReadbackAndFiltersCandidates(t *testing.T) {
 	s := newModelSelection(selectionTarget(), selectionCatalog())
 	readback := selectionConfig("provider-model-b", 131072, 8192, 5)

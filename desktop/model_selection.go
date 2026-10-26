@@ -37,15 +37,16 @@ type modelSelectionActions struct {
 }
 
 type modelSelection struct {
-	Target     modelSelectionTarget
-	Effective  modelSelectionTarget
-	Catalog    runtimeModelCatalog
-	Draft      modelSelectionDraft
-	Filter     string
-	Busy       bool
-	Error      string
-	Status     string
-	focusField string
+	Target      modelSelectionTarget
+	Effective   modelSelectionTarget
+	Catalog     runtimeModelCatalog
+	Draft       modelSelectionDraft
+	Filter      string
+	Unconfirmed bool
+	Busy        bool
+	Error       string
+	Status      string
+	focusField  string
 }
 
 const (
@@ -95,6 +96,7 @@ func (s *modelSelection) SetTarget(target modelSelectionTarget) {
 	s.Effective = target
 	if changedTarget {
 		s.Filter = ""
+		s.Unconfirmed = false
 	}
 	if changedTarget || !wasDirty {
 		s.ResetDraft()
@@ -115,6 +117,9 @@ func (s *modelSelection) SetEffective(config runtimeConnectionConfig) {
 	if changedTarget || !wasDirty {
 		s.ResetDraft()
 	}
+	s.Unconfirmed = false
+	s.Error = ""
+	s.Status = "Runtime configuration read back."
 }
 
 // SetResult applies a confirmed config update and discards the draft.
@@ -122,8 +127,19 @@ func (s *modelSelection) SetResult(config runtimeConnectionConfig) {
 	s.Target.Config = config
 	s.Effective.Config = config
 	s.Busy = false
+	s.Unconfirmed = false
 	s.ResetDraft()
 	s.Status = "Model configuration applied."
+}
+
+func (s *modelSelection) SetUnconfirmed(message string) {
+	s.Unconfirmed = true
+	s.Busy = false
+	s.Error = ""
+	if strings.TrimSpace(message) == "" {
+		message = "Runtime did not confirm the current configuration. Refresh to read it again."
+	}
+	s.Status = message
 }
 
 func (s *modelSelection) SetBusy(busy bool, status string) {
@@ -195,6 +211,10 @@ func (s *modelSelection) SelectCapacityMode(mode string) {
 }
 
 func (s *modelSelection) Request() (modelSelectionRequest, bool) {
+	if s.Unconfirmed {
+		s.Error = "Refresh the Runtime configuration before updating the model. The current effective value is not confirmed."
+		return modelSelectionRequest{}, false
+	}
 	modelID := strings.TrimSpace(s.Draft.Model)
 	if modelID == "" {
 		s.Error = "Enter the provider model ID."
@@ -321,14 +341,23 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 		if id := connectionIdentity(effective.ConnectionID); id != "" {
 			ui.Text(c, "Connection: "+id).FontSize(11).TextColor(t.TextMuted)
 		}
-		ui.Text(c, "Effective model: "+valueOr(effective.Model, "unknown")).FontSize(13).FontWeight(500).TextColor(t.Text)
+		modelLabel := "Effective model: "
+		limitsLabel := "Effective limits: "
+		if s.Unconfirmed {
+			modelLabel = "Last read model: "
+			limitsLabel = "Last read limits: "
+		}
+		ui.Text(c, modelLabel+valueOr(effective.Model, "unknown")).FontSize(13).FontWeight(500).TextColor(t.Text)
 		source := capacitySourceLabel(s.Effective)
 		if catalogID := s.effectiveCatalogID(); catalogID != "" {
 			source += " (" + catalogID + ")"
 		}
-		ui.Text(c, fmt.Sprintf("Effective limits: context %d / output %d · %s · revision %d",
-			compaction.ContextTokens, compaction.OutputTokens, source, s.Target.Config.ConfigRevision)).
+		ui.Text(c, fmt.Sprintf("%scontext %d / output %d · %s · revision %d",
+			limitsLabel, compaction.ContextTokens, compaction.OutputTokens, source, s.Target.Config.ConfigRevision)).
 			FontSize(11).TextColor(t.TextMuted)
+		if s.Unconfirmed {
+			ui.Text(c, "Runtime has not confirmed the current configuration; these are the last read values. Refresh is available.").FontSize(12).LineHeight(1.4).TextColor(t.Warning)
+		}
 		if s.Error != "" {
 			ui.Text(c, s.Error).FontSize(12).LineHeight(1.4).TextColor(t.Danger)
 		}
@@ -364,12 +393,18 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 					actions.Refresh(s.Target)
 				}
 			})
-			ui.PrimaryButton(c, "Update model").FontSize(13).Disabled(s.Busy).OnClick(func() {
+			ui.PrimaryButton(c, "Update model").FontSize(13).Disabled(s.Busy || s.Unconfirmed).OnClick(func() {
 				if request, ok := s.Request(); ok && actions.Update != nil {
 					actions.Update(request)
 				}
 			})
 		})
+		if s.Busy {
+			ui.Text(c, "Waiting for Runtime…").FontSize(12).TextColor(t.TextMuted)
+		}
+		if s.Status != "" {
+			ui.Text(c, s.Status).FontSize(12).LineHeight(1.4).TextColor(t.Text)
+		}
 		ui.Text(c, "Filter candidates").FontSize(12).FontWeight(500).TextColor(t.Text)
 		ui.TextInput(c, &s.Filter).Label("Filter").FontSize(13).Placeholder("Model or catalog ID").Disabled(s.Busy)
 		configured := s.visibleConfiguredModels()
@@ -406,12 +441,6 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 			}
 		} else if len(s.Catalog.Models) == 0 {
 			ui.Text(c, "No Runtime catalog entries are available; enter explicit limits.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
-		}
-		if s.Busy {
-			ui.Text(c, "Waiting for Runtime…").FontSize(12).TextColor(t.TextMuted)
-		}
-		if s.Status != "" {
-			ui.Text(c, s.Status).FontSize(12).LineHeight(1.4).TextColor(t.Text)
 		}
 	})
 }
