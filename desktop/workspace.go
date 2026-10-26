@@ -608,6 +608,9 @@ func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *
 		if reason != "" {
 			ui.Text(c, "Start unavailable: "+reason).FontSize(10).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
 		}
+		if question := issue.openQuestion(); question != nil {
+			ui.Text(c, "Question: "+truncate(question.Text, 180)).FontSize(11).LineHeight(1.4).TextColor(t.Warning).MaxLines(3)
+		}
 		ui.Row(c).Gap(6).Children(func() {
 			taskContextButton()
 			addSupplementButton()

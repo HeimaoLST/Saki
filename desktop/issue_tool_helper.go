@@ -129,17 +129,18 @@ func issueToolDefinitions() []issueToolDefinition {
 			},
 		},
 		{
-			Name: "issue_action", Description: "Apply one explicit user-authorized issue action through Nagi's existing issue path. Do not use for ordinary discussion. Ambiguous/missing targets return candidates; no operation is accepted without real Runtime IDs.",
+			Name: "issue_action", Description: "Apply one explicit user-authorized issue action through Nagi's existing issue path, including wait for missing information and resume. Do not use for ordinary discussion. Ambiguous/missing targets return candidates; no operation is accepted without real Runtime IDs.",
 			InputSchema: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
 					"scope":             stringProp("Opaque app-issued scope token; never invent or change it."),
-					"action":            map[string]any{"type": "string", "enum": []string{issueToolActionCreate, issueToolActionUpdate, issueToolActionRun, issueToolActionStop, issueToolActionAddSupplement}},
+					"action":            map[string]any{"type": "string", "enum": []string{issueToolActionCreate, issueToolActionUpdate, issueToolActionRun, issueToolActionStop, issueToolActionAddSupplement, issueToolActionWait, issueToolActionResume}},
 					"issue_id":          stringProp("Exact authorized issue id; omitted only for create."),
 					"expected_revision": map[string]any{"type": "integer", "minimum": 1},
 					"goal":              stringProp("Issue goal. Required for create/update."),
 					"requirements":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-					"text":              stringProp("Supplement text for add_supplement."),
+					"text":              stringProp("Supplement text for add_supplement; question text for wait."),
+					"question_ref":      stringProp("Open question ref from a wait; required to attach an answer to that question."),
 				},
 				"required": []string{"scope", "action"},
 			},

@@ -146,6 +146,14 @@ func (a *appModel) setIssueRequirementStateFor(ct *contact, issueID, requirement
 }
 
 func (a *appModel) markIssueWaitingFor(ct *contact, issueID string) bool {
+	return a.markIssueWaitingForQuestion(ct, issueID, "", nil, nil, nil)
+}
+
+// markIssueWaitingForQuestion is the one waiting application save. It validates
+// the active/unknown boundary before touching an existing question, then writes
+// status, AutoContinue, the optional supersede/new question and its operation
+// receipt in one persist. UI mark-waiting and tool wait share this path.
+func (a *appModel) markIssueWaitingForQuestion(ct *contact, issueID, supersedeRef string, question *issueQuestion, operation *IssueToolOperation, receipt *IssueToolReceipt) bool {
 	issue := issueForContact(ct, issueID)
 	if issue == nil || issue.Archived {
 		return false
@@ -156,15 +164,55 @@ func (a *appModel) markIssueWaitingFor(ct *contact, issueID string) bool {
 	if issue.Work.ActiveTaskID != "" || issue.Work.SendState != sendIdle || issueRunBlocked(issue) != "" {
 		return false
 	}
-	if !a.setIssueSupplementAuto(ct, issue.ID, false) {
+	ledger := issueSupplementLedgerFor(issue)
+	previousQuestions := append([]*issueQuestion(nil), issue.Questions...)
+	questionStates := make(map[*issueQuestion]issueQuestion, len(issue.Questions))
+	for _, existing := range issue.Questions {
+		if existing != nil {
+			questionStates[existing] = *existing
+		}
+	}
+	previousStatus, previousUpdated, previousAuto := issue.Status, issue.UpdatedAt, ledger.AutoContinue
+	var previousReceipt *IssueToolReceipt
+	if operation != nil {
+		previousReceipt = operation.Receipt
+	}
+	if supersedeRef != "" {
+		for _, existing := range issue.Questions {
+			if existing != nil && existing.Ref == supersedeRef {
+				existing.State = issueQuestionSuperseded
+				break
+			}
+		}
+	}
+	if question != nil {
+		issue.Questions = append(issue.Questions, question)
+	}
+	issue.Status, issue.UpdatedAt = issueStatusWaitingUser, nowMillis()
+	ledger.AutoContinue = false
+	if operation != nil {
+		operation.Receipt = receipt
+	}
+	if err := a.persist(); err != nil {
+		issue.Questions = previousQuestions
+		for existing, snapshot := range questionStates {
+			*existing = snapshot
+		}
+		issue.Status, issue.UpdatedAt, ledger.AutoContinue = previousStatus, previousUpdated, previousAuto
+		if operation != nil {
+			operation.Receipt = previousReceipt
+		}
 		return false
 	}
-	return a.setIssueStatus(issue, issueStatusWaitingUser)
+	return true
 }
 
 func (a *appModel) resumeIssueFor(ct *contact, issueID string) bool {
 	issue := issueForContact(ct, issueID)
 	if issue == nil || issue.Archived {
+		return false
+	}
+	if issue.openQuestion() != nil {
 		return false
 	}
 	if issue.Status != issueStatusWaitingUser && issue.Status != issueStatusNeedsAttention {

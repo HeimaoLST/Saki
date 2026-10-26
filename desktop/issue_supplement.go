@@ -143,6 +143,17 @@ func (l *issueSupplementLedger) pendingBytes() int {
 // existing one-shot store save; nil is rejected instead of calling in-memory
 // data received.
 func (l *issueSupplementLedger) Add(target issueSupplementTarget, text string, save func() error) (*issueSupplement, error) {
+	return l.add(target, text, nil, save)
+}
+
+// AddWith applies an answer/question association to the new item before the
+// same one-shot store save. The caller's mutation must be rollback-safe; the
+// item itself is removed if save fails.
+func (l *issueSupplementLedger) AddWith(target issueSupplementTarget, text string, before func(*issueSupplement), save func() error) (*issueSupplement, error) {
+	return l.add(target, text, before, save)
+}
+
+func (l *issueSupplementLedger) add(target issueSupplementTarget, text string, before func(*issueSupplement), save func() error) (*issueSupplement, error) {
 	if err := validateSupplementTarget(target); err != nil {
 		return nil, err
 	}
@@ -160,7 +171,7 @@ func (l *issueSupplementLedger) Add(target issueSupplementTarget, text string, s
 		return nil, fmt.Errorf("too many pending supplements for this issue (max %d)", maxPendingSupplements)
 	}
 	if l.pendingBytes()+len([]byte(text)) > maxPendingSupplementBytes {
-		return nil, fmt.Errorf("pending supplement text is too large (max %d bytes)", maxPendingSupplementBytes)
+		return nil, fmt.Errorf("pending supplement text is too large (max %d)", maxPendingSupplementBytes)
 	}
 	item := &issueSupplement{
 		ID: newIssueSupplementID(), ContactID: target.ContactID, IssueID: target.IssueID,
@@ -168,6 +179,9 @@ func (l *issueSupplementLedger) Add(target issueSupplementTarget, text string, s
 		CreatedAt: nowMillis(), State: supplementStatePending,
 	}
 	l.Items = append(l.Items, item)
+	if before != nil {
+		before(item)
+	}
 	if err := save(); err != nil {
 		l.Items = l.Items[:len(l.Items)-1]
 		return nil, fmt.Errorf("could not save supplement: %w", err)

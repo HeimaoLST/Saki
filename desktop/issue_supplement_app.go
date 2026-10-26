@@ -33,6 +33,13 @@ func issueSupplementTargetFor(ct *contact, issue *productIssue) issueSupplementT
 }
 
 func (a *appModel) addIssueSupplement(ct *contact, issueID, text string) error {
+	return a.addIssueSupplementBefore(ct, issueID, text, nil)
+}
+
+// addIssueSupplementBefore is the one application supplement path. The optional
+// callback runs after the ledger item exists but before the same store save, so
+// a question answer can be linked atomically without a second queue.
+func (a *appModel) addIssueSupplementBefore(ct *contact, issueID, text string, before func(*issueSupplement)) error {
 	issue := issueForContact(ct, issueID)
 	if issue == nil {
 		return errors.New("issue not found for this contact")
@@ -42,7 +49,7 @@ func (a *appModel) addIssueSupplement(ct *contact, issueID, text string) error {
 	}
 	ledger := issueSupplementLedgerFor(issue)
 	target := issueSupplementTargetFor(ct, issue)
-	if _, err := ledger.Add(target, text, a.persist); err != nil {
+	if _, err := ledger.AddWith(target, text, before, a.persist); err != nil {
 		return err
 	}
 	a.issueActionError = ""

@@ -93,6 +93,9 @@ func newRuntimeApp() (*appModel, error) {
 	if a.issueToolShutdown == nil {
 		a.issueToolShutdown = make(chan struct{})
 	}
+	if a.issueToolSchemaOK == nil {
+		a.issueToolSchemaOK = map[string]bool{}
+	}
 	if err := a.startIssueToolService(); err != nil {
 		a.issueToolErr = err.Error()
 	}

@@ -24,6 +24,8 @@ const (
 	issueToolActionRun           = "run"
 	issueToolActionStop          = "stop"
 	issueToolActionAddSupplement = "add_supplement"
+	issueToolActionWait          = "wait"
+	issueToolActionResume        = "resume"
 )
 
 const (
@@ -107,6 +109,7 @@ type IssueToolActionRequest struct {
 	Goal             string   `json:"goal,omitempty"`
 	Requirements     []string `json:"requirements,omitempty"`
 	Text             string   `json:"text,omitempty"`
+	QuestionRef      string   `json:"question_ref,omitempty"`
 }
 
 func (r IssueToolActionRequest) Validate(scope IssueToolScope) error {
@@ -125,6 +128,14 @@ func (r IssueToolActionRequest) Validate(scope IssueToolScope) error {
 			return errIssueToolAction
 		}
 	case issueToolActionRun, issueToolActionStop:
+		if strings.TrimSpace(r.IssueID) == "" {
+			return errIssueToolAction
+		}
+	case issueToolActionWait:
+		if strings.TrimSpace(r.IssueID) == "" || strings.TrimSpace(r.Text) == "" || r.ExpectedRevision == nil || *r.ExpectedRevision < 1 {
+			return errIssueToolAction
+		}
+	case issueToolActionResume:
 		if strings.TrimSpace(r.IssueID) == "" {
 			return errIssueToolAction
 		}
@@ -158,10 +169,11 @@ func issueToolCanonicalPayload(r IssueToolActionRequest) (string, error) {
 		Goal             string   `json:"goal,omitempty"`
 		Requirements     []string `json:"requirements,omitempty"`
 		Text             string   `json:"text,omitempty"`
+		QuestionRef      string   `json:"question_ref,omitempty"`
 	}{
 		Action: r.Action, IssueID: r.IssueID, ExpectedRevision: r.ExpectedRevision,
 		Goal: strings.TrimSpace(r.Goal), Requirements: append([]string(nil), r.Requirements...),
-		Text: strings.TrimSpace(r.Text),
+		Text: strings.TrimSpace(r.Text), QuestionRef: strings.TrimSpace(r.QuestionRef),
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -184,6 +196,8 @@ type IssueToolReceipt struct {
 	TaskID               string          `json:"task_id,omitempty"`
 	MessageID            string          `json:"message_id,omitempty"`
 	RequirementsRevision *int            `json:"requirements_revision,omitempty"`
+	QuestionRef          string          `json:"question_ref,omitempty"`
+	SupplementID         string          `json:"supplement_id,omitempty"`
 	Error                *IssueToolError `json:"error,omitempty"`
 }
 
@@ -347,6 +361,9 @@ type IssueToolIssueSummary struct {
 	LastExecutionID      string `json:"last_execution_id,omitempty"`
 	LastExecutionState   string `json:"last_execution_state,omitempty"`
 	PendingSupplements   int    `json:"pending_supplements"`
+	QuestionRef          string `json:"question_ref,omitempty"`
+	Question             string `json:"question,omitempty"`
+	QuestionRevision     int    `json:"question_revision,omitempty"`
 }
 
 type IssueToolRequirementView struct {
@@ -401,6 +418,9 @@ func issueToolSummary(issue *productIssue) IssueToolIssueSummary {
 	summary.Archived, summary.RequirementsRevision = issue.Archived, issue.RequirementsRevision
 	if issue.Supplements != nil {
 		summary.PendingSupplements = issue.Supplements.pendingCount()
+	}
+	if question := issue.openQuestion(); question != nil {
+		summary.QuestionRef, summary.Question, summary.QuestionRevision = question.Ref, question.Text, question.RequirementsRevision
 	}
 	for index := len(issue.Executions) - 1; index >= 0; index-- {
 		execution := issue.Executions[index]

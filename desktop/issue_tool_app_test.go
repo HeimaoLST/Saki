@@ -517,3 +517,307 @@ func TestIssueToolShutdownRejectsNewActionButKeepsReceipt(t *testing.T) {
 		t.Fatalf("shutdown old receipt = %+v err=%v ops=%d", duplicate, err, len(a.issueToolLedger.Operations))
 	}
 }
+
+func attachIssueToolTestExecution(issue *productIssue) {
+	issue.Executions = append(issue.Executions, &issueExecution{
+		ID: "execution-test", SessionID: "work-session", TaskID: "work-task",
+		Status: issueExecutionCompleted, RequirementsRevision: issue.RequirementsRevision,
+	})
+}
+
+func TestIssueToolWaitAnswerResumeUsesQuestionAnd142Ledger(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	issue, err := a.createIssueFor(ct, "needs input", "current requirement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachIssueToolTestExecution(issue)
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-q", "turn-q")
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateIssueToolTestScope(t, a, scope)
+	waitArgs := issueToolActionArgs(t, *scope, issueToolActionWait, map[string]any{
+		"issue_id": issue.ID, "expected_revision": issue.RequirementsRevision, "text": "Which method should I use?",
+	})
+	first, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: waitArgs})
+	if err != nil || first.IsError {
+		t.Fatalf("wait = %+v err=%v", first, err)
+	}
+	var waitReceipt IssueToolReceipt
+	if err := json.Unmarshal(issueToolResponseJSON(t, first), &waitReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if waitReceipt.QuestionRef == "" || issue.Status != issueStatusWaitingUser || issue.openQuestion() == nil ||
+		issue.Supplements.AutoContinue || len(issue.Questions) != 1 {
+		t.Fatalf("wait state = receipt=%+v question=%+v status=%q auto=%v", waitReceipt, issue.openQuestion(), issue.Status, issue.Supplements.AutoContinue)
+	}
+	questionRef := waitReceipt.QuestionRef
+	repeated, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: waitArgs})
+	if err != nil || repeated.IsError || len(issue.Questions) != 1 {
+		t.Fatalf("repeated wait = %+v err=%v questions=%d", repeated, err, len(issue.Questions))
+	}
+	resumeArgs := issueToolActionArgs(t, *scope, issueToolActionResume, map[string]any{"issue_id": issue.ID})
+	if a.resumeIssueFor(ct, issue.ID) {
+		t.Fatal("UI resume bypassed the open structured question")
+	}
+	resumed, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: resumeArgs})
+	if err != nil || !resumed.IsError || issue.Status != issueStatusWaitingUser || issue.openQuestion() == nil {
+		t.Fatalf("resume with open question = %+v err=%v status=%q question=%+v", resumed, err, issue.Status, issue.openQuestion())
+	}
+	answerArgs := issueToolActionArgs(t, *scope, issueToolActionAddSupplement, map[string]any{
+		"issue_id": issue.ID, "text": "Use SMS.", "question_ref": questionRef,
+	})
+	answered, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: answerArgs})
+	if err != nil || answered.IsError {
+		t.Fatalf("answer = %+v err=%v", answered, err)
+	}
+	var answerReceipt IssueToolReceipt
+	if err := json.Unmarshal(issueToolResponseJSON(t, answered), &answerReceipt); err != nil {
+		t.Fatal(err)
+	}
+	question := issue.questionByRef(questionRef)
+	if question == nil || question.State != issueQuestionAnswered || question.AnswerSupplementID == "" ||
+		answerReceipt.SupplementID != question.AnswerSupplementID || issue.Supplements.pendingCount() != 1 ||
+		issue.Status != issueStatusInProgress || !issue.Supplements.AutoContinue {
+		t.Fatalf("answer state = question=%+v receipt=%+v pending=%d status=%q auto=%v", question, answerReceipt, issue.Supplements.pendingCount(), issue.Status, issue.Supplements.AutoContinue)
+	}
+	duplicate, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: answerArgs})
+	if err != nil || duplicate.IsError || issue.Supplements.pendingCount() != 1 {
+		t.Fatalf("duplicate answer = %+v err=%v pending=%d", duplicate, err, issue.Supplements.pendingCount())
+	}
+	// A new turn cannot answer the same open question twice.
+	secondScope, err := a.issueToolNewScope(ct.ID, "conversation-q2", "turn-q2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateIssueToolTestScope(t, a, secondScope)
+	crossTurn, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *secondScope, issueToolActionAddSupplement, map[string]any{
+		"issue_id": issue.ID, "text": "Use SMS.", "question_ref": questionRef,
+	})})
+	if err != nil || crossTurn.IsError || issue.Supplements.pendingCount() != 1 {
+		t.Fatalf("cross-turn duplicate answer = %+v err=%v pending=%d", crossTurn, err, issue.Supplements.pendingCount())
+	}
+	changedScope, err := a.issueToolNewScope(ct.ID, "conversation-q3", "turn-q3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateIssueToolTestScope(t, a, changedScope)
+	changed, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *changedScope, issueToolActionAddSupplement, map[string]any{
+		"issue_id": issue.ID, "text": "Use email instead.", "question_ref": questionRef,
+	})})
+	if err != nil || !changed.IsError || !strings.Contains(string(issueToolResponseJSON(t, changed)), "question_answer_conflict") ||
+		issue.Supplements.pendingCount() != 1 {
+		t.Fatalf("changed answer = %+v err=%v pending=%d", changed, err, issue.Supplements.pendingCount())
+	}
+	reloaded, err := openContactStore(a.store.path, a.workDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloadedContacts := contactsFromStore(reloaded)
+	if len(reloadedContacts) != 1 || len(reloadedContacts[0].Issues) != 1 {
+		t.Fatalf("reloaded question state = %+v", reloadedContacts)
+	}
+	reloadedIssue := reloadedContacts[0].Issues[0]
+	reloadedQuestion := reloadedIssue.questionByRef(questionRef)
+	if reloadedQuestion == nil || reloadedQuestion.State != issueQuestionAnswered ||
+		reloadedQuestion.AnswerSupplementID != question.AnswerSupplementID || reloadedIssue.Supplements.pendingCount() != 1 {
+		t.Fatalf("reloaded question/answer = %+v", reloadedIssue)
+	}
+}
+
+func TestIssueToolWrongOrStaleQuestionRefIsRejected(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	issue, err := a.createIssueFor(ct, "question errors", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachIssueToolTestExecution(issue)
+	scope, _ := a.issueToolNewScope(ct.ID, "conversation-qe", "turn-qe")
+	activateIssueToolTestScope(t, a, scope)
+	waitArgs := issueToolActionArgs(t, *scope, issueToolActionWait, map[string]any{
+		"issue_id": issue.ID, "expected_revision": issue.RequirementsRevision, "text": "Need input",
+	})
+	wait, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: waitArgs})
+	if err != nil || wait.IsError {
+		t.Fatalf("wait setup = %+v err=%v", wait, err)
+	}
+	bad, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *scope, issueToolActionAddSupplement, map[string]any{
+		"issue_id": issue.ID, "text": "answer", "question_ref": "question-wrong",
+	})})
+	if err != nil || !bad.IsError || !strings.Contains(string(issueToolResponseJSON(t, bad)), "question_not_found") {
+		t.Fatalf("wrong question = %+v err=%v", bad, err)
+	}
+	question := issue.openQuestion()
+	question.RequirementsRevision = 0
+	staleScope, err := a.issueToolNewScope(ct.ID, "conversation-qe2", "turn-qe2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateIssueToolTestScope(t, a, staleScope)
+	stale, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *staleScope, issueToolActionAddSupplement, map[string]any{
+		"issue_id": issue.ID, "text": "answer", "question_ref": question.Ref,
+	})})
+	if err != nil || !stale.IsError || !strings.Contains(string(issueToolResponseJSON(t, stale)), "revision_mismatch") {
+		t.Fatalf("stale question = %+v err=%v", stale, err)
+	}
+}
+
+func TestIssueToolAnswerAfterProductCancelIsRejected(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	issue, err := a.createIssueFor(ct, "cancel question", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachIssueToolTestExecution(issue)
+	scope, _ := a.issueToolNewScope(ct.ID, "conversation-cancel", "turn-cancel")
+	activateIssueToolTestScope(t, a, scope)
+	wait, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *scope, issueToolActionWait, map[string]any{
+		"issue_id": issue.ID, "expected_revision": issue.RequirementsRevision, "text": "need answer",
+	})})
+	if err != nil || wait.IsError {
+		t.Fatalf("wait = %+v err=%v", wait, err)
+	}
+	question := issue.openQuestion()
+	if !a.cancelIssueProductFor(ct, issue.ID) || issue.Status != issueStatusCanceled {
+		t.Fatalf("product cancel = status %q", issue.Status)
+	}
+	answer, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *scope, issueToolActionAddSupplement, map[string]any{
+		"issue_id": issue.ID, "text": "answer", "question_ref": question.Ref,
+	})})
+	if err != nil || !answer.IsError || issue.Supplements.pendingCount() != 0 {
+		t.Fatalf("canceled answer = %+v err=%v pending=%d", answer, err, issue.Supplements.pendingCount())
+	}
+}
+
+func TestIssueToolAnsweredQuestionMissingSupplementIsUnknown(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	issue, err := a.createIssueFor(ct, "missing answer", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachIssueToolTestExecution(issue)
+	scope, _ := a.issueToolNewScope(ct.ID, "conversation-missing", "turn-missing")
+	activateIssueToolTestScope(t, a, scope)
+	wait, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *scope, issueToolActionWait, map[string]any{
+		"issue_id": issue.ID, "expected_revision": issue.RequirementsRevision, "text": "question",
+	})})
+	if err != nil || wait.IsError {
+		t.Fatalf("wait = %+v err=%v", wait, err)
+	}
+	question := issue.openQuestion()
+	question.State = issueQuestionAnswered
+	question.AnswerSupplementID = "supplement-missing"
+	newScope, _ := a.issueToolNewScope(ct.ID, "conversation-missing2", "turn-missing2")
+	activateIssueToolTestScope(t, a, newScope)
+	answer, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *newScope, issueToolActionAddSupplement, map[string]any{
+		"issue_id": issue.ID, "text": "answer", "question_ref": question.Ref,
+	})})
+	if err != nil || !answer.IsError || !strings.Contains(string(issueToolResponseJSON(t, answer)), "operation_unknown") ||
+		issue.Supplements.pendingCount() != 0 {
+		t.Fatalf("missing answer supplement = %+v err=%v pending=%d", answer, err, issue.Supplements.pendingCount())
+	}
+}
+
+func TestIssueToolWaitSupersedesChangedQuestionAndRevision(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	issue, err := a.createIssueFor(ct, "supersede", "first requirement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachIssueToolTestExecution(issue)
+	scope, _ := a.issueToolNewScope(ct.ID, "conversation-sup", "turn-sup")
+	activateIssueToolTestScope(t, a, scope)
+	wait := func(scope *IssueToolScope, text string, revision int) {
+		t.Helper()
+		response, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *scope, issueToolActionWait, map[string]any{
+			"issue_id": issue.ID, "expected_revision": revision, "text": text,
+		})})
+		if err != nil || response.IsError {
+			t.Fatalf("wait %q = %+v err=%v", text, response, err)
+		}
+	}
+	wait(scope, "first question", issue.RequirementsRevision)
+	firstRef := issue.openQuestion().Ref
+	secondScope, _ := a.issueToolNewScope(ct.ID, "conversation-sup2", "turn-sup2")
+	activateIssueToolTestScope(t, a, secondScope)
+	wait(secondScope, "corrected question", issue.RequirementsRevision)
+	if len(issue.Questions) != 2 || issue.Questions[0].Ref != firstRef || issue.Questions[0].State != issueQuestionSuperseded ||
+		issue.Questions[1].State != issueQuestionOpen || issue.Questions[1].Text != "corrected question" {
+		t.Fatalf("superseded questions = %+v", issue.Questions)
+	}
+	secondRef := issue.openQuestion().Ref
+	if !a.editIssueFor(ct, issue.ID, issue.Goal, "second requirement") {
+		t.Fatalf("edit requirements: %s", a.issueFormError)
+	}
+	thirdScope, _ := a.issueToolNewScope(ct.ID, "conversation-sup3", "turn-sup3")
+	activateIssueToolTestScope(t, a, thirdScope)
+	wait(thirdScope, "new revision question", issue.RequirementsRevision)
+	if len(issue.Questions) != 3 || issue.questionByRef(secondRef).State != issueQuestionSuperseded {
+		t.Fatalf("revision supersede = %+v", issue.Questions)
+	}
+	detail, err := issueToolGet(*thirdScope, []*productIssue{issue}, issue.ID)
+	if err != nil || detail.Issue.QuestionRevision != issue.RequirementsRevision || detail.Issue.Question == "" {
+		t.Fatalf("query question/revision = %+v err=%v", detail, err)
+	}
+}
+
+func TestIssueToolResumeWithoutStructuredQuestionStillWorks(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	issue, err := a.createIssueFor(ct, "manual waiting", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachIssueToolTestExecution(issue)
+	if !a.markIssueWaitingFor(ct, issue.ID) || issue.Status != issueStatusWaitingUser || issue.openQuestion() != nil {
+		t.Fatalf("manual wait state = status=%q question=%+v", issue.Status, issue.openQuestion())
+	}
+	scope, _ := a.issueToolNewScope(ct.ID, "conversation-manual", "turn-manual")
+	activateIssueToolTestScope(t, a, scope)
+	resume, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *scope, issueToolActionResume, map[string]any{"issue_id": issue.ID})})
+	if err != nil || resume.IsError || issue.Status != issueStatusInProgress {
+		t.Fatalf("manual resume = %+v err=%v status=%q", resume, err, issue.Status)
+	}
+}
+
+func TestIssueToolReplacementQuestionSaveFailureKeepsOriginalOpen(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	issue, err := a.createIssueFor(ct, "atomic replacement", "requirement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachIssueToolTestExecution(issue)
+	scope, _ := a.issueToolNewScope(ct.ID, "conversation-atomic-q", "turn-atomic-q")
+	activateIssueToolTestScope(t, a, scope)
+	wait, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *scope, issueToolActionWait, map[string]any{
+		"issue_id": issue.ID, "expected_revision": issue.RequirementsRevision, "text": "original question",
+	})})
+	if err != nil || wait.IsError {
+		t.Fatalf("wait = %+v err=%v", wait, err)
+	}
+	original := issue.openQuestion()
+	originalRef, originalText := original.Ref, original.Text
+	issue.Supplements.AutoContinue = true
+	replacement := &issueQuestion{
+		Ref: "question-replacement", Text: "replacement question", RequirementsRevision: issue.RequirementsRevision,
+		SourceScopeRef: scope.Ref, SourceTurnID: scope.TurnID, State: issueQuestionOpen, CreatedAt: nowMillis(),
+	}
+	operation := &IssueToolOperation{ID: "issue-op-replacement", Action: issueToolActionWait, TargetIssueID: issue.ID}
+	receipt := &IssueToolReceipt{State: issueToolReceiptSaved, IssueID: issue.ID, QuestionRef: replacement.Ref}
+	a.store.path = t.TempDir() // atomic save fails after in-memory mutations
+	if a.markIssueWaitingForQuestion(ct, issue.ID, originalRef, replacement, operation, receipt) {
+		t.Fatal("replacement wait unexpectedly saved with a failing store")
+	}
+	if issue.openQuestion() == nil || issue.openQuestion().Ref != originalRef || issue.openQuestion().Text != originalText ||
+		issue.openQuestion().State != issueQuestionOpen || len(issue.Questions) != 1 ||
+		issue.Status != issueStatusWaitingUser || !issue.Supplements.AutoContinue || operation.Receipt != nil {
+		t.Fatalf("failed replacement lost original question: questions=%+v status=%q auto=%v receipt=%+v", issue.Questions, issue.Status, issue.Supplements.AutoContinue, operation.Receipt)
+	}
+}

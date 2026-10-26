@@ -32,11 +32,68 @@ type productIssue struct {
 	// issue. It is persisted with the issue; it is not a Runtime history copy.
 	Supplements *issueSupplementLedger
 
+	// Questions are persistent missing-information prompts. An answer is linked
+	// to the same supplement ledger, not to an invented assistant message.
+	Questions []*issueQuestion
+
 	// WorkSessionID is the issue-owned execution context. It is intentionally
 	// separate from contact.SessionID (the ongoing conversation). Old
 	// executions keep their actual SessionID and are never migrated in place.
 	WorkSessionID string
 	Work          issueWorkSession
+}
+
+const (
+	issueQuestionOpen       = "open"
+	issueQuestionAnswered   = "answered"
+	issueQuestionSuperseded = "superseded"
+)
+
+type issueQuestion struct {
+	Ref                  string `json:"ref"`
+	Text                 string `json:"text"`
+	RequirementsRevision int    `json:"requirements_revision"`
+	SourceTaskID         string `json:"source_task_id,omitempty"`
+	SourceScopeRef       string `json:"source_scope_ref,omitempty"`
+	SourceTurnID         string `json:"source_turn_id,omitempty"`
+	State                string `json:"state"`
+	CreatedAt            int64  `json:"created_at,omitempty"`
+	AnsweredAt           int64  `json:"answered_at,omitempty"`
+	AnswerSupplementID   string `json:"answer_supplement_id,omitempty"`
+	AnswerText           string `json:"answer_text,omitempty"`
+}
+
+func newIssueQuestionRef() string {
+	var bytes [8]byte
+	if _, err := rand.Read(bytes[:]); err == nil {
+		return "question-" + hex.EncodeToString(bytes[:])
+	}
+	return fmt.Sprintf("question-%d", time.Now().UnixNano())
+}
+
+func (issue *productIssue) openQuestion() *issueQuestion {
+	if issue == nil {
+		return nil
+	}
+	for index := len(issue.Questions) - 1; index >= 0; index-- {
+		question := issue.Questions[index]
+		if question != nil && question.State == issueQuestionOpen {
+			return question
+		}
+	}
+	return nil
+}
+
+func (issue *productIssue) questionByRef(ref string) *issueQuestion {
+	if issue == nil {
+		return nil
+	}
+	for _, question := range issue.Questions {
+		if question != nil && question.Ref == ref {
+			return question
+		}
+	}
+	return nil
 }
 
 // issueWorkSession is the in-memory runtime projection for one issue's
@@ -410,6 +467,13 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 			WorkSessionID: stored.WorkSessionID,
 			Context:       taskContext{items: cloneTaskContextItems(stored.TaskContext)},
 			Supplements:   cloneIssueSupplementLedger(stored.Supplements),
+		}
+		for _, question := range stored.Questions {
+			if question == nil || strings.TrimSpace(question.Ref) == "" {
+				continue
+			}
+			copy := *question
+			issue.Questions = append(issue.Questions, &copy)
 		}
 		if len(stored.RequirementItems) > 0 {
 			for _, item := range stored.RequirementItems {

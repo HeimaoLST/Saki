@@ -22,6 +22,7 @@ import (
 
 const issueToolTestMarker = "CONVERSATION-TOOL"
 const issueToolTestIssueGoal = "ISSUE-TOOL-GOAL"
+const issueToolWaitGoal = "WAIT-A-GOAL"
 
 type issueToolChainProvider struct {
 	mu           sync.Mutex
@@ -731,5 +732,297 @@ func TestIssueToolExistingSchemaTwoSessionGetsSelectionAndRestart(t *testing.T) 
 	})
 	if restartStateErr != "" {
 		t.Fatal(restartStateErr)
+	}
+}
+
+type issueToolWaitAnswerProvider struct {
+	mu           sync.Mutex
+	bodies       []string
+	conversation int
+	issueWork    int
+	issueID      string
+	revision     int
+	questionRef  string
+}
+
+func (p *issueToolWaitAnswerProvider) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.bodies)
+}
+
+func (p *issueToolWaitAnswerProvider) body(i int) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if i < 0 || i >= len(p.bodies) {
+		return ""
+	}
+	return p.bodies[i]
+}
+
+func (p *issueToolWaitAnswerProvider) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		p.mu.Lock()
+		p.bodies = append(p.bodies, string(body))
+		isConversation := strings.Contains(string(body), "WAIT-CONV-")
+		step := p.conversation
+		if isConversation {
+			p.conversation++
+		}
+		workStep := p.issueWork
+		if strings.Contains(string(body), issueToolWaitGoal) && !isConversation {
+			p.issueWork++
+		}
+		issueID, revision, questionRef := p.issueID, p.revision, p.questionRef
+		scope := issueToolTestScope(string(body))
+		p.mu.Unlock()
+		var response any
+		switch {
+		case !isConversation && workStep == 0:
+			response = issueResultPageFinal("A-FIRST")
+		case !isConversation:
+			response = issueResultPageFinal("A-SECOND")
+		case step == 0:
+			response = issueResultFunctionCall("issue_action", "wait-call", map[string]any{
+				"scope": scope, "action": issueToolActionWait, "issue_id": issueID,
+				"expected_revision": revision, "text": "Which verification method?",
+			})
+		case step == 1:
+			p.mu.Lock()
+			p.questionRef = issueToolTestQuestionRef(string(body), "wait-call")
+			p.mu.Unlock()
+			response = issueResultPageFinal("WAIT-CONV-FINAL")
+		case step == 2:
+			response = issueResultPageFinal("B-CONV-FINAL")
+		case step == 3:
+			response = issueResultFunctionCall("issue_action", "answer-call", map[string]any{
+				"scope": scope, "action": issueToolActionAddSupplement, "issue_id": issueID,
+				"text": "Use SMS.", "question_ref": questionRef,
+			})
+		case step == 4:
+			response = issueResultPageFinal("ANSWER-CONV-FINAL")
+		case step == 5:
+			response = issueResultFunctionCall("issue_action", "duplicate-answer", map[string]any{
+				"scope": scope, "action": issueToolActionAddSupplement, "issue_id": issueID,
+				"text": "Use SMS.", "question_ref": questionRef,
+			})
+		default:
+			response = issueResultPageFinal("DUP-CONV-FINAL")
+		}
+		data, _ := json.Marshal(response)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}
+}
+
+func issueToolTestQuestionRef(body, callID string) string {
+	text := issueToolTestOutput(body, callID)
+	var receipt IssueToolReceipt
+	if json.Unmarshal([]byte(text), &receipt) != nil {
+		return ""
+	}
+	return receipt.QuestionRef
+}
+
+func TestIssueToolWaitAnswerResumeRealChain(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	provider := &issueToolWaitAnswerProvider{}
+	h := startIssueToolTestHarness(t, binary, provider.handler())
+	var issueID, scopeRef, questionRef string
+	var revision int
+	var setupErr string
+	h.pump.do(func() {
+		if !h.app.createIssue("WAIT-A-GOAL", "WAIT-A-REQ") {
+			setupErr = h.app.issueFormError
+			return
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		revision = ct.issueByID(issueID).RequirementsRevision
+		if !h.app.runIssue(issueID) {
+			setupErr = h.app.issueFormError
+		}
+	})
+	if setupErr != "" {
+		t.Fatal(setupErr)
+	}
+	provider.mu.Lock()
+	provider.issueID = issueID
+	provider.revision = revision
+	provider.mu.Unlock()
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		return ct.SendState == sendIdle && ct.ActiveTaskID == "" &&
+			issue != nil && len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
+	})
+	var sendErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "WAIT-CONV-WAIT"
+		if !h.app.sendCurrent() {
+			sendErr = ct.SendError
+		}
+	})
+	if sendErr != "" {
+		t.Fatal(sendErr)
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		return ct.SendState == sendIdle && ct.ActiveTaskID == "" &&
+			issue != nil && issue.Status == issueStatusWaitingUser && issue.openQuestion() != nil
+	})
+	h.pump.do(func() {
+		var latest int64
+		for ref, scope := range h.app.issueToolScopes {
+			if scope.CreatedAt >= latest {
+				latest, scopeRef = scope.CreatedAt, ref
+			}
+		}
+		if question := h.app.selectedContact().issueByID(issueID).openQuestion(); question != nil {
+			questionRef = question.Ref
+		}
+	})
+	// The scope used by the wait turn is the latest persisted one at this point.
+	var waitStateErr string
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		if issue == nil || issue.Status != issueStatusWaitingUser {
+			waitStateErr = fmt.Sprintf("wait did not mark A waiting: %+v", issue)
+			return
+		}
+		question := issue.openQuestion()
+		if question == nil || question.Text == "" || question.RequirementsRevision != revision || question.SourceTaskID == "" {
+			waitStateErr = fmt.Sprintf("persisted question = %+v", question)
+		}
+	})
+	if waitStateErr != "" {
+		t.Fatal(waitStateErr)
+	}
+	var bErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "WAIT-CONV-B"
+		if !h.app.sendCurrent() {
+			bErr = ct.SendError
+		}
+	})
+	if bErr != "" {
+		t.Fatal(bErr)
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		return ct.SendState == sendIdle && ct.ActiveTaskID == "" && issue != nil &&
+			issue.Status == issueStatusWaitingUser && issue.Work.ActiveTaskID == ""
+	})
+	var answerErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "WAIT-CONV-ANSWER"
+		if !h.app.sendCurrent() {
+			answerErr = ct.SendError
+		}
+	})
+	if answerErr != "" {
+		t.Fatal(answerErr)
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		return ct.SendState == sendIdle && ct.ActiveTaskID == "" && issue != nil &&
+			len(issue.Executions) == 2 && issue.Work.ActiveTaskID == "" &&
+			issue.Executions[1].Status == issueExecutionCompleted
+	})
+	var secondWorkErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		if issue == nil || issue.openQuestion() != nil || len(issue.Questions) != 1 || issue.Questions[0].State != issueQuestionAnswered {
+			secondWorkErr = fmt.Sprintf("answer/question state = %+v", issue)
+		}
+		if containsText(contactMessageTextsForWork(issue), "B-CONV-FINAL") {
+			secondWorkErr = "B leaked into A work"
+		}
+	})
+	if secondWorkErr != "" {
+		t.Fatal(secondWorkErr)
+	}
+	var duplicateErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "WAIT-CONV-DUP"
+		if !h.app.sendCurrent() {
+			duplicateErr = ct.SendError
+		}
+	})
+	if duplicateErr != "" {
+		t.Fatal(duplicateErr)
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		return ct.SendState == sendIdle && ct.ActiveTaskID == "" && issue != nil && len(issue.Executions) == 2
+	})
+	var duplicateStateErr string
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		if issue == nil || len(issue.Executions) != 2 || issue.Supplements.pendingCount() != 0 {
+			duplicateStateErr = fmt.Sprintf("duplicate answer created work/supplement: %+v", issue)
+		}
+	})
+	if duplicateStateErr != "" {
+		t.Fatal(duplicateStateErr)
+	}
+	// Wait for the terminal-triggered history reload callbacks to drain before
+	// the test closes the UI pump.
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		return ct.SendState == sendIdle && ct.ActiveTaskID == "" && !ct.HistoryDirty &&
+			issue != nil && issue.Work.ActiveTaskID == "" && !issue.Work.HistoryDirty
+	})
+	// Restart and query the old issue through the retained scope.
+	h.shutdown(t)
+	restarted := restartGUIHarness(t, binary)
+	t.Cleanup(func() {
+		if !restarted.closed {
+			restarted.shutdown(t)
+		}
+	})
+	restarted.pump.wait(func() bool {
+		ct := restarted.app.contactByID(h.app.selectedContact().ID)
+		return ct != nil && ct.Loaded
+	})
+	var queryArgs []byte
+	restarted.pump.do(func() {
+		queryArgs, _ = json.Marshal(map[string]any{"scope": scopeRef, "issue_id": issueID})
+	})
+	query, err := restarted.app.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_get", Arguments: queryArgs})
+	if err != nil || query.IsError {
+		t.Fatalf("restart query = %+v err=%v", query, err)
+	}
+	var detail IssueToolIssueDetail
+	if err := json.Unmarshal(issueToolResponseJSON(t, query), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.ExecutionCount != 2 || detail.Issue.Goal != "WAIT-A-GOAL" {
+		t.Fatalf("restart old issue = %+v", detail)
+	}
+	var persistedQuestion *issueQuestion
+	restarted.pump.do(func() {
+		issue := restarted.app.contacts[0].Issues[0]
+		if question := issue.questionByRef(questionRef); question != nil {
+			copy := *question
+			persistedQuestion = &copy
+		}
+	})
+	if persistedQuestion == nil || persistedQuestion.State != issueQuestionAnswered || persistedQuestion.AnswerSupplementID == "" {
+		t.Fatalf("restart question/answer association = %+v", persistedQuestion)
 	}
 }

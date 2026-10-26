@@ -21,9 +21,10 @@ import (
 // persisted truth. v5 added owned task-context snapshots and pending-send
 // intent. v6 added the issue supplement ledger. v7 adds contact archive state
 // and explicit references to conversations replaced by Save and start new.
-// v8 adds the conversation issue-tool scope/operation ledger. v1-v7 remain
-// readable here. Older apps reject v8 instead of dropping fields.
-const contactStoreVersion = 8
+// v8 adds the conversation issue-tool scope/operation ledger. v9 adds
+// persistent missing-information questions and their answer associations.
+// v1-v8 remain readable here. Older apps reject v9 instead of dropping fields.
+const contactStoreVersion = 9
 
 type storedContact struct {
 	ID               string            `json:"id"`
@@ -80,6 +81,7 @@ type storedIssue struct {
 	WorkSessionID        string                 `json:"work_session_id,omitempty"`
 	TaskContext          []taskContextItem      `json:"task_context,omitempty"`
 	Supplements          *issueSupplementLedger `json:"supplements,omitempty"`
+	Questions            []*issueQuestion       `json:"questions,omitempty"`
 	Executions           []storedIssueExecution `json:"executions,omitempty"`
 }
 
@@ -270,6 +272,7 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 				Evidence: issue.Evidence, CreatedAt: issue.CreatedAt, UpdatedAt: issue.UpdatedAt,
 				WorkSessionID: issue.WorkSessionID, RequirementsRevision: issue.RequirementsRevision,
 				TaskContext: issue.Context.snapshot(), Supplements: issue.Supplements,
+				Questions: issue.Questions,
 			}
 			for _, requirement := range issue.Requirements {
 				if requirement == nil || strings.TrimSpace(requirement.Text) == "" {

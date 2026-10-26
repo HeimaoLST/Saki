@@ -187,8 +187,24 @@ func (a *appModel) issueToolMergedSelection(current runtimeToolSelection) (map[s
 // adds only the issue-tool bindings when absent. It deliberately does not
 // migrate schema 1 or guessed legacy ownership; those paths remain explicit
 // follow-ups.
+func (a *appModel) issueToolSchemaReady(sessionID string) bool {
+	a.issueToolMu.Lock()
+	defer a.issueToolMu.Unlock()
+	return a.issueToolSchemaOK[sessionID]
+}
+
+func (a *appModel) markIssueToolSchemaReady(sessionID string) {
+	a.issueToolMu.Lock()
+	if a.issueToolSchemaOK == nil {
+		a.issueToolSchemaOK = map[string]bool{}
+	}
+	a.issueToolSchemaOK[sessionID] = true
+	a.issueToolMu.Unlock()
+}
+
 func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, sessionID string, created bool) (bool, error) {
 	if created {
+		a.markIssueToolSchemaReady(sessionID)
 		return true, nil
 	}
 	if rt == nil || sessionID == "" {
@@ -201,7 +217,7 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 	if config.StorageSchema < 2 {
 		return false, nil
 	}
-	if runtimeSelectionHasIssueTools(config.EffectiveConfig.ToolSelection) {
+	if runtimeSelectionHasIssueTools(config.EffectiveConfig.ToolSelection) && a.issueToolSchemaReady(sessionID) {
 		return true, nil
 	}
 	selection, mergeErr := a.issueToolMergedSelection(config.EffectiveConfig.ToolSelection)
@@ -211,9 +227,11 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 	if selection == nil {
 		return false, nil
 	}
+	// Updating the full (merged) selection also reconfirms the current helper's
+	// tool declaration after restart. It changes no model/cwd/prompt setting.
 	updated, err := rt.updateSessionToolSelection(sessionID, config.ConfigRevision, selection)
 	if err != nil {
-		return false, fmt.Errorf("enable issue tools for this conversation: %w", err)
+		return false, fmt.Errorf("enable or refresh issue tools for this conversation: %w", err)
 	}
 	if updated.ReadbackError != nil {
 		return false, fmt.Errorf("read back conversation tool selection: %w", updated.ReadbackError)
@@ -221,6 +239,7 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 	if !runtimeSelectionHasIssueTools(updated.EffectiveConfig.ToolSelection) {
 		return false, errors.New("Runtime did not confirm the conversation issue-tool selection")
 	}
+	a.markIssueToolSchemaReady(sessionID)
 	return true, nil
 }
 
@@ -337,6 +356,15 @@ func (a *appModel) issueToolBindTask(ref, taskID string) {
 	}
 	scope.RuntimeTaskID = taskID
 	a.issueToolScopes[ref] = scope
+	for _, ct := range a.contacts {
+		for _, issue := range ct.Issues {
+			for _, question := range issue.Questions {
+				if question != nil && question.SourceScopeRef == ref && question.SourceTaskID == "" {
+					question.SourceTaskID = taskID
+				}
+			}
+		}
+	}
 }
 
 // issueToolReserveForTurn performs existing-operation lookup, active-turn
@@ -750,6 +778,10 @@ func (a *appModel) issueToolHandleAction(_ context.Context, raw json.RawMessage)
 		response, _ = a.issueToolUpdate(scope, request, operation)
 	case issueToolActionAddSupplement:
 		response, _ = a.issueToolSupplement(scope, request, operation)
+	case issueToolActionWait:
+		response, _ = a.issueToolWait(scope, request, operation)
+	case issueToolActionResume:
+		response, _ = a.issueToolResume(scope, request, operation)
 	case issueToolActionRun:
 		response, _ = a.issueToolRun(scope, request, operation)
 	case issueToolActionStop:
@@ -862,6 +894,9 @@ func (a *appModel) issueToolUpdate(scope IssueToolScope, request IssueToolAction
 }
 
 func (a *appModel) issueToolSupplement(scope IssueToolScope, request IssueToolActionRequest, operation *IssueToolOperation) (issueToolForwardResponse, error) {
+	if strings.TrimSpace(request.QuestionRef) != "" {
+		return a.issueToolAnswerQuestion(scope, request, operation)
+	}
 	var callErr error
 	a.runOnUI(func() {
 		if err := a.issueToolActionAllowed(scope); err != nil {
@@ -888,6 +923,177 @@ func (a *appModel) issueToolSupplement(scope IssueToolScope, request IssueToolAc
 	}
 	var receipt *IssueToolReceipt
 	a.runOnUI(func() { receipt = cloneIssueToolReceipt(operation.Receipt) })
+	return issueToolJSONResponse(receipt, false)
+}
+
+func (a *appModel) issueToolWait(scope IssueToolScope, request IssueToolActionRequest, operation *IssueToolOperation) (issueToolForwardResponse, error) {
+	var receipt *IssueToolReceipt
+	var callErr error
+	a.runOnUI(func() {
+		if err := a.issueToolActionAllowed(scope); err != nil {
+			callErr = err
+			return
+		}
+		ct := a.contactByID(scope.ContactID)
+		issue := issueForContact(ct, request.IssueID)
+		if issue == nil || issue.Archived || issue.Status == issueStatusCompleted || issue.Status == issueStatusCanceled {
+			callErr = errors.New("issue cannot wait in its current state")
+			return
+		}
+		if request.ExpectedRevision == nil || *request.ExpectedRevision != issue.RequirementsRevision {
+			callErr = &IssueToolError{Code: "revision_mismatch", Message: "issue requirements changed; reload before waiting", CurrentRevision: issueToolRevisionPointer(issue.RequirementsRevision)}
+			return
+		}
+		if issue.Work.ActiveTaskID != "" || issue.Work.SendState != sendIdle || issueRunBlocked(issue) != "" {
+			callErr = errors.New("issue has active or unresolved work; wait cannot be recorded")
+			return
+		}
+		text := strings.TrimSpace(request.Text)
+		supersedeRef := ""
+		if open := issue.openQuestion(); open != nil {
+			if open.RequirementsRevision == issue.RequirementsRevision && strings.TrimSpace(open.Text) == text {
+				receipt = &IssueToolReceipt{
+					State: issueToolReceiptSaved, IssueID: issue.ID, QuestionRef: open.Ref,
+					RequirementsRevision: issueToolRevisionPointer(open.RequirementsRevision),
+				}
+				callErr = a.issueToolSetReceipt(operation, receipt)
+				return
+			}
+			supersedeRef = open.Ref
+		}
+		question := &issueQuestion{
+			Ref: newIssueQuestionRef(), Text: text,
+			RequirementsRevision: issue.RequirementsRevision, SourceTaskID: scope.RuntimeTaskID,
+			SourceScopeRef: scope.Ref, SourceTurnID: scope.TurnID,
+			State: issueQuestionOpen, CreatedAt: nowMillis(),
+		}
+		receipt = &IssueToolReceipt{
+			State: issueToolReceiptSaved, IssueID: issue.ID, QuestionRef: question.Ref,
+			RequirementsRevision: issueToolRevisionPointer(question.RequirementsRevision),
+		}
+		if !a.markIssueWaitingForQuestion(ct, issue.ID, supersedeRef, question, operation, receipt) {
+			callErr = errors.New("issue could not be marked waiting and saved")
+			return
+		}
+		receipt = cloneIssueToolReceipt(receipt)
+	})
+	if callErr != nil {
+		return issueActionErrorResponse(callErr)
+	}
+	return issueToolJSONResponse(receipt, false)
+}
+
+func (a *appModel) issueToolResume(scope IssueToolScope, request IssueToolActionRequest, operation *IssueToolOperation) (issueToolForwardResponse, error) {
+	var receipt *IssueToolReceipt
+	var callErr error
+	a.runOnUI(func() {
+		if err := a.issueToolActionAllowed(scope); err != nil {
+			callErr = err
+			return
+		}
+		ct := a.contactByID(scope.ContactID)
+		issue := issueForContact(ct, request.IssueID)
+		if issue == nil {
+			callErr = errors.New("issue not found")
+			return
+		}
+		if !a.resumeIssueFor(ct, issue.ID) {
+			callErr = errors.New(valueOr(a.issueActionError, "issue cannot resume in its current state"))
+			return
+		}
+		receipt = &IssueToolReceipt{
+			State: issueToolReceiptSaved, IssueID: issue.ID,
+			RequirementsRevision: issueToolRevisionPointer(issue.RequirementsRevision),
+		}
+		if question := issue.openQuestion(); question != nil {
+			receipt.QuestionRef = question.Ref
+		}
+		callErr = a.issueToolSetReceipt(operation, receipt)
+	})
+	if callErr != nil {
+		return issueActionErrorResponse(callErr)
+	}
+	return issueToolJSONResponse(cloneIssueToolReceipt(receipt), false)
+}
+
+func (a *appModel) issueToolAnswerQuestion(scope IssueToolScope, request IssueToolActionRequest, operation *IssueToolOperation) (issueToolForwardResponse, error) {
+	var receipt *IssueToolReceipt
+	var callErr error
+	a.runOnUI(func() {
+		if err := a.issueToolActionAllowed(scope); err != nil {
+			callErr = err
+			return
+		}
+		ct := a.contactByID(scope.ContactID)
+		issue := issueForContact(ct, request.IssueID)
+		if issue == nil {
+			callErr = &IssueToolError{Code: "not_found", Message: "issue not found for this question"}
+			return
+		}
+		question := issue.questionByRef(request.QuestionRef)
+		if question == nil {
+			candidates := make([]string, 0)
+			if open := issue.openQuestion(); open != nil {
+				candidates = append(candidates, open.Ref)
+			}
+			callErr = &IssueToolError{Code: "question_not_found", Message: "question_ref is not attached to this issue", Candidates: candidates}
+			return
+		}
+		if question.State == issueQuestionAnswered {
+			answer := issueSupplementLedgerFor(issue).itemByID(question.AnswerSupplementID)
+			if answer == nil {
+				callErr = &IssueToolError{Code: "operation_unknown", Message: "the saved answer supplement is missing; reload before revising"}
+				return
+			}
+			if strings.TrimSpace(request.Text) != strings.TrimSpace(answer.Text) {
+				callErr = &IssueToolError{Code: "question_answer_conflict", Message: "this question already has a different answer; reload before revising"}
+				return
+			}
+			receipt = &IssueToolReceipt{
+				State: issueToolReceiptSaved, IssueID: issue.ID, QuestionRef: question.Ref,
+				SupplementID:         question.AnswerSupplementID,
+				RequirementsRevision: issueToolRevisionPointer(question.RequirementsRevision),
+			}
+			callErr = a.issueToolSetReceipt(operation, receipt)
+			return
+		}
+		if request.ExpectedRevision != nil && *request.ExpectedRevision != issue.RequirementsRevision ||
+			question.RequirementsRevision != issue.RequirementsRevision {
+			callErr = &IssueToolError{Code: "revision_mismatch", Message: "question or issue was changed; reload before answering", CurrentRevision: issueToolRevisionPointer(issue.RequirementsRevision)}
+			return
+		}
+		if issue.Archived || issue.Status == issueStatusCompleted || issue.Status == issueStatusCanceled {
+			callErr = errors.New("issue cannot accept this answer in its current state")
+			return
+		}
+		ledger := issueSupplementLedgerFor(issue)
+		previousQuestion := *question
+		previousStatus, previousUpdated, previousAuto := issue.Status, issue.UpdatedAt, ledger.AutoContinue
+		if err := a.addIssueSupplementBefore(ct, issue.ID, request.Text, func(item *issueSupplement) {
+			question.State, question.AnsweredAt, question.AnswerSupplementID = issueQuestionAnswered, nowMillis(), item.ID
+			if len(issue.Executions) > 0 {
+				issue.Status, ledger.AutoContinue = issueStatusInProgress, true
+			} else {
+				issue.Status, ledger.AutoContinue = issueStatusNotStarted, false
+			}
+			issue.UpdatedAt = nowMillis()
+			receipt = &IssueToolReceipt{
+				State: issueToolReceiptSaved, IssueID: issue.ID, QuestionRef: question.Ref,
+				SupplementID: item.ID, RequirementsRevision: issueToolRevisionPointer(issue.RequirementsRevision),
+			}
+			operation.Receipt = receipt
+		}); err != nil {
+			*question = previousQuestion
+			issue.Status, issue.UpdatedAt, ledger.AutoContinue = previousStatus, previousUpdated, previousAuto
+			operation.Receipt = nil
+			callErr = err
+			return
+		}
+		receipt = cloneIssueToolReceipt(receipt)
+	})
+	if callErr != nil {
+		return issueActionErrorResponse(callErr)
+	}
 	return issueToolJSONResponse(receipt, false)
 }
 

@@ -245,6 +245,8 @@ type appModel struct {
 	issueToolErr      string
 	issueToolWaiters  map[string]chan IssueToolReceipt
 	issueToolShutdown chan struct{}
+	issueToolMu       sync.Mutex
+	issueToolSchemaOK map[string]bool
 
 	modelForm         *modelSelection
 	modelOpenToken    int
