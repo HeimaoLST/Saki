@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -20,7 +21,6 @@ import (
 const (
 	issueToolIPCSocketEnv        = "NAGI_ISSUE_TOOL_SOCKET"
 	issueToolIPCDefaultTimeout   = 30 * time.Second
-	issueToolIPCDefaultMaxFrame  = 8 * 1024 * 1024
 	issueToolIPCEndpointMaxBytes = 4096
 )
 
@@ -41,13 +41,13 @@ func (c issueToolIPCClient) forward(ctx context.Context, request issueToolForwar
 	}
 	maxFrame := c.MaxFrameBytes
 	if maxFrame <= 0 {
-		maxFrame = issueToolIPCDefaultMaxFrame
+		maxFrame = issueToolMaxFrameBytes
 	}
 	requestData, err := json.Marshal(request)
 	if err != nil {
 		return issueToolForwardResponse{}, fmt.Errorf("encode issue tool IPC request: %w", err)
 	}
-	if len(requestData)+1 > maxFrame {
+	if len(requestData) > maxFrame {
 		return issueToolForwardResponse{}, errors.New("issue tool IPC request exceeds frame limit")
 	}
 	if err := ctx.Err(); err != nil {
@@ -66,8 +66,13 @@ func (c issueToolIPCClient) forward(ctx context.Context, request issueToolForwar
 	if err := conn.SetDeadline(deadline); err != nil {
 		return issueToolForwardResponse{}, err
 	}
-	if _, err := conn.Write(append(requestData, '\n')); err != nil {
+	payload := append(requestData, '\n')
+	n, err := conn.Write(payload)
+	if err != nil {
 		return issueToolForwardResponse{}, fmt.Errorf("write issue tool IPC request: %w", err)
+	}
+	if n != len(payload) {
+		return issueToolForwardResponse{}, io.ErrShortWrite
 	}
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 16*1024), maxFrame)
@@ -83,12 +88,6 @@ func (c issueToolIPCClient) forward(ctx context.Context, request issueToolForwar
 	var response issueToolForwardResponse
 	if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
 		return issueToolForwardResponse{}, fmt.Errorf("decode issue tool IPC response: %w", err)
-	}
-	if scanner.Scan() {
-		return issueToolForwardResponse{}, errors.New("issue tool IPC returned more than one response")
-	}
-	if err := scanner.Err(); err != nil {
-		return issueToolForwardResponse{}, fmt.Errorf("read issue tool IPC response: %w", err)
 	}
 	if len(response.Content) == 0 {
 		return issueToolForwardResponse{}, errors.New("issue tool IPC response has no content")

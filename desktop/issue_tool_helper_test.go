@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -163,8 +165,28 @@ func TestIssueToolHelperBusinessErrorAndProtocolErrors(t *testing.T) {
 	if responses[3].Error == nil || responses[3].Error.Code != -32602 {
 		t.Fatalf("invalid params = %+v", responses[3])
 	}
-	if responses[4].Error == nil || responses[4].Error.Code != -32700 {
-		t.Fatalf("parse error = %+v", responses[4])
+	if responses[4].Error == nil || responses[4].Error.Code != -32700 || string(responses[4].ID) != "null" {
+		t.Fatalf("parse error/null id = %+v", responses[4])
+	}
+}
+
+func TestIssueToolHelperNotificationDoesNotInitializeOrForward(t *testing.T) {
+	input := `{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n" +
+		`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"issue_list","arguments":{"scope":"s"}}}` + "\n"
+	forwardCalls := 0
+	out, err := runIssueToolHelper(t, input, func(context.Context, issueToolForwardRequest) (issueToolForwardResponse, error) {
+		forwardCalls++
+		return issueToolForwardResponse{Content: []issueToolContent{{Type: "text", Text: "should-not-run"}}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forwardCalls != 0 {
+		t.Fatal("notification initialized the server without initialize")
+	}
+	responses := decodeIssueToolOutput(t, out)
+	if len(responses) != 1 || responses[0].Error == nil || responses[0].Error.Code != -32002 {
+		t.Fatalf("pre-init call = %+v", responses)
 	}
 }
 
@@ -269,7 +291,7 @@ func TestIssueToolIPCRealSocketRoundTrip(t *testing.T) {
 		}
 		defer conn.Close()
 		scanner := bufio.NewScanner(conn)
-		scanner.Buffer(make([]byte, 16*1024), issueToolIPCMaxFrameBytes)
+		scanner.Buffer(make([]byte, 16*1024), issueToolMaxFrameBytes)
 		if !scanner.Scan() {
 			return
 		}
@@ -331,5 +353,88 @@ func TestIssueToolHelperLogsOnlyToConfiguredSink(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "forward failed") {
 		t.Fatal("log leaked to stdout")
+	}
+}
+
+func TestIssueToolIPCReturnsFirstResponseWithoutWaitingForEOF(t *testing.T) {
+	path := fmt.Sprintf("/tmp/saki-154-hold-%d.sock", time.Now().UnixNano())
+	defer os.Remove(path)
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	released := make(chan struct{})
+	clientClosed := make(chan struct{})
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		scanner := bufio.NewScanner(conn)
+		scanner.Buffer(make([]byte, 16*1024), issueToolMaxFrameBytes)
+		if !scanner.Scan() {
+			return
+		}
+		_, _ = conn.Write([]byte(`{"content":[{"type":"text","text":"held-response"}]}` + "\n"))
+		<-released
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		var one [1]byte
+		if _, err := conn.Read(one[:]); errors.Is(err, io.EOF) {
+			close(clientClosed)
+		}
+	}()
+	result := make(chan issueToolForwardResponse, 1)
+	errs := make(chan error, 1)
+	go func() {
+		response, err := issueToolIPCForwarder(path)(context.Background(), issueToolForwardRequest{Tool: "issue_get", Arguments: json.RawMessage(`{"scope":"s"}`)})
+		if err != nil {
+			errs <- err
+			return
+		}
+		result <- response
+	}()
+	select {
+	case response := <-result:
+		if len(response.Content) != 1 || response.Content[0].Text != "held-response" {
+			t.Fatalf("held response = %+v", response)
+		}
+	case err := <-errs:
+		t.Fatalf("client waited/errored before EOF: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("client did not return after first complete response")
+	}
+	close(released)
+	select {
+	case <-clientClosed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("client did not close after first response")
+	}
+}
+
+func TestIssueToolHelperResponseFrameTooLargeIsSmallError(t *testing.T) {
+	init := issueToolInitLine() + `{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n"
+	input := init + `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"issue_get","arguments":{"scope":"s"}}}` + "\n"
+	forwardCalls := 0
+	var out bytes.Buffer
+	err := issueToolHelperServe(context.Background(), strings.NewReader(input), &out, func(context.Context, issueToolForwardRequest) (issueToolForwardResponse, error) {
+		forwardCalls++
+		return issueToolForwardResponse{Content: []issueToolContent{{Type: "text", Text: strings.Repeat("x", 600)}}}, nil
+	}, issueToolHelperOptions{ForwardTimeout: time.Second, MaxFrameBytes: 400})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forwardCalls != 1 {
+		t.Fatalf("oversize response forwarded %d times", forwardCalls)
+	}
+	responses := decodeIssueToolOutput(t, out.String())
+	if len(responses) != 2 || responses[1].Error != nil {
+		t.Fatalf("oversize protocol output = %+v", responses)
+	}
+	var result issueToolForwardResponse
+	if err := json.Unmarshal(responses[1].Result, &result); err != nil || !result.IsError ||
+		len(result.Content) != 1 || !strings.Contains(result.Content[0].Text, "response_too_large") {
+		t.Fatalf("oversize fallback = %+v / %v", result, err)
 	}
 }

@@ -18,10 +18,11 @@ import (
 
 const (
 	issueToolMCPProtocolVersion = "2025-11-25"
-	issueToolMaxFrameBytes      = 8 * 1024 * 1024
+	issueToolMaxFrameBytes      = 4 * 1024 * 1024
 	issueToolDefaultCallTimeout = 30 * time.Second
-	issueToolIPCMaxFrameBytes   = 8 * 1024 * 1024
 )
+
+var errIssueToolResponseTooLarge = errors.New("issue tool response exceeds the 4 MiB frame")
 
 type issueToolContent struct {
 	Type string `json:"type"`
@@ -116,7 +117,7 @@ func issueToolDefinitions() []issueToolDefinition {
 			},
 		},
 		{
-			Name: "issue_get", Description: "Read one authorized issue's goal, structured requirements, executions and supplement receipts. Read-only; never infer an issue from GUI selection.",
+			Name: "issue_get", Description: "Read one authorized issue's goal, structured requirements, bounded executions and pending supplement count. Read-only; never infer an issue from GUI selection.",
 			InputSchema: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
@@ -160,11 +161,28 @@ func issueToolHelperServe(ctx context.Context, in io.Reader, out io.Writer, forw
 	options.withDefaults()
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 64*1024), options.MaxFrameBytes)
-	encoder := json.NewEncoder(out)
 	initialized := false
+	handshakeStarted := false
 	write := func(response issueToolRPCResponse) error {
 		response.JSONRPC = "2.0"
-		return encoder.Encode(response)
+		if len(response.ID) == 0 {
+			response.ID = json.RawMessage("null")
+		}
+		data, err := json.Marshal(response)
+		if err != nil {
+			return err
+		}
+		if len(data) > options.MaxFrameBytes {
+			return errIssueToolResponseTooLarge
+		}
+		n, err := out.Write(append(data, '\n'))
+		if err != nil {
+			return err
+		}
+		if n != len(data)+1 {
+			return io.ErrShortWrite
+		}
+		return nil
 	}
 	writeError := func(id json.RawMessage, code int, message string) error {
 		return write(issueToolRPCResponse{ID: id, Error: &issueToolRPCError{Code: code, Message: message}})
@@ -193,8 +211,8 @@ func issueToolHelperServe(ctx context.Context, in io.Reader, out io.Writer, forw
 		notification := len(request.ID) == 0
 		switch request.Method {
 		case "initialize":
-			if request.JSONRPC != "2.0" || notification {
-				if writeErr := writeError(request.ID, -32600, "initialize requires an id and jsonrpc 2.0"); writeErr != nil {
+			if notification {
+				if writeErr := writeError(request.ID, -32600, "initialize requires an id"); writeErr != nil {
 					return writeErr
 				}
 				continue
@@ -210,22 +228,18 @@ func issueToolHelperServe(ctx context.Context, in io.Reader, out io.Writer, forw
 					continue
 				}
 			}
+			_ = params // legacy version is fixed below; no modern negotiation
 			result := issueToolInitialize()
-			// This helper intentionally implements only the legacy 2025-11-25
-			// lifecycle; it does not silently negotiate modern Discover.
-			if params.ProtocolVersion != "" && params.ProtocolVersion != issueToolMCPProtocolVersion {
-				// The client may still accept the server version in its legacy
-				// handshake. Return our explicit version so the Runtime rejects it
-				// if it requires a different protocol.
-				result.ProtocolVersion = issueToolMCPProtocolVersion
-			}
-			initialized = true
+			handshakeStarted = true
 			if err := write(issueToolRPCResponse{ID: request.ID, Result: result}); err != nil {
 				return err
 			}
 		case "notifications/initialized":
-			// Notifications never receive a response.
-			initialized = true
+			// Notifications never receive a response. This notification only
+			// completes a lifecycle that began with initialize.
+			if handshakeStarted {
+				initialized = true
+			}
 		case "ping":
 			if notification {
 				continue
@@ -320,7 +334,12 @@ func issueToolHelperServe(ctx context.Context, in io.Reader, out io.Writer, forw
 				payload, _ := json.Marshal(map[string]string{"code": "invalid_forward_result", "message": "application response had no content"})
 				response = issueToolForwardResponse{Content: []issueToolContent{{Type: "text", Text: string(payload)}}, IsError: true}
 			}
-			if err := write(issueToolRPCResponse{ID: request.ID, Result: response}); err != nil {
+			if err := write(issueToolRPCResponse{ID: request.ID, Result: response}); err == errIssueToolResponseTooLarge {
+				fallback := issueToolForwardResponse{Content: []issueToolContent{{Type: "text", Text: `{"code":"response_too_large","message":"tool response exceeded the 4 MiB frame; no retry"}`}}, IsError: true}
+				if fallbackErr := write(issueToolRPCResponse{ID: request.ID, Result: fallback}); fallbackErr != nil {
+					return fallbackErr
+				}
+			} else if err != nil {
 				return err
 			}
 		default:
