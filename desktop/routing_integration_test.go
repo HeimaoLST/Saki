@@ -54,10 +54,7 @@ func startRoutingHarnessWithHandler(t *testing.T, binary string, handler http.Ha
 		if h.closed {
 			return
 		}
-		if app.rt != nil {
-			_ = app.rt.shutdown()
-		}
-		pump.close()
+		h.shutdown(t)
 	})
 	return h
 }
@@ -465,7 +462,7 @@ func TestStoppingIssueWorkDoesNotStopConversation(t *testing.T) {
 			containsText(contactMessageTexts(ct), "gate-B result")
 	})
 	issue := ct.issueByID(issueID)
-	if issue.Status != issueStatusOpen || containsText(contactMessageTextsForWork(issue), "gate-B result") {
+	if issue.Status != issueStatusInProgress || containsText(contactMessageTextsForWork(issue), "gate-B result") {
 		t.Fatalf("B result leaked into A or A closed: %+v", issue)
 	}
 	if provider.count() != 2 {
@@ -1012,8 +1009,7 @@ func TestQuitDrainsIssueAndConversationSessions(t *testing.T) {
 			t.Fatalf("drain left active tasks: chat=%q work=%q", ct.ActiveTaskID, issue.Work.ActiveTaskID)
 		}
 	})
-	h.pump.close()
-	h.closed = true
+	h.shutdown(t)
 }
 
 func TestConversationUnreadDoesNotComeFromIssueWork(t *testing.T) {

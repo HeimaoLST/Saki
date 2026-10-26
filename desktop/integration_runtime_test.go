@@ -383,10 +383,7 @@ func startGUIHarness(t *testing.T, binary string, provider *providerFixture, mar
 		if h.closed {
 			return
 		}
-		if app.rt != nil {
-			_ = app.rt.shutdown()
-		}
-		pump.close()
+		h.shutdown(t)
 	})
 	return h
 }
@@ -409,25 +406,31 @@ func (h *guiHarness) shutdown(t *testing.T) {
 	if h.closed {
 		return
 	}
-	quit := make(chan struct{}, 1)
-	h.pump.do(func() {
-		h.app.requestQuit = func() { quit <- struct{}{} }
-		h.app.beginShutdown()
-	})
-	select {
-	case <-quit:
-	case <-time.After(15 * time.Second):
-		t.Fatal("runtime did not drain before quit")
-	}
-	if h.app.rt != nil {
-		h.pump.waitTimeout(func() bool { return h.app.runtimeStatus == runtimeStateExited }, 5*time.Second)
-	}
+	h.pump.do(func() { h.app.beginShutdown() })
+	h.pump.waitTimeout(func() bool {
+		if !h.app.quitReady {
+			return false
+		}
+		return h.app.rt == nil || h.app.runtimeStatus == runtimeStateExited
+	}, 15*time.Second)
 	h.pump.close()
 	h.closed = true
 }
 
 func (h *guiHarness) snapshot(fn func()) {
 	h.pump.do(fn)
+}
+
+func TestGUIShutdownAfterManualBeginIsIdempotent(t *testing.T) {
+	app := &appModel{}
+	pump := newUIPump(t, app)
+	h := &guiHarness{app: app, pump: pump}
+	h.pump.do(func() { h.app.beginShutdown() })
+	h.shutdown(t)
+	h.shutdown(t)
+	if !h.closed {
+		t.Fatal("idempotent harness shutdown did not finish")
+	}
 }
 
 func TestGUIAppRuntimeFlow(t *testing.T) {
@@ -837,32 +840,42 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 	})
 	run()
 	var issue *productIssue
+	var draftAfterRun, workSession, conversationSession string
+	var executionSessions []string
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
 		issue = ct.Issues[0]
-		if len(issue.Executions) != 2 {
-			t.Fatalf("executions = %+v", issue.Executions)
-		}
-		if issue.Executions[0].TaskID == issue.Executions[1].TaskID ||
-			issue.Executions[0].SessionID == "" || issue.Executions[1].MessageID == "" {
-			t.Fatalf("execution associations = %+v", issue.Executions)
-		}
-		if issue.Status != issueStatusOpen {
-			t.Fatalf("runtime completion changed issue status: %q", issue.Status)
-		}
-		if !strings.Contains(issueEvidenceText(issue), "not recorded") {
-			t.Fatalf("completion evidence = %q", issueEvidenceText(issue))
-		}
-		if ct.Draft != prompt {
-			t.Fatalf("issue run consumed a composer draft equal to its prompt: %q", ct.Draft)
-		}
-		if issue.WorkSessionID == "" || issue.WorkSessionID == ct.SessionID {
-			t.Fatalf("issue work session was not independent: work=%q conversation=%q", issue.WorkSessionID, ct.SessionID)
-		}
-		if issue.Executions[0].SessionID != issue.WorkSessionID || issue.Executions[1].SessionID != issue.WorkSessionID {
-			t.Fatalf("execution session mapping = %+v / work=%q", issue.Executions, issue.WorkSessionID)
+		draftAfterRun = ct.Draft
+		workSession, conversationSession = issue.WorkSessionID, ct.SessionID
+		for _, execution := range issue.Executions {
+			executionSessions = append(executionSessions, execution.SessionID)
 		}
 	})
+	if len(issue.Executions) != 2 {
+		t.Fatalf("executions = %+v", issue.Executions)
+	}
+	if issue.Executions[0].TaskID == issue.Executions[1].TaskID ||
+		issue.Executions[0].SessionID == "" || issue.Executions[1].MessageID == "" {
+		t.Fatalf("execution associations = %+v", issue.Executions)
+	}
+	if issue.Status != issueStatusInProgress {
+		t.Fatalf("runtime completion changed issue status: %q", issue.Status)
+	}
+	if !strings.Contains(issueEvidenceText(issue), "not recorded") {
+		t.Fatalf("completion evidence = %q", issueEvidenceText(issue))
+	}
+	if draftAfterRun != prompt {
+		t.Fatalf("issue run consumed a composer draft equal to its prompt: %q", draftAfterRun)
+	}
+	if workSession == "" || workSession == conversationSession {
+		t.Fatalf("issue work session was not independent: work=%q conversation=%q", workSession, conversationSession)
+	}
+	for _, sessionID := range executionSessions {
+		if sessionID != workSession {
+			t.Fatalf("execution session mapping = %v / work=%q", executionSessions, workSession)
+		}
+	}
+
 	if provider.count() != 2 {
 		t.Fatalf("issue runs made %d model requests, want 2", provider.count())
 	}
@@ -878,19 +891,23 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 		ct := h2.app.contacts[0]
 		return len(ct.Issues) == 1 && ct.Issues[0].Work.Loaded && len(ct.Issues[0].Executions) == 2
 	})
+	var restoredIssue *productIssue
+	var restoredDraft string
 	h2.snapshot(func() {
 		ct := h2.app.contacts[0]
-		issue = ct.Issues[0]
-		if issue.ID != issueID || issue.Status != issueStatusOpen || len(issue.Executions) != 2 {
-			t.Fatalf("restored issue = %+v", issue)
-		}
-		if issue.Executions[0].TaskID == "" || issue.Executions[1].TaskID == "" {
-			t.Fatalf("restored execution IDs = %+v", issue.Executions)
-		}
-		if ct.Draft != prompt {
-			t.Fatalf("restart issue draft = %q", ct.Draft)
-		}
+		restoredIssue = ct.Issues[0]
+		restoredDraft = ct.Draft
 	})
+	if restoredIssue.ID != issueID || restoredIssue.Status != issueStatusInProgress || len(restoredIssue.Executions) != 2 {
+		t.Fatalf("restored issue = %+v", restoredIssue)
+	}
+	if restoredIssue.Executions[0].TaskID == "" || restoredIssue.Executions[1].TaskID == "" {
+		t.Fatalf("restored execution IDs = %+v", restoredIssue.Executions)
+	}
+	if restoredDraft != prompt {
+		t.Fatalf("restart issue draft = %q", restoredDraft)
+	}
+
 	if provider.count() != beforeRestart {
 		t.Fatalf("restart issued model requests: %d -> %d", beforeRestart, provider.count())
 	}
@@ -989,7 +1006,7 @@ func TestGUIAppIssueStopKeepsItemAndExecution(t *testing.T) {
 	})
 	ct := h.app.selectedContact()
 	issue := ct.issueByID(issueID)
-	if issue == nil || issue.Status != issueStatusOpen || ct.Draft != "later issue draft" {
+	if issue == nil || issue.Status != issueStatusInProgress || ct.Draft != "later issue draft" {
 		release()
 		t.Fatalf("stop issue/draft = %+v / %q", issue, ct.Draft)
 	}
@@ -1313,11 +1330,88 @@ func TestGUIAppRejectedComposerSendKeepsInFlightIssueAssociation(t *testing.T) {
 	if execution.TaskID == "" || ct.Issues[0].Work.pendingExecutionID != "" || execution.ID != executionID {
 		t.Fatalf("accepted task lost its issue attribution: %+v pending=%q", execution, ct.Issues[0].Work.pendingExecutionID)
 	}
-	if len(ct.Issues[0].Executions) != 1 || ct.Issues[0].Status != issueStatusOpen || ct.Draft != "ordinary composer attempt" {
+	if len(ct.Issues[0].Executions) != 1 || ct.Issues[0].Status != issueStatusInProgress || ct.Draft != "ordinary composer attempt" {
 		t.Fatalf("issue/draft after in-flight rejection = %+v / %q", ct.Issues[0], ct.Draft)
 	}
 	if provider.count() != 1 {
 		t.Fatalf("in-flight issue produced %d provider requests, want 1", provider.count())
 	}
 	h.shutdown(t)
+}
+
+func TestGUIShutdownWaitsForFinalOwnerCallback(t *testing.T) {
+	for _, firstIndex := range []int{0, 1} {
+		firstIndex := firstIndex
+		t.Run(fmt.Sprintf("execute_collected_%d_first", firstIndex+1), func(t *testing.T) {
+			binary := requireRuntimeBinary(t)
+			h := startGUIHarness(t, binary, &providerFixture{ToolFirst: false}, fmt.Sprintf("shutdown-barrier-%d", firstIndex))
+			h.pump.wait(func() bool {
+				return h.app.runtimeStatus == runtimeStateReady && h.app.runtimeCapabilitiesLoaded
+			})
+			callbacks := make(chan func(), 8)
+			h.pump.do(func() {
+				h.app.setUIHook(func(fn func()) { callbacks <- fn })
+			})
+			var quitCount int
+			h.pump.do(func() {
+				h.app.requestQuit = func() { quitCount++ }
+				h.app.beginShutdown()
+			})
+
+			// finish() closes done before OnExit, but finishShutdown can enqueue the
+			// final callback before OnExit. Collect both owner callbacks without
+			// assuming their order; execute only one first.
+			var callbacksSeen [2]func()
+			for i := 0; i < len(callbacksSeen); i++ {
+				select {
+				case callbacksSeen[i] = <-callbacks:
+				case <-time.After(15 * time.Second):
+					t.Fatalf("shutdown owner callback %d did not arrive", i+1)
+				}
+			}
+			h.pump.do(callbacksSeen[firstIndex])
+			var exited, ready bool
+			h.pump.do(func() {
+				exited = h.app.runtimeStatus == runtimeStateExited
+				ready = h.app.quitReady
+			})
+			if exited == ready {
+				t.Fatalf("after first owner callback, expected exactly one completion fact: exited=%v quitReady=%v", exited, ready)
+			}
+			t.Logf("first executed owner point: exited=%v quitReady=%v", exited, ready)
+
+			cleanupDone := make(chan struct{})
+			go func() {
+				h.shutdown(t)
+				close(cleanupDone)
+			}()
+			select {
+			case <-cleanupDone:
+				t.Fatal("cleanup completed before both owner callbacks were applied")
+			default:
+			}
+			h.pump.do(func() {
+				callbacksSeen[1-firstIndex]()
+				exited = h.app.runtimeStatus == runtimeStateExited
+				ready = h.app.quitReady
+			})
+			select {
+			case <-cleanupDone:
+			case <-time.After(5 * time.Second):
+				t.Fatal("cleanup did not complete after both owner callbacks")
+			}
+			if !exited || !ready || quitCount != 1 || !h.closed {
+				t.Fatalf("final owner state: exited=%v quitReady=%v quitCount=%d closed=%v", exited, ready, quitCount, h.closed)
+			}
+			h.shutdown(t)
+			if quitCount != 1 {
+				t.Fatalf("idempotent cleanup changed quit callback count: %d", quitCount)
+			}
+			select {
+			case extra := <-callbacks:
+				t.Fatalf("unexpected callback after owner completion: %p", extra)
+			default:
+			}
+		})
+	}
 }

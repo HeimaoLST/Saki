@@ -143,12 +143,17 @@ type appModel struct {
 	settingsDraft   profileDraft
 	settingsError   bool
 
-	issueFormOpen     bool
-	issueGoal         string
-	issueRequirements string
-	issueFormError    string
-	focusIssueGoal    bool
-	focusIssueNew     bool
+	issueFormOpen          bool
+	issueFormEditingID     string
+	issueGoal              string
+	issueRequirements      string
+	issueFormError         string
+	focusIssueGoal         bool
+	focusIssueNew          bool
+	issueFilter            string
+	issueActionError       string
+	issueRequirementDrafts map[string]*string
+	issueCompletionDrafts  map[string]*string
 
 	// Runtime mode. demo keeps the local fixture path for tests/screenshots;
 	// the shipped app is runtime-backed.
@@ -190,6 +195,14 @@ type appModel struct {
 	connectionTestCancel   func()
 	startupDetailsOpen     bool
 	shutdownDrainStarted   bool
+
+	modelForm         *modelSelection
+	modelOpenToken    int
+	modelPanelMessage string
+	modelPanelError   string
+	modelOpActive     bool
+	modelOpSessionID  string
+	modelRecovery     map[string]modelRecoveryState
 
 	// Layout is native runtime state, not product configuration. Width is
 	// updated from the window so the same view can choose three-pane,
@@ -457,11 +470,18 @@ func (a *appModel) saveSettings() bool {
 }
 
 func (a *appModel) closeAux() {
+	if a.aux == "model" && a.modelOpActive {
+		return
+	}
 	switch a.aux {
 	case "settings":
 		a.focusSettings = true
 	case "sources":
 		a.focusHistory = false
+	case "model":
+		a.modelForm = nil
+		a.modelPanelMessage = ""
+		a.modelPanelError = ""
 	}
 	a.aux = ""
 }

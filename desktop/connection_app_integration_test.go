@@ -279,7 +279,7 @@ func TestConnectionGUISaveDuringIssueAndReloadFailurePreservesHelper(t *testing.
 		if h.app.rt == original || h.app.runtimeMaxActiveTasks != 3 {
 			t.Error("successful reload did not install the candidate and reread real capacity")
 		}
-		if h.app.contacts[0].issueByID(issueID).Requirements != "Preserve these requirements" {
+		if issueRequirementsText(h.app.contacts[0].issueByID(issueID)) != "Preserve these requirements" {
 			t.Error("reload changed issue requirements")
 		}
 	})
@@ -330,8 +330,7 @@ func TestConnectionGUIQuitWaitsForTestCleanup(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("connection test cancellation did not allow quit")
 	}
-	h.pump.close()
-	h.closed = true
+	h.shutdown(t)
 	release()
 }
 
