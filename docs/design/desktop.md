@@ -575,7 +575,7 @@ type resolvedTheme struct {
 
 ## #153 事项生命周期、要求核对与归档（实现事实，2026-10-25）
 
-代码来源：`agent/gui/153-issue-lifecycle`，base `885fb1f`（#116 配置组合），本阶段代码 `23929d9`。只描述 #153 范围，不等于完整 MVP；#142/#154、看板、日程和跨人转交未随本阶段完成。设置模块仍由 #115/#116 负责，本单未改 `connection_app.go` 或 `runtime.go`。
+代码来源：`agent/gui/153-issue-lifecycle`，base `885fb1f`（#116 配置组合），生产代码最终为 `817d9c9`（生命周期实现 `23929d9`，之后仅有归档标题/截图测试整理）。只描述 #153 范围，不等于完整 MVP；#142/#154、看板、日程和跨人转交未随本阶段完成。设置模块仍由 #115/#116 负责，本单未改 `connection_app.go` 或 `runtime.go`。
 
 - **状态**：事项使用持久化 `not_started / in_progress / waiting_user / needs_attention / completed / canceled`；`Archived` 是独立组织状态，不并入生命周期。旧 v1-v3 的 `open` 在加载时收敛为对应初始/进行状态；运行时 completed 不自动把 issue 设为 completed。
 - **持久化**：store 升到 v4，写入结构化 `requirement_items`、`requirements_revision`、`archived`、execution 的 `requirements_revision`；v1-v3 仍可读。旧整段 `requirements` 只在迁移/序列化边界解析，运行时 live 状态只有 `productIssue.Requirements []*issueRequirement`，不长期双写两套真相。新版本写入后旧 app 明确拒绝，不静默覆盖。
@@ -585,5 +585,6 @@ type resolvedTheme struct {
 - **Stop 与 Cancel**：Stop 只结束当前真实 execution，issue 不进入 canceled/completed；Cancel issue 是独立产品动作，保留 execution history。若用户在派发重试等待期间 Cancel issue，先把 Canceled 持久化并记录进程内 cancel-after-accept 意图；TaskID 出现后由实际 owner contact/issue 定向 Stop，不依赖 UI 当前选中，不把产品 Canceled 伪称 Runtime 终态，也不自动重发。
 - **恢复与保护**：重启/历史恢复会从最新真实 execution 收敛 in_progress/needs_attention；旧 execution 不覆盖新 active，也不覆盖用户显式 completed/canceled/waiting。归档只隐藏分类、不取消 active task、不丢 WorkSession/execution；Apply 使用既有 activeTaskCount/issueRunBlocked 扫描全部（含 archived）事项。未知执行保持核查/确认入口，不自动重试。
 - **UI**：状态筛选提供 Active/Waiting/Attention/Done/Canceled/Archived，归档恢复、详情、编辑要求、逐项证据与动作入口共用同一事实；右侧 Stop issue task 与 composer Stop conversation 分离；长内容在 320/360/720/960/1040/宽屏下使用垂直滚动，不增加横向溢出。旧 execution 显示 sent snapshot/revision，而不是用当前要求冒充旧提交。
-- **验证**：本阶段完整 `go test -race ./...` 为 203 PASS / 0 FAIL / 8 SKIP（其中在线 smoke 1、环境 preview 7；本地真实 helper 使用 #116 核验 SHA `3c19b03f…`，不连接付费在线模型）。真实 process 覆盖 Stop/Continue、取消 pending acceptance、重启、归档 active、策略/owner 与失败回滚；headless 截图 30 张，light/dark，960/1040/1380 wide/900 overlay/320/360，另含 completed/dual working/unknown。原生窗口、CUA、输入法和真实应用内完整回归尚未因此宣称通过。
+- **验证**：本阶段完整 `go test -race ./...` 为 203 PASS / 0 FAIL / 8 SKIP（其中在线 smoke 1、环境 preview 7；本地真实 helper 使用 #116 核验 SHA `3c19b03f…`，不连接付费在线模型）。真实 process 覆盖 Stop/Continue、取消 pending acceptance、重启、归档 active、策略/owner 与失败回滚；headless 截图 50 张，light/dark，960/1040/1380 wide/900 overlay/320/360，另含 completed/dual working/unknown/archive/edit/long content。原生窗口、CUA、输入法和真实应用内完整回归尚未因此宣称通过。
+- **退出间歇**：曾有一次完整 race 在 `TestIndependentIssueWorkAndConversationCapacityTwo` 的 quit drain 处挂起（父级 SIGQUIT 收栈，原 `race-final.log` 与栈保留）；之后同用例 `-count=5` 与多轮完整 race 通过，父级 885 基线也有独立 PASS，尚不能宣称 Runtime 基线 bug 或已修复。该失败未被抹去，#160 修复不被当作退出已过；后续组合复验才作结论。
 - **边界**：设置保存/Apply 仍由 #116 负责；#154 后续必须复用这里的事项动作和事实，不另造生命周期；#142 的补充递交不在本单。用户判断可作完成依据，但不是自动完成；无依据要求保持未核实。
