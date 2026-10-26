@@ -133,11 +133,10 @@ func issueToolDefinitions() []issueToolDefinition {
 			InputSchema: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"scope":             stringProp("Opaque app-issued work scope token; never invent or change it."),
-					"text":              stringProp("The missing-information question for the user."),
-					"expected_revision": map[string]any{"type": "integer", "minimum": 1},
+					"scope": stringProp("Opaque app-issued work scope token; never invent or change it."),
+					"text":  stringProp("The missing-information question for the user."),
 				},
-				"required": []string{"scope", "text", "expected_revision"},
+				"required": []string{"scope", "text"},
 			},
 		},
 		{

@@ -1160,7 +1160,6 @@ type issueToolWorkWaitProvider struct {
 	work         int
 	conversation int
 	issueID      string
-	revision     int
 	questionRef  string
 }
 
@@ -1194,14 +1193,14 @@ func (p *issueToolWorkWaitProvider) handler() http.HandlerFunc {
 		if isConversation {
 			p.conversation++
 		}
-		issueID, revision, questionRef := p.issueID, p.revision, p.questionRef
+		issueID, questionRef := p.issueID, p.questionRef
 		scope := issueToolTestScope(string(body))
 		p.mu.Unlock()
 		var response any
 		switch {
 		case isWork && workStep == 0:
 			response = issueResultFunctionCall("issue_wait", "work-wait", map[string]any{
-				"scope": scope, "text": "Which environment should I use?", "expected_revision": revision,
+				"scope": scope, "text": "Which environment should I use?",
 			})
 		case isWork:
 			response = issueResultPageFinal("A-WORK-SECOND")
@@ -1238,7 +1237,12 @@ func TestIssueToolWorkWaitPausesAndAnswerContinues(t *testing.T) {
 		}
 		ct := h.app.selectedContact()
 		issueID = ct.SelectedIssueID
-		revision = ct.issueByID(issueID).RequirementsRevision
+		issue := ct.issueByID(issueID)
+		if issue == nil || !h.app.editIssueFor(ct, issueID, issue.Goal, issueRequirementsText(issue)+"\nWORK-WAIT-REQ-2") {
+			setupErr = "could not raise requirements revision: " + h.app.issueFormError
+			return
+		}
+		revision = issue.RequirementsRevision
 		contactID = ct.ID
 		if !h.app.runIssue(issueID) {
 			setupErr = h.app.issueFormError
@@ -1248,7 +1252,7 @@ func TestIssueToolWorkWaitPausesAndAnswerContinues(t *testing.T) {
 		t.Fatal(setupErr)
 	}
 	provider.mu.Lock()
-	provider.issueID, provider.revision = issueID, revision
+	provider.issueID = issueID
 	provider.mu.Unlock()
 	t.Logf("stage: A work dispatched; waiting for work wait/cancel")
 	h.pump.wait(func() bool {
@@ -1355,5 +1359,89 @@ func TestIssueToolWorkWaitPausesAndAnswerContinues(t *testing.T) {
 	})
 	if restartQuestion == nil || restartQuestion.State != issueQuestionAnswered || restartQuestion.AnswerSupplementID == "" {
 		t.Fatalf("restart work question = %+v", restartQuestion)
+	}
+}
+
+func TestIssueToolReleaseCallbackRunsBeforeQuit(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	provider := &issueToolSelectionProvider{}
+	h := startIssueToolTestHarness(t, binary, provider.handler())
+	var contactID, issueID string
+	var setupErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if !h.app.createIssue("RELEASE-GOAL", "") {
+			setupErr = h.app.issueFormError
+			return
+		}
+		issueID, contactID = ct.SelectedIssueID, ct.ID
+		session, err := h.app.rt.createConfiguredSession(h.root, "")
+		if err != nil {
+			setupErr = err.Error()
+			return
+		}
+		issue := ct.issueByID(issueID)
+		issue.WorkSessionID = session.SessionID
+		issue.Work.Loaded = true
+		issue.Work.SendState = sendIdle
+		if err := h.app.persist(); err != nil {
+			setupErr = err.Error()
+		}
+	})
+	if setupErr != "" {
+		t.Fatal(setupErr)
+	}
+	originalHook := h.app.getUIHook()
+	held := make(chan func(), 1)
+	h.pump.do(func() { h.app.setUIHook(func(fn func()) { held <- fn }) })
+	h.pump.do(func() {
+		ct := h.app.contactByID(contactID)
+		h.app.releaseIssueWorkSession(ct, ct.issueByID(issueID))
+	})
+	var releaseCallback func()
+	select {
+	case releaseCallback = <-held:
+	case <-time.After(10 * time.Second):
+		h.pump.do(func() { h.app.setUIHook(originalHook) })
+		t.Fatal("release callback did not reach the UI queue")
+	}
+	var releaseStateErr string
+	h.pump.do(func() {
+		if h.app.issueToolReleaseInFlight != 1 {
+			releaseStateErr = fmt.Sprintf("release in-flight count before callback = %d", h.app.issueToolReleaseInFlight)
+			return
+		}
+		if h.app.contactByID(contactID).issueByID(issueID).Work.Released {
+			releaseStateErr = "released flag set before final release callback"
+		}
+	})
+	if releaseStateErr != "" {
+		t.Fatal(releaseStateErr)
+	}
+	var order []string
+	var shutdownStateErr string
+	h.pump.do(func() {
+		h.app.requestQuit = func() { order = append(order, "quit") }
+		h.app.beginShutdown()
+		if h.app.quitReady || len(order) != 0 {
+			shutdownStateErr = "shutdown completed before held release callback"
+		}
+		h.app.setUIHook(originalHook)
+	})
+	if shutdownStateErr != "" {
+		t.Fatal(shutdownStateErr)
+	}
+	h.pump.do(func() {
+		releaseCallback()
+		order = append(order, "release-callback")
+	})
+	h.pump.wait(func() bool { return h.app.quitReady })
+	if h.app.issueToolReleaseInFlight != 0 || !h.app.contactByID(contactID).issueByID(issueID).Work.Released {
+		t.Fatalf("release state after callback = inFlight=%d released=%v", h.app.issueToolReleaseInFlight, h.app.contactByID(contactID).issueByID(issueID).Work.Released)
+	}
+	if len(order) < 2 || order[len(order)-1] != "quit" || order[len(order)-2] != "release-callback" {
+		t.Fatalf("release/quit callback order = %v", order)
 	}
 }

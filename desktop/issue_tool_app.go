@@ -1216,15 +1216,20 @@ func (a *appModel) issueToolHandleWorkWait(_ context.Context, raw json.RawMessag
 	if err != nil || text == "" {
 		return issueToolErrorResponse("invalid_arguments", "text is required")
 	}
-	var args struct {
-		ExpectedRevision *int `json:"expected_revision"`
-	}
-	if err := json.Unmarshal(raw, &args); err != nil || args.ExpectedRevision == nil || *args.ExpectedRevision < 1 {
-		return issueToolErrorResponse("invalid_arguments", "expected_revision is required")
-	}
 	var scope IssueToolScope
+	var revision int
 	var resolveErr error
-	a.runOnUI(func() { scope, resolveErr = a.issueToolScopeByRef(scopeRef) })
+	a.runOnUI(func() {
+		scope, resolveErr = a.issueToolScopeByRef(scopeRef)
+		if resolveErr != nil {
+			return
+		}
+		ct := a.contactByID(scope.ContactID)
+		_, execution := ct.executionByID(scope.WorkExecutionID)
+		if execution != nil {
+			revision = execution.RequirementsRevision
+		}
+	})
 	if resolveErr != nil {
 		return issueToolErrorResponse("scope_denied", resolveErr.Error())
 	}
@@ -1233,7 +1238,10 @@ func (a *appModel) issueToolHandleWorkWait(_ context.Context, raw json.RawMessag
 	}
 	request := IssueToolActionRequest{
 		ScopeRef: scope.Ref, Action: issueToolActionWait, IssueID: scope.WorkIssueID,
-		ExpectedRevision: args.ExpectedRevision, Text: text,
+		ExpectedRevision: issueToolRevisionPointer(revision), Text: text,
+	}
+	if revision < 1 {
+		return issueToolErrorResponse("revision_unavailable", "the captured work execution has no requirements revision")
 	}
 	if err := request.Validate(scope); err != nil {
 		if toolErr, ok := err.(*IssueToolError); ok {
@@ -1287,7 +1295,12 @@ func (a *appModel) issueToolWorkWait(scope IssueToolScope, request IssueToolActi
 			return
 		}
 		if request.ExpectedRevision == nil || *request.ExpectedRevision != issue.RequirementsRevision {
-			callErr = &IssueToolError{Code: "revision_mismatch", Message: "issue requirements changed; reload before waiting", CurrentRevision: issueToolRevisionPointer(issue.RequirementsRevision)}
+			if issue.Status != issueStatusCanceled && issue.Status != issueStatusCompleted && !issue.Archived {
+				issue.Status = issueStatusNeedsAttention
+				issue.UpdatedAt = nowMillis()
+				_ = a.persist()
+			}
+			callErr = &IssueToolError{Code: "revision_mismatch", Message: "the captured work requirement revision is stale; mark needs attention and do not retry", CurrentRevision: issueToolRevisionPointer(issue.RequirementsRevision)}
 			return
 		}
 		text := strings.TrimSpace(request.Text)
