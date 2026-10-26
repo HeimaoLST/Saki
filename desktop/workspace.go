@@ -390,6 +390,11 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 			ui.Text(c, "Issue · "+issue.Goal).FontSize(13).FontWeight(600).TextColor(t.Text).MaxLines(2)
 			ui.Spacer(c)
+			if issue.WorkSessionID != "" {
+				ui.Button(c, "Issue model").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+					a.openSessionModel(issue.WorkSessionID, "work", issue.Goal)
+				})
+			}
 			ui.Text(c, issueStatusLabel(issue)).FontSize(11).TextColor(a.issueStatusColor(t, issue))
 		})
 		if a.issueActionError != "" {

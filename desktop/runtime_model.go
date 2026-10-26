@@ -1626,6 +1626,9 @@ func (a *appModel) canSend(ct *contact) string {
 	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
 		return "Runtime is not ready."
 	}
+	if status := a.modelSessionStatus(ct.SessionID); status != "" {
+		return status
+	}
 	if ct.SessionID != "" && !ct.Loaded {
 		return "This contact is still loading its history."
 	}
@@ -1654,6 +1657,9 @@ func (a *appModel) canStartIssue(ct *contact, issue *productIssue) string {
 	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
 		return "Runtime is not ready."
 	}
+	if status := a.modelSessionStatus(issue.WorkSessionID); status != "" {
+		return status
+	}
 	if sessionBusy(issue.Work.SendState, issue.Work.ActiveTaskID) {
 		return "This issue already has an active execution."
 	}
@@ -1679,6 +1685,10 @@ func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *i
 	}
 	if a.connectionApplying {
 		issue.Work.SendError = "Connection settings are being applied; wait for the new helper to become ready."
+		return false
+	}
+	if status := a.modelSessionStatus(issue.WorkSessionID); status != "" {
+		issue.Work.SendError = status
 		return false
 	}
 	if a.rt == nil || a.runtimeStatus != runtimeStateReady {

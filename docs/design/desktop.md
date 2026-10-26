@@ -1,6 +1,6 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-25。本文保留各阶段的实现与验证记录；配置以末尾 **#116 首用配置** 为当前候选事实，阅读与独立工作会话分别见 #113/#118。早期原生窗口证据只适用于其注明的包，不代表新配置候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
+更新日期：2026-10-26。本文保留各阶段的实现与验证记录；连接配置见末尾 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
 
 [previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。当前代码仍使用 Main/Dawn 派生色；#92 设计目标是用户确认的 Moon/Dawn，但本轮只交付设计，不代表换色功能已实现。concurrency、`search_history`／`read_history`、附件、模型切换等仍是后续独立任务，不在首轮。
 
@@ -588,3 +588,18 @@ type resolvedTheme struct {
 - **验证**：本阶段完整 `go test -race ./...` 为 203 PASS / 0 FAIL / 8 SKIP（其中在线 smoke 1、环境 preview 7；本地真实 helper 使用 #116 核验 SHA `3c19b03f…`，不连接付费在线模型）。真实 process 覆盖 Stop/Continue、取消 pending acceptance、重启、归档 active、策略/owner 与失败回滚；headless 截图 50 张，light/dark，960/1040/1380 wide/900 overlay/320/360，另含 completed/dual working/unknown/archive/edit/long content。原生窗口、CUA、输入法和真实应用内完整回归尚未因此宣称通过。
 - **退出间歇**：曾有一次完整 race 在 `TestIndependentIssueWorkAndConversationCapacityTwo` 的 quit drain 处挂起（父级 SIGQUIT 收栈，原 `race-final.log` 与栈保留）；之后同用例 `-count=5` 与多轮完整 race 通过，父级 885 基线也有独立 PASS，尚不能宣称 Runtime 基线 bug 或已修复。该失败未被抹去，#160 修复不被当作退出已过；后续组合复验才作结论。
 - **边界**：设置保存/Apply 仍由 #116 负责；#154 后续必须复用这里的事项动作和事实，不另造生命周期；#142 的补充递交不在本单。用户判断可作完成依据，但不是自动完成；无依据要求保持未核实。
+
+## #115 会话模型选择（候选实现，2026-10-26）
+
+代码来源：`agent/gui/115-session-model`，在#116固定`885fb1f`上普通合入#153固定`1700f8d`与Runtime #160固定`722de4b`。这是会话配置消费能力，不改变Rust公共协议、不迁移联系人store，也不代表整套Nagi MVP已交付。
+
+- **作用对象**：Conversation model读取联系人的持续对话`SessionID`；Issue model读取选中事项的`WorkSessionID`。选择器显示Runtime返回的有效模型、容量、来源、revision和目标，更新只用于该会话的下一次任务。旧execution快照、消息历史和联系人ID不改写；宿主默认值继续由#116管理。
+- **未创建上下文**：打开或取消模型面板不创建会话。界面说明新上下文使用已应用的Connection settings默认值；已有会话才能在这里独立切换，不把默认值冒充旧会话的生效值。
+- **单一配置来源**：沿既有config DTO消费`model.list`、`session.config.get/update`。provider model ID与catalog容量ID分别提交；目录/宿主声明不保证endpoint支持该模型。没有连接身份时不猜测默认连接，没有目录时可显式输入容量；服务端校验保留其错误原因。
+- **提交与取消**：以读取快照的revision提交一次更新，成功返回值才标为生效。busy、revision冲突、非法容量或原生续接不兼容均保留历史与可修正草稿，不重建联系人绕过错误。取消、Escape或关闭面板不提交修改；写入在途时关闭不能绕过操作保护。
+- **不确定结果**：任何更新失败先读取一次实际配置，不自动重发。读回成功显示实际值并保留原错误；读回失败只显示Last read，关闭面板也不解除该会话的发送限制。成功重读可解除待刷新状态；`commit_unknown`需要显式Release/Load恢复，单纯Refresh不解除限制，也不会自动提交用户修正草稿。
+- **并发与退出**：另一会话的活动任务不阻止当前空闲会话切换。正在更新/恢复的目标暂停接纳新任务，其他目标保持独立；Apply helper重载等待操作完成，Quit沿已有退出路径等待更新/读回收尾。异步读取按面板代次与helper身份归属，旧目标迟到结果不覆盖新面板。
+- **#117接点**：已有`sendTask`增加可选`runtimeContextInput{Name,Text}`，非空只进入`params.context`一次；旧两参调用兼容。资料快照/存储/递交行为仍由#117交付，不属于本单完成范围。
+- **验证边界**：`model_selection_integration_test.go`验证真实双协议模型请求、目录容量与provider ID分离、失败保持、丢回复和显式Release/Load；`model_selection_app_integration_test.go`从实际app视图/动作验证对话与事项隔离、重启、拒绝/冲突/取消、未知恢复、退出互锁及逆序读取。故障代理在真实Rust提交后丢弃或替换指定回复；`commit_unknown`代理只验证GUI消费语义，Runtime磁盘故障由其既有测试覆盖。使用固定#160 binary与本地受控HTTP provider，不声称任意外部模型或真实付费模型已验证。
+- **本机组合结果**：以#160 binary（SHA256 `c738c63374c0222b8e4397a15e1fb4109c8ff6bf34b89b8219cdecd7e0fa5516`）执行全部Go race并开启预览，240 PASS / 0 FAIL / 3 opt-in SKIP，136.672s；`go vet`、GUI build、diff检查通过。实际app明暗960/1280预览24张，选择器560/320预览8张；这些是受控数据下的headless页面。此前一次Chat子用例等待/quit超时未稳定复现，原日志保留，不能将本次通过写成已修复所有退出问题。
+- **原生限制**：2026-10-26再次读取CUA状态仍返回`Sky Computer Use native pipe startup failed`，未取得本候选原生点击/键盘/输入法证据。headless布局与真实进程消费者验收独立记录，不替代#114原生验收。最终验证SHA、门禁和日志随PR165/issue #115更新；尚未集成dev不标done。

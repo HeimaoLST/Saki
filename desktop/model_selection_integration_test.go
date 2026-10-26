@@ -117,6 +117,7 @@ func TestModelSelectionProxyHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	var updates sync.Map
+	var reads sync.Map
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
 		scanner.Buffer(make([]byte, 65536), runtimeMaxLine)
@@ -135,6 +136,9 @@ func TestModelSelectionProxyHelper(t *testing.T) {
 				_, _ = file.WriteString("update\n")
 				_ = file.Close()
 			}
+			if request.Method == "session.config.get" {
+				reads.Store(request.ID, true)
+			}
 			if _, err := input.Write(append(append([]byte(nil), scanner.Bytes()...), '\n')); err != nil {
 				break
 			}
@@ -144,6 +148,12 @@ func TestModelSelectionProxyHelper(t *testing.T) {
 	scanner := bufio.NewScanner(output)
 	scanner.Buffer(make([]byte, 65536), runtimeMaxLine)
 	dropped := false
+	failedRead := false
+	mode := os.Getenv("SAKI_MODEL_PROXY_MODE")
+	writeError := func(id, code string) {
+		data, _ := json.Marshal(map[string]any{"version": runtimeProtocolVersion, "type": "response", "id": id, "error": map[string]string{"code": code, "message": "controlled reply failure after the real update"}})
+		_, _ = os.Stdout.Write(append(data, '\n'))
+	}
 	for scanner.Scan() {
 		var response struct {
 			ID string `json:"id"`
@@ -151,6 +161,14 @@ func TestModelSelectionProxyHelper(t *testing.T) {
 		_ = json.Unmarshal(scanner.Bytes(), &response)
 		if _, ok := updates.Load(response.ID); ok && !dropped {
 			dropped = true
+			if mode == "commit_unknown" {
+				writeError(response.ID, "commit_unknown")
+			}
+			continue
+		}
+		if _, ok := reads.Load(response.ID); ok && dropped && !failedRead && mode == "fail_readback" {
+			failedRead = true
+			writeError(response.ID, "io_error")
 			continue
 		}
 		_, _ = os.Stdout.Write(append(append([]byte(nil), scanner.Bytes()...), '\n'))

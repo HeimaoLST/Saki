@@ -196,6 +196,14 @@ type appModel struct {
 	startupDetailsOpen     bool
 	shutdownDrainStarted   bool
 
+	modelForm         *modelSelection
+	modelOpenToken    int
+	modelPanelMessage string
+	modelPanelError   string
+	modelOpActive     bool
+	modelOpSessionID  string
+	modelRecovery     map[string]modelRecoveryState
+
 	// Layout is native runtime state, not product configuration. Width is
 	// updated from the window so the same view can choose three-pane,
 	// compact, or overlay presentation.
@@ -462,11 +470,18 @@ func (a *appModel) saveSettings() bool {
 }
 
 func (a *appModel) closeAux() {
+	if a.aux == "model" && a.modelOpActive {
+		return
+	}
 	switch a.aux {
 	case "settings":
 		a.focusSettings = true
 	case "sources":
 		a.focusHistory = false
+	case "model":
+		a.modelForm = nil
+		a.modelPanelMessage = ""
+		a.modelPanelError = ""
 	}
 	a.aux = ""
 }
