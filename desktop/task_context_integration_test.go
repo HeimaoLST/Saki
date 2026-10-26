@@ -11,6 +11,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -1095,76 +1096,119 @@ func TestTaskContextGUIAcceptanceEditsPreserveNewerContextAndOwner(t *testing.T)
 	binary := requireRuntimeBinary(t)
 	provider := &providerFixture{}
 	h := startGUIHarness(t, binary, provider, "task-context-accept-edit-117")
+	var gate chan struct{}
+	var forwardDone chan struct{}
 	defer func() {
+		if gate != nil {
+			select {
+			case <-gate:
+			default:
+				close(gate)
+			}
+		}
 		if !h.closed {
 			h.shutdown(t)
 		}
+		if forwardDone != nil {
+			<-forwardDone
+		}
 	}()
+	var setupErr error
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
 		ct.Draft = "Establish the conversation."
 		if !h.app.sendCurrent() {
-			t.Fatalf("establish send: %s", ct.SendError)
+			setupErr = fmt.Errorf("establish send: %s", ct.SendError)
 		}
 	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
 	h.pump.wait(func() bool {
 		ct := h.app.selectedContact()
 		return ct.LastTaskID != "" && ct.ActiveTaskID == "" && ct.SendState == sendIdle
 	})
+
+	callbacks := make(chan func(), 128)
+	captured := make(chan struct{}, 1)
+	gate = make(chan struct{})
+	forwardDone = make(chan struct{})
+	go func() {
+		defer close(forwardDone)
+		for {
+			select {
+			case fn := <-callbacks:
+				select {
+				case <-gate:
+					select {
+					case h.pump.q <- fn:
+					case <-h.pump.done:
+						return
+					}
+				case <-h.pump.done:
+					return
+				}
+			case <-h.pump.done:
+				return
+			}
+		}
+	}()
+
 	var ownerID, firstID, secondID string
-	manual := make(chan func(), 64)
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
 		ownerID = ct.ID
 		first, err := ct.Context.AddSnippet("First", "old context")
 		if err != nil {
-			t.Fatal(err)
+			setupErr = err
+			return
 		}
 		second, err := ct.Context.AddSnippet("Second", "submitted sibling")
 		if err != nil {
-			t.Fatal(err)
+			setupErr = err
+			return
 		}
 		firstID, secondID = first.ID, second.ID
 		ct.Draft = "acceptance prompt with stable context"
-		h.app.setUIHook(func(fn func()) { manual <- fn })
+		h.app.setUIHook(func(fn func()) {
+			callbacks <- fn
+			select {
+			case captured <- struct{}{}:
+			default:
+			}
+		})
 		if !h.app.sendCurrent() {
-			t.Fatalf("acceptance send: %s", ct.SendError)
+			setupErr = fmt.Errorf("acceptance send: %s", ct.SendError)
 		}
 	})
-	var firstCallback func()
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
 	select {
-	case firstCallback = <-manual:
+	case <-captured:
 	case <-time.After(15 * time.Second):
 		t.Fatal("acceptance callback did not arrive")
 	}
+
 	var edited *taskContextItem
 	h.pump.do(func() {
-		ct := h.app.selectedContact()
+		ct := h.app.contactByID(ownerID)
 		item, err := ct.Context.Edit(firstID, "First", "newer context")
 		if err != nil {
-			t.Fatal(err)
+			setupErr = err
+			return
 		}
 		edited = &item
 		if _, err := ct.Context.AddSnippet("Third", "new during flight"); err != nil {
-			t.Fatal(err)
+			setupErr = err
+			return
 		}
 		h.app.addDefaultContact()
 	})
-	h.pump.do(func() {
-		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
-		if firstCallback != nil {
-			firstCallback()
-			firstCallback = nil
-		}
-		for {
-			select {
-			case fn := <-manual:
-				fn()
-			default:
-				return
-			}
-		}
-	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	close(gate)
 	h.pump.wait(func() bool {
 		ct := h.app.contactByID(ownerID)
 		return ct != nil && ct.ActiveTaskID == "" && ct.SendState == sendIdle && len(ct.Messages) > 0

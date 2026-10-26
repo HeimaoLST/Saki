@@ -412,7 +412,10 @@ func TestTaskContextUnsavedEditorSurvivesContactSwitch(t *testing.T) {
 func TestTaskContextAppPreviewScreenshots(t *testing.T) {
 	dir := os.Getenv("SAKI_PREVIEW_DIR")
 	if dir == "" {
-		t.Skip("set SAKI_PREVIEW_DIR to write headless app previews")
+		dir = t.TempDir()
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "release-notes.txt")
 	if err := os.WriteFile(path, []byte("Exact saved file text.\nSecond line with Unicode: 你好 — café.\n"), 0o600); err != nil {
@@ -594,7 +597,10 @@ func TestTaskContextStoreV5ReadsOldV4WithoutContext(t *testing.T) {
 func TestTaskContextAppIssueAndReadOnlyPreviewScreenshots(t *testing.T) {
 	dir := os.Getenv("SAKI_PREVIEW_DIR")
 	if dir == "" {
-		t.Skip("set SAKI_PREVIEW_DIR to write headless app previews")
+		dir = t.TempDir()
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
 	}
 	write := func(scene string) {
 		for _, dark := range []bool{false, true} {

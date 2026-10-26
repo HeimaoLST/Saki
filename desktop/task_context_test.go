@@ -483,7 +483,7 @@ func TestTaskContextEmptyFilePreviewCopyAndRefresh(t *testing.T) {
 func TestTaskContextHeadlessPreviews(t *testing.T) {
 	dir := os.Getenv("SAKI_PREVIEW_DIR")
 	if dir == "" {
-		t.Skip("set SAKI_PREVIEW_DIR to write component previews")
+		dir = t.TempDir()
 	}
 	path := filepath.Join(t.TempDir(), "interface-notes.txt")
 	if err := os.WriteFile(path, []byte("Compact cards keep the exact saved text.\nRefresh is explicit; later file changes stay out of the snapshot.\n"), 0o600); err != nil {
