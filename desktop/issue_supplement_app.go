@@ -306,30 +306,25 @@ func supplementHistoryMatches(execution *issueExecution, records []historyRecord
 	if execution == nil || execution.Prompt == "" || execution.TaskID == "" || execution.MessageID == "" {
 		return false
 	}
-	for index := len(records) - 1; index >= 0; index-- {
-		rec := records[index].Record
-		if rec.Type != "messages" || rec.TaskID != execution.TaskID || rec.MessageID != execution.MessageID {
+	// Runtime JournalRecord::Messages has no task/message IDs; parseHistory
+	// carries the ownership from TaskStarted through Messages to TaskFinished.
+	projection := parseHistory(execution.SessionID, records, nil)
+	for index := len(projection.messages) - 1; index >= 0; index-- {
+		message := projection.messages[index]
+		if message.TaskID != execution.TaskID || message.MessageID != execution.MessageID ||
+			message.Text != execution.Prompt || len(message.Context) != len(execution.Context) {
 			continue
 		}
-		for _, item := range rec.Items {
-			if item.Role != "user" {
-				continue
+		matched := true
+		for i := range message.Context {
+			current := execution.Context[i]
+			if message.Context[i].Name != current.inputName() || message.Context[i].Text != current.Text {
+				matched = false
+				break
 			}
-			text, contexts := taskContextUserContent(item.Content)
-			if text != execution.Prompt || len(contexts) != len(execution.Context) {
-				continue
-			}
-			matched := true
-			for i := range contexts {
-				current := execution.Context[i]
-				if contexts[i].Name != current.inputName() || contexts[i].Text != current.Text {
-					matched = false
-					break
-				}
-			}
-			if matched {
-				return true
-			}
+		}
+		if matched {
+			return true
 		}
 	}
 	return false

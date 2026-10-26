@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -129,5 +130,63 @@ func TestIssueSupplementConfirmNotDispatchedSaveFailureRestoresAllWorkState(t *t
 		issue.Work.pendingExecutionID != execution.ID || issue.Supplements.AutoContinue != oldAuto {
 		t.Fatalf("failed confirm changed state: ok=%v execution=%+v work=%v/%q/%q auto=%v",
 			ok, execution, issue.Work.SendState, issue.Work.SendError, issue.Work.pendingExecutionID, issue.Supplements.AutoContinue)
+	}
+}
+
+func supplementRawHistoryRecords(t *testing.T, taskID, messageID, body string, contexts []taskContextItem, withTaskStart bool) []historyRecord {
+	t.Helper()
+	parts := []map[string]any{{"type": "text", "text": body}}
+	for _, item := range contexts {
+		envelope, err := json.Marshal(map[string]any{
+			"type": "caller_context", "label": "Caller-provided context (user data)",
+			"name": item.Name, "text": item.Text,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts = append(parts, map[string]any{"type": "text", "text": string(envelope)})
+	}
+	content, err := json.Marshal(parts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []historyRecord
+	if withTaskStart {
+		records = append(records, historyRecord{Record: journalRecord{Type: "task_started", TaskID: taskID, MessageID: messageID}})
+	}
+	records = append(records, historyRecord{Record: journalRecord{
+		Type:  "messages",
+		Items: []inputItem{{Type: "message", Role: "user", Content: content}},
+	}})
+	records = append(records, historyRecord{Record: journalRecord{Type: "task_finished", TaskID: taskID, MessageID: messageID, Status: "completed"}})
+	return records
+}
+
+func TestIssueSupplementHistoryMatchesRealJournalShape(t *testing.T) {
+	execution := &issueExecution{
+		SessionID: "session-real", TaskID: "task-real", MessageID: "message-real", Prompt: "goal body",
+		Context: []taskContextItem{{ID: "c1", Name: "ctx", Text: "context text", Revision: 1}},
+	}
+	records := supplementRawHistoryRecords(t, execution.TaskID, execution.MessageID, execution.Prompt, execution.Context, true)
+	// The Messages journal record intentionally has no TaskID/MessageID fields:
+	// ownership comes only from the preceding TaskStarted record.
+	if records[1].Record.TaskID != "" || records[1].Record.MessageID != "" {
+		t.Fatal("test fixture incorrectly put ownership on Messages")
+	}
+	if !supplementHistoryMatches(execution, records) {
+		t.Fatal("real journal shape did not match exact Prompt/Context")
+	}
+	wrong := *execution
+	wrong.Prompt = "different body"
+	if supplementHistoryMatches(&wrong, records) {
+		t.Fatal("incorrect body matched")
+	}
+	wrong = *execution
+	wrong.Context = []taskContextItem{{ID: "c1", Name: "ctx", Text: "different context", Revision: 1}}
+	if supplementHistoryMatches(&wrong, records) {
+		t.Fatal("incorrect context matched")
+	}
+	if supplementHistoryMatches(execution, supplementRawHistoryRecords(t, execution.TaskID, execution.MessageID, execution.Prompt, execution.Context, false)) {
+		t.Fatal("missing TaskStarted ownership matched")
 	}
 }

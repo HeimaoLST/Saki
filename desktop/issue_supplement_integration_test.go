@@ -276,6 +276,27 @@ func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 	if !finalOK {
 		t.Fatal("final supplement receipts were not accepted without auto disable")
 	}
+	var workSession string
+	h.snapshot(func() {
+		issue := h.app.contactByID(xID).issueByID(issueID)
+		if issue != nil {
+			workSession = issue.WorkSessionID
+		}
+	})
+	records, _, historyErr := h.app.historyAll(workSession)
+	if historyErr != nil {
+		t.Fatalf("history read for supplement verification: %v", historyErr)
+	}
+	var historyOK bool
+	h.snapshot(func() {
+		issue := h.app.contactByID(xID).issueByID(issueID)
+		historyOK = issue != nil && len(issue.Executions) == 2 &&
+			supplementHistoryMatches(issue.Executions[0], records) &&
+			supplementHistoryMatches(issue.Executions[1], records)
+	})
+	if !historyOK {
+		t.Fatal("actual Runtime history did not prove both supplement executions' exact Prompt/Context")
+	}
 }
 
 func TestIssueSupplementDispatchSaveFailureStaysPendingAndOffline(t *testing.T) {
@@ -514,5 +535,96 @@ func TestIssueSupplementStopKeepsPendingUntilExplicitResume(t *testing.T) {
 	})
 	if provider.count() != 2 {
 		t.Fatalf("explicit resume sent %d supplement requests, want 2 total", provider.count())
+	}
+}
+
+func TestIssueSupplementCancelKeepsPendingAndRequiresReopenResume(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := newGatedProvider("cancel-next", "cancel-keep")
+	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 2)
+	defer func() {
+		provider.release("cancel-keep")
+		provider.release("cancel-next")
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	var issueID string
+	var setupErr error
+	h.pump.do(func() {
+		if !h.app.createIssue("cancel goal", "cancel requirement") {
+			setupErr = errors.New(h.app.issueFormError)
+			return
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		if err := h.app.addIssueSupplement(ct, issueID, "cancel-keep"); err != nil {
+			setupErr = err
+			return
+		}
+		if !h.app.runIssue(issueID) {
+			setupErr = errors.New(h.app.issueFormError)
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	select {
+	case <-provider.arrived["cancel-keep"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("cancel-keep did not reach provider")
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID != ""
+	})
+	var addErr error
+	h.pump.do(func() { addErr = h.app.addIssueSupplement(h.app.selectedContact(), issueID, "cancel-next") })
+	if addErr != nil {
+		t.Fatal(addErr)
+	}
+	var canceled bool
+	h.pump.do(func() { canceled = h.app.cancelIssueProduct(issueID) })
+	if !canceled {
+		t.Fatal("Cancel issue failed")
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted
+	})
+	var stoppedOK bool
+	h.snapshot(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		stoppedOK = issue != nil && issue.Status == issueStatusCanceled && !issue.Supplements.AutoContinue &&
+			issue.Supplements.pendingCount() == 1
+	})
+	if !stoppedOK {
+		t.Fatal("Cancel did not preserve pending/auto-off issue state")
+	}
+	if provider.count() != 1 {
+		t.Fatalf("Cancel triggered an automatic task: provider=%d", provider.count())
+	}
+	var reopened, resumed bool
+	h.pump.do(func() {
+		reopened = h.app.reopenIssue(issueID)
+		resumed = h.app.setIssueSupplementAuto(h.app.selectedContact(), issueID, true)
+	})
+	if !reopened || !resumed {
+		t.Fatalf("reopen/resume = %v/%v", reopened, resumed)
+	}
+	select {
+	case <-provider.arrived["cancel-next"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("explicit reopen/resume did not send pending supplement")
+	}
+	provider.release("cancel-next")
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && len(issue.Executions) == 2 &&
+			issue.Executions[1].Status == issueExecutionCompleted && issue.Supplements.pendingCount() == 0
+	})
+	if provider.count() != 2 {
+		t.Fatalf("Cancel/resume sent %d requests, want 2", provider.count())
 	}
 }
