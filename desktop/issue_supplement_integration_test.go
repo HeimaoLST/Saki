@@ -26,7 +26,7 @@ func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 		}
 	}()
 
-	var issueID string
+	var issueID, xID string
 	var setupErr error
 	h.pump.do(func() {
 		if !h.app.createIssue("Issue goal", "Current requirement") {
@@ -34,6 +34,7 @@ func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 			return
 		}
 		ct := h.app.selectedContact()
+		xID = ct.ID
 		issueID = ct.SelectedIssueID
 		if issueID == "" {
 			setupErr = errors.New("issue was not selected")
@@ -145,9 +146,33 @@ func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 	if provider.count() != 2 {
 		t.Fatalf("conversation B request count = %d, want 2 total", provider.count())
 	}
+	// Select a real second contact while X's issue remains in flight and send
+	// its own conversation. Its provider body/history must not contain X data.
+	var yID string
+	var yErr error
+	h.pump.do(func() {
+		h.app.addRuntimeContact()
+		yID = h.app.selectedContact().ID
+		y := h.app.selectedContact()
+		y.Draft = "Contact Y independent"
+		if !h.app.sendCurrent() {
+			yErr = errors.New(y.SendError)
+		}
+	})
+	if yErr != nil {
+		t.Fatalf("contact Y conversation failed: %v", yErr)
+	}
+	h.pump.wait(func() bool {
+		y := h.app.selectedContact()
+		return y.ID == yID && y.ActiveTaskID == "" && y.SendState == sendIdle && !y.HistoryDirty &&
+			len(y.Messages) > 0
+	})
+	if provider.count() != 3 {
+		t.Fatalf("contact Y request count = %d, want 3 total", provider.count())
+	}
 	var pendingOK bool
 	h.snapshot(func() {
-		issue := h.app.selectedContact().issueByID(issueID)
+		issue := h.app.contactByID(xID).issueByID(issueID)
 		pendingOK = issue != nil && issue.RequirementsRevision == 2 &&
 			issue.Supplements.pendingCount() == 2 &&
 			issue.Supplements.Items[1].RequirementsRevision == 1 &&
@@ -164,7 +189,7 @@ func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 		t.Fatal("second supplement did not dispatch after the first terminal")
 	}
 	h.pump.wait(func() bool {
-		issue := h.app.selectedContact().issueByID(issueID)
+		issue := h.app.contactByID(xID).issueByID(issueID)
 		return issue != nil && issue.Work.ActiveTaskID != "" && len(issue.Executions) == 2 &&
 			issue.Executions[0].Status == issueExecutionCompleted &&
 			(issue.Executions[1].Status == issueExecutionAccepted || issue.Executions[1].Status == issueExecutionRunning)
@@ -176,7 +201,7 @@ func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 	var secondBatchState string
 	var secondText string
 	h.snapshot(func() {
-		ct := h.app.selectedContact()
+		ct := h.app.contactByID(xID)
 		issue := ct.issueByID(issueID)
 		if issue == nil || len(issue.Executions) != 2 || len(issue.Supplements.Batches) != 2 {
 			return
@@ -213,30 +238,35 @@ func TestIssueSupplementAutoDispatchAcrossInFlightRevision(t *testing.T) {
 	if !strings.Contains(provider.body(0), "supp A") || !strings.Contains(provider.body(0), "Issue context") {
 		t.Fatalf("first provider body missing prompt/context: %s", provider.body(0))
 	}
-	if !strings.Contains(provider.body(2), "supp B") || !strings.Contains(provider.body(2), "supp C") ||
-		!strings.Contains(provider.body(2), "Current requirement changed") {
-		t.Fatalf("second provider body missing current target: %s", provider.body(2))
+	if !strings.Contains(provider.body(3), "supp B") || !strings.Contains(provider.body(3), "supp C") ||
+		!strings.Contains(provider.body(3), "Current requirement changed") {
+		t.Fatalf("second provider body missing current target: %s", provider.body(3))
 	}
 	if !strings.Contains(provider.body(1), "Conversation B independent") ||
 		strings.Contains(provider.body(1), "supp A") || strings.Contains(provider.body(1), "supp B") ||
 		strings.Contains(provider.body(1), "supp C") {
-		t.Fatalf("conversation B provider body mixed issue supplements: %s", provider.body(1))
+		t.Fatalf("same-contact conversation provider body mixed issue supplements: %s", provider.body(1))
+	}
+	if !strings.Contains(provider.body(2), "Contact Y independent") ||
+		strings.Contains(provider.body(2), "supp A") || strings.Contains(provider.body(2), "supp B") ||
+		strings.Contains(provider.body(2), "supp C") || strings.Contains(provider.body(2), "retry requirement") {
+		t.Fatalf("contact Y provider body mixed X data: %s", provider.body(2))
 	}
 
 	provider.release("supp B")
 	h.pump.wait(func() bool {
-		issue := h.app.selectedContact().issueByID(issueID)
+		issue := h.app.contactByID(xID).issueByID(issueID)
 		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
 			len(issue.Executions) == 2 && issue.Executions[1].Status == issueExecutionCompleted &&
 			issue.Supplements.Batches[1].State == supplementBatchAccepted
 	})
-	if provider.count() != 3 {
-		t.Fatalf("supplement/conversation produced %d provider requests, want 3", provider.count())
+	if provider.count() != 4 {
+		t.Fatalf("supplement/conversation produced %d provider requests, want 4", provider.count())
 	}
 	var finalOK bool
 	h.snapshot(func() {
-		issue := h.app.selectedContact().issueByID(issueID)
-		finalOK = issue != nil && issue.Supplements.pendingCount() == 0 &&
+		issue := h.app.contactByID(xID).issueByID(issueID)
+		finalOK = h.app.selectedContact().ID == yID && issue != nil && issue.Supplements.pendingCount() == 0 &&
 			issue.Supplements.Items[0].State == supplementStateSubmitted &&
 			issue.Supplements.Items[1].State == supplementStateSubmitted &&
 			issue.Supplements.Items[2].State == supplementStateSubmitted &&
@@ -393,5 +423,96 @@ func TestIssueSupplementConfirmNotDispatchedThenExplicitRetryOnce(t *testing.T) 
 	}
 	if provider.count() != 1 {
 		t.Fatalf("explicit retry sent %d provider requests, want 1", provider.count())
+	}
+}
+
+func TestIssueSupplementStopKeepsPendingUntilExplicitResume(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := newGatedProvider("after-stop", "stop-keep")
+	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 2)
+	defer func() {
+		provider.release("stop-keep")
+		provider.release("after-stop")
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	var issueID string
+	var setupErr error
+	h.pump.do(func() {
+		if !h.app.createIssue("stop goal", "stop requirement") {
+			setupErr = errors.New(h.app.issueFormError)
+			return
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		if err := h.app.addIssueSupplement(ct, issueID, "stop-keep"); err != nil {
+			setupErr = err
+			return
+		}
+		if !h.app.runIssue(issueID) {
+			setupErr = errors.New(h.app.issueFormError)
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	select {
+	case <-provider.arrived["stop-keep"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("first supplement did not reach provider")
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID != ""
+	})
+	var addErr error
+	h.pump.do(func() {
+		addErr = h.app.addIssueSupplement(h.app.selectedContact(), issueID, "after-stop")
+	})
+	if addErr != nil {
+		t.Fatal(addErr)
+	}
+	var canceled bool
+	h.pump.do(func() { canceled = h.app.cancelIssue(issueID) })
+	if !canceled {
+		t.Fatal("Stop did not accept active issue")
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted
+	})
+	var stoppedOK bool
+	h.snapshot(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		stoppedOK = issue != nil && !issue.Supplements.AutoContinue &&
+			issue.Supplements.pendingCount() == 1 && issue.Supplements.Items[1].Text == "after-stop"
+	})
+	if !stoppedOK {
+		t.Fatal("Stop did not preserve pending text with automatic continuation off")
+	}
+	if provider.count() != 1 {
+		t.Fatalf("Stop triggered an automatic next task: provider=%d", provider.count())
+	}
+	var resumed bool
+	h.pump.do(func() { resumed = h.app.setIssueSupplementAuto(h.app.selectedContact(), issueID, true) })
+	if !resumed {
+		t.Fatal("explicit Resume auto failed")
+	}
+	select {
+	case <-provider.arrived["after-stop"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("explicit resume did not send the pending supplement")
+	}
+	provider.release("after-stop")
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 2 && issue.Executions[1].Status == issueExecutionCompleted &&
+			issue.Supplements.pendingCount() == 0
+	})
+	if provider.count() != 2 {
+		t.Fatalf("explicit resume sent %d supplement requests, want 2 total", provider.count())
 	}
 }
