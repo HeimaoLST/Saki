@@ -1295,12 +1295,7 @@ func (a *appModel) issueToolWorkWait(scope IssueToolScope, request IssueToolActi
 			return
 		}
 		if request.ExpectedRevision == nil || *request.ExpectedRevision != issue.RequirementsRevision {
-			if issue.Status != issueStatusCanceled && issue.Status != issueStatusCompleted && !issue.Archived {
-				issue.Status = issueStatusNeedsAttention
-				issue.UpdatedAt = nowMillis()
-				_ = a.persist()
-			}
-			callErr = &IssueToolError{Code: "revision_mismatch", Message: "the captured work requirement revision is stale; mark needs attention and do not retry", CurrentRevision: issueToolRevisionPointer(issue.RequirementsRevision)}
+			callErr = &IssueToolError{Code: "revision_mismatch", Message: "the captured work requirement revision is stale; do not retry", CurrentRevision: issueToolRevisionPointer(issue.RequirementsRevision)}
 			return
 		}
 		text := strings.TrimSpace(request.Text)
