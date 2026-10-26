@@ -215,7 +215,7 @@ func TestContactProfileSaveFailureKeepsDraftAndArchiveState(t *testing.T) {
 func TestPreviewContactProfile(t *testing.T) {
 	dir := os.Getenv("SAKI_PREVIEW_DIR")
 	if dir == "" {
-		t.Skip("set SAKI_PREVIEW_DIR to write contact profile previews")
+		dir = t.TempDir()
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
