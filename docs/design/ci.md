@@ -62,12 +62,12 @@ driver 自建本地 fixture HTTP 服务，不需要外部 provider/key；其断�
 cd desktop
 SAKI_TEST_RUNTIME_BIN="$GITHUB_WORKSPACE/target/debug/Saki" \
 SAKI_TEST_ONLINE=0 CGO_ENABLED=0 \
-  go test -json ./... -count=1 > "$RUNNER_TEMP/desktop-go-test.json"
+  go test -json ./... -count=1 | tee "$RUNNER_TEMP/desktop-go-test.json"
 python3 "$GITHUB_WORKSPACE/scripts/check-gui-runtime-results.py" \
   "$RUNNER_TEMP/desktop-go-test.json"
 ```
 
-`go test` 的 stderr 直接进入 CI 日志，stdout 才是 JSON；不使用会混入 stderr 的 `2>&1`。`SAKI_TEST_RUNTIME_BIN` 必须指向本次构建的绝对 binary，`SAKI_TEST_ONLINE=0` 显式关闭线上入口，`-count=1` 禁止缓存替代新 binary。Go test 非零直接失败；checker 再验证 package PASS 与场景合同，任一不符都失败。
+`go test` 的 stdout JSON 用仅 stdout 的 `tee` 同时保留完整逐项日志，stderr 直接进入 CI 日志；不使用会混入 stderr 的 `2>&1`。显式 `set -o pipefail` 与 bash `-e` 保证 Go 非零不会被 tee 吞掉，checker 错误也有原始 JSON/日志可查。`SAKI_TEST_RUNTIME_BIN` 必须指向本次构建的绝对 binary，`SAKI_TEST_ONLINE=0` 显式关闭线上入口，`-count=1` 禁止缓存替代新 binary。Go test 非零直接失败；checker 再验证 package PASS 与场景合同，任一不符都失败。
 
 checker（`scripts/check-gui-runtime-results.py`）的**必须 PASS** 清单（原 #87 五项 + 当前 Nagi 场景）：
 
@@ -92,7 +92,7 @@ TestUnknownIssueExecutionIsRecoveredFromHistoryAfterRestart
 TestIssueWorkStopButtonStopsIssueNotConversation
 ```
 
-checker 还要求至少一个 PASS、`saki/desktop` package 最终 PASS、无任何 FAIL；缺任一必须用例、关键用例 Skip、未知 Skip、零执行/空 JSON 都会失败。明确允许的 opt-in Skip 仅这 8 个：
+checker 以 `(Package, Test)` 为结果键：18 个必须项必须来自 `saki/desktop`，其它 package 的同名 PASS 不能覆盖本 package 的 Skip/缺失；其它 package 的 FAIL 或未知 Skip 同样失败。任何 FAIL 终态优先保留，不能被后续同名 PASS 覆盖。还要求至少一个 PASS、`saki/desktop` package 最终 PASS、无任何 FAIL；缺任一必须用例、关键用例 Skip、未知 Skip、零执行/空 JSON 都会失败。checker 正向逐项打印 18 个 `saki/desktop::<test> = pass` 供证据核对。明确允许的 opt-in Skip 仅这 8 个（均限定 `saki/desktop`）：
 
 ```text
 TestGUIOnlineSmoke
@@ -234,8 +234,9 @@ python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
 # GUI→Runtime 完整离线 desktop package（子 shell 保持后续命令仍在仓库根）
 (
   cd desktop
+  set -o pipefail
   SAKI_TEST_RUNTIME_BIN="$PWD/../target/debug/Saki" SAKI_TEST_ONLINE=0 CGO_ENABLED=0 \
-    go test -json ./... -count=1 > /tmp/desktop-go-test.json
+    go test -json ./... -count=1 | tee /tmp/desktop-go-test.json
   python3 ../scripts/check-gui-runtime-results.py /tmp/desktop-go-test.json
 )
 

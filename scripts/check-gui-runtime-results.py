@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 import sys
 
-REQUIRED = (
+DESKTOP = "saki/desktop"
+REQUIRED_TESTS = (
     # Original #87 five-test gate.
     "TestRuntimeProcessIntegration",
     "TestGUIAppRuntimeFlow",
@@ -34,7 +35,8 @@ REQUIRED = (
 )
 
 # Explicit opt-in preview/online tests. All other skips are failures.
-ALLOWED_SKIPS = frozenset({
+REQUIRED = tuple((DESKTOP, test) for test in REQUIRED_TESTS)
+ALLOWED_SKIP_TESTS = frozenset({
     "TestGUIOnlineSmoke",
     "TestIntegratedMarkdownPreview",
     "TestMarkdownReaderScreenshot",
@@ -44,10 +46,13 @@ ALLOWED_SKIPS = frozenset({
     "TestPreviewRuntimeStates",
     "TestPreviewStartupDiagnostics",
 })
+ALLOWED_SKIPS = frozenset((DESKTOP, test) for test in ALLOWED_SKIP_TESTS)
 
 
 def main(path: str) -> int:
-    results: dict[str, str] = {}
+    results: dict[tuple[str, str], str] = {}
+    fail_keys: set[tuple[str, str]] = set()
+    skip_keys: set[tuple[str, str]] = set()
     package_actions: list[tuple[str, str]] = []
     try:
         with open(path, encoding="utf-8") as handle:
@@ -64,8 +69,13 @@ def main(path: str) -> int:
                 test = event.get("Test")
                 package = event.get("Package")
                 if action in ("pass", "fail", "skip"):
-                    if test:
-                        results[test] = action
+                    if test and package:
+                        key = (package, test)
+                        results[key] = action
+                        if action == "fail":
+                            fail_keys.add(key)
+                        if action == "skip":
+                            skip_keys.add(key)
                     elif package:
                         package_actions.append((package, action))
     except OSError as exc:
@@ -73,32 +83,39 @@ def main(path: str) -> int:
         return 1
 
     errors: list[str] = []
-    passes = [test for test, action in results.items() if action == "pass"]
-    skips = sorted(test for test, action in results.items() if action == "skip")
-    fails = sorted(test for test, action in results.items() if action == "fail")
+    passes = sorted(key for key, action in results.items() if action == "pass")
+    skips = sorted(key for key in skip_keys)
+    fails = sorted(key for key in fail_keys)
 
     if not results:
         errors.append("no test result events (zero tests executed)")
     if not passes:
         errors.append("no PASS events")
     if fails:
-        errors.append("FAIL tests: " + ", ".join(fails))
-    for test in REQUIRED:
-        action = results.get(test)
-        if action != "pass":
-            errors.append(f"required test {test}: {action or 'missing'}")
-    for test in skips:
-        if test not in ALLOWED_SKIPS:
-            errors.append(f"unexpected SKIP: {test}")
+        errors.append("FAIL tests: " + ", ".join(f"{pkg}::{test}" for pkg, test in fails))
+    for package, test in REQUIRED:
+        key = (package, test)
+        action = results.get(key)
+        if action != "pass" or key in fail_keys:
+            errors.append(f"required test {package}::{test}: {action or 'missing'}")
+    for package, test in skips:
+        if (package, test) not in ALLOWED_SKIPS:
+            errors.append(f"unexpected SKIP: {package}::{test}")
 
     desktop_package = [action for package, action in package_actions if package == "saki/desktop"]
     if "pass" not in desktop_package:
-        errors.append("desktop package did not finish PASS")
-    if "fail" in desktop_package:
-        errors.append("desktop package finished FAIL")
+        errors.append("saki/desktop package did not finish PASS")
+    if "fail" in desktop_package or any(pkg == "saki/desktop" for pkg, _ in fails):
+        errors.append("saki/desktop package finished FAIL")
+    if any(action == "fail" for _, action in package_actions):
+        errors.append("a package finished FAIL")
 
+    for package, test in REQUIRED:
+        key = (package, test)
+        action = "fail" if key in fail_keys else results.get(key, "missing")
+        print(f"checker: MUST {package}::{test} = {action}")
     print(f"checker: tests={len(results)} pass={len(passes)} skip={len(skips)} fail={len(fails)}")
-    print("checker: skips=" + (", ".join(skips) if skips else "<none>"))
+    print("checker: skips=" + (", ".join(f"{pkg}::{test}" for pkg, test in skips) if skips else "<none>"))
     if errors:
         for error in errors:
             print("checker: ERROR " + error, file=sys.stderr)

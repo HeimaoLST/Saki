@@ -89,7 +89,8 @@ jobs:
           SAKI_TEST_ONLINE: "0"
           CGO_ENABLED: "0"
         run: |
-          go test -json ./... -count=1 > "$RUNNER_TEMP/desktop-go-test.json"
+          set -o pipefail
+          go test -json ./... -count=1 | tee "$RUNNER_TEMP/desktop-go-test.json"
           python3 "$GITHUB_WORKSPACE/scripts/check-gui-runtime-results.py" "$RUNNER_TEMP/desktop-go-test.json"
 
       - name: Job summary
