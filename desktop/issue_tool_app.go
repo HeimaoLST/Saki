@@ -833,6 +833,20 @@ func boundIssueToolDetail(detail *IssueToolIssueDetail) *IssueToolIssueDetail {
 		detail.ResultFiles = detail.ResultFiles[:len(detail.ResultFiles)-1]
 		detail.ResultFilesHasMore = true
 	}
+	if detail.ResultExcerpt != "" && issueToolResponseBytes(detail) > issueToolQueryMaxBytes {
+		original := detail.ResultExcerpt
+		for _, limit := range []int{2048, 1024, 512, 256, 128} {
+			detail.ResultExcerpt = truncateIssueToolText(original, limit)
+			detail.ResultExcerptHasMore = true
+			if issueToolResponseBytes(detail) <= issueToolQueryMaxBytes {
+				break
+			}
+		}
+		if issueToolResponseBytes(detail) > issueToolQueryMaxBytes {
+			detail.ResultExcerpt = ""
+			detail.ResultExcerptHasMore = true
+		}
+	}
 	return detail
 }
 

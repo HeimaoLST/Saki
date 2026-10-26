@@ -1174,3 +1174,37 @@ func TestIssueToolQueryResponsesRespectByteBudgetAndUTF8(t *testing.T) {
 		t.Fatalf("bounded detail identity/range = %+v", detail)
 	}
 }
+
+func TestIssueToolDetailBudgetShrinksLongExcerptAndPreservesIdentity(t *testing.T) {
+	long := strings.Repeat("中文\\\"\\n\\t", 900)
+	detail := &IssueToolIssueDetail{
+		Issue: IssueToolIssueSummary{
+			ID: "issue-budget-identity", Goal: long, Status: issueStatusWaitingUser,
+			RequirementsRevision: 7, QuestionRef: "question-budget", Question: long,
+			QuestionRevision: 7,
+		},
+		Requirements:      []IssueToolRequirementView{{ID: "req-1", Text: long, Evidence: long}},
+		ExecutionCount:    1,
+		ResultExecutionID: "execution-budget",
+		ResultExcerpt:     long + long,
+	}
+	bounded := boundIssueToolDetail(detail)
+	responseBytes, _ := json.Marshal(issueToolRPCResponse{JSONRPC: "2.0", ID: json.RawMessage(`"budget"`), Result: mustIssueToolDetailForward(t, bounded)})
+	if len(responseBytes) > issueToolQueryMaxBytes || !utf8.Valid(responseBytes) {
+		t.Fatalf("long detail MCP bytes=%d validUTF8=%v", len(responseBytes), utf8.Valid(responseBytes))
+	}
+	if bounded.Issue.ID != "issue-budget-identity" || bounded.Issue.Status != issueStatusWaitingUser ||
+		bounded.Issue.QuestionRef != "question-budget" || bounded.Issue.RequirementsRevision != 7 ||
+		bounded.ResultExecutionID != "execution-budget" || !bounded.ResultExcerptHasMore {
+		t.Fatalf("bounded identity/excerpt = %+v", bounded)
+	}
+}
+
+func mustIssueToolDetailForward(t *testing.T, detail *IssueToolIssueDetail) issueToolForwardResponse {
+	t.Helper()
+	response, err := issueToolJSONResponse(detail, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
+}

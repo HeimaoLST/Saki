@@ -421,12 +421,13 @@ type IssueToolIssueDetail struct {
 
 	// Result facts are derived from the latest recorded execution's typed
 	// history. They are never fabricated from assistant prose or tool logs.
-	ResultExecutionID  string                    `json:"result_execution_id,omitempty"`
-	ResultFileCount    int                       `json:"result_file_count"`
-	ResultFiles        []IssueToolResultFileView `json:"result_files,omitempty"`
-	ResultFilesHasMore bool                      `json:"result_files_has_more,omitempty"`
-	ResultExcerpt      string                    `json:"result_excerpt,omitempty"`
-	ResultUnavailable  string                    `json:"result_unavailable,omitempty"`
+	ResultExecutionID    string                    `json:"result_execution_id,omitempty"`
+	ResultFileCount      int                       `json:"result_file_count"`
+	ResultFiles          []IssueToolResultFileView `json:"result_files,omitempty"`
+	ResultFilesHasMore   bool                      `json:"result_files_has_more,omitempty"`
+	ResultExcerpt        string                    `json:"result_excerpt,omitempty"`
+	ResultExcerptHasMore bool                      `json:"result_excerpt_has_more,omitempty"`
+	ResultUnavailable    string                    `json:"result_unavailable,omitempty"`
 }
 
 func issueToolSummary(issue *productIssue) IssueToolIssueSummary {
