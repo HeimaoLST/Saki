@@ -719,6 +719,8 @@ func (a *appModel) restoreIssueWork(rt *runtimeClient, generation int, contactID
 			}
 			if issue.Status == issueStatusCanceled {
 				_ = a.cancelIssueFor(ct, issue.ID)
+			} else if issue.Status != issueStatusCompleted && issue.Status != issueStatusWaitingUser {
+				issue.Status = issueStatusInProgress
 			}
 			return
 		}
@@ -1158,6 +1160,39 @@ func (a *appModel) applyIssueWorkHistory(ct *contact, issue *productIssue, recor
 	issue.Work.Loaded = true
 	issue.Work.SessionState = status
 	issue.Work.HistoryDirty = false
+	a.applyIssueRecoveredLifecycle(issue)
+}
+
+func (a *appModel) applyIssueRecoveredLifecycle(issue *productIssue) {
+	if issue == nil || issue.Status == issueStatusCompleted || issue.Status == issueStatusCanceled ||
+		issue.Status == issueStatusWaitingUser {
+		return
+	}
+	if issue.Work.ActiveTaskID != "" {
+		issue.Status = issueStatusInProgress
+		issue.UpdatedAt = nowMillis()
+		return
+	}
+	if len(issue.Executions) == 0 {
+		return
+	}
+	latest := issue.Executions[len(issue.Executions)-1]
+	switch latest.Status {
+	case issueExecutionCompleted:
+		issue.Status = issueStatusInProgress
+	case issueExecutionFailed, issueExecutionUnknown, issueExecutionPending,
+		issueExecutionNotDispatched, issueExecutionRejected:
+		issue.Status = issueStatusNeedsAttention
+	case issueExecutionInterrupted:
+		if issue.Work.StopRequestedTasks[latest.TaskID] {
+			issue.Status = issueStatusInProgress
+		} else {
+			issue.Status = issueStatusNeedsAttention
+		}
+	case issueExecutionAccepted, issueExecutionRunning:
+		issue.Status = issueStatusInProgress
+	}
+	issue.UpdatedAt = nowMillis()
 }
 
 func historyWorkDetail(status string, errText *string) string {

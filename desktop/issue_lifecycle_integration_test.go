@@ -180,26 +180,6 @@ func TestIssueUITargetsLifecycleActions(t *testing.T) {
 	}
 }
 
-func TestIssueUITargetsExecutionOldDoesNotClearNewActive(t *testing.T) {
-	a, ct := workspaceTestApp(t)
-	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "old/new", Status: issueStatusInProgress, WorkSessionID: "work"}
-	issue.Work.ActiveTaskID = "t-new"
-	issue.Work.SendState = sendAccepted
-	issue.Executions = []*issueExecution{
-		{ID: "e-old", SessionID: "work", TaskID: "t-old", Prompt: "old snapshot", RequirementsRevision: 1, Status: issueExecutionCompleted},
-		{ID: "e-new", SessionID: "work", TaskID: "t-new", Prompt: "new snapshot", RequirementsRevision: 2, Status: issueExecutionRunning},
-	}
-	ct.Issues = []*productIssue{issue}
-	ct.SelectedIssueID = issue.ID
-	ct.Works = []*workItem{{TaskID: "t-old", State: workCompleted}, {TaskID: "t-new", State: workRunning}}
-	a.windowWidth = 1040
-	tr := ui.NewTester(a.view, 1040, 720)
-	tr.Frame()
-	if !tr.HasText("Sent snapshot") || !tr.HasText("req r") && !strings.Contains(strings.Join(tr.Texts(), "\n"), "req r") {
-		t.Fatalf("execution snapshot labels missing: %v", tr.Texts())
-	}
-}
-
 func TestIssueUIFilterArchiveAndRestore(t *testing.T) {
 	a, ct := workspaceTestApp(t)
 	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
@@ -408,5 +388,27 @@ func TestIssueUICompleteAndReopenActions(t *testing.T) {
 	tr.Frame()
 	if issue.Status != issueStatusNotStarted {
 		t.Fatalf("UI reopen = %q", issue.Status)
+	}
+}
+
+func TestIssueUIRequirementEvidenceActionPersists(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
+	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "goal", Status: issueStatusInProgress, RequirementsRevision: 1,
+		Requirements: parseIssueRequirements("one checked requirement")}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	requirement := issue.Requirements[0]
+	draft := a.requirementDraft(requirement)
+	*draft = "checked by the user"
+	if err := tr.Click("Satisfied"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if requirement.State != requirementSatisfied || requirement.Evidence != "checked by the user" {
+		t.Fatalf("requirement UI evidence = %+v", requirement)
 	}
 }

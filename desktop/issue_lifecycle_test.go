@@ -198,3 +198,30 @@ func TestGoalChangeInvalidatesSameTextRequirementEvidence(t *testing.T) {
 		t.Fatalf("goal edit kept satisfied evidence as current: %+v", requirement)
 	}
 }
+
+func TestRecoveredHistoryUpdatesBusinessStatusWithoutOverridingActive(t *testing.T) {
+	issue := &productIssue{ID: "i1", Status: issueStatusInProgress, WorkSessionID: "work"}
+	issue.Executions = []*issueExecution{{ID: "e1", SessionID: "work", TaskID: "t1", Status: issueExecutionFailed}}
+	issue.Work.StopRequestedTasks = map[string]bool{}
+	a := &appModel{}
+	a.applyIssueRecoveredLifecycle(issue)
+	if issue.Status != issueStatusNeedsAttention {
+		t.Fatalf("recovered failed history status = %q", issue.Status)
+	}
+
+	issue.Status = issueStatusInProgress
+	issue.Work.ActiveTaskID = "t2"
+	issue.Executions = append(issue.Executions, &issueExecution{ID: "e2", SessionID: "work", TaskID: "t2", Status: issueExecutionRunning})
+	a.applyIssueRecoveredLifecycle(issue)
+	if issue.Status != issueStatusInProgress {
+		t.Fatalf("old failed execution overrode active new task: %q", issue.Status)
+	}
+
+	issue.Status = issueStatusWaitingUser
+	issue.Work.ActiveTaskID = ""
+	issue.Executions = append(issue.Executions, &issueExecution{ID: "e3", SessionID: "work", TaskID: "t3", Status: issueExecutionFailed})
+	a.applyIssueRecoveredLifecycle(issue)
+	if issue.Status != issueStatusWaitingUser {
+		t.Fatalf("recovered history overrode explicit waiting: %q", issue.Status)
+	}
+}
