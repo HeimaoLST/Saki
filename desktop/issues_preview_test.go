@@ -90,6 +90,20 @@ func issuePreviewApp(scene string) *appModel {
 		a.issueFormOpen = true
 		a.issueGoal = "Keep requirements attached to each run"
 		a.issueRequirements = "Show the original requirement text and an explicit unverified completion state."
+	case "issue-archive":
+		ct.Issues[0].Status = issueStatusCompleted
+		ct.Issues[0].Archived = true
+		ct.Issues[0].Evidence = "User reviewed the result and archived the item."
+		a.issueFilter = "archived"
+	case "issue-edit":
+		a.issueFormOpen = true
+		a.issueFormEditingID = ct.Issues[0].ID
+		a.issueGoal = ct.Issues[0].Goal
+		a.issueRequirements = issueRequirementsText(ct.Issues[0])
+	case "issue-long":
+		ct.Issues[0].Requirements[1].Text = "Keep every execution associated with this issue, preserve the exact sent snapshot, show the result and evidence, and do not turn a completed Runtime task into issue completion."
+		ct.Issues[0].Requirements[1].Evidence = "User verified the long requirement against the execution result and the reviewed output."
+		ct.Issues[0].Requirements[1].State = requirementSatisfied
 	case "issue-completed":
 		ct.Issues[0].Status = issueStatusCompleted
 		ct.Issues[0].Evidence = "User reviewed the rendered result and accepted the remaining verification note."
@@ -142,6 +156,16 @@ func TestPreviewIssueStates(t *testing.T) {
 		write("issue-dual", 320, 900, dark)
 		write("issue-completed", 1040, 720, dark)
 		write("issue-completed", 320, 900, dark)
+		write("issue-archive", 1040, 720, dark)
+		write("issue-archive", 960, 640, dark)
+		write("issue-archive", 320, 900, dark)
+		write("issue-edit", 1040, 720, dark)
+		write("issue-edit", 960, 640, dark)
+		write("issue-edit", 320, 900, dark)
+		write("issue-long", 960, 640, dark)
+		write("issue-long", 1040, 720, dark)
+		write("issue-long", 1380, 900, dark)
+		write("issue-long", 320, 900, dark)
 		write("issue-unknown", 320, 640, dark)
 	}
 }

@@ -391,9 +391,6 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 			ui.Text(c, "Issue · "+issue.Goal).FontSize(13).FontWeight(600).TextColor(t.Text).MaxLines(2)
 			ui.Spacer(c)
 			ui.Text(c, issueStatusLabel(issue)).FontSize(11).TextColor(a.issueStatusColor(t, issue))
-			if issue.Archived {
-				ui.Text(c, "Archived").FontSize(10).TextColor(t.TextMuted)
-			}
 		})
 		if a.issueActionError != "" {
 			ui.Text(c, a.issueActionError).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
