@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1089,5 +1090,86 @@ func TestIssueToolReleaseCallbackParticipatesInShutdownDrain(t *testing.T) {
 	a.finishShutdown()
 	if !a.quitReady || !quit {
 		t.Fatal("shutdown did not complete after the final release callback")
+	}
+}
+
+func TestIssueToolQueryResponsesRespectByteBudgetAndUTF8(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	longText := strings.Repeat("中文 requirement ", 2000)
+	var firstIssueID string
+	for i := 0; i < 60; i++ {
+		issue, err := a.createIssueFor(ct, fmt.Sprintf("goal-%02d-%s", i, longText), longText)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			firstIssueID = issue.ID
+		}
+	}
+	issue := ct.issueByID(firstIssueID)
+	for i := 0; i < 80; i++ {
+		issue.Requirements = append(issue.Requirements, &issueRequirement{
+			ID: fmt.Sprintf("requirement-%02d", i), Text: fmt.Sprintf("%02d %s", i, longText), State: requirementUnverified,
+		})
+	}
+	issue.RequirementsRevision = 9
+	scope, err := a.issueToolNewScope(ct.ID, "query-budget-session", "query-budget-turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateIssueToolTestScope(t, a, scope)
+	seen := map[string]bool{}
+	cursor := ""
+	for page := 0; page < 10; page++ {
+		args := map[string]any{"scope": scope.Ref, "limit": 50}
+		if cursor != "" {
+			args["cursor"] = cursor
+		}
+		listArgs, _ := json.Marshal(args)
+		listResponse, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_list", Arguments: listArgs})
+		if err != nil || listResponse.IsError {
+			t.Fatalf("budget list page %d = %+v err=%v", page, listResponse, err)
+		}
+		rawList, _ := json.Marshal(listResponse)
+		if len(rawList) > issueToolQueryMaxBytes || !utf8.Valid(rawList) {
+			t.Fatalf("list response bytes=%d validUTF8=%v", len(rawList), utf8.Valid(rawList))
+		}
+		var list IssueToolIssueListResult
+		if err := json.Unmarshal(issueToolResponseJSON(t, listResponse), &list); err != nil {
+			t.Fatal(err)
+		}
+		for _, summary := range list.Issues {
+			if seen[summary.ID] {
+				t.Fatalf("list cursor repeated issue %q on page %d", summary.ID, page)
+			}
+			seen[summary.ID] = true
+		}
+		if !list.HasMore {
+			break
+		}
+		if list.NextCursor == "" {
+			t.Fatalf("list page %d has_more without cursor", page)
+		}
+		cursor = list.NextCursor
+	}
+	if len(seen) != 60 {
+		t.Fatalf("bounded paging saw %d issues, want 60", len(seen))
+	}
+	getArgs, _ := json.Marshal(map[string]any{"scope": scope.Ref, "issue_id": firstIssueID})
+	getResponse, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_get", Arguments: getArgs})
+	if err != nil || getResponse.IsError {
+		t.Fatalf("budget get = %+v err=%v", getResponse, err)
+	}
+	rawGet, _ := json.Marshal(getResponse)
+	if len(rawGet) > issueToolQueryMaxBytes || !utf8.Valid(rawGet) {
+		t.Fatalf("detail response bytes=%d validUTF8=%v", len(rawGet), utf8.Valid(rawGet))
+	}
+	var detail IssueToolIssueDetail
+	if err := json.Unmarshal(issueToolResponseJSON(t, getResponse), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Issue.ID != firstIssueID || detail.Issue.RequirementsRevision != 9 || len(detail.Executions) > 20 {
+		t.Fatalf("bounded detail identity/range = %+v", detail)
 	}
 }

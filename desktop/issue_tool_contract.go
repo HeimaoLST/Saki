@@ -411,11 +411,13 @@ type IssueToolResultFileView struct {
 }
 
 type IssueToolIssueDetail struct {
-	Issue             IssueToolIssueSummary      `json:"issue"`
-	Requirements      []IssueToolRequirementView `json:"requirements,omitempty"`
-	Executions        []IssueToolExecutionView   `json:"executions,omitempty"`
-	ExecutionCount    int                        `json:"execution_count"`
-	ExecutionsHasMore bool                       `json:"executions_has_more"`
+	Issue               IssueToolIssueSummary      `json:"issue"`
+	Requirements        []IssueToolRequirementView `json:"requirements,omitempty"`
+	RequirementCount    int                        `json:"requirement_count"`
+	RequirementsHasMore bool                       `json:"requirements_has_more,omitempty"`
+	Executions          []IssueToolExecutionView   `json:"executions,omitempty"`
+	ExecutionCount      int                        `json:"execution_count"`
+	ExecutionsHasMore   bool                       `json:"executions_has_more"`
 
 	// Result facts are derived from the latest recorded execution's typed
 	// history. They are never fabricated from assistant prose or tool logs.

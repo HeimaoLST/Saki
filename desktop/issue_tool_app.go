@@ -19,11 +19,14 @@ import (
 )
 
 const (
-	issueToolSourceID          = "nagi_issue_tools"
-	issueToolScopeContextName  = "nagi.issue_tools.scope"
-	issueToolWaitTimeout       = 25 * time.Second
-	issueToolResultExcerptSize = 4096
-	issueToolResultFilesLimit  = 50
+	issueToolSourceID              = "nagi_issue_tools"
+	issueToolScopeContextName      = "nagi.issue_tools.scope"
+	issueToolWaitTimeout           = 25 * time.Second
+	issueToolResultExcerptSize     = 4096
+	issueToolResultFilesLimit      = 50
+	issueToolQueryMaxBytes         = 50 * 1024
+	issueToolQueryTextLimit        = 512
+	issueToolQueryRequirementLimit = 32
 )
 
 func newIssueToolTurnID() string {
@@ -770,6 +773,68 @@ func issueToolArgumentString(raw json.RawMessage, field string) (string, error) 
 	return strings.TrimSpace(value), nil
 }
 
+func issueToolResponseBytes(value any) int {
+	response, err := issueToolJSONResponse(value, false)
+	if err != nil {
+		return issueToolQueryMaxBytes + 1
+	}
+	data, err := json.Marshal(response)
+	if err != nil {
+		return issueToolQueryMaxBytes + 1
+	}
+	return len(data)
+}
+
+func boundIssueToolList(result IssueToolIssueListResult) IssueToolIssueListResult {
+	for index := range result.Issues {
+		result.Issues[index].Goal = truncateIssueToolText(result.Issues[index].Goal, issueToolQueryTextLimit)
+		result.Issues[index].Question = truncateIssueToolText(result.Issues[index].Question, issueToolQueryTextLimit)
+	}
+	for len(result.Issues) > 0 && issueToolResponseBytes(result) > issueToolQueryMaxBytes {
+		result.Issues = result.Issues[:len(result.Issues)-1]
+		result.HasMore = true
+	}
+	if result.HasMore && len(result.Issues) > 0 {
+		result.NextCursor = result.Issues[len(result.Issues)-1].ID
+	} else if len(result.Issues) == 0 {
+		result.HasMore = false
+		result.NextCursor = ""
+	}
+	return result
+}
+
+func boundIssueToolDetail(detail *IssueToolIssueDetail) *IssueToolIssueDetail {
+	if detail == nil {
+		return nil
+	}
+	detail.Issue.Goal = truncateIssueToolText(detail.Issue.Goal, issueToolQueryTextLimit)
+	detail.Issue.Question = truncateIssueToolText(detail.Issue.Question, issueToolQueryTextLimit)
+	for index := range detail.Requirements {
+		detail.Requirements[index].Text = truncateIssueToolText(detail.Requirements[index].Text, issueToolQueryTextLimit)
+		detail.Requirements[index].Evidence = truncateIssueToolText(detail.Requirements[index].Evidence, issueToolQueryTextLimit)
+	}
+	for index := range detail.Executions {
+		detail.Executions[index].Detail = truncateIssueToolText(detail.Executions[index].Detail, issueToolQueryTextLimit)
+	}
+	detail.ResultExcerpt = truncateIssueToolText(detail.ResultExcerpt, issueToolResultExcerptSize)
+	if detail.RequirementCount == 0 {
+		detail.RequirementCount = len(detail.Requirements)
+	}
+	for len(detail.Requirements) > issueToolQueryRequirementLimit && issueToolResponseBytes(detail) > issueToolQueryMaxBytes {
+		detail.Requirements = detail.Requirements[:len(detail.Requirements)-1]
+		detail.RequirementsHasMore = true
+	}
+	for len(detail.Executions) > 1 && issueToolResponseBytes(detail) > issueToolQueryMaxBytes {
+		detail.Executions = detail.Executions[1:]
+		detail.ExecutionsHasMore = true
+	}
+	for len(detail.ResultFiles) > 0 && issueToolResponseBytes(detail) > issueToolQueryMaxBytes {
+		detail.ResultFiles = detail.ResultFiles[:len(detail.ResultFiles)-1]
+		detail.ResultFilesHasMore = true
+	}
+	return detail
+}
+
 func (a *appModel) issueToolHandleList(_ context.Context, raw json.RawMessage) (issueToolForwardResponse, error) {
 	scopeRef, err := issueToolArgumentString(raw, "scope")
 	if err != nil {
@@ -804,6 +869,7 @@ func (a *appModel) issueToolHandleList(_ context.Context, raw json.RawMessage) (
 	if callErr != nil {
 		return issueToolConsumeError(callErr)
 	}
+	result = boundIssueToolList(result)
 	return issueToolJSONResponse(result, false)
 }
 
@@ -869,20 +935,20 @@ func (a *appModel) issueToolHandleGet(_ context.Context, raw json.RawMessage) (i
 	}
 	if source.ExecutionID == "" {
 		detail.ResultUnavailable = "The latest execution has no recorded Runtime session/task; results cannot be inspected."
-		return issueToolJSONResponse(detail, false)
+		return issueToolJSONResponse(boundIssueToolDetail(detail), false)
 	}
 	stillCurrent := false
 	a.runOnUI(func() { stillCurrent = rt != nil && a.rt == rt && a.connectionGeneration == generation })
 	if !stillCurrent {
 		detail.ResultUnavailable = "Runtime is not available for the recorded execution; results cannot be inspected."
-		return issueToolJSONResponse(detail, false)
+		return issueToolJSONResponse(boundIssueToolDetail(detail), false)
 	}
 	history, historyErr := a.historyAllForSession(rt, source.SessionID)
 	if historyErr != nil {
 		var historyErrText string
 		a.runOnUI(func() { historyErrText = a.connectionRuntimeMessage(historyErr) })
 		detail.ResultUnavailable = "Execution history is unavailable: " + historyErrText
-		return issueToolJSONResponse(detail, false)
+		return issueToolJSONResponse(boundIssueToolDetail(detail), false)
 	}
 	workingDirectory := ""
 	if config, err := rt.connectionConfig(source.SessionID); err == nil {
@@ -924,7 +990,7 @@ func (a *appModel) issueToolHandleGet(_ context.Context, raw json.RawMessage) (i
 	if !stillCurrent {
 		detail = &IssueToolIssueDetail{Issue: detail.Issue, ResultExecutionID: source.ExecutionID, ResultUnavailable: "The conversation turn or Runtime owner changed while history was being read; results were discarded."}
 	}
-	return issueToolJSONResponse(detail, false)
+	return issueToolJSONResponse(boundIssueToolDetail(detail), false)
 }
 
 func truncateIssueToolText(text string, limit int) string {
