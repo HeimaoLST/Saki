@@ -117,8 +117,8 @@ func (a *appModel) issueToolConversationSelection() map[string]any {
 	if !a.issueToolEnabled() {
 		return nil
 	}
-	external := make([]map[string]string, 0, len(issueToolDefinitions()))
-	for _, definition := range issueToolDefinitions() {
+	external := make([]map[string]string, 0, len(issueToolConversationDefinitions()))
+	for _, definition := range issueToolConversationDefinitions() {
 		external = append(external, map[string]string{
 			"source_id": issueToolSourceID, "tool_name": definition.Name, "exposed_name": definition.Name,
 		})
@@ -129,6 +129,181 @@ func (a *appModel) issueToolConversationSelection() map[string]any {
 	}
 }
 
+func issueToolConversationDefinitions() []issueToolDefinition {
+	all := issueToolDefinitions()
+	out := make([]issueToolDefinition, 0, len(all))
+	for _, definition := range all {
+		if definition.Name != issueToolWorkToolName {
+			out = append(out, definition)
+		}
+	}
+	return out
+}
+
+func issueToolWorkDefinitions() []issueToolDefinition {
+	for _, definition := range issueToolDefinitions() {
+		if definition.Name == issueToolWorkToolName {
+			return []issueToolDefinition{definition}
+		}
+	}
+	return nil
+}
+
+const issueToolWorkToolName = "issue_wait"
+
+func (a *appModel) issueToolWorkSelection() map[string]any {
+	if !a.issueToolEnabled() {
+		return nil
+	}
+	return map[string]any{
+		"builtin": []string{"read", "bash", "edit", "write"},
+		"external": []map[string]string{{
+			"source_id": issueToolSourceID, "tool_name": issueToolWorkToolName, "exposed_name": issueToolWorkToolName,
+		}},
+	}
+}
+
+func runtimeSelectionHasWorkWait(selection runtimeToolSelection) bool {
+	for _, binding := range selection.External {
+		if binding.SourceID == issueToolSourceID && binding.ToolName == issueToolWorkToolName && binding.ExposedName == issueToolWorkToolName {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *appModel) issueToolMergedWorkSelection(current runtimeToolSelection) (map[string]any, error) {
+	selection := a.issueToolWorkSelection()
+	if selection == nil {
+		return nil, nil
+	}
+	selection["builtin"] = append([]string{}, current.Builtin...)
+	external := make([]map[string]string, 0, len(current.External)+1)
+	exposedOwner := map[string]string{}
+	found := false
+	for _, binding := range current.External {
+		external = append(external, map[string]string{
+			"source_id": binding.SourceID, "tool_name": binding.ToolName, "exposed_name": binding.ExposedName,
+		})
+		if binding.ExposedName != "" {
+			exposedOwner[binding.ExposedName] = binding.SourceID + "\x00" + binding.ToolName
+		}
+		if binding.SourceID == issueToolSourceID && binding.ToolName == issueToolWorkToolName && binding.ExposedName == issueToolWorkToolName {
+			found = true
+		}
+	}
+	if !found {
+		owner := issueToolSourceID + "\x00" + issueToolWorkToolName
+		if existing, used := exposedOwner[issueToolWorkToolName]; used && existing != owner {
+			return nil, fmt.Errorf("issue wait exposed name is already used by %s", existing)
+		}
+		external = append(external, map[string]string{
+			"source_id": issueToolSourceID, "tool_name": issueToolWorkToolName, "exposed_name": issueToolWorkToolName,
+		})
+	}
+	selection["external"] = external
+	return selection, nil
+}
+
+func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID string, created bool) (bool, error) {
+	if created {
+		a.markIssueToolSchemaReady(rt, sessionID)
+		return true, nil
+	}
+	if rt == nil || sessionID == "" {
+		return false, errRuntimeDisconnected
+	}
+	config, err := rt.connectionConfig(sessionID)
+	if err != nil {
+		return false, fmt.Errorf("read work tool selection: %w", err)
+	}
+	if config.StorageSchema < 2 {
+		return false, nil
+	}
+	if runtimeSelectionHasWorkWait(config.EffectiveConfig.ToolSelection) && a.issueToolSchemaReady(rt, sessionID) {
+		return true, nil
+	}
+	selection, mergeErr := a.issueToolMergedWorkSelection(config.EffectiveConfig.ToolSelection)
+	if mergeErr != nil {
+		return false, mergeErr
+	}
+	if selection == nil {
+		return false, nil
+	}
+	updated, err := rt.updateSessionToolSelection(sessionID, config.ConfigRevision, selection)
+	if err != nil {
+		return false, fmt.Errorf("enable or refresh work wait tool: %w", err)
+	}
+	if updated.ReadbackError != nil {
+		return false, fmt.Errorf("read back work tool selection: %w", updated.ReadbackError)
+	}
+	if !runtimeSelectionHasWorkWait(updated.EffectiveConfig.ToolSelection) {
+		return false, errors.New("Runtime did not confirm the work wait tool")
+	}
+	a.markIssueToolSchemaReady(rt, sessionID)
+	return true, nil
+}
+
+func (a *appModel) releaseIssueWorkSession(ct *contact, issue *productIssue) {
+	if a == nil || a.rt == nil || ct == nil || issue == nil || !a.issueToolEnabled() ||
+		issue.WorkSessionID == "" || issue.Work.ActiveTaskID != "" || issue.Work.Releasing {
+		return
+	}
+	sessionID := issue.WorkSessionID
+	rt, generation := a.rt, a.connectionGeneration
+	issue.Work.Releasing = true
+	go func() {
+		err := rt.releaseSession(sessionID)
+		a.updateUI(func() {
+			if a.rt != rt || a.connectionGeneration != generation {
+				return
+			}
+			contactOwner := a.contactByID(ct.ID)
+			if contactOwner == nil {
+				return
+			}
+			owner := contactOwner.issueByID(issue.ID)
+			if owner == nil || owner.WorkSessionID != sessionID {
+				return
+			}
+			owner.Work.Releasing = false
+			owner.Work.ReleasePending = false
+			if err != nil {
+				owner.Work.SendError = "Could not release idle work tool process: " + a.connectionRuntimeMessage(err)
+				return
+			}
+			owner.Work.Released = true
+			owner.Work.Loaded = true
+			a.maybeAutoContinueIssue(contactOwner, owner)
+		})
+	}()
+}
+
+func (a *appModel) issueToolNewWorkScope(contactID, issueID, executionID, sessionID string) (*IssueToolScope, error) {
+	ct := a.contactByID(contactID)
+	if ct == nil || issueForContact(ct, issueID) == nil {
+		return nil, errors.New("issue not found for work scope")
+	}
+	scope := IssueToolScope{
+		Ref: newIssueToolScopeRef(), Mode: issueToolModeWork,
+		ContactID: contactID, RuntimeSessionID: sessionID,
+		TurnID: executionID, AllowedIssueIDs: []string{issueID},
+		WorkIssueID: issueID, WorkExecutionID: executionID, CreatedAt: nowMillis(),
+	}
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	if a.issueToolScopes == nil {
+		a.issueToolScopes = map[string]IssueToolScope{}
+	}
+	a.issueToolScopes[scope.Ref] = scope
+	if err := a.persist(); err != nil {
+		delete(a.issueToolScopes, scope.Ref)
+		return nil, fmt.Errorf("save work issue scope: %w", err)
+	}
+	return &scope, nil
+}
+
 func runtimeSelectionHasIssueTools(selection runtimeToolSelection) bool {
 	found := map[string]bool{}
 	for _, binding := range selection.External {
@@ -136,7 +311,7 @@ func runtimeSelectionHasIssueTools(selection runtimeToolSelection) bool {
 			found[binding.ToolName+"\x00"+binding.ExposedName] = true
 		}
 	}
-	for _, definition := range issueToolDefinitions() {
+	for _, definition := range issueToolConversationDefinitions() {
 		if !found[definition.Name+"\x00"+definition.Name] {
 			return false
 		}
@@ -152,7 +327,7 @@ func (a *appModel) issueToolMergedSelection(current runtimeToolSelection) (map[s
 	// An empty builtin list is an explicit "no built-in tools" choice. Preserve
 	// it exactly; only a new conversation gets the default four.
 	selection["builtin"] = append([]string{}, current.Builtin...)
-	external := make([]map[string]string, 0, len(current.External)+len(issueToolDefinitions()))
+	external := make([]map[string]string, 0, len(current.External)+len(issueToolConversationDefinitions()))
 	exposedOwner := map[string]string{}
 	canonical := map[string]bool{}
 	for _, binding := range current.External {
@@ -272,7 +447,7 @@ func (a *appModel) issueToolNewScope(contactID, sessionID, turnID string) (*Issu
 		}
 	}
 	scope := IssueToolScope{
-		Ref: newIssueToolScopeRef(), ContactID: contactID, ConversationSessionID: sessionID,
+		Ref: newIssueToolScopeRef(), ContactID: contactID, RuntimeSessionID: sessionID,
 		TurnID: turnID, AllowedIssueIDs: ids, AllowCreate: true, CreatedAt: nowMillis(),
 	}
 	if err := scope.Validate(); err != nil {
@@ -287,6 +462,17 @@ func (a *appModel) issueToolNewScope(contactID, sessionID, turnID string) (*Issu
 		return nil, fmt.Errorf("save issue tool scope: %w", err)
 	}
 	return &scope, nil
+}
+
+func issueToolScopeText(scope *IssueToolScope) string {
+	if scope == nil {
+		return ""
+	}
+	data, err := json.Marshal(scope)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func issueToolScopeInput(scope *IssueToolScope) (runtimeContextInput, bool) {
@@ -327,11 +513,27 @@ func (a *appModel) issueToolScopeActive(captured IssueToolScope) bool {
 	// immutable scope identity still matches the captured one.
 	scope, ok := a.issueToolScopes[captured.Ref]
 	if !ok || scope.Ref != captured.Ref || scope.ContactID != captured.ContactID ||
-		scope.ConversationSessionID != captured.ConversationSessionID || scope.TurnID != captured.TurnID {
+		scope.RuntimeSession() != captured.RuntimeSession() || scope.TurnID != captured.TurnID {
 		return false
 	}
 	ct := a.contactByID(scope.ContactID)
-	if ct == nil || ct.Archived || scope.Validate() != nil || ct.SessionID != scope.ConversationSessionID {
+	if ct == nil || ct.Archived || scope.Validate() != nil {
+		return false
+	}
+	if scope.Mode == issueToolModeWork {
+		issue := ct.issueByID(scope.WorkIssueID)
+		if issue == nil || issue.Archived || issue.WorkSessionID != scope.RuntimeSession() {
+			return false
+		}
+		_, execution := ct.executionByID(scope.WorkExecutionID)
+		if issue.Work.ActiveTaskID != "" {
+			return scope.RuntimeTaskID == issue.Work.ActiveTaskID ||
+				execution != nil && execution.ToolScopeRef == scope.Ref && execution.TaskID == issue.Work.ActiveTaskID
+		}
+		return issue.Work.SendState == sendSubmitting && execution != nil &&
+			execution.ToolScopeRef == scope.Ref && execution.SessionID == scope.RuntimeSession()
+	}
+	if ct.SessionID != scope.RuntimeSession() {
 		return false
 	}
 	if ct.ActiveTaskID != "" {
@@ -425,11 +627,11 @@ func (a *appModel) issueToolReserveForTurn(scope IssueToolScope, request IssueTo
 }
 
 type issueToolScopeIdentity struct {
-	Ref                   string
-	ContactID             string
-	ConversationSessionID string
-	TurnID                string
-	CreatedAt             int64
+	Ref              string
+	ContactID        string
+	RuntimeSessionID string
+	TurnID           string
+	CreatedAt        int64
 }
 
 // issueToolScopeIndexSnapshot copies only immutable issued-scope identity. It
@@ -439,8 +641,8 @@ func (a *appModel) issueToolScopeIndexSnapshot() map[string]issueToolScopeIdenti
 	for ref, scope := range a.issueToolScopes {
 		index[ref] = issueToolScopeIdentity{
 			Ref: ref, ContactID: scope.ContactID,
-			ConversationSessionID: scope.ConversationSessionID,
-			TurnID:                scope.TurnID, CreatedAt: scope.CreatedAt,
+			RuntimeSessionID: scope.RuntimeSession(),
+			TurnID:           scope.TurnID, CreatedAt: scope.CreatedAt,
 		}
 	}
 	return index
@@ -459,7 +661,7 @@ func filterIssueToolContextWithIndex(index map[string]issueToolScopeIdentity, se
 		return items
 	}
 	identity, ok := index[input.Ref]
-	if !ok || identity.ContactID != input.ContactID || identity.ConversationSessionID != sessionID ||
+	if !ok || identity.ContactID != input.ContactID || identity.RuntimeSessionID != sessionID ||
 		identity.TurnID != input.TurnID || identity.CreatedAt != input.CreatedAt {
 		return items
 	}
@@ -528,7 +730,7 @@ func issueToolJSONResponse(value any, isError bool) (issueToolForwardResponse, e
 
 func (a *appModel) handleIssueToolForward(ctx context.Context, request issueToolForwardRequest) (issueToolForwardResponse, error) {
 	switch request.Tool {
-	case "issue_list", "issue_get", "issue_action":
+	case "issue_list", "issue_get", "issue_action", "issue_wait":
 	default:
 		return issueToolErrorResponse("unknown_tool", "unknown issue tool")
 	}
@@ -537,6 +739,9 @@ func (a *appModel) handleIssueToolForward(ctx context.Context, request issueTool
 	}
 	if request.Tool == "issue_get" {
 		return a.issueToolHandleGet(ctx, request.Arguments)
+	}
+	if request.Tool == "issue_wait" {
+		return a.issueToolHandleWorkWait(ctx, request.Arguments)
 	}
 	return a.issueToolHandleAction(ctx, request.Arguments)
 }
@@ -814,6 +1019,9 @@ func (a *appModel) issueToolHandleAction(_ context.Context, raw json.RawMessage)
 	if scopeErr != nil {
 		return issueToolErrorResponse("scope_denied", scopeErr.Error())
 	}
+	if scope.Mode == issueToolModeWork {
+		return issueToolErrorResponse("scope_denied", "work scope allows only issue_wait")
+	}
 	if err := request.Validate(scope); err != nil {
 		if toolErr, ok := err.(*IssueToolError); ok {
 			return issueToolJSONResponse(toolErr, true)
@@ -986,6 +1194,141 @@ func (a *appModel) issueToolSupplement(scope IssueToolScope, request IssueToolAc
 	}
 	var receipt *IssueToolReceipt
 	a.runOnUI(func() { receipt = cloneIssueToolReceipt(operation.Receipt) })
+	return issueToolJSONResponse(receipt, false)
+}
+
+func (a *appModel) issueToolHandleWorkWait(_ context.Context, raw json.RawMessage) (issueToolForwardResponse, error) {
+	scopeRef, err := issueToolArgumentString(raw, "scope")
+	if err != nil {
+		return issueToolErrorResponse("invalid_arguments", err.Error())
+	}
+	text, err := issueToolArgumentString(raw, "text")
+	if err != nil || text == "" {
+		return issueToolErrorResponse("invalid_arguments", "text is required")
+	}
+	var args struct {
+		ExpectedRevision *int `json:"expected_revision"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil || args.ExpectedRevision == nil || *args.ExpectedRevision < 1 {
+		return issueToolErrorResponse("invalid_arguments", "expected_revision is required")
+	}
+	var scope IssueToolScope
+	var resolveErr error
+	a.runOnUI(func() { scope, resolveErr = a.issueToolScopeByRef(scopeRef) })
+	if resolveErr != nil {
+		return issueToolErrorResponse("scope_denied", resolveErr.Error())
+	}
+	if scope.Mode != issueToolModeWork || scope.WorkIssueID == "" {
+		return issueToolErrorResponse("scope_denied", "issue_wait requires an app-issued work scope")
+	}
+	request := IssueToolActionRequest{
+		ScopeRef: scope.Ref, Action: issueToolActionWait, IssueID: scope.WorkIssueID,
+		ExpectedRevision: args.ExpectedRevision, Text: text,
+	}
+	if err := request.Validate(scope); err != nil {
+		if toolErr, ok := err.(*IssueToolError); ok {
+			return issueToolJSONResponse(toolErr, true)
+		}
+		return issueToolErrorResponse("invalid_action", err.Error())
+	}
+	operation, created, existing, receipt, reserveErr := a.issueToolReserveForTurn(scope, request)
+	if reserveErr != nil {
+		return issueToolConsumeError(reserveErr)
+	}
+	if existing {
+		if receipt == nil {
+			return issueToolErrorResponse("operation_unknown", "work wait already recorded without a receipt; not replaying it")
+		}
+		return issueToolJSONResponse(receipt, receipt.State == issueToolReceiptUnknown)
+	}
+	if !created {
+		return issueToolErrorResponse("operation_unknown", "work wait was not reserved")
+	}
+	return a.issueToolWorkWait(scope, request, operation)
+}
+
+func (a *appModel) issueToolWorkWait(scope IssueToolScope, request IssueToolActionRequest, operation *IssueToolOperation) (issueToolForwardResponse, error) {
+	var receipt *IssueToolReceipt
+	var callErr error
+	var cancel bool
+	a.runOnUI(func() {
+		if err := a.issueToolActionAllowed(scope); err != nil {
+			callErr = err
+			return
+		}
+		ct := a.contactByID(scope.ContactID)
+		issue := issueForContact(ct, scope.WorkIssueID)
+		if issue == nil || issue.Archived || issue.Status == issueStatusCompleted || issue.Status == issueStatusCanceled {
+			callErr = errors.New("work issue cannot wait in its current state")
+			return
+		}
+		_, execution := ct.executionByID(scope.WorkExecutionID)
+		if execution == nil {
+			callErr = errors.New("work execution is not available")
+			return
+		}
+		if execution.TaskID == "" {
+			if issue.Work.SendState != sendSubmitting || issue.Work.ActiveTaskID != "" {
+				callErr = errors.New("work execution is not awaiting acceptance")
+				return
+			}
+		} else if issue.Work.ActiveTaskID != execution.TaskID {
+			callErr = errors.New("work execution is not the active captured task")
+			return
+		}
+		if request.ExpectedRevision == nil || *request.ExpectedRevision != issue.RequirementsRevision {
+			callErr = &IssueToolError{Code: "revision_mismatch", Message: "issue requirements changed; reload before waiting", CurrentRevision: issueToolRevisionPointer(issue.RequirementsRevision)}
+			return
+		}
+		text := strings.TrimSpace(request.Text)
+		supersedeRef := ""
+		if open := issue.openQuestion(); open != nil {
+			if open.RequirementsRevision == issue.RequirementsRevision && strings.TrimSpace(open.Text) == text {
+				receipt = &IssueToolReceipt{
+					State: issueToolReceiptSaved, IssueID: issue.ID, QuestionRef: open.Ref,
+					QuestionState: open.State, IssueStatus: issue.Status,
+					RequirementsRevision: issueToolRevisionPointer(open.RequirementsRevision),
+				}
+				callErr = a.issueToolSetReceipt(operation, receipt)
+				return
+			}
+			supersedeRef = open.Ref
+		}
+		question := &issueQuestion{
+			Ref: newIssueQuestionRef(), Text: text,
+			RequirementsRevision: issue.RequirementsRevision, SourceTaskID: scope.RuntimeTaskID,
+			SourceScopeRef: scope.Ref, SourceTurnID: scope.TurnID,
+			State: issueQuestionOpen, CreatedAt: nowMillis(),
+		}
+		receipt = &IssueToolReceipt{
+			State: issueToolReceiptSaved, IssueID: issue.ID, QuestionRef: question.Ref,
+			QuestionState: issueQuestionOpen, IssueStatus: issueStatusWaitingUser,
+			RequirementsRevision: issueToolRevisionPointer(question.RequirementsRevision),
+		}
+		previousWait := execution.WaitRequested
+		execution.WaitRequested = true
+		if !a.markIssueWaitingForQuestionActive(ct, issue.ID, supersedeRef, question, operation, receipt, true) {
+			execution.WaitRequested = previousWait
+			callErr = errors.New("work wait could not be saved")
+			return
+		}
+		receipt = cloneIssueToolReceipt(receipt)
+		cancel = execution.TaskID != ""
+	})
+	if callErr != nil {
+		return issueActionErrorResponse(callErr)
+	}
+	if cancel {
+		a.runOnUI(func() {
+			ct := a.contactByID(scope.ContactID)
+			issue := issueForContact(ct, scope.WorkIssueID)
+			_, execution := ct.executionByID(scope.WorkExecutionID)
+			if issue == nil || execution == nil {
+				return
+			}
+			a.requestIssueWaitStop(ct, issue, execution.ID, execution.SessionID, execution.TaskID)
+		})
+	}
 	return issueToolJSONResponse(receipt, false)
 }
 
@@ -1252,6 +1595,33 @@ func (a *appModel) issueToolStop(scope IssueToolScope, request IssueToolActionRe
 		return issueActionErrorResponse(callErr)
 	}
 	return issueToolJSONResponse(cloneIssueToolReceipt(receipt), false)
+}
+
+func (a *appModel) requestIssueWaitStop(ct *contact, issue *productIssue, executionID, sessionID, taskID string) bool {
+	if a.rt == nil || ct == nil || issue == nil || executionID == "" || taskID == "" || sessionID == "" ||
+		issue.Work.ActiveTaskID != taskID || issue.WorkSessionID != sessionID {
+		return false
+	}
+	owner, execution := ct.executionByID(executionID)
+	if owner != issue || execution == nil || execution.TaskID != taskID || execution.SessionID != sessionID {
+		return false
+	}
+	if w := workFor(ct, taskID); w != nil {
+		w.State = workStopping
+		w.StopRequested = true
+	}
+	issue.Work.SendError = "Waiting for your answer; stopping the current execution."
+	rt, generation := a.rt, a.connectionGeneration
+	go func() {
+		status, err := rt.cancelTask(sessionID, taskID)
+		a.updateUI(func() {
+			if a.rt != rt || a.connectionGeneration != generation {
+				return
+			}
+			a.applyIssueCancelResult(ct.ID, issue.ID, taskID, status, err)
+		})
+	}()
+	return true
 }
 
 func issueActionErrorResponse(err error) (issueToolForwardResponse, error) {

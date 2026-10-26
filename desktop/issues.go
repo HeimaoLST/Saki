@@ -115,6 +115,9 @@ type issueWorkSession struct {
 	cancelAfterAccept  bool
 	historyGen         int
 	HistoryDirty       bool
+	Released           bool
+	Releasing          bool
+	ReleasePending     bool
 }
 
 // issueRequirement is the single live truth for a product requirement. The
@@ -145,6 +148,7 @@ type issueExecution struct {
 	ToolOperationID      string
 	ToolScopeRef         string
 	ToolScopeInput       string
+	WaitRequested        bool
 }
 
 const (
@@ -297,6 +301,18 @@ func (ct *contact) selectedIssue() *productIssue {
 	}
 	if len(ct.Issues) > 0 {
 		return ct.Issues[0]
+	}
+	return nil
+}
+
+func executionForTask(issue *productIssue, taskID string) *issueExecution {
+	if issue == nil || taskID == "" {
+		return nil
+	}
+	for _, execution := range issue.Executions {
+		if execution != nil && execution.TaskID == taskID {
+			return execution
+		}
 	}
 	return nil
 }
@@ -520,7 +536,7 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 				Status: status, Detail: detail, RequirementsRevision: execution.RequirementsRevision,
 				Context: cloneTaskContextItems(execution.Context), SupplementBatchID: execution.SupplementBatchID,
 				ToolOperationID: execution.ToolOperationID, ToolScopeRef: execution.ToolScopeRef,
-				ToolScopeInput: execution.ToolScopeInput,
+				ToolScopeInput: execution.ToolScopeInput, WaitRequested: execution.WaitRequested,
 			})
 		}
 		issue.Status = normalizeIssueStatus(stored.Status, issue.Executions)

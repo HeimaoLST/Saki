@@ -91,10 +91,10 @@ func TestIssueToolHelperInitializeListAndNotification(t *testing.T) {
 	if err := json.Unmarshal(responses[1].Result, &list); err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Tools) != 3 {
+	if len(list.Tools) != 4 {
 		t.Fatalf("tool list = %+v", list.Tools)
 	}
-	if list.Tools[0].Name != "issue_list" || list.Tools[1].Name != "issue_get" || list.Tools[2].Name != "issue_action" {
+	if list.Tools[0].Name != "issue_list" || list.Tools[1].Name != "issue_get" || list.Tools[2].Name != "issue_wait" || list.Tools[3].Name != "issue_action" {
 		t.Fatalf("tool names = %+v", list.Tools)
 	}
 	if list.Tools[0].InputSchema["required"] == nil {

@@ -586,6 +586,13 @@ func (a *appModel) configuredConversationCreate(rt *runtimeClient, configured bo
 	return rt.createSession(workspace, system)
 }
 
+func (a *appModel) configuredWorkCreate(rt *runtimeClient, configured bool, workspace, system string) (runtimeSession, error) {
+	if configured {
+		return rt.createConfiguredConversationSession(workspace, system, a.issueToolWorkSelection())
+	}
+	return rt.createSession(workspace, system)
+}
+
 func observedConnectionSummary(connection runtimeConnection, config runtimeConnectionConfig, maxActiveTasks int) string {
 	effective := config.EffectiveConfig
 	summary := fmt.Sprintf("%s · %s · cwd %s · context %d / output %d",

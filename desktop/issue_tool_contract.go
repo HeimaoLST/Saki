@@ -47,20 +47,36 @@ var (
 // IssueToolScope is issued before a Runtime task exists. TurnID is the stable
 // app-issued user-turn/intent identity; RuntimeTaskID may be attached later and
 // is never required to create the scope.
+const (
+	issueToolModeConversation = "conversation"
+	issueToolModeWork         = "work"
+)
+
 type IssueToolScope struct {
 	Ref                   string   `json:"ref"`
+	Mode                  string   `json:"mode,omitempty"`
 	ContactID             string   `json:"contact_id"`
-	ConversationSessionID string   `json:"conversation_session_id"`
+	ConversationSessionID string   `json:"conversation_session_id,omitempty"` // legacy read fallback only
+	RuntimeSessionID      string   `json:"runtime_session_id,omitempty"`
 	TurnID                string   `json:"turn_id"`
 	AllowedIssueIDs       []string `json:"allowed_issue_ids,omitempty"`
 	AllowCreate           bool     `json:"allow_create,omitempty"`
 	RuntimeTaskID         string   `json:"runtime_task_id,omitempty"`
+	WorkIssueID           string   `json:"work_issue_id,omitempty"`
+	WorkExecutionID       string   `json:"work_execution_id,omitempty"`
 	CreatedAt             int64    `json:"created_at"`
+}
+
+func (s IssueToolScope) RuntimeSession() string {
+	if strings.TrimSpace(s.RuntimeSessionID) != "" {
+		return strings.TrimSpace(s.RuntimeSessionID)
+	}
+	return strings.TrimSpace(s.ConversationSessionID)
 }
 
 func (s IssueToolScope) Validate() error {
 	if strings.TrimSpace(s.Ref) == "" || strings.TrimSpace(s.ContactID) == "" ||
-		strings.TrimSpace(s.ConversationSessionID) == "" || strings.TrimSpace(s.TurnID) == "" {
+		strings.TrimSpace(s.RuntimeSession()) == "" || strings.TrimSpace(s.TurnID) == "" {
 		return errIssueToolScope
 	}
 	for _, id := range s.AllowedIssueIDs {

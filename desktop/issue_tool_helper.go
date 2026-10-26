@@ -129,6 +129,18 @@ func issueToolDefinitions() []issueToolDefinition {
 			},
 		},
 		{
+			Name: "issue_wait", Description: "Report that the current issue execution needs information and pause work. Returns a short waiting_user receipt with question_ref; do not wait inside the tool call.",
+			InputSchema: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"scope":             stringProp("Opaque app-issued work scope token; never invent or change it."),
+					"text":              stringProp("The missing-information question for the user."),
+					"expected_revision": map[string]any{"type": "integer", "minimum": 1},
+				},
+				"required": []string{"scope", "text", "expected_revision"},
+			},
+		},
+		{
 			Name: "issue_action", Description: "Apply one explicit user-authorized issue action through Nagi's existing issue path, including wait for missing information and resume. Do not use for ordinary discussion. Ambiguous/missing targets return candidates; no operation is accepted without real Runtime IDs.",
 			InputSchema: map[string]any{
 				"type": "object", "additionalProperties": false,

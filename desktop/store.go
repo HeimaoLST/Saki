@@ -58,6 +58,7 @@ type storedIssueExecution struct {
 	ToolOperationID      string            `json:"tool_operation_id,omitempty"`
 	ToolScopeRef         string            `json:"tool_scope_ref,omitempty"`
 	ToolScopeInput       string            `json:"tool_scope_input,omitempty"`
+	WaitRequested        bool              `json:"wait_requested,omitempty"`
 }
 
 type storedRequirement struct {
@@ -296,6 +297,7 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 					ToolOperationID:      execution.ToolOperationID,
 					ToolScopeRef:         execution.ToolScopeRef,
 					ToolScopeInput:       execution.ToolScopeInput,
+					WaitRequested:        execution.WaitRequested,
 				})
 			}
 			s.state.Issues = append(s.state.Issues, stored)

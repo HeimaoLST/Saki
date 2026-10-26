@@ -1230,6 +1230,9 @@ func (a *appModel) applyIssueWorkHistory(ct *contact, issue *productIssue, recor
 	}
 	issue.Work.Loaded = true
 	issue.Work.SessionState = status
+	if issue.Work.ReleasePending && issue.Work.ActiveTaskID == "" && !issue.Work.Releasing {
+		a.releaseIssueWorkSession(ct, issue)
+	}
 	issue.Work.HistoryDirty = false
 	a.applyIssueRecoveredLifecycle(issue)
 }
@@ -1487,6 +1490,7 @@ func (a *appModel) applyIssueEvent(ct *contact, issue *productIssue, event runti
 			execution.Detail = detail
 		}
 		a.applyIssueTerminalLifecycle(issue, event.TaskID, payload.Status)
+		issue.Work.ReleasePending = true
 		_ = a.persist()
 		a.reloadIssueWorkByID(ct.ID, issue.ID)
 		a.maybeAutoContinueAllIssues()
@@ -1747,7 +1751,10 @@ func (a *appModel) canStartIssue(ct *contact, issue *productIssue) string {
 	if sessionBusy(issue.Work.SendState, issue.Work.ActiveTaskID) {
 		return "This issue already has an active execution."
 	}
-	if issue.WorkSessionID != "" && !issue.Work.Loaded {
+	if issue.Work.Releasing {
+		return "This issue's work session is still being released; retry after it completes."
+	}
+	if issue.WorkSessionID != "" && !issue.Work.Loaded && !issue.Work.Released {
 		return "This issue's work history is still loading."
 	}
 	if a.activeTaskCount() >= a.maxActiveTasks() {
@@ -1790,13 +1797,23 @@ func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *i
 	sessionID := issue.WorkSessionID
 	context := cloneTaskContextItems(execution.Context)
 	rt, configured := a.rt, a.connectionManaged
-	go a.submitIssueTask(rt, configured, ct.ID, issue.ID, execution.ID, sessionID, workspace, system, prompt, context)
+	released := issue.Work.Released
+	go a.submitIssueTask(rt, configured, ct.ID, issue.ID, execution.ID, sessionID, workspace, system, prompt, context, released)
 	return true
 }
 
-func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID, issueID, executionID, sessionID, workspace, system, prompt string, context []taskContextItem) {
+func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID, issueID, executionID, sessionID, workspace, system, prompt string, context []taskContextItem, released bool) {
+	workTools := a.issueToolEnabled() && a.connectionManaged
+	createdSession := false
 	if sessionID == "" {
-		session, err := a.configuredCreate(rt, configured, workspace, system)
+		var session runtimeSession
+		var err error
+		if workTools {
+			session, err = a.configuredWorkCreate(rt, configured, workspace, system)
+			createdSession = err == nil
+		} else {
+			session, err = a.configuredCreate(rt, configured, workspace, system)
+		}
 		if err != nil {
 			a.failIssueSubmit(contactID, issueID, err, false)
 			return
@@ -1831,7 +1848,63 @@ func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID
 			return
 		}
 	}
+	if sessionID != "" && released {
+		if _, err := rt.loadSession(sessionID); err != nil {
+			a.failIssueSubmit(contactID, issueID, fmt.Errorf("reload released work session: %w", err), false)
+			return
+		}
+		a.runOnUI(func() {
+			if issue := a.contactByID(contactID).issueByID(issueID); issue != nil {
+				issue.Work.Released = false
+				issue.Work.Loaded = true
+				_ = a.persist()
+			}
+		})
+	}
 	wireContext := taskContextInputs(context)
+	if workTools {
+		configuredTools, err := a.issueToolEnsureWorkSession(rt, sessionID, createdSession)
+		if err != nil {
+			a.failIssueSubmit(contactID, issueID, err, false)
+			return
+		}
+		if configuredTools {
+			var scope *IssueToolScope
+			var scopeErr error
+			a.runOnUI(func() {
+				if a.shutdownStarted {
+					scopeErr = errors.New("app is shutting down")
+					return
+				}
+				scope, scopeErr = a.issueToolNewWorkScope(contactID, issueID, executionID, sessionID)
+				if scopeErr != nil {
+					return
+				}
+				ct := a.contactByID(contactID)
+				if ct == nil {
+					scopeErr = errors.New("contact disappeared before work scope")
+					return
+				}
+				_, execution := ct.executionByID(executionID)
+				if execution == nil {
+					scopeErr = errors.New("execution disappeared before work scope")
+					return
+				}
+				execution.ToolScopeRef = scope.Ref
+				execution.ToolScopeInput = issueToolScopeText(scope)
+				if err := a.persist(); err != nil {
+					scopeErr = err
+				}
+			})
+			if scopeErr != nil {
+				a.failIssueSubmit(contactID, issueID, scopeErr, false)
+				return
+			}
+			if input, ok := issueToolScopeInput(scope); ok {
+				wireContext = append(wireContext, input)
+			}
+		}
+	}
 	if err := validateRuntimeContextInputs(wireContext); err != nil {
 		a.failIssueSubmit(contactID, issueID, fmt.Errorf("issue work caller context: %w", err), false)
 		return
@@ -1873,6 +1946,9 @@ func (a *appModel) acceptIssueTask(ct *contact, issue *productIssue, execution *
 		execution.MessageID = result.MessageID
 		execution.Status = issueExecutionAccepted
 		execution.Detail = ""
+		if execution.ToolScopeRef != "" {
+			a.issueToolBindTask(execution.ToolScopeRef, result.TaskID)
+		}
 	}
 	issue.Work.pendingExecutionID = ""
 	if w := a.ensureWork(ct, result.TaskID, result.MessageID); w != nil {
@@ -1959,6 +2035,11 @@ func (a *appModel) acceptIssueTask(ct *contact, issue *productIssue, execution *
 			}
 		}
 		a.issueToolCompleteExecution(execution, acceptedSaved, detail)
+	}
+	if execution != nil && execution.WaitRequested && issue.openQuestion() != nil &&
+		a.requestIssueWaitStop(ct, issue, execution.ID, execution.SessionID, execution.TaskID) {
+		// The actual Runtime task is now known; cancellation was intentionally
+		// deferred until this accept callback.
 	}
 }
 
@@ -2229,6 +2310,9 @@ func (a *appModel) acceptTask(ct *contact, text string, result runtimeSendResult
 		w.Prompt = text
 	}
 	_, execution := ct.executionByID(ct.pendingIssueExecution)
+	if execution != nil && execution.ToolScopeRef != "" {
+		a.issueToolBindTask(execution.ToolScopeRef, result.TaskID)
+	}
 	if execution != nil {
 		execution.SessionID = ct.SessionID
 		execution.TaskID = result.TaskID

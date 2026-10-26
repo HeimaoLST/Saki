@@ -157,6 +157,10 @@ func (a *appModel) markIssueWaitingFor(ct *contact, issueID string) bool {
 // status, AutoContinue, the optional supersede/new question and its operation
 // receipt in one persist. UI mark-waiting and tool wait share this path.
 func (a *appModel) markIssueWaitingForQuestion(ct *contact, issueID, supersedeRef string, question *issueQuestion, operation *IssueToolOperation, receipt *IssueToolReceipt) bool {
+	return a.markIssueWaitingForQuestionActive(ct, issueID, supersedeRef, question, operation, receipt, false)
+}
+
+func (a *appModel) markIssueWaitingForQuestionActive(ct *contact, issueID, supersedeRef string, question *issueQuestion, operation *IssueToolOperation, receipt *IssueToolReceipt, allowActive bool) bool {
 	issue := issueForContact(ct, issueID)
 	if issue == nil || issue.Archived {
 		return false
@@ -164,7 +168,10 @@ func (a *appModel) markIssueWaitingForQuestion(ct *contact, issueID, supersedeRe
 	if issue.Status == issueStatusCompleted || issue.Status == issueStatusCanceled {
 		return false
 	}
-	if issue.Work.ActiveTaskID != "" || issue.Work.SendState != sendIdle || issueRunBlocked(issue) != "" {
+	if !allowActive && (issue.Work.ActiveTaskID != "" || issue.Work.SendState != sendIdle || issueRunBlocked(issue) != "") {
+		return false
+	}
+	if allowActive && issue.Work.ActiveTaskID == "" && issue.Work.SendState != sendSubmitting {
 		return false
 	}
 	ledger := issueSupplementLedgerFor(issue)
@@ -428,6 +435,15 @@ func (a *appModel) applyIssueTerminalLifecycle(issue *productIssue, taskID, stat
 	case "interrupted":
 		if issue.Work.StopRequestedTasks[taskID] {
 			issue.Status = issueStatusInProgress
+		} else if execution := executionForTask(issue, taskID); execution != nil && execution.WaitRequested {
+			if issue.openQuestion() != nil {
+				issue.Status = issueStatusWaitingUser
+				if issue.Supplements != nil {
+					issue.Supplements.AutoContinue = false
+				}
+			} else {
+				issue.Status = issueStatusInProgress
+			}
 		} else {
 			issue.Status = issueStatusNeedsAttention
 			if issue.Supplements != nil {
