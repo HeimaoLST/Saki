@@ -578,6 +578,7 @@ func (a *appModel) reconcileIssueExecution(issueID, executionID string) bool {
 
 func (a *appModel) checkIssueExecution(rt *runtimeClient, contactID, issueID, executionID, sessionID, taskID string) {
 	state, err := rt.taskStatus(sessionID, taskID)
+	pages, _, historyErr := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
 		if a.rt != rt {
 			return
@@ -611,7 +612,9 @@ func (a *appModel) checkIssueExecution(rt *runtimeClient, contactID, issueID, ex
 				w.State = workStateFromTask(state.Status)
 				w.Detail = ""
 			}
-			_ = a.persist()
+			if !a.acceptSupplementFromHistory(issue, execution, pages, historyErr) {
+				_ = a.persist()
+			}
 			a.reloadIssueWorkByID(contactID, issueID)
 			a.maybeAutoContinueAllIssues()
 		case "accepted", "running":
@@ -630,7 +633,9 @@ func (a *appModel) checkIssueExecution(rt *runtimeClient, contactID, issueID, ex
 					w.State = workAccepted
 				}
 			}
-			_ = a.persist()
+			if !a.acceptSupplementFromHistory(issue, execution, pages, historyErr) {
+				_ = a.persist()
+			}
 		default:
 			execution.Status = issueExecutionUnknown
 			execution.Detail = "Runtime reports no trusted terminal state for this task; inspect the work record or confirm not dispatched. No automatic retry."

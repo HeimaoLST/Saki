@@ -297,3 +297,66 @@ func (a *appModel) normalizeRestoredSupplementBatches() {
 		}
 	}
 }
+
+// supplementHistoryMatches verifies the exact user body and caller-context
+// inputs against the Runtime semantic history for this task/message. It uses
+// the existing task_context parser and does not search prompt text or create a
+// second history model.
+func supplementHistoryMatches(execution *issueExecution, records []historyRecord) bool {
+	if execution == nil || execution.Prompt == "" || execution.TaskID == "" || execution.MessageID == "" {
+		return false
+	}
+	for index := len(records) - 1; index >= 0; index-- {
+		rec := records[index].Record
+		if rec.Type != "messages" || rec.TaskID != execution.TaskID || rec.MessageID != execution.MessageID {
+			continue
+		}
+		for _, item := range rec.Items {
+			if item.Role != "user" {
+				continue
+			}
+			text, contexts := taskContextUserContent(item.Content)
+			if text != execution.Prompt || len(contexts) != len(execution.Context) {
+				continue
+			}
+			matched := true
+			for i := range contexts {
+				current := execution.Context[i]
+				if contexts[i].Name != current.inputName() || contexts[i].Text != current.Text {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (a *appModel) acceptSupplementFromHistory(issue *productIssue, execution *issueExecution, records []historyRecord, historyErr error) bool {
+	if issue == nil || execution == nil || issue.Supplements == nil {
+		return false
+	}
+	batch := issueSupplementBatchForExecution(issue, execution.ID)
+	if batch == nil || (batch.State != supplementBatchDispatching && batch.State != supplementBatchUnknown) {
+		return false
+	}
+	if historyErr != nil || !supplementHistoryMatches(execution, records) {
+		execution.Detail = "Runtime task is known, but the full prompt/context history is not proven; keep this supplement pending verification. No automatic resend."
+		return false
+	}
+	association := issueSupplementAssociation{
+		SessionID: execution.SessionID, TaskID: execution.TaskID,
+		MessageID: execution.MessageID, ExecutionID: execution.ID,
+	}
+	accepted, err := issue.Supplements.Accept(batch, association, a.persist)
+	if !accepted {
+		return false
+	}
+	if err != nil {
+		issue.Work.SendError = "Runtime accepted this supplement, but the history-verified receipt could not be saved: " + err.Error()
+	}
+	return true
+}
