@@ -231,6 +231,17 @@ type appModel struct {
 	issueResultOpen    func(string) error
 	issueResultReveal  func(string) error
 
+	// #154 conversation issue tools. The scope/operation records live in the
+	// same contact store, not in a second database or queue.
+	issueToolLedger   *IssueToolOperationLedger
+	issueToolScopes   map[string]IssueToolScope
+	issueToolServer   *issueToolIPCServer
+	issueToolEndpoint string
+	issueToolHelper   string
+	issueToolErr      string
+	issueToolWaiters  map[string]chan IssueToolReceipt
+	issueToolShutdown chan struct{}
+
 	modelForm         *modelSelection
 	modelOpenToken    int
 	modelPanelMessage string

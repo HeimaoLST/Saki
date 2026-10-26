@@ -2,8 +2,9 @@ package main
 
 // MCP 2025-11-25 legacy stdio helper for conversation-issued Nagi issue tools.
 // The helper only speaks MCP and forwards one tool call to the application IPC;
-// it owns no contact/issue/store/Runtime state. The future main entry starts
-// this function; no GUI shortcut or second Runtime client lives here.
+// it owns no contact/issue/store/Runtime state. The same binary enters this
+// function via --issue-tool-helper; no GUI shortcut or second Runtime client
+// lives here.
 
 import (
 	"bufio"
@@ -258,10 +259,15 @@ func issueToolHelperServe(ctx context.Context, in io.Reader, out io.Writer, forw
 				continue
 			}
 			if len(request.Params) > 0 && strings.TrimSpace(string(request.Params)) != "{}" && strings.TrimSpace(string(request.Params)) != "null" {
-				if err := writeError(request.ID, -32602, "tools/list params must be empty"); err != nil {
-					return err
+				var params struct {
+					Cursor *string `json:"cursor"`
 				}
-				continue
+				if err := json.Unmarshal(request.Params, &params); err != nil || params.Cursor != nil && strings.TrimSpace(*params.Cursor) != "" {
+					if err := writeError(request.ID, -32602, "tools/list cursor is not supported"); err != nil {
+						return err
+					}
+					continue
+				}
 			}
 			if err := write(issueToolRPCResponse{ID: request.ID, Result: map[string]any{"tools": issueToolDefinitions()}}); err != nil {
 				return err

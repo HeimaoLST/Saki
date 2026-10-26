@@ -81,6 +81,21 @@ func newRuntimeApp() (*appModel, error) {
 	}
 	a.bindTaskContexts()
 	a.normalizeRestoredSupplementBatches()
+	if a.issueToolLedger == nil {
+		a.issueToolLedger = &IssueToolOperationLedger{}
+	}
+	if a.issueToolScopes == nil {
+		a.issueToolScopes = map[string]IssueToolScope{}
+	}
+	if a.issueToolWaiters == nil {
+		a.issueToolWaiters = map[string]chan IssueToolReceipt{}
+	}
+	if a.issueToolShutdown == nil {
+		a.issueToolShutdown = make(chan struct{})
+	}
+	if err := a.startIssueToolService(); err != nil {
+		a.issueToolErr = err.Error()
+	}
 	formConfig := startup.Config
 	if formConfig == nil {
 		formConfig = startup.FormConfig
@@ -261,7 +276,7 @@ func (a *appModel) startRuntime() {
 	var rt *runtimeClient
 	var err error
 	if a.connectionEffective != nil {
-		launch, prepareErr := prepareConnectionLaunch(*a.connectionEffective, os.Environ(), a.sessionDir, os.TempDir())
+		launch, prepareErr := prepareConnectionLaunchWithTools(*a.connectionEffective, os.Environ(), a.sessionDir, os.TempDir(), a.issueToolLaunchSource())
 		if prepareErr != nil {
 			a.runtimeStatus = runtimeStateFailed
 			a.runtimeStage = "Connection configuration"
@@ -445,6 +460,9 @@ func (a *appModel) beginShutdown() {
 		return
 	}
 	a.shutdownStarted = true
+	if a.issueToolShutdown != nil {
+		close(a.issueToolShutdown)
+	}
 	a.persist()
 	if a.connectionTestCancel != nil {
 		a.connectionTestCancel()
@@ -1917,6 +1935,16 @@ func (a *appModel) acceptIssueTask(ct *contact, issue *productIssue, execution *
 			issue.Work.SendError = "The accepted task could not be cancelled; do not retry it automatically."
 		}
 	}
+	if execution != nil && execution.ToolOperationID != "" {
+		detail := ""
+		if !acceptedSaved {
+			detail = issue.Work.SendError
+			if detail == "" {
+				detail = "Runtime accepted the task, but its local receipt could not be saved."
+			}
+		}
+		a.issueToolCompleteExecution(execution, acceptedSaved, detail)
+	}
 }
 
 func executionIDOf(execution *issueExecution) string {
@@ -1939,6 +1967,15 @@ func (a *appModel) failIssueSubmit(contactID, issueID string, err error, submitt
 		issue.Work.pendingEvents = nil
 		_, execution := ct.executionByID(issue.Work.pendingExecutionID)
 		issue.Work.pendingExecutionID = ""
+		if execution != nil && execution.ToolOperationID != "" {
+			defer func() {
+				detail := execution.Detail
+				if detail == "" {
+					detail = issue.Work.SendError
+				}
+				a.issueToolCompleteExecution(execution, false, detail)
+			}()
+		}
 		batch := issueSupplementBatchForExecution(issue, executionIDOf(execution))
 		detail := a.connectionRuntimeMessage(err)
 		switch {
@@ -2055,13 +2092,14 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 		return false
 	}
 	rt, configured := a.rt, a.connectionManaged
-	go a.submitTask(rt, configured, contactID, sessionID, text, workspace, system, submittedContext)
+	issueTools := a.issueToolEnabled() && a.connectionManaged
+	go a.submitTask(rt, configured, contactID, sessionID, text, workspace, system, submittedContext, newIssueToolTurnID(), issueTools)
 	return true
 }
 
-func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, sessionID, text, workspace, system string, context []taskContextItem) {
+func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, sessionID, text, workspace, system string, context []taskContextItem, turnID string, issueTools bool) {
 	if sessionID == "" {
-		session, err := a.configuredCreate(rt, configured, workspace, system)
+		session, err := a.configuredConversationCreate(rt, configured, workspace, system)
 		if err != nil {
 			a.failSubmit(contactID, err, false)
 			return
@@ -2094,7 +2132,26 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 			return
 		}
 	}
-	result, err := rt.sendTask(sessionID, text, taskContextInputs(context)...)
+	wireContext := taskContextInputs(context)
+	if issueTools {
+		var scope *IssueToolScope
+		var scopeErr error
+		a.runOnUI(func() {
+			if a.shutdownStarted {
+				scopeErr = errors.New("app is shutting down")
+				return
+			}
+			scope, scopeErr = a.issueToolNewScope(contactID, sessionID, turnID)
+		})
+		if scopeErr != nil {
+			a.failSubmit(contactID, fmt.Errorf("prepare issue tool scope: %w", scopeErr), false)
+			return
+		}
+		if input, ok := issueToolScopeInput(scope); ok {
+			wireContext = append(wireContext, input)
+		}
+	}
+	result, err := rt.sendTask(sessionID, text, wireContext...)
 	if err != nil {
 		a.failSubmit(contactID, err, true)
 		return
@@ -2423,6 +2480,7 @@ func (a *appModel) persist() error {
 	if a.store == nil {
 		return nil
 	}
+	a.store.setIssueToolState(a.issueToolLedger, a.issueToolScopes)
 	if err := a.store.save(a.contacts, a.selectedID()); err != nil {
 		a.runtimeErr = "Could not save contacts: " + err.Error()
 		return err

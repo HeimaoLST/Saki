@@ -81,6 +81,9 @@ func contactsFromStore(store *contactStore) []*contact {
 			Status:           statusReady, WorkLabel: "Preparing a reply",
 		}
 		ct.Issues = issuesForStoredContact(store.state.Issues, ct.ID)
+		if stored.SelectedIssueID != "" {
+			ct.SelectedIssueID = stored.SelectedIssueID
+		}
 		if issue := ct.selectedIssue(); issue != nil {
 			ct.SelectedIssueID = issue.ID
 		}
@@ -98,6 +101,8 @@ func placeholderContact(workDir string) *contact {
 
 func applyStoreSelection(a *appModel, store *contactStore) {
 	a.store = store
+	a.issueToolLedger = store.issueToolLedger
+	a.issueToolScopes = store.issueToolScopes
 	a.contacts = contactsFromStore(store)
 	a.selected = 0
 	for i, ct := range a.contacts {
@@ -270,10 +275,10 @@ func (a *appModel) applyConnection() {
 	sessionDir := a.sessionDir
 	helperHint := a.runtimeHelperHint()
 	gen := a.connectionGeneration + 1
-	go a.applyConnectionWorker(gen, path, sessionDir, helperHint, oldRT, oldLaunch)
+	go a.applyConnectionWorker(gen, path, sessionDir, helperHint, oldRT, oldLaunch, a.issueToolLaunchSource())
 }
 
-func (a *appModel) applyConnectionWorker(gen int, path, sessionDir, helperHint string, oldRT *runtimeClient, oldLaunch *connectionLaunch) {
+func (a *appModel) applyConnectionWorker(gen int, path, sessionDir, helperHint string, oldRT *runtimeClient, oldLaunch *connectionLaunch, toolSource *runtimeToolSource) {
 	fail := func(message string) {
 		a.updateUI(func() {
 			a.connectionApplying = false
@@ -295,7 +300,7 @@ func (a *appModel) applyConnectionWorker(gen int, path, sessionDir, helperHint s
 		fail("Runtime helper not found. " + helperHint)
 		return
 	}
-	launch, err := prepareConnectionLaunch(config, os.Environ(), sessionDir, os.TempDir())
+	launch, err := prepareConnectionLaunchWithTools(config, os.Environ(), sessionDir, os.TempDir(), toolSource)
 	if err != nil {
 		fail("Could not prepare the saved connection: " + err.Error())
 		return
@@ -574,6 +579,13 @@ func (a *appModel) configuredCreate(rt *runtimeClient, configured bool, workspac
 	return rt.createSession(workspace, system)
 }
 
+func (a *appModel) configuredConversationCreate(rt *runtimeClient, configured bool, workspace, system string) (runtimeSession, error) {
+	if configured {
+		return rt.createConfiguredConversationSession(workspace, system, a.issueToolConversationSelection())
+	}
+	return rt.createSession(workspace, system)
+}
+
 func observedConnectionSummary(connection runtimeConnection, config runtimeConnectionConfig, maxActiveTasks int) string {
 	effective := config.EffectiveConfig
 	summary := fmt.Sprintf("%s · %s · cwd %s · context %d / output %d",
@@ -625,6 +637,14 @@ func probeRuntimeConfig(binary string, config connectionConfig, parentEnv []stri
 }
 
 func (c *runtimeClient) createConfiguredSession(workingDir, systemPrompt string) (runtimeSession, error) {
+	return c.createConfiguredSessionWithTools(workingDir, systemPrompt, nil)
+}
+
+func (c *runtimeClient) createConfiguredConversationSession(workingDir, systemPrompt string, toolSelection map[string]any) (runtimeSession, error) {
+	return c.createConfiguredSessionWithTools(workingDir, systemPrompt, toolSelection)
+}
+
+func (c *runtimeClient) createConfiguredSessionWithTools(workingDir, systemPrompt string, toolSelection map[string]any) (runtimeSession, error) {
 	config := map[string]any{
 		"connection_id": connectionID,
 	}
@@ -633,6 +653,9 @@ func (c *runtimeClient) createConfiguredSession(workingDir, systemPrompt string)
 	}
 	if systemPrompt != "" {
 		config["system_prompt"] = systemPrompt
+	}
+	if toolSelection != nil {
+		config["tool_selection"] = toolSelection
 	}
 	var session runtimeSession
 	err := c.call("session.create", map[string]any{
@@ -662,10 +685,26 @@ func (a *appModel) finishShutdown() {
 		return
 	}
 	if a.rt == nil {
-		a.quitReady = true
-		if a.requestQuit != nil {
-			a.requestQuit()
+		if a.issueToolServer == nil {
+			a.quitReady = true
+			if a.requestQuit != nil {
+				a.requestQuit()
+			}
+			return
 		}
+		a.shutdownDrainStarted = true
+		go func() {
+			err := a.closeIssueToolService()
+			a.updateUI(func() {
+				a.quitReady = true
+				if err != nil {
+					a.runtimeErr = "Issue tool service shutdown: " + a.connectionSafeMessage(err)
+				}
+				if a.requestQuit != nil {
+					a.requestQuit()
+				}
+			})
+		}()
 		return
 	}
 	a.shutdownDrainStarted = true
@@ -678,10 +717,14 @@ func (a *appModel) finishShutdown() {
 		if launch != nil {
 			_ = launch.Cleanup()
 		}
+		toolErr := a.closeIssueToolService()
 		a.updateUI(func() {
 			a.quitReady = true
 			if err != nil {
 				a.runtimeErr = "Runtime shutdown: " + a.connectionSafeMessage(err)
+			}
+			if toolErr != nil {
+				a.runtimeErr = "Issue tool service shutdown: " + a.connectionSafeMessage(toolErr)
 			}
 			if a.requestQuit != nil {
 				a.requestQuit()

@@ -368,12 +368,28 @@ type IssueToolExecutionView struct {
 
 const issueToolExecutionPageLimit = 20
 
+type IssueToolResultFileView struct {
+	ExecutionID string `json:"execution_id"`
+	CallID      string `json:"call_id"`
+	ToolName    string `json:"tool_name"`
+	Path        string `json:"path"`
+}
+
 type IssueToolIssueDetail struct {
 	Issue             IssueToolIssueSummary      `json:"issue"`
 	Requirements      []IssueToolRequirementView `json:"requirements,omitempty"`
 	Executions        []IssueToolExecutionView   `json:"executions,omitempty"`
 	ExecutionCount    int                        `json:"execution_count"`
 	ExecutionsHasMore bool                       `json:"executions_has_more"`
+
+	// Result facts are derived from the latest recorded execution's typed
+	// history. They are never fabricated from assistant prose or tool logs.
+	ResultExecutionID  string                    `json:"result_execution_id,omitempty"`
+	ResultFileCount    int                       `json:"result_file_count"`
+	ResultFiles        []IssueToolResultFileView `json:"result_files,omitempty"`
+	ResultFilesHasMore bool                      `json:"result_files_has_more,omitempty"`
+	ResultExcerpt      string                    `json:"result_excerpt,omitempty"`
+	ResultUnavailable  string                    `json:"result_unavailable,omitempty"`
 }
 
 func issueToolSummary(issue *productIssue) IssueToolIssueSummary {

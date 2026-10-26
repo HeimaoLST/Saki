@@ -131,6 +131,10 @@ func (a *appModel) autoContinueIssue(ct *contact, issue *productIssue) bool {
 // revision, all eligible pending supplements, and task context before the one
 // save that records the execution and dispatching batch.
 func (a *appModel) startIssueRun(ct *contact, issue *productIssue) bool {
+	return a.startIssueRunWithOperation(ct, issue, "")
+}
+
+func (a *appModel) startIssueRunWithOperation(ct *contact, issue *productIssue, operationID string) bool {
 	prompt := issuePrompt(issue)
 	if strings.TrimSpace(prompt) == "" {
 		a.issueFormError = "This issue has no goal to run."
@@ -149,7 +153,7 @@ func (a *appModel) startIssueRun(ct *contact, issue *productIssue) bool {
 	execution := &issueExecution{
 		ID: newIssueExecutionID(), SessionID: issue.WorkSessionID, Prompt: prompt,
 		Status: issueExecutionPending, RequirementsRevision: issue.RequirementsRevision,
-		Context: issue.Context.snapshot(),
+		Context: issue.Context.snapshot(), ToolOperationID: operationID,
 	}
 	previousExecutions := issue.Executions
 	previousSend, previousPending := issue.Work.SendState, issue.Work.pendingExecutionID

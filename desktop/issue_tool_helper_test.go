@@ -438,3 +438,17 @@ func TestIssueToolHelperResponseFrameTooLargeIsSmallError(t *testing.T) {
 		t.Fatalf("oversize fallback = %+v / %v", result, err)
 	}
 }
+
+func TestIssueToolHelperAcceptsRuntimeToolsListCursor(t *testing.T) {
+	input := issueToolInitLine() +
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n" +
+		`{"jsonrpc":"2.0","id":"list-cursor","method":"tools/list","params":{"cursor":null}}` + "\n"
+	out, err := runIssueToolHelper(t, input, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	responses := decodeIssueToolOutput(t, out)
+	if len(responses) != 2 || responses[1].Error != nil || !strings.Contains(string(responses[1].Result), "issue_action") {
+		t.Fatalf("tools/list with null cursor = %+v", responses)
+	}
+}

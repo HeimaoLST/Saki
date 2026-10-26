@@ -117,7 +117,24 @@ func saveConnectionConfig(path string, config connectionConfig) error {
 	return nil
 }
 
+type runtimeToolSource struct {
+	ID               string   `json:"id"`
+	Transport        string   `json:"transport"`
+	Command          string   `json:"command"`
+	Args             []string `json:"args,omitempty"`
+	EnvFrom          []string `json:"env_from,omitempty"`
+	Protocol         string   `json:"protocol,omitempty"`
+	StartupTimeoutMS int      `json:"startup_timeout_ms,omitempty"`
+	CallTimeoutMS    int      `json:"call_timeout_ms,omitempty"`
+	CancelGraceMS    int      `json:"cancel_grace_ms,omitempty"`
+	Endpoint         string   `json:"-"`
+}
+
 func prepareConnectionLaunch(config connectionConfig, parentEnv []string, sessionDir, tempRoot string) (*connectionLaunch, error) {
+	return prepareConnectionLaunchWithTools(config, parentEnv, sessionDir, tempRoot, nil)
+}
+
+func prepareConnectionLaunchWithTools(config connectionConfig, parentEnv []string, sessionDir, tempRoot string, toolSource *runtimeToolSource) (*connectionLaunch, error) {
 	if fields := validateConnectionConfig(config); len(fields) > 0 {
 		return nil, fmt.Errorf("invalid connection config: %s", connectionValidationSummary(fields))
 	}
@@ -140,10 +157,16 @@ func prepareConnectionLaunch(config connectionConfig, parentEnv []string, sessio
 		return nil, err
 	}
 
+	toolSources := []runtimeToolSource(nil)
+	if toolSource != nil && strings.TrimSpace(toolSource.Command) != "" {
+		toolSources = append(toolSources, *toolSource)
+	}
 	hostConfig := struct {
 		DefaultConnectionID string               `json:"default_connection_id"`
 		Connections         []connectionHostItem `json:"connections"`
 		MaxActiveTasks      int                  `json:"max_active_tasks"`
+		MaxToolProcesses    int                  `json:"max_tool_processes,omitempty"`
+		ToolSources         []runtimeToolSource  `json:"tool_sources,omitempty"`
 	}{
 		DefaultConnectionID: connectionID,
 		Connections: []connectionHostItem{{
@@ -154,6 +177,7 @@ func prepareConnectionLaunch(config connectionConfig, parentEnv []string, sessio
 			DefaultModel: config.Model,
 		}},
 		MaxActiveTasks: config.MaxActiveTasks,
+		ToolSources:    toolSources,
 	}
 	hostData, err := json.MarshalIndent(hostConfig, "", "  ")
 	if err != nil {
@@ -198,6 +222,9 @@ func prepareConnectionLaunch(config connectionConfig, parentEnv []string, sessio
 		"SAKI_COMPACT_KEEP_TOKENS="+strconv.Itoa(keepRecent),
 		"SAKI_COMPACT_SUMMARY_TOKENS="+strconv.Itoa(summaryTokens),
 	)
+	if toolSource != nil && toolSource.Endpoint != "" {
+		env = append(env, issueToolIPCSocketEnv+"="+toolSource.Endpoint)
+	}
 	return &connectionLaunch{
 		Dir:            config.WorkingDirectory,
 		Env:            env,
@@ -314,6 +341,7 @@ var filteredConnectionEnv = map[string]bool{
 	"SAKI_COMPACT_SUMMARY_TOKENS": true,
 	"SAKI_SESSION_DIR":            true,
 	"SAKI_RUNTIME_CONFIG":         true,
+	issueToolIPCSocketEnv:         true,
 	connectionAPIKeyEnv:           true,
 }
 

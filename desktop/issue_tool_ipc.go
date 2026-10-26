@@ -1,8 +1,8 @@
 package main
 
-// Minimal one-request Unix-socket transport between the MCP helper and the
-// future Nagi application handler. It carries no contact/issue/Runtime state;
-// scope and action remain in the forwarded tool arguments. No retry occurs.
+// Minimal one-request Unix-socket transport between the MCP helper and the Nagi
+// application handler. It carries no contact/issue/Runtime state; scope and
+// action remain in the forwarded tool arguments. No retry occurs.
 
 import (
 	"bufio"
@@ -234,10 +234,6 @@ func (s *issueToolIPCServer) writeResponse(conn net.Conn, response issueToolForw
 	_, _ = conn.Write(append(data, '\n'))
 }
 
-// Close stops accepting new helper connections, waits for accepted handlers to
-// finish, and removes only the socket this server created. A handler that is
-// already running is not cancelled or replayed; the future adapter must keep
-// UI-state handler completion semantics explicit.
 // Close stops accepting, closes all currently accepted IO connections to
 // unblock idle reads/writes, waits for accepted handlers to complete their
 // side effects, and then removes only this server's socket. It is blocking and
