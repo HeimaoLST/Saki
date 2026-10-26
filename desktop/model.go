@@ -166,6 +166,7 @@ type appModel struct {
 	contactHistoryGen        int
 	contactHistoryDetailGen  int
 	contactHistoryInFlight   int
+	resultInFlight           int
 
 	issueFormOpen                 bool
 	issueFormEditingID            string
@@ -224,6 +225,9 @@ type appModel struct {
 	connectionTestCancel   func()
 	startupDetailsOpen     bool
 	shutdownDrainStarted   bool
+
+	issueResult        issueResultPage
+	issueResultInspect func(issueResultFile) issueResultFileInspection
 
 	modelForm         *modelSelection
 	modelOpenToken    int
@@ -393,6 +397,9 @@ func (a *appModel) selectContact(i int) {
 		a.persist()
 	}
 	a.screen = viewChat
+	if a.issueResult.Open {
+		a.cancelIssueResultView()
+	}
 	a.aux = ""
 	a.highlight = ""
 	if !a.demo {
@@ -489,6 +496,8 @@ func (a *appModel) closeAux() {
 		a.modelForm = nil
 		a.modelPanelMessage = ""
 		a.modelPanelError = ""
+	case "issue-result":
+		a.cancelIssueResultView()
 	}
 	a.aux = ""
 }

@@ -517,13 +517,14 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 						ui.Text(c, "No assistant message was recorded for this run. Use View execution to inspect its tool activity.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
 					}
 				}
-				if w != nil {
-					label := "View result"
-					if resultText == "" {
-						label = "View execution"
+				ui.Row(c).Gap(10).Children(func() {
+					ui.Button(c, "Open result").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+						a.openIssueResult(issue.ID, execution.ID)
+					})
+					if w != nil {
+						ui.Button(c, "View execution").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.showIssueWork(issue.ID, execution.TaskID) })
 					}
-					ui.Button(c, label).FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.showIssueWork(issue.ID, execution.TaskID) })
-				}
+				})
 			})
 		}
 		if executionHasUnknownRecovery(issue) {

@@ -933,8 +933,18 @@ func (a *appModel) historyAll(sessionID string) ([]historyRecord, string, error)
 }
 
 func (a *appModel) historyAllFor(rt *runtimeClient, sessionID string) ([]historyRecord, string, error) {
+	history, err := a.historyAllForSession(rt, sessionID)
+	if err != nil {
+		return nil, "", err
+	}
+	return history.Records, history.Status, nil
+}
+
+// historyAllForSession keeps the Runtime session header so callers can verify
+// typed provenance instead of assuming which session a record slice came from.
+func (a *appModel) historyAllForSession(rt *runtimeClient, sessionID string) (runtimeHistory, error) {
 	if rt == nil {
-		return nil, "", errRuntimeDisconnected
+		return runtimeHistory{}, errRuntimeDisconnected
 	}
 	offset := 0
 	var all []historyRecord
@@ -942,19 +952,22 @@ func (a *appModel) historyAllFor(rt *runtimeClient, sessionID string) ([]history
 	for page := 0; page < 1000; page++ {
 		result, err := rt.historyPage(sessionID, offset, 100)
 		if err != nil {
-			return nil, "", err
+			return runtimeHistory{}, err
+		}
+		if result.SessionID != sessionID {
+			return runtimeHistory{}, errors.New("runtime history returned a different session")
 		}
 		all = append(all, result.Records...)
 		status = result.Status
 		if result.NextOffset == nil {
-			return all, status, nil
+			return runtimeHistory{SessionID: result.SessionID, Records: all, Status: status}, nil
 		}
 		if *result.NextOffset <= offset {
-			return nil, "", errors.New("history pagination did not advance")
+			return runtimeHistory{}, errors.New("history pagination did not advance")
 		}
 		offset = *result.NextOffset
 	}
-	return nil, "", errors.New("history pagination exceeded 1000 pages")
+	return runtimeHistory{}, errors.New("history pagination exceeded 1000 pages")
 }
 
 type historyProjection struct {

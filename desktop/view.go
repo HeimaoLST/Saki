@@ -664,6 +664,9 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 	if returnAux == "configuration" || returnAux == "model" || returnAux == "task-context" {
 		width = 560
 	}
+	if returnAux == "issue-result" {
+		width = float32(a.issueResultPanelWidth())
+	}
 	open := true
 	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
@@ -679,6 +682,8 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 						a.modelPanel(c, t)
 					case "task-context":
 						a.taskContextPanel(c, t)
+					case "issue-result":
+						a.issueResultPanelView(c, t)
 					default:
 						a.settingsPanel(c, t)
 					}
@@ -689,6 +694,9 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 	if !open {
 		if returnAux == "model" && a.modelOpActive {
 			return
+		}
+		if returnAux == "issue-result" {
+			a.cancelIssueResultView()
 		}
 		a.aux = ""
 		if returnAux == "task-context" {
