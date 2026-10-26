@@ -462,7 +462,8 @@ func (a *appModel) runIssueFor(ct *contact, issueID string) bool {
 	ct.SelectedWorkTaskID = ""
 	execution := &issueExecution{
 		ID: newIssueExecutionID(), SessionID: issue.WorkSessionID, Prompt: prompt, Status: issueExecutionPending,
-		Context: issue.Context.snapshot(),
+		RequirementsRevision: issue.RequirementsRevision,
+		Context:              issue.Context.snapshot(),
 	}
 	issue.Executions = append(issue.Executions, execution)
 	issue.UpdatedAt = nowMillis()

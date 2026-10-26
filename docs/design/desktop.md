@@ -578,7 +578,7 @@ type resolvedTheme struct {
 代码来源：`agent/gui/153-issue-lifecycle`，base `885fb1f`（#116 配置组合），生产代码最终为 `817d9c9`（生命周期实现 `23929d9`，之后仅有归档标题/截图测试整理）。只描述 #153 范围，不等于完整 MVP；#142/#154、看板、日程和跨人转交未随本阶段完成。设置模块仍由 #115/#116 负责，本单未改 `connection_app.go` 或 `runtime.go`。
 
 - **状态**：事项使用持久化 `not_started / in_progress / waiting_user / needs_attention / completed / canceled`；`Archived` 是独立组织状态，不并入生命周期。旧 v1-v3 的 `open` 在加载时收敛为对应初始/进行状态；运行时 completed 不自动把 issue 设为 completed。
-- **持久化**：store 升到 v4，写入结构化 `requirement_items`、`requirements_revision`、`archived`、execution 的 `requirements_revision`；v1-v3 仍可读。旧整段 `requirements` 只在迁移/序列化边界解析，运行时 live 状态只有 `productIssue.Requirements []*issueRequirement`，不长期双写两套真相。新版本写入后旧 app 明确拒绝，不静默覆盖。
+- **持久化**：store 升到 v4，写入结构化 `requirement_items`、`requirements_revision`、`archived`、execution 的 `requirements_revision` 字段；原 `1700f8d` 创建新执行时漏赋值，后由 #117 组合在派发前捕获当前 revision；已有 0 保留为未记录，不按当前要求回填。v1-v3 仍可读。旧整段 `requirements` 只在迁移/序列化边界解析，运行时 live 状态只有 `productIssue.Requirements []*issueRequirement`，不长期双写两套真相。新版本写入后旧 app 明确拒绝，不静默覆盖。
 - **要求与证据**：每项要求有稳定 ID、text、`satisfied/unmet/unverified`、evidence；证据可由用户判断、可核对执行/task 或文件/检查来源；不新增 Source 枚举或自动审批关卡。用户可修正状态与证据，完成由用户显式动作产生，不要求逐项审批，也不因 execution completed 自动 satisfied/Done。
 - **编辑诚实性**：保存 Goal/Requirements 递增 `RequirementsRevision`；旧 execution 的 `Prompt`、SessionID/TaskID/MessageID 和 revision 不被编辑改写。Goal 改变时旧的 issue Evidence 清空，同文本要求也只保留为“Previous evidence (goal changed)”并回到 unverified；需求文本改变的新项为 unverified。旧 execution 仍以 sent snapshot 展示。
 - **动作**：创建、编辑、Start/Continue、Stop issue task、Cancel issue、Mark waiting、Resume、Complete、Reopen、Archive/Restore 均落到同一 `productIssue` 与现有 `runIssue`/`cancelIssue` 路径；Continue 复用同一 `WorkSessionID` 追加 execution，不复制 issue。完成 evidence 由用户输入或明确用户判断；没有自动完成。
