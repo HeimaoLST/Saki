@@ -456,6 +456,10 @@ func (ct *contact) issuesForFilter(filter string) []*productIssue {
 	return out
 }
 
+func issueFilterActionLabel(filter string) string {
+	return "Show " + strings.ToLower(issueFilterLabel(filter))
+}
+
 func issueFilterLabel(filter string) string {
 	switch filter {
 	case "waiting":

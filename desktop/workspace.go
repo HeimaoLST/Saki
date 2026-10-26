@@ -617,7 +617,7 @@ func (a *appModel) issueList(c *ui.Context, t *ui.Theme, ct *contact) {
 		ui.Row(c).Gap(4).Children(func() {
 			for _, candidate := range filters[start:end] {
 				candidate := candidate
-				label := issueFilterLabel(candidate)
+				label := issueFilterActionLabel(candidate)
 				if candidate == filter {
 					label = "• " + label
 				}

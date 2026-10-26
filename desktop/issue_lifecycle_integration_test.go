@@ -412,3 +412,24 @@ func TestIssueUIRequirementEvidenceActionPersists(t *testing.T) {
 		t.Fatalf("requirement UI evidence = %+v", requirement)
 	}
 }
+
+func TestIssueUIStatusFilterSelection(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
+	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "filtered issue", Status: issueStatusCompleted, RequirementsRevision: 1}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("Show completed"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.issueFilter != "completed" {
+		t.Fatalf("status filter = %q", a.issueFilter)
+	}
+	if !tr.HasText("Completed · filtered issue") {
+		t.Fatalf("completed filter did not list issue: %v", tr.Texts())
+	}
+}
