@@ -18,19 +18,20 @@ type runtimeConnection struct {
 }
 
 type runtimeConnectionConfig struct {
-	SessionID       string `json:"session_id"`
-	ConfigRevision  uint64 `json:"config_revision"`
+	SessionID       string   `json:"session_id"`
+	ConfigRevision  uint64   `json:"config_revision"`
+	StorageSchema   int      `json:"storage_schema"`
+	ImmutableFields []string `json:"immutable_fields"`
 	EffectiveConfig struct {
-		ConnectionID     *string `json:"connection_id"`
-		Model            string  `json:"model"`
-		API              string  `json:"api"`
-		WorkingDirectory string  `json:"working_directory"`
-		Compaction       struct {
-			ContextTokens int `json:"context_budget_tokens"`
-			OutputTokens  int `json:"reserve_tokens"`
-		} `json:"compaction"`
-		CapacitySource struct {
-			Kind string `json:"kind"`
+		ConnectionID          *string           `json:"connection_id"`
+		ExecutionConnectionID *string           `json:"execution_connection_id"`
+		Model                 string            `json:"model"`
+		API                   string            `json:"api"`
+		WorkingDirectory      string            `json:"working_directory"`
+		Compaction            runtimeCompaction `json:"compaction"`
+		CapacitySource        struct {
+			Kind      string `json:"kind"`
+			CatalogID string `json:"catalog_id"`
 		} `json:"capacity_source"`
 		ConnectionBinding struct {
 			State string `json:"state"`
