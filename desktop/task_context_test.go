@@ -341,7 +341,7 @@ func exerciseTaskContextView(t *testing.T, dark bool) {
 	if err := tr.Click("Context name"); err != nil {
 		t.Fatal(err)
 	}
-	tr.Key(ui.Super, ui.KeyA)
+	tr.Command("selectAll")
 	tr.Type("Renamed snippet")
 	if err := tr.Click("Save changes"); err != nil {
 		t.Fatal(err)
