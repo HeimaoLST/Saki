@@ -322,6 +322,97 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 	} else if got != files[0].Path {
 		t.Fatalf("path copy = %q, want %q", got, files[0].Path)
 	}
+
+	openKey := issueResultFileKey(files[0])
+	var openCalls, revealCalls atomic.Int32
+	var openPath, revealPath string
+	h.pump.do(func() {
+		h.app.issueResultOpen = func(path string) error {
+			openCalls.Add(1)
+			openPath = path
+			return fmt.Errorf("injected open failure")
+		}
+		h.app.issueResultReveal = func(path string) error {
+			revealCalls.Add(1)
+			revealPath = path
+			return fmt.Errorf("injected reveal failure")
+		}
+	})
+	if err := issueResultClick(h, "Open file"); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.wait(func() bool {
+		action := h.app.issueResult.Panel.Action
+		return h.app.issueResult.Panel.ActionFor == openKey && action.Err != ""
+	})
+	if openCalls.Load() != 1 || revealCalls.Load() != 0 || openPath != files[0].Path {
+		t.Fatalf("Open called wrong OS action: open=%d reveal=%d path=%q want=%q", openCalls.Load(), revealCalls.Load(), openPath, files[0].Path)
+	}
+	issueResultRequireTexts(t, h, "injected open failure")
+	if err := issueResultClick(h, "Check again"); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.wait(func() bool {
+		page := h.app.issueResult
+		return page.Panel.ActionFor == "" && !page.Panel.Checking && page.Panel.Inspection != nil
+	})
+	stem := issueResultTexts(h)
+	if issueResultTextsHave(stem, "injected open failure") {
+		t.Fatalf("successful check kept stale open error: %v", stem)
+	}
+	h.pump.do(func() {
+		h.app.issueResultOpen = func(path string) error {
+			openCalls.Add(1)
+			openPath = path
+			return nil
+		}
+	})
+	if err := issueResultClick(h, "Open file"); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.wait(func() bool {
+		page := h.app.issueResult
+		return page.Panel.ActionFor == openKey && page.Panel.Action.Err == ""
+	})
+	if openCalls.Load() != 2 || revealCalls.Load() != 0 || openPath != files[0].Path {
+		t.Fatalf("second Open called wrong OS action: open=%d reveal=%d path=%q", openCalls.Load(), revealCalls.Load(), openPath)
+	}
+	stem = issueResultTexts(h)
+	if issueResultTextsHave(stem, "Opened") || issueResultTextsHave(stem, "injected open failure") {
+		t.Fatalf("open request produced a false outcome or stale error: %v", stem)
+	}
+	if err := issueResultClick(h, "Show in Finder"); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.wait(func() bool {
+		action := h.app.issueResult.Panel.Action
+		return h.app.issueResult.Panel.ActionFor == openKey && strings.Contains(action.Err, "injected reveal failure")
+	})
+	if revealCalls.Load() != 1 || openCalls.Load() != 2 || revealPath != files[0].Path {
+		t.Fatalf("Reveal called wrong OS action: open=%d reveal=%d path=%q want=%q", openCalls.Load(), revealCalls.Load(), revealPath, files[0].Path)
+	}
+	issueResultRequireTexts(t, h, "injected reveal failure")
+	h.pump.do(func() {
+		h.app.issueResultReveal = func(path string) error {
+			revealCalls.Add(1)
+			revealPath = path
+			return nil
+		}
+	})
+	if err := issueResultClick(h, "Show in Finder"); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.wait(func() bool {
+		page := h.app.issueResult
+		return page.Panel.ActionFor == openKey && page.Panel.Action.Err == ""
+	})
+	if revealCalls.Load() != 2 || openCalls.Load() != 2 || revealPath != files[0].Path {
+		t.Fatalf("second Reveal called wrong OS action: open=%d reveal=%d path=%q", openCalls.Load(), revealCalls.Load(), revealPath)
+	}
+	stem = issueResultTexts(h)
+	if issueResultTextsHave(stem, "Found in Finder") || issueResultTextsHave(stem, "injected reveal failure") {
+		t.Fatalf("reveal request produced a false outcome or stale error: %v", stem)
+	}
 	if err := issueResultClick(h, "Source & raw record"); err != nil {
 		t.Fatal(err)
 	}
@@ -547,5 +638,424 @@ func TestIssueResultPageCheckSequenceAppliesOnlyLatest(t *testing.T) {
 	})
 	if preview != "newer" {
 		t.Fatalf("older same-key check overwrote latest inspection: %q", preview)
+	}
+}
+
+const issueResultActualRunOneFinal = "  first result  \n\nsecond paragraph keeps spaces  \nI also wrote /tmp/assistant-claim-only.txt"
+const issueResultActualRunTwoFinal = "\n second result\n\ncontinued paragraph  \n"
+
+type issueResultRunProvider struct {
+	keys   []string
+	mu     sync.Mutex
+	counts map[string]int
+	bodies []string
+}
+
+func newIssueResultRunProvider() *issueResultRunProvider {
+	return &issueResultRunProvider{
+		keys:   []string{"PAGE-RUN-TWO", "PAGE-RUN-ONE"},
+		counts: map[string]int{},
+	}
+}
+
+func (p *issueResultRunProvider) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.bodies)
+}
+
+func (p *issueResultRunProvider) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		p.mu.Lock()
+		p.bodies = append(p.bodies, string(body))
+		key := ""
+		for _, candidate := range p.keys {
+			if strings.Contains(string(body), candidate) {
+				key = candidate
+				break
+			}
+		}
+		count := p.counts[key]
+		p.counts[key]++
+		p.mu.Unlock()
+		var response any
+		switch {
+		case key == "PAGE-RUN-ONE" && count == 0:
+			response = issueResultFunctionCall("write", "app-write", map[string]any{
+				"path": "app-result.txt", "content": "app-first\n",
+			})
+		case key == "PAGE-RUN-TWO" && count == 0:
+			response = issueResultFunctionCall("edit", "app-edit", map[string]any{
+				"path": "app-result.txt",
+				"edits": []any{
+					map[string]any{"oldText": "app-first", "newText": "app-second"},
+				},
+			})
+		case key == "PAGE-RUN-ONE":
+			response = issueResultPageFinal(issueResultActualRunOneFinal)
+		default:
+			response = issueResultPageFinal(issueResultActualRunTwoFinal)
+		}
+		data, _ := json.Marshal(response)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}
+}
+
+func TestIssueResultPageFromActualIssueRunsAndRestart(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := newIssueResultRunProvider()
+	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 1)
+	var contactID, issueID string
+	var runOK bool
+	var runErr string
+	h.pump.do(func() {
+		runOK = h.app.createIssue("PAGE-RUN-ONE", "Create and then modify the result file.")
+		runErr = h.app.issueFormError
+		if !runOK {
+			return
+		}
+		contactID = h.app.selectedContact().ID
+		issueID = h.app.selectedContact().SelectedIssueID
+		runOK = h.app.runIssue(issueID)
+		runErr = h.app.issueFormError
+	})
+	if !runOK {
+		t.Fatalf("first actual issue run: %s", runErr)
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
+	})
+	if provider.count() != 2 {
+		t.Fatalf("first run provider requests = %d, want write/final", provider.count())
+	}
+	issueResultRequireTexts(t, h, "Open result")
+	if err := issueResultClick(h, "Open result"); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.wait(func() bool {
+		page := h.app.issueResult
+		return page.Open && !page.Loading && (page.LoadError != "" || len(page.Panel.Files) > 0)
+	})
+	open, loading, loadError, files, response := issueResultPageState(h)
+	if !open || loading || loadError != "" || len(files) != 1 || response != issueResultActualRunOneFinal {
+		t.Fatalf("actual first run page = open=%v loading=%v error=%q files=%+v response=%q", open, loading, loadError, files, response)
+	}
+	if files[0].ToolName != "write" || files[0].CallID != "app-write" || filepath.Base(files[0].Path) != "app-result.txt" {
+		t.Fatalf("actual first run file = %+v", files[0])
+	}
+	if strings.Contains(files[0].Path, "assistant-claim-only") {
+		t.Fatal("assistant text path became a reported file")
+	}
+	if got, err := issueResultClickCopy(h, "Copy result"); err != nil {
+		t.Fatal(err)
+	} else if got != issueResultActualRunOneFinal {
+		t.Fatalf("actual first result copy = %q, want exact %q", got, issueResultActualRunOneFinal)
+	}
+	if err := issueResultClick(h, "Close results"); err != nil {
+		t.Fatal(err)
+	}
+
+	var editOK, continueOK bool
+	h.pump.do(func() {
+		editOK = h.app.editIssue(issueID, "PAGE-RUN-TWO", "Modify the same result file.")
+		runErr = h.app.issueFormError
+		if editOK {
+			continueOK = h.app.runIssue(issueID)
+			runErr = h.app.issueFormError
+		}
+	})
+	if !editOK || !continueOK {
+		t.Fatalf("actual continue run: edit=%v run=%v error=%s", editOK, continueOK, runErr)
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 2 && issue.Executions[1].Status == issueExecutionCompleted
+	})
+	if provider.count() != 4 {
+		t.Fatalf("continue provider requests = %d, want edit/final", provider.count())
+	}
+	var secondExecutionID string
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		secondExecutionID = issue.Executions[1].ID
+		h.app.openIssueResult(issueID, secondExecutionID)
+	})
+	h.pump.wait(func() bool {
+		page := h.app.issueResult
+		return page.Open && !page.Loading && (page.LoadError != "" || len(page.Panel.Files) > 0)
+	})
+	open, loading, loadError, files, response = issueResultPageState(h)
+	if !open || loading || loadError != "" || len(files) != 1 || response != issueResultActualRunTwoFinal {
+		t.Fatalf("actual second run page = open=%v loading=%v error=%q files=%+v response=%q", open, loading, loadError, files, response)
+	}
+	if files[0].ToolName != "edit" || files[0].CallID != "app-edit" {
+		t.Fatalf("actual second run file = %+v", files[0])
+	}
+	var reloadGeneration int
+	h.pump.do(func() { reloadGeneration = h.app.issueResult.Generation })
+	beforeReload := provider.count()
+	if err := issueResultClick(h, "Reload result"); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.wait(func() bool {
+		page := h.app.issueResult
+		return page.Generation > reloadGeneration && !page.Loading
+	})
+	open, loading, loadError, files, response = issueResultPageState(h)
+	if !open || loading || loadError != "" || len(files) != 1 || response != issueResultActualRunTwoFinal {
+		t.Fatalf("reloaded page = open=%v loading=%v error=%q files=%+v response=%q", open, loading, loadError, files, response)
+	}
+	if provider.count() != beforeReload {
+		t.Fatalf("Reload result issued provider requests: %d -> %d", beforeReload, provider.count())
+	}
+	if err := issueResultClick(h, "View file 1"); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.wait(func() bool {
+		return !h.app.issueResult.Panel.Checking && h.app.issueResult.Panel.Inspection != nil
+	})
+	issueResultRequireTexts(t, h, "Current file", "app-second")
+	if err := issueResultClick(h, "Close results"); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeRestart := provider.count()
+	h.shutdown(t)
+	restarted := startIssueResultPageApp(t)
+	var reopened bool
+	restarted.pump.do(func() {
+		ct := restarted.app.contactByID(contactID)
+		if ct == nil {
+			return
+		}
+		for index, candidate := range restarted.app.contacts {
+			if candidate.ID == contactID {
+				restarted.app.selected = index
+			}
+		}
+		issue := ct.issueByID(issueID)
+		if issue == nil || len(issue.Executions) != 2 {
+			return
+		}
+		restarted.app.workspaceOpen = true
+		restarted.app.openIssueResult(issueID, issue.Executions[1].ID)
+		reopened = true
+	})
+	if !reopened {
+		t.Fatal("restart did not restore the dispatched issue executions")
+	}
+	restarted.pump.wait(func() bool {
+		page := restarted.app.issueResult
+		return page.Open && !page.Loading && (page.LoadError != "" || len(page.Panel.Files) > 0)
+	})
+	open, loading, loadError, files, response = issueResultPageState(restarted)
+	if !open || loading || loadError != "" || len(files) != 1 || response != issueResultActualRunTwoFinal {
+		t.Fatalf("restarted actual page = open=%v loading=%v error=%q files=%+v response=%q", open, loading, loadError, files, response)
+	}
+	if provider.count() != beforeRestart {
+		t.Fatalf("restart result page issued provider requests: %d -> %d", beforeRestart, provider.count())
+	}
+}
+
+func TestIssueResultPageReloadErrorKeepsReadableBody(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	file := issueResultPanelFixtureFile("reload", "/tmp/reload-body.txt", `{"path":"/tmp/reload-body.txt","bytes_written":1}`)
+	a.aux = "issue-result"
+	a.windowWidth = 720
+	a.issueResult = issueResultPage{
+		Open: true, OwnerContactID: ct.ID, IssueID: "issue-reload", ExecutionID: "exec-reload",
+		SessionID: "session-reload", TaskID: "task-reload", MessageID: "msg-reload", Generation: 3,
+		LoadError: "Execution history is unavailable: injected",
+		Notice:    "Runtime session working directory is unavailable; file paths are shown as reported.",
+		Panel: issueResultPanelState{
+			RunLabel: "Run 2 · Reload error", RunStatus: "Completed",
+			Response: "previous readable body\n", Files: []issueResultFile{file},
+		},
+	}
+	tr := ui.NewTester(a.view, 720, 900)
+	tr.Frame()
+	texts := tr.Texts()
+	for _, want := range []string{"Execution history is unavailable: injected", "previous readable body", "reload-body.txt", "Reload result"} {
+		if !issueResultTextsHave(texts, want) {
+			t.Fatalf("reload error hid readable body or retry control: missing %q in %v", want, texts)
+		}
+	}
+}
+
+func issueResultAppPreview(scene string, width int) *appModel {
+	a := issuePreviewApp("issue-results")
+	a.windowWidth = width
+	a.aux = "issue-result"
+	ct := a.selectedContact()
+	file := issueResultPanelFixtureFile("preview", "/Users/you/Workspace/Saki/report.txt", `{"path":"/Users/you/Workspace/Saki/report.txt","bytes_written":12}`)
+	page := issueResultPage{
+		Open: true, OwnerContactID: ct.ID, IssueID: ct.SelectedIssueID, ExecutionID: "exec-preview",
+		SessionID: "session-preview", TaskID: "task-preview", MessageID: "msg-preview", Generation: 1,
+		Panel: issueResultPanelState{
+			RunLabel: "Run 2 · Ship visible results", RunStatus: "Completed",
+			Response: "# Recorded output\n\nResult body with `code`.\n\n```go\nfunc main() {}\n```\n",
+			Files:    []issueResultFile{file},
+		},
+	}
+	switch scene {
+	case "loading":
+		page.Loading = true
+		page.Panel.Response = ""
+		page.Panel.Files = nil
+	case "empty":
+		page.Panel.Response = ""
+		page.Panel.Files = nil
+	case "missing":
+		inspection := issueResultFileInspection{
+			Path: file.Path, WorkingDirectory: file.WorkingDirectory,
+			Notice: "No file exists at the reported path; it may have been moved or deleted.",
+		}
+		page.Panel.Selected = issueResultFileKey(file)
+		page.Panel.InspectFor = issueResultFileKey(file)
+		page.Panel.Inspection = &inspection
+		page.Panel.ActionFor = issueResultFileKey(file)
+		page.Panel.Action = issueResultFileAction{Path: file.Path, Err: "Could not open the current file: no handler"}
+	case "source":
+		inspection := issueResultFileInspection{
+			Path: file.Path, WorkingDirectory: file.WorkingDirectory, Exists: true, Regular: true,
+			Preview: "current file content\n",
+		}
+		page.Panel.Selected = issueResultFileKey(file)
+		page.Panel.InspectFor = issueResultFileKey(file)
+		page.Panel.Inspection = &inspection
+		page.Panel.SourceFor = issueResultFileKey(file)
+	case "long":
+		longPath := "/Users/you/Workspace/Saki/" + strings.Repeat("very-long-directory-", 6) + "result.txt"
+		longFile := issueResultPanelFixtureFile("long", longPath, fmt.Sprintf(`{"path":%q,"bytes_written":1}`, longPath))
+		inspection := issueResultFileInspection{
+			Path: longPath, WorkingDirectory: longFile.WorkingDirectory, Exists: true, Regular: true,
+			Preview: strings.Repeat("long current file content ", 10) + "\n",
+		}
+		page.Panel.Files = []issueResultFile{longFile}
+		page.Panel.Selected = issueResultFileKey(longFile)
+		page.Panel.InspectFor = issueResultFileKey(longFile)
+		page.Panel.Inspection = &inspection
+	case "multiple":
+		second := issueResultPanelFixtureFile("preview-two", file.Path, `{"path":"/Users/you/Workspace/Saki/report.txt","applied":1}`)
+		page.Panel.RunLabel = "Run 3 · Ship visible results"
+		page.Panel.Files = []issueResultFile{file, second}
+	}
+	a.issueResult = page
+	return a
+}
+
+func TestIssueResultAppPreviewsAlwaysWriteHeadlessPNGs(t *testing.T) {
+	dir := os.Getenv("SAKI_PREVIEW_DIR")
+	if dir == "" {
+		dir = t.TempDir()
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, scene := range []struct {
+		name  string
+		width int
+		dark  bool
+	}{
+		{"loading", 720, false},
+		{"loading", 1040, true},
+		{"empty", 1040, false},
+		{"empty", 720, true},
+		{"missing", 1040, false},
+		{"missing", 1040, true},
+		{"source", 720, false},
+		{"source", 1280, true},
+		{"long", 720, false},
+		{"long", 1040, true},
+		{"multiple", 1280, true},
+	} {
+		app := issueResultAppPreview(scene.name, scene.width)
+		tr := ui.NewTester(app.view, scene.width, 900)
+		tr.SetDark(scene.dark)
+		tr.Frame()
+		theme := "light"
+		if scene.dark {
+			theme = "dark"
+		}
+		writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("issue-result-app-%s-%s-%d.png", scene.name, theme, scene.width)), tr.Image())
+	}
+}
+
+func TestIssueResultPageReloadDuringCheckDrainsStaleCallback(t *testing.T) {
+	execution := &issueExecution{
+		ID: "exec-reload", SessionID: "new-session", TaskID: "new-task", MessageID: "new-message",
+		Status: issueExecutionCompleted,
+	}
+	issue := &productIssue{
+		ID: "issue-reload", ContactID: "contact-reload", Goal: "reload while checking",
+		Status: issueStatusInProgress, Executions: []*issueExecution{execution},
+	}
+	ct := &contact{ID: "contact-reload", Issues: []*productIssue{issue}}
+	app := &appModel{contacts: []*contact{ct}, selected: 0, scrollTo: -1}
+	pump := newUIPump(t, app)
+	t.Cleanup(func() { pump.close() })
+	file := issueResultFile{
+		ExecutionID: "exec-reload", SessionID: "old-session", TaskID: "old-task", MessageID: "old-message",
+		CallID: "call-reload", ToolName: "write", Path: "/tmp/issue-result-reload.txt", WorkingDirectory: "/tmp",
+		RawResult: `{"path":"/tmp/issue-result-reload.txt","bytes_written":1}`,
+	}
+	key := issueResultFileKey(file)
+	app.aux = "issue-result"
+	app.issueResult = issueResultPage{
+		Open: true, OwnerContactID: ct.ID, IssueID: issue.ID, ExecutionID: execution.ID,
+		SessionID: "old-session", TaskID: "old-task", MessageID: "old-message", Generation: 1,
+		Panel: issueResultPanelState{
+			RunLabel: "Run 1 · old label", RunStatus: "Running",
+			Files: []issueResultFile{file}, Selected: key, InspectFor: key,
+		},
+	}
+	checkStarted := make(chan struct{})
+	releaseCheck := make(chan struct{})
+	app.issueResultInspect = func(issueResultFile) issueResultFileInspection {
+		close(checkStarted)
+		<-releaseCheck
+		return issueResultFileInspection{Path: file.Path, Exists: true, Regular: true, Preview: "old inspection"}
+	}
+	pump.do(func() { app.checkIssueResultFile(1, file) })
+	select {
+	case <-checkStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("check did not start")
+	}
+	pump.do(func() { app.reloadIssueResult(1) })
+	var checking bool
+	var sessionID, taskID, messageID, status, runLabel, loadError string
+	pump.do(func() {
+		page := app.issueResult
+		checking = page.Panel.Checking
+		sessionID, taskID, messageID = page.SessionID, page.TaskID, page.MessageID
+		status, runLabel, loadError = page.Panel.RunStatus, page.Panel.RunLabel, page.LoadError
+	})
+	if checking {
+		t.Fatal("reload left an in-flight Check marked as checking")
+	}
+	if sessionID != "new-session" || taskID != "new-task" || messageID != "new-message" {
+		t.Fatalf("reload kept stale execution identity: %s/%s/%s", sessionID, taskID, messageID)
+	}
+	if status != issueExecutionLabel(execution) || runLabel != "Run 1 · reload while checking" {
+		t.Fatalf("reload kept stale run label/status: %q / %q", runLabel, status)
+	}
+	if loadError == "" {
+		t.Fatal("reload without a ready runtime should leave an explainable error")
+	}
+	close(releaseCheck)
+	pump.wait(func() bool { return app.resultInFlight == 0 })
+	var applied bool
+	pump.do(func() {
+		applied = app.issueResult.Panel.Inspection != nil && app.issueResult.Panel.Inspection.Preview == "old inspection"
+	})
+	if applied {
+		t.Fatal("reload allowed a stale in-flight check callback to apply")
 	}
 }

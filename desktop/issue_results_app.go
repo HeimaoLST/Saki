@@ -63,19 +63,64 @@ func (a *appModel) openIssueResult(issueID, executionID string) {
 		},
 	}
 	a.aux = "issue-result"
-	if execution.SessionID == "" || execution.TaskID == "" {
+	a.startIssueResultLoad()
+}
+
+func (a *appModel) startIssueResultLoad() {
+	page := &a.issueResult
+	if page.SessionID == "" || page.TaskID == "" {
+		page.Loading = false
 		page.LoadError = "This execution has no recorded Runtime session/task; results cannot be inspected."
 		return
 	}
 	if a.rt == nil || a.runtimeStatus != runtimeStateReady || a.shutdownStarted {
+		page.Loading = false
 		page.LoadError = "Runtime is not ready; reopen this result after history is available."
 		return
 	}
 	page.Loading = true
+	page.LoadError = ""
+	page.Notice = ""
 	rt, runtimeGeneration := a.rt, a.connectionGeneration
 	a.issueResultAsyncStarted()
 	go a.loadIssueResult(rt, runtimeGeneration, page.Generation,
-		ct.ID, issue.ID, execution.ID, execution.SessionID, execution.TaskID, execution.MessageID)
+		page.OwnerContactID, page.IssueID, page.ExecutionID, page.SessionID, page.TaskID, page.MessageID)
+}
+
+func (a *appModel) reloadIssueResult(generation int) {
+	page := &a.issueResult
+	if !page.Open || page.Generation != generation {
+		return
+	}
+	ct := a.contactByID(page.OwnerContactID)
+	if ct == nil {
+		page.LoadError = "The issue owner is no longer available; reload cannot continue."
+		return
+	}
+	issue, execution := ct.executionByID(page.ExecutionID)
+	if issue == nil || execution == nil || issue.ID != page.IssueID {
+		page.LoadError = "This execution is no longer attached to the issue; reload cannot continue."
+		return
+	}
+	runIndex := 0
+	for index, candidate := range issue.Executions {
+		if candidate == execution {
+			runIndex = index
+			break
+		}
+	}
+	page.SessionID = execution.SessionID
+	page.TaskID = execution.TaskID
+	page.MessageID = execution.MessageID
+	page.Panel.RunLabel = fmt.Sprintf("Run %d · %s", runIndex+1, issue.Goal)
+	page.Panel.RunStatus = issueExecutionLabel(execution)
+	page.Panel.Checking = false
+	page.Panel.ActionFor = ""
+	page.Panel.Action = issueResultFileAction{}
+	page.Generation++
+	page.LoadError = ""
+	page.Notice = ""
+	a.startIssueResultLoad()
 }
 
 func (a *appModel) loadIssueResult(rt *runtimeClient, runtimeGeneration, generation int,
@@ -192,9 +237,13 @@ func (a *appModel) issueResultPanelView(c *ui.Context, t *ui.Theme) {
 	if !page.Open {
 		return
 	}
-	if page.Loading || page.LoadError != "" {
+	hasBody := page.Panel.Response != "" || len(page.Panel.Files) > 0
+	if !hasBody {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			ui.Text(c, "Run results").FontSize(16).FontWeight(600).TextColor(t.Text).Grow(1)
+			if !page.Loading {
+				ui.Button(c, "Reload result").FontSize(12).OnClick(func() { a.reloadIssueResult(page.Generation) })
+			}
 			ui.Button(c, "Close results").FontSize(12).OnClick(func() { a.closeIssueResult() })
 		})
 		if page.Panel.RunLabel != "" {
@@ -211,6 +260,12 @@ func (a *appModel) issueResultPanelView(c *ui.Context, t *ui.Theme) {
 		}
 		return
 	}
+	if page.Loading {
+		ui.Text(c, "Reloading result from Runtime… The recorded output below is the previous snapshot.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+	}
+	if page.LoadError != "" {
+		ui.Text(c, page.LoadError).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
+	}
 	if page.Notice != "" {
 		ui.Text(c, page.Notice).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 	}
@@ -220,6 +275,7 @@ func (a *appModel) issueResultPanelView(c *ui.Context, t *ui.Theme) {
 func (a *appModel) issueResultPanelActions(generation int) issueResultPanelActions {
 	return issueResultPanelActions{
 		Close:      func() { a.closeIssueResult() },
+		Reload:     func() { a.reloadIssueResult(generation) },
 		SelectFile: func(key string) { a.checkIssueResultFileByKey(generation, key) },
 		CheckFile:  func(file issueResultFile) { a.checkIssueResultFile(generation, file) },
 		OpenFile:   func(file issueResultFile) { a.requestIssueResultFileAction(generation, file, true) },
@@ -262,10 +318,18 @@ func (a *appModel) checkIssueResultFile(generation int, file issueResultFile) {
 	page.Panel.Selected = key
 	page.Panel.InspectFor = key
 	page.Panel.Checking = true
+	if page.Panel.ActionFor == key {
+		page.Panel.ActionFor = ""
+		page.Panel.Action = issueResultFileAction{}
+	}
 	rt, runtimeGeneration := a.rt, a.connectionGeneration
+	inspect := a.issueResultInspect
+	if inspect == nil {
+		inspect = inspectIssueResultFile
+	}
 	a.issueResultAsyncStarted()
 	go func() {
-		inspection := a.inspectIssueResult(file)
+		inspection := inspect(file)
 		a.updateUI(func() {
 			defer a.issueResultAsyncFinished()
 			page := &a.issueResult
@@ -279,27 +343,31 @@ func (a *appModel) checkIssueResultFile(generation int, file issueResultFile) {
 	}()
 }
 
-func (a *appModel) inspectIssueResult(file issueResultFile) issueResultFileInspection {
-	if a.issueResultInspect != nil {
-		return a.issueResultInspect(file)
-	}
-	return inspectIssueResultFile(file)
-}
-
 func (a *appModel) requestIssueResultFileAction(generation int, file issueResultFile, open bool) {
 	page := &a.issueResult
 	if page.Generation != generation {
 		return
 	}
 	key := issueResultFileKey(file)
+	if page.Panel.ActionFor == key {
+		page.Panel.ActionFor = ""
+		page.Panel.Action = issueResultFileAction{}
+	}
+	openWith, revealWith := a.issueResultOpen, a.issueResultReveal
+	if openWith == nil {
+		openWith = requestOpenIssueResultWithSystem
+	}
+	if revealWith == nil {
+		revealWith = requestRevealIssueResultWithSystem
+	}
 	rt, runtimeGeneration := a.rt, a.connectionGeneration
 	a.issueResultAsyncStarted()
 	go func() {
 		var action issueResultFileAction
 		if open {
-			action = requestOpenIssueResultFile(file, requestOpenIssueResultWithSystem)
+			action = requestOpenIssueResultFile(file, openWith)
 		} else {
-			action = requestRevealIssueResultFile(file, requestRevealIssueResultWithSystem)
+			action = requestRevealIssueResultFile(file, revealWith)
 		}
 		a.updateUI(func() {
 			defer a.issueResultAsyncFinished()

@@ -645,3 +645,14 @@ type resolvedTheme struct {
 - **历史读取**：保留原来当前对话的即时搜索，并提供 `Search saved contexts`。范围是该联系人的当前对话与显式保留的旧对话 ID，不扫描其他联系人或事项工作会话。查询通过 Runtime `session.history` 和既有 `parseHistory`，不解析 JSONL、不调用模型、不另建索引；结果按会话去重，最多 100 条，部分会话不可读与截断明确显示。每条命中携带会话 ID/EntryID，可读取完整消息和其原始 Context，查看不会修改当前执行绑定。异步结果绑定联系人、Runtime 实例及查询版本，迟到结果不能覆盖其他对象；退出等待读取回调完成后关闭 UI。
 - **数据兼容**：store v7 新增 `archived`、`archived_at`、`previous_sessions`，读 v1-v6；保留 v6 的 Context、pendingSend、要求版本、execution 与 supplement ledger 关联。只保存旧会话引用，不复制消息正文。升级后旧 v6 应用会拒绝 v7，防止保存时丢字段；降级使用升级前备份或隔离的数据目录，不能把新 store 直接交旧包写入。Runtime 协议无变更，#117 exact-ID/revision 清理、#142 单一补充派发路径及 #173 停止回归继续保留。
 - **验证与限制**：实际 GUI action + 固定 Rust helper 的受控 provider 测试覆盖保存后现有请求快照、新对话/cwd、活动事项保护、旧对话和 Context 定位、不同联系人隔离、重启、归档恢复、保存失败回滚，以及 Runtime 拒绝新目录后的明确重试。组件/应用截图属于 headless；不代表原生 IME/VoiceOver 或线上模型兼容通过。本单测试使用 #160 固定 helper `c738c633…`，没有付费模型重试；#177 的 Runtime 修复交付与 #142 GUI 在线补充复验另记，不能把 Runtime 受控成功当作 GUI 全流程通过。最终测试计数与 CI 以精确候选的交付记录为准。
+
+## #155 执行成果与已报告文件（候选实现，2026-10-26）
+
+代码来源：`agent/gui/155-issue-results`，独立投影/阅读组件为 `929deba`、`1b49693`；普通 merge #152 固定 `00cb5fd` 后，实际页面首片为 `9b222d9`。本节随该候选更新，最终 SHA、完整测试与集成状态以 PR #174 为准，不把阶段代码或本地测试扩称为完整 MVP。
+
+- **阅读入口与归属**：事项每次执行提供 `Open result`，完整阅读页与原 `View execution` 工具活动入口分开。页面由持久化 execution/session/task/message 身份读取 Runtime history；每页响应的 session header 必须匹配。`Reload result` 只重读同一执行的已记录输出，不发送任务；读取失败仍保留此前可读结果和重试入口。页面是已记录内容的快照，不另建 live 投影。不同执行的成果不会被最后一条全局消息覆盖，查看不会改变事项完成状态。完整消息记录仍在 Runtime，GUI 不新增结果库、文件索引或持久化正文缓存；store 继续沿用 #152 的 v7。
+- **文件来源**：仅该次执行中已完成且成功的 `write`/`edit` 工具结果形成 reported-file 行；保留 call ID 和原始结果。模型正文中的任意路径、`read`/`bash` 输出、失败/中断的工具记录不构成已生成文件证明；相同路径的不同 call/执行仍可分别核对。工作目录读取对应 Runtime 会话的真实配置/metadata，不从当前可编辑联系人 profile 推断。没有权威 diff 时不伪造 diff。
+- **内容与复制**：复用 #113 的 Markdown reader，提供完整结果、代码、精确文件路径、当前文件内容及工具原始记录复制；错误反馈沿用同一 reader。默认界面突出结果和文件，session/task/message/call 等来源细节按需展开。历史工具结果与文件当前内容分开：当前文件可能在执行后被外部修改，不声称保存了执行时文件快照。
+- **当前文件与错误**：文件检查在用户查看/重新检查时读取，UTF-8 文本预览上限为 256KiB；超限不静默截断，空文件可复制空内容。缺失/移动、非普通文件、读取/格式失败保持具体说明、原路径和可用动作，不搜索替代文件或自动重新生成。系统打开/定位前再检查实际路径；两个动作分别调用对应系统入口，系统请求被接受不等于已观察到窗口显示成功。Finder 定位使用 macOS `open -R` 的可返回错误路径。重新检查/再次操作清除相应过期错误，不让成功恢复后的文件继续显示旧的操作失败。
+- **异步边界**：渲染不读文件或调用 Runtime；读取经既有 UI 队列回投，并检查页面、owner、helper 和请求代次。连续检查同一文件只应用最新请求；切换联系人或关闭页面后的迟到读取不能覆盖新页面或重新打开旧页面。退出沿统一收尾等待本线读取回调，不能在 UI 已关闭后投递。
+- **验证与限制**：`issue_results_app_integration_test.go` 同时覆盖真实历史恢复页和应用 `runIssue`→Rust write→结果页、Continue→edit→另一执行/重启的生产关联；首尾空白原文、完整复制、实际 OS 错误消费与过期错误清理、Open/Reveal 不交叉调用、读取不增加模型请求均有回归。受控 barrier 验证连续检查与重载期间迟到检查的收尾。新的明暗 720/1040/1280 页面覆盖 loading、空结果、缺失文件、来源展开、长路径和多个 call；最终完整组合结果以精确候选交付记录为准。受控 HTTP、headless 控件与注入系统动作不证明任意在线 provider、macOS 原生 Finder/剪贴板/IME 或完整 MVP 通过；不把 #142 原自动验收 FAIL 改写成成功。本单没有 PDF/OCR/Office、通用文件管理器或另一 Agent loop。

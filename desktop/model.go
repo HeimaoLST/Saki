@@ -228,6 +228,8 @@ type appModel struct {
 
 	issueResult        issueResultPage
 	issueResultInspect func(issueResultFile) issueResultFileInspection
+	issueResultOpen    func(string) error
+	issueResultReveal  func(string) error
 
 	modelForm         *modelSelection
 	modelOpenToken    int
