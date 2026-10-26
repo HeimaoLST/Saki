@@ -229,26 +229,6 @@ func (ct *contact) selectedIssue() *productIssue {
 	return nil
 }
 
-func (ct *contact) openIssues() []*productIssue {
-	out := make([]*productIssue, 0, len(ct.Issues))
-	for _, issue := range ct.Issues {
-		if !issue.Archived {
-			out = append(out, issue)
-		}
-	}
-	return out
-}
-
-func (ct *contact) archivedIssues() []*productIssue {
-	out := make([]*productIssue, 0)
-	for _, issue := range ct.Issues {
-		if issue.Archived {
-			out = append(out, issue)
-		}
-	}
-	return out
-}
-
 func (ct *contact) executionByTask(taskID string) *issueExecution {
 	if taskID == "" {
 		return nil
@@ -438,7 +418,14 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 // runIssue persists a prepared execution snapshot before any Runtime dispatch.
 // The issue remains open regardless of the eventual runtime task state.
 func (a *appModel) runIssue(issueID string) bool {
-	ct := a.selectedContact()
+	return a.runIssueFor(a.selectedContact(), issueID)
+}
+
+func (a *appModel) runIssueFor(ct *contact, issueID string) bool {
+	if ct == nil {
+		a.issueFormError = "Contact not found."
+		return false
+	}
 	issue := ct.issueByID(issueID)
 	if issue == nil {
 		a.issueFormError = "Issue not found for this contact."
@@ -550,14 +537,6 @@ func issueExecutionStatusFromWork(state workState) string {
 	default:
 		return issueExecutionUnknown
 	}
-}
-
-func issueRequirementsSummary(issue *productIssue) string {
-	text := issueRequirementsText(issue)
-	if strings.TrimSpace(text) == "" {
-		return "No requirements recorded."
-	}
-	return text
 }
 
 func unresolvedExecution(execution *issueExecution) bool {

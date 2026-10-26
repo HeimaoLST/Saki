@@ -185,3 +185,16 @@ func writeStoredState(path string, state storedState) error {
 	store := &contactStore{path: path, state: state}
 	return store.saveState()
 }
+
+func TestGoalChangeInvalidatesSameTextRequirementEvidence(t *testing.T) {
+	a, _, issue := lifecycleTestIssue()
+	requirement := issue.Requirements[0]
+	requirement.State, requirement.Evidence = requirementSatisfied, "proved against old goal"
+	if !a.editIssue(issue.ID, "new goal", issueRequirementsText(issue)) {
+		t.Fatal("goal edit failed")
+	}
+	if issue.Requirements[0] != requirement || requirement.State != requirementUnverified ||
+		!strings.HasPrefix(requirement.Evidence, "Previous evidence (goal changed): ") {
+		t.Fatalf("goal edit kept satisfied evidence as current: %+v", requirement)
+	}
+}

@@ -43,15 +43,16 @@ func TestCancelWhileIssueSendPendingLatchesToAcceptedTask(t *testing.T) {
 		if issue.Status != issueStatusCanceled || !issue.Work.cancelAfterAccept {
 			t.Fatalf("cancel intent was not latched: %+v", issue)
 		}
+		h.app.addDefaultContact()
 		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
 	})
 	h.pump.do(mapping)
 	h.pump.wait(func() bool {
-		issue := h.app.selectedContact().issueByID(issueID)
+		issue := h.app.contacts[0].issueByID(issueID)
 		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
 			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted
 	})
-	issue := h.app.selectedContact().issueByID(issueID)
+	issue := h.app.contacts[0].issueByID(issueID)
 	if issue.Status != issueStatusCanceled || issue.Work.cancelAfterAccept {
 		t.Fatalf("cancel latch did not clear after real task stop: %+v", issue)
 	}
@@ -60,6 +61,9 @@ func TestCancelWhileIssueSendPendingLatchesToAcceptedTask(t *testing.T) {
 	}
 	if len(issue.Executions) != 1 || issue.Executions[0].TaskID == "" {
 		t.Fatalf("accepted task did not get a real task identity before cancellation: %+v", issue.Executions)
+	}
+	if other := h.app.contacts[1]; len(other.Issues) != 0 || other.ActiveTaskID != "" {
+		t.Fatalf("cancel on contact X changed contact Y: %+v / active=%q", other.Issues, other.ActiveTaskID)
 	}
 	provider.release("cancel-latch")
 	h.shutdown(t)
@@ -321,6 +325,11 @@ func TestIssueRuntimeStopContinueAndExplicitCompletion(t *testing.T) {
 		if !h.app.completeIssue(issueID, "user reviewed both runs") {
 			t.Fatal("explicit completion failed")
 		}
+	})
+	if issue.Status != issueStatusCompleted {
+		t.Fatalf("explicit completion status = %q", issue.Status)
+	}
+	h.pump.do(func() {
 		if !h.app.reopenIssue(issueID) {
 			t.Fatal("reopen failed")
 		}
@@ -332,4 +341,72 @@ func TestIssueRuntimeStopContinueAndExplicitCompletion(t *testing.T) {
 		t.Fatalf("unexpected retries: %d", provider.count())
 	}
 	h.shutdown(t)
+}
+
+func TestIssueEditSaveFailureRestoresCompleteVisibleState(t *testing.T) {
+	a, _, issue := lifecycleTestIssue()
+	a.store = &contactStore{path: t.TempDir()}
+	issue.Evidence = "old completion proof"
+	oldGoal, oldRequirements, oldRevision := issue.Goal, issue.Requirements, issue.RequirementsRevision
+	oldEvidence, oldUpdated := issue.Evidence, issue.UpdatedAt
+	if a.editIssue(issue.ID, "new goal", "new requirement") {
+		t.Fatal("edit unexpectedly succeeded with a failing store")
+	}
+	if issue.Goal != oldGoal || issue.RequirementsRevision != oldRevision || issue.Evidence != oldEvidence ||
+		issue.UpdatedAt != oldUpdated || len(issue.Requirements) != len(oldRequirements) {
+		t.Fatalf("failed edit left partial state: %+v evidence=%q updated=%d", issue, issue.Evidence, issue.UpdatedAt)
+	}
+}
+
+func TestArchivedActiveIssueStillBlocksApply(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "hidden active", Status: issueStatusInProgress, Archived: true, WorkSessionID: "work"}
+	issue.Work.ActiveTaskID = "t1"
+	issue.Work.SendState = sendAccepted
+	ct.Issues = []*productIssue{issue}
+	a.connectionSaved = &connectionConfig{}
+	a.rt = &runtimeClient{}
+	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
+	reason := a.connectionReloadBlocked()
+	if !strings.Contains(reason, "Wait for all conversation and issue work") {
+		t.Fatalf("archived active issue was missed by Apply protection: %q", reason)
+	}
+}
+
+func TestIssuePersistentActionsRollbackOnSaveFailure(t *testing.T) {
+	a, _, issue := lifecycleTestIssue()
+	a.store = &contactStore{path: t.TempDir()}
+	issue.Status = issueStatusInProgress
+	oldUpdated := issue.UpdatedAt
+	if a.completeIssue(issue.ID, "evidence") || a.archiveIssue(issue.ID) {
+		t.Fatal("save-failing actions unexpectedly succeeded")
+	}
+	if issue.Status != issueStatusInProgress || issue.Archived || issue.UpdatedAt != oldUpdated {
+		t.Fatalf("failed actions left partial state: %+v", issue)
+	}
+}
+
+func TestIssueUICompleteAndReopenActions(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
+	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "finish me", Status: issueStatusInProgress, RequirementsRevision: 1}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("Mark complete"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if issue.Status != issueStatusCompleted {
+		t.Fatalf("UI completion = %q", issue.Status)
+	}
+	if err := tr.Click("Reopen issue"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if issue.Status != issueStatusNotStarted {
+		t.Fatalf("UI reopen = %q", issue.Status)
+	}
 }

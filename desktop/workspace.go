@@ -524,8 +524,8 @@ func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *
 		})
 		return
 	}
-	ui.Row(c).Gap(6).Children(func() {
-		if editable {
+	if editable {
+		ui.Row(c).Gap(6).Children(func() {
 			reason := issueLifecycleStartBlocked(issue)
 			if reason == "" {
 				reason = a.canStartIssue(ct, issue)
@@ -559,6 +559,10 @@ func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *
 					}
 				})
 			}
+		})
+	}
+	ui.Row(c).Gap(6).Children(func() {
+		if editable {
 			ui.Button(c, "Cancel issue").FontSize(11).Padding(2, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.Warning).OnClick(func() {
 				if !a.cancelIssueProduct(issue.ID) {
 					a.issueActionError = "Could not cancel this issue; its state was not changed."

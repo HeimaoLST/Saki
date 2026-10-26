@@ -21,7 +21,7 @@ func issuePreviewApp(scene string) *appModel {
 			{
 				ID: "issue-1", ContactID: "saki", Goal: "Ship explicit product issues", Status: issueStatusInProgress,
 				Requirements:  parseIssueRequirements("Persist the original goal and requirements.\nKeep every execution associated with this issue."),
-				WorkSessionID: "issue-preview-work-1",
+				WorkSessionID: "issue-preview-work-1", RequirementsRevision: 1,
 				Executions: []*issueExecution{
 					{ID: "exec-1", SessionID: "issue-preview-work-1", TaskID: "task-1", MessageID: "msg-1", Prompt: "Ship explicit product issues", Status: issueExecutionCompleted},
 					{ID: "exec-2", SessionID: "issue-preview-work-1", TaskID: "task-2", MessageID: "msg-2", Prompt: "Ship explicit product issues", Status: issueExecutionCompleted},
@@ -30,7 +30,7 @@ func issuePreviewApp(scene string) *appModel {
 			{
 				ID: "issue-2", ContactID: "saki", Goal: "Verify restart continuation", Status: issueStatusInProgress,
 				Requirements:  parseIssueRequirements("Do not turn an accepted draft into a new task after restart."),
-				WorkSessionID: "issue-preview-work-2",
+				WorkSessionID: "issue-preview-work-2", RequirementsRevision: 1,
 				Executions: []*issueExecution{
 					{ID: "exec-3", SessionID: "issue-preview-work-2", TaskID: "task-3", MessageID: "msg-3", Prompt: "Verify restart continuation", Status: issueExecutionInterrupted},
 				},
@@ -90,6 +90,14 @@ func issuePreviewApp(scene string) *appModel {
 		a.issueFormOpen = true
 		a.issueGoal = "Keep requirements attached to each run"
 		a.issueRequirements = "Show the original requirement text and an explicit unverified completion state."
+	case "issue-completed":
+		ct.Issues[0].Status = issueStatusCompleted
+		ct.Issues[0].Evidence = "User reviewed the rendered result and accepted the remaining verification note."
+		ct.Issues[0].Requirements[0].State = requirementSatisfied
+		ct.Issues[0].Requirements[0].Evidence = "User confirmed the original goal and execution result."
+		ct.Issues[0].Requirements[1].State = requirementUnmet
+		ct.Issues[0].Requirements[1].Evidence = "Second requirement is documented but not verified."
+		a.issueFilter = "completed"
 	case "issue-unknown":
 		ct.Issues[1].Executions[0] = &issueExecution{ID: "exec-3", SessionID: "issue-preview-work-2", Prompt: "Verify restart continuation", Status: issueExecutionUnknown, Detail: "No trusted Runtime task history was found for this execution; manually inspect or confirm not dispatched."}
 		ct.SelectedIssueID = "issue-2"
@@ -132,6 +140,8 @@ func TestPreviewIssueStates(t *testing.T) {
 		write("issue-dual", 960, 640, dark)
 		write("issue-dual", 1040, 720, dark)
 		write("issue-dual", 320, 900, dark)
+		write("issue-completed", 1040, 720, dark)
+		write("issue-completed", 320, 900, dark)
 		write("issue-unknown", 320, 640, dark)
 	}
 }

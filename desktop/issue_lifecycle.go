@@ -9,12 +9,15 @@ import (
 	"strings"
 )
 
-func (a *appModel) issueForSelected(issueID string) *productIssue {
-	ct := a.selectedContact()
+func issueForContact(ct *contact, issueID string) *productIssue {
 	if ct == nil {
 		return nil
 	}
 	return ct.issueByID(issueID)
+}
+
+func (a *appModel) issueForSelected(issueID string) *productIssue {
+	return issueForContact(a.selectedContact(), issueID)
 }
 
 func issueLifecycleStartBlocked(issue *productIssue) string {
@@ -36,8 +39,8 @@ func issueLifecycleStartBlocked(issue *productIssue) string {
 // editIssue updates goal and requirement text. Unchanged requirement text keeps
 // its stable identity/state; new or changed text starts unverified. Old
 // execution Prompt snapshots are never touched.
-func (a *appModel) editIssue(issueID, goal, requirementsText string) bool {
-	issue := a.issueForSelected(issueID)
+func (a *appModel) editIssueFor(ct *contact, issueID, goal, requirementsText string) bool {
+	issue := issueForContact(ct, issueID)
 	goal = strings.TrimSpace(goal)
 	if issue == nil {
 		a.issueFormError = "Issue not found for this contact."
@@ -56,6 +59,17 @@ func (a *appModel) editIssue(issueID, goal, requirementsText string) bool {
 		return false
 	}
 	oldGoal, oldRequirements, oldRevision, oldUpdated, oldEvidence := issue.Goal, issue.Requirements, issue.RequirementsRevision, issue.UpdatedAt, issue.Evidence
+	type requirementSnapshot struct {
+		state, evidence string
+		updated         int64
+	}
+	oldRequirementFields := map[string]requirementSnapshot{}
+	for _, requirement := range issue.Requirements {
+		if requirement != nil {
+			oldRequirementFields[requirement.ID] = requirementSnapshot{requirement.State, requirement.Evidence, requirement.UpdatedAt}
+		}
+	}
+	goalChanged := strings.TrimSpace(oldGoal) != goal
 	byText := map[string][]*issueRequirement{}
 	for _, requirement := range issue.Requirements {
 		if requirement != nil {
@@ -75,12 +89,25 @@ func (a *appModel) editIssue(issueID, goal, requirementsText string) bool {
 		}
 		next = append(next, &issueRequirement{ID: newRequirementID(), Text: text, State: requirementUnverified})
 	}
+	if goalChanged {
+		for _, requirement := range next {
+			requirement.State = requirementUnverified
+			if requirement.Evidence != "" && !strings.HasPrefix(requirement.Evidence, "Previous evidence (goal changed): ") {
+				requirement.Evidence = "Previous evidence (goal changed): " + requirement.Evidence
+			}
+		}
+	}
 	issue.Goal = goal
 	issue.Requirements = next
 	issue.RequirementsRevision++
 	issue.Evidence = ""
 	issue.UpdatedAt = nowMillis()
 	if err := a.persist(); err != nil {
+		for _, requirement := range oldRequirements {
+			if snapshot, ok := oldRequirementFields[requirement.ID]; ok {
+				requirement.State, requirement.Evidence, requirement.UpdatedAt = snapshot.state, snapshot.evidence, snapshot.updated
+			}
+		}
 		issue.Goal, issue.Requirements, issue.RequirementsRevision, issue.UpdatedAt, issue.Evidence = oldGoal, oldRequirements, oldRevision, oldUpdated, oldEvidence
 		a.issueFormError = "Could not save this issue: " + err.Error()
 		return false
@@ -89,8 +116,8 @@ func (a *appModel) editIssue(issueID, goal, requirementsText string) bool {
 	return true
 }
 
-func (a *appModel) setIssueRequirementState(issueID, requirementID, state, evidence string) bool {
-	issue := a.issueForSelected(issueID)
+func (a *appModel) setIssueRequirementStateFor(ct *contact, issueID, requirementID, state, evidence string) bool {
+	issue := issueForContact(ct, issueID)
 	requirement := issueRequirementByID(issue, requirementID)
 	if issue == nil || requirement == nil {
 		return false
@@ -118,8 +145,8 @@ func (a *appModel) setIssueRequirementState(issueID, requirementID, state, evide
 	return true
 }
 
-func (a *appModel) markIssueWaiting(issueID string) bool {
-	issue := a.issueForSelected(issueID)
+func (a *appModel) markIssueWaitingFor(ct *contact, issueID string) bool {
+	issue := issueForContact(ct, issueID)
 	if issue == nil || issue.Archived {
 		return false
 	}
@@ -132,8 +159,8 @@ func (a *appModel) markIssueWaiting(issueID string) bool {
 	return a.setIssueStatus(issue, issueStatusWaitingUser)
 }
 
-func (a *appModel) resumeIssue(issueID string) bool {
-	issue := a.issueForSelected(issueID)
+func (a *appModel) resumeIssueFor(ct *contact, issueID string) bool {
+	issue := issueForContact(ct, issueID)
 	if issue == nil || issue.Archived {
 		return false
 	}
@@ -164,8 +191,8 @@ func (a *appModel) setIssueStatus(issue *productIssue, status string) bool {
 	return true
 }
 
-func (a *appModel) completeIssue(issueID, evidence string) bool {
-	issue := a.issueForSelected(issueID)
+func (a *appModel) completeIssueFor(ct *contact, issueID, evidence string) bool {
+	issue := issueForContact(ct, issueID)
 	if issue == nil || issue.Archived || issue.Status == issueStatusCompleted || issue.Status == issueStatusCanceled {
 		return false
 	}
@@ -189,8 +216,8 @@ func (a *appModel) completeIssue(issueID, evidence string) bool {
 	return true
 }
 
-func (a *appModel) reopenIssue(issueID string) bool {
-	issue := a.issueForSelected(issueID)
+func (a *appModel) reopenIssueFor(ct *contact, issueID string) bool {
+	issue := issueForContact(ct, issueID)
 	if issue == nil || issue.Archived {
 		return false
 	}
@@ -207,11 +234,50 @@ func (a *appModel) reopenIssue(issueID string) bool {
 	return a.setIssueStatus(issue, next)
 }
 
+func (a *appModel) editIssue(issueID, goal, requirementsText string) bool {
+	return a.editIssueFor(a.selectedContact(), issueID, goal, requirementsText)
+}
+
+func (a *appModel) setIssueRequirementState(issueID, requirementID, state, evidence string) bool {
+	return a.setIssueRequirementStateFor(a.selectedContact(), issueID, requirementID, state, evidence)
+}
+
+func (a *appModel) markIssueWaiting(issueID string) bool {
+	return a.markIssueWaitingFor(a.selectedContact(), issueID)
+}
+
+func (a *appModel) resumeIssue(issueID string) bool {
+	return a.resumeIssueFor(a.selectedContact(), issueID)
+}
+
+func (a *appModel) completeIssue(issueID, evidence string) bool {
+	return a.completeIssueFor(a.selectedContact(), issueID, evidence)
+}
+
+func (a *appModel) reopenIssue(issueID string) bool {
+	return a.reopenIssueFor(a.selectedContact(), issueID)
+}
+
+func (a *appModel) archiveIssue(issueID string) bool {
+	return a.archiveIssueFor(a.selectedContact(), issueID)
+}
+
+func (a *appModel) restoreIssue(issueID string) bool {
+	return a.restoreIssueFor(a.selectedContact(), issueID)
+}
+
 // cancelIssueProduct is separate from cancelIssue (stop execution): it records
 // the product-level canceled state, then asks the existing execution path to
 // stop any real active task. The task terminal remains whatever Runtime reports.
 func (a *appModel) cancelIssueProduct(issueID string) bool {
-	issue := a.issueForSelected(issueID)
+	return a.cancelIssueProductFor(a.selectedContact(), issueID)
+}
+
+func (a *appModel) cancelIssueProductFor(ct *contact, issueID string) bool {
+	if ct == nil {
+		return false
+	}
+	issue := ct.issueByID(issueID)
 	if issue == nil || issue.Archived {
 		return false
 	}
@@ -232,7 +298,7 @@ func (a *appModel) cancelIssueProduct(issueID string) bool {
 		return false
 	}
 	if activeTask {
-		if !a.cancelIssue(issue.ID) {
+		if !a.cancelIssueFor(ct, issue.ID) {
 			issue.Status, issue.UpdatedAt, issue.Work.cancelAfterAccept = oldStatus, oldUpdated, oldCancelAfter
 			_ = a.persist()
 			return false
@@ -241,8 +307,8 @@ func (a *appModel) cancelIssueProduct(issueID string) bool {
 	return true
 }
 
-func (a *appModel) archiveIssue(issueID string) bool {
-	issue := a.issueForSelected(issueID)
+func (a *appModel) archiveIssueFor(ct *contact, issueID string) bool {
+	issue := issueForContact(ct, issueID)
 	if issue == nil || issue.Archived {
 		return false
 	}
@@ -256,8 +322,8 @@ func (a *appModel) archiveIssue(issueID string) bool {
 	return true
 }
 
-func (a *appModel) restoreIssue(issueID string) bool {
-	issue := a.issueForSelected(issueID)
+func (a *appModel) restoreIssueFor(ct *contact, issueID string) bool {
+	issue := issueForContact(ct, issueID)
 	if issue == nil || !issue.Archived {
 		return false
 	}
@@ -274,7 +340,7 @@ func (a *appModel) restoreIssue(issueID string) bool {
 // applyIssueTerminalLifecycle maps an execution terminal to a visible product
 // status without ever making a completed execution equal to issue completion.
 func (a *appModel) applyIssueTerminalLifecycle(issue *productIssue, taskID, status string) {
-	if issue == nil || issue.Archived || issue.Status == issueStatusCompleted || issue.Status == issueStatusCanceled {
+	if issue == nil || issue.Status == issueStatusCompleted || issue.Status == issueStatusCanceled {
 		return
 	}
 	switch status {

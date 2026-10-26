@@ -1750,7 +1750,7 @@ func (a *appModel) acceptIssueTask(ct *contact, issue *productIssue, execution *
 		issue.Work.SendError = "Task accepted, but its issue association could not be saved; reload before retrying."
 	}
 	if (issue.Work.cancelAfterAccept || issue.Status == issueStatusCanceled) && issue.Work.ActiveTaskID != "" {
-		if a.cancelIssue(issue.ID) {
+		if a.cancelIssueFor(ct, issue.ID) {
 			issue.Work.cancelAfterAccept = false
 		} else {
 			issue.Work.SendError = "The accepted task could not be cancelled; do not retry it automatically."
@@ -1991,8 +1991,11 @@ func (a *appModel) cancelSelected() {
 }
 
 func (a *appModel) cancelIssue(issueID string) bool {
-	ct := a.selectedContact()
-	if a.rt == nil {
+	return a.cancelIssueFor(a.selectedContact(), issueID)
+}
+
+func (a *appModel) cancelIssueFor(ct *contact, issueID string) bool {
+	if a.rt == nil || ct == nil {
 		return false
 	}
 	issue := ct.issueByID(issueID)
@@ -2009,15 +2012,9 @@ func (a *appModel) cancelIssue(issueID string) bool {
 	}
 	issue.Work.StopRequestedTasks[taskID] = true
 	issue.Work.SendError = "Cancellation requested"
-	rt := a.rt
 	go func() {
-		status, err := rt.cancelTask(sessionID, taskID)
-		a.updateUI(func() {
-			if a.rt != rt {
-				return
-			}
-			a.applyIssueCancelResult(ct.ID, issueID, taskID, status, err)
-		})
+		status, err := a.rt.cancelTask(sessionID, taskID)
+		a.updateUI(func() { a.applyIssueCancelResult(ct.ID, issueID, taskID, status, err) })
 	}()
 	return true
 }
