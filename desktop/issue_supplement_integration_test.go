@@ -729,3 +729,205 @@ func TestIssueSupplementLostSendReceiptRestartKeepsUnknownWithoutResend(t *testi
 		t.Fatalf("task.send count after restart = %q, %v", got, err)
 	}
 }
+
+func TestIssueSupplementWaitingRequiresExplicitResumeAndSendsOnce(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startGUIHarness(t, binary, provider, "supplement-waiting")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	var issueID string
+	var setupErr error
+	h.pump.do(func() {
+		if !h.app.createIssue("waiting goal", "waiting requirement") {
+			setupErr = errors.New(h.app.issueFormError)
+			return
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		if !h.app.runIssue(issueID) {
+			setupErr = errors.New(h.app.issueFormError)
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && len(issue.Executions) == 1 &&
+			issue.Executions[0].Status == issueExecutionCompleted
+	})
+	var waitingOK bool
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		if !h.app.setIssueSupplementAuto(ct, issueID, false) {
+			setupErr = errors.New("failed to stop auto")
+			return
+		}
+		if err := h.app.addIssueSupplement(ct, issueID, "waiting answer"); err != nil {
+			setupErr = err
+			return
+		}
+		if !h.app.markIssueWaiting(issueID) {
+			setupErr = errors.New("mark waiting failed")
+			return
+		}
+		waitingOK = issue.Status == issueStatusWaitingUser && !issue.Supplements.AutoContinue &&
+			issue.Supplements.pendingCount() == 1
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	if !waitingOK {
+		t.Fatal("waiting state or auto/pending state not retained")
+	}
+	if provider.count() != 1 {
+		t.Fatalf("waiting issue sent supplement automatically: provider=%d", provider.count())
+	}
+	var resumed bool
+	h.pump.do(func() { resumed = h.app.resumeIssue(issueID) })
+	if !resumed {
+		t.Fatal("explicit resume failed")
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && len(issue.Executions) == 2 &&
+			issue.Executions[1].Status == issueExecutionCompleted && issue.Supplements.pendingCount() == 0
+	})
+	if provider.count() != 2 {
+		t.Fatalf("resume sent %d requests, want 2 total", provider.count())
+	}
+}
+
+func TestIssueSupplementFailedTaskStopsAutoWithoutRetry(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false, Auth401: true}
+	h := startGUIHarness(t, binary, provider, "supplement-failed")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	var issueID string
+	var setupErr error
+	h.pump.do(func() {
+		if !h.app.createIssue("failed goal", "failed requirement") {
+			setupErr = errors.New(h.app.issueFormError)
+			return
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		if err := h.app.addIssueSupplement(ct, issueID, "first supplement"); err != nil {
+			setupErr = err
+			return
+		}
+		if !h.app.runIssue(issueID) {
+			setupErr = errors.New(h.app.issueFormError)
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && len(issue.Executions) == 1 &&
+			issue.Executions[0].Status == issueExecutionFailed
+	})
+	var failedOK bool
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		if err := h.app.addIssueSupplement(ct, issueID, "after failure"); err != nil {
+			setupErr = err
+			return
+		}
+		failedOK = issue.Status == issueStatusNeedsAttention && !issue.Supplements.AutoContinue &&
+			issue.Supplements.pendingCount() == 1
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	if !failedOK {
+		t.Fatal("failed task did not stay needs-attention with auto off and pending text")
+	}
+	if provider.count() != 1 {
+		t.Fatalf("failed task retried automatically: provider=%d", provider.count())
+	}
+}
+
+func TestIssueSupplementCancelDuringPendingAcceptRecordsLateReceiptAndStops(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := newGatedProvider("cancel-late-supp")
+	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 1)
+	defer func() {
+		provider.release("cancel-late-supp")
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	manual := make(chan func(), 8)
+	var issueID string
+	h.pump.do(func() {
+		if !h.app.createIssue("cancel late supplement", "keep late receipt") {
+			t.Fatal(h.app.issueFormError)
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		if err := h.app.addIssueSupplement(ct, issueID, "cancel-late-supp text"); err != nil {
+			t.Fatalf("add supplement: %v", err)
+		}
+		h.app.setUIHook(func(fn func()) { manual <- fn })
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("run issue: %s", h.app.issueFormError)
+		}
+	})
+	var mapping func()
+	select {
+	case mapping = <-manual:
+	case <-time.After(15 * time.Second):
+		t.Fatal("issue session mapping callback did not arrive")
+	}
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		if issue.Work.SendState != sendSubmitting {
+			t.Fatalf("expected pending acceptance, got %v", issue.Work.SendState)
+		}
+		if !h.app.cancelIssueProduct(issueID) {
+			t.Fatal("Cancel during pending supplement acceptance failed")
+		}
+		if issue.Status != issueStatusCanceled || !issue.Work.cancelAfterAccept {
+			t.Fatalf("cancel latch = status %q latch %v", issue.Status, issue.Work.cancelAfterAccept)
+		}
+		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
+	})
+	h.pump.do(mapping)
+	select {
+	case <-provider.arrived["cancel-late-supp"]:
+	case <-time.After(15 * time.Second):
+		t.Fatal("late supplement task did not reach provider")
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted
+	})
+	var lateOK bool
+	h.snapshot(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		lateOK = issue != nil && issue.Status == issueStatusCanceled && !issue.Work.cancelAfterAccept &&
+			!issue.Supplements.AutoContinue && len(issue.Supplements.Batches) == 1 &&
+			issue.Supplements.Batches[0].State == supplementBatchAccepted &&
+			issue.Supplements.Batches[0].TaskID != "" && issue.Supplements.Batches[0].ExecutionID != "" &&
+			issue.Executions[0].TaskID == issue.Supplements.Batches[0].TaskID
+	})
+	if !lateOK {
+		t.Fatal("late accepted supplement did not retain real IDs or cancel intent")
+	}
+	if provider.count() != 1 {
+		t.Fatalf("late accept/cancel resubmitted supplement: provider=%d", provider.count())
+	}
+}

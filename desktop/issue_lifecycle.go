@@ -371,11 +371,17 @@ func (a *appModel) applyIssueTerminalLifecycle(issue *productIssue, taskID, stat
 		issue.Status = issueStatusInProgress
 	case "failed", "unknown":
 		issue.Status = issueStatusNeedsAttention
+		if issue.Supplements != nil {
+			issue.Supplements.AutoContinue = false
+		}
 	case "interrupted":
 		if issue.Work.StopRequestedTasks[taskID] {
 			issue.Status = issueStatusInProgress
 		} else {
 			issue.Status = issueStatusNeedsAttention
+			if issue.Supplements != nil {
+				issue.Supplements.AutoContinue = false
+			}
 		}
 	}
 	issue.UpdatedAt = nowMillis()

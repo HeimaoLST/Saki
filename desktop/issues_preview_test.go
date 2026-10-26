@@ -112,6 +112,35 @@ func issuePreviewApp(scene string) *appModel {
 		ct.Issues[0].Requirements[1].State = requirementUnmet
 		ct.Issues[0].Requirements[1].Evidence = "Second requirement is documented but not verified."
 		a.issueFilter = "completed"
+	case "supplement":
+		issue := ct.Issues[0]
+		ledger := newIssueSupplementLedger()
+		noSave := func() error { return nil }
+		target := issueSupplementTargetFor(ct, issue)
+		if _, err := ledger.Add(target, "Keep the supplement receipt visible", noSave); err != nil {
+			panic(err)
+		}
+		batch1, err := ledger.PrepareDispatch(target, issue.Executions[0], noSave)
+		if err != nil {
+			panic(err)
+		}
+		if _, err := ledger.Accept(batch1, issueSupplementAssociation{SessionID: "issue-preview-work-1", TaskID: "task-1", MessageID: "msg-1", ExecutionID: "exec-1"}, noSave); err != nil {
+			panic(err)
+		}
+		if _, err := ledger.Add(target, "Show dispatch and review state", noSave); err != nil {
+			panic(err)
+		}
+		batch2, err := ledger.PrepareDispatch(target, issue.Executions[1], noSave)
+		if err != nil {
+			panic(err)
+		}
+		if !ledger.Unknown(batch2, "Runtime reply was not confirmed; inspect before retry.", noSave) {
+			panic("preview unknown transition failed")
+		}
+		if _, err := ledger.Add(target, "Pending answer after resume", noSave); err != nil {
+			panic(err)
+		}
+		issue.Supplements = ledger
 	case "issue-unknown":
 		ct.Issues[1].Executions[0] = &issueExecution{ID: "exec-3", SessionID: "issue-preview-work-2", Prompt: "Verify restart continuation", Status: issueExecutionUnknown, Detail: "No trusted Runtime task history was found for this execution; manually inspect or confirm not dispatched."}
 		ct.SelectedIssueID = "issue-2"
@@ -167,5 +196,34 @@ func TestPreviewIssueStates(t *testing.T) {
 		write("issue-long", 1380, 900, dark)
 		write("issue-long", 320, 900, dark)
 		write("issue-unknown", 320, 640, dark)
+	}
+}
+
+func TestPreviewSupplementStates(t *testing.T) {
+	dir := os.Getenv("SAKI_PREVIEW_DIR")
+	if dir == "" {
+		dir = t.TempDir()
+	} else if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadAvatar(); err != nil {
+		t.Fatal(err)
+	}
+	for _, dark := range []bool{false, true} {
+		theme := "light"
+		if dark {
+			theme = "dark"
+		}
+		for _, size := range []struct {
+			name          string
+			width, height int
+		}{{"720", 720, 640}, {"960", 960, 640}, {"1040", 1040, 720}, {"1380", 1380, 900}} {
+			a := issuePreviewApp("supplement")
+			a.windowWidth = size.width
+			tr := ui.NewTester(a.view, size.width, size.height)
+			tr.SetDark(dark)
+			tr.Frame()
+			writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("headless-%s-supplement-%s.png", theme, size.name)), tr.Image())
+		}
 	}
 }
