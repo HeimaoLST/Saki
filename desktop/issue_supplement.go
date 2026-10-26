@@ -1,9 +1,9 @@
 package main
 
-// Issue supplement domain model. This file is intentionally independent of the
-// GUI store and Runtime client so the app can attach it to productIssue later
-// and persist it in the same atomic save as the issue. It does not dispatch
-// tasks or keep a second execution loop.
+// Issue supplement domain model. This is deliberately independent of the GUI
+// store and Runtime client. The app will attach the ledger to productIssue and
+// include it in the same atomic store save; this file has no dispatcher, queue
+// worker, or second execution loop.
 
 import (
 	"crypto/rand"
@@ -23,13 +23,14 @@ const (
 const (
 	supplementStatePending       = "pending"
 	supplementStatePrepared      = "prepared"
+	supplementStateDispatching   = "dispatching"
 	supplementStateSubmitted     = "submitted"
 	supplementStateRejected      = "rejected"
 	supplementStateNotDispatched = "not_dispatched"
 	supplementStateUnknown       = "unknown"
 
 	supplementBatchPrepared      = "prepared"
-	supplementBatchStored        = "stored"
+	supplementBatchDispatching   = "dispatching"
 	supplementBatchAccepted      = "accepted"
 	supplementBatchRejected      = "rejected"
 	supplementBatchNotDispatched = "not_dispatched"
@@ -43,45 +44,43 @@ var (
 )
 
 type issueSupplementTarget struct {
-	ContactID            string
-	IssueID              string
-	RequirementsRevision int
+	ContactID            string `json:"contact_id"`
+	IssueID              string `json:"issue_id"`
+	RequirementsRevision int    `json:"requirements_revision"`
 }
 
 type issueSupplement struct {
-	ID                   string
-	ContactID            string
-	IssueID              string
-	Text                 string
-	RequirementsRevision int
-	CreatedAt            int64
-	State                string
-	Stored               bool
-	BatchID              string
-	Detail               string
-	SessionID            string
-	TaskID               string
-	MessageID            string
-	ExecutionID          string
+	ID                   string `json:"id"`
+	ContactID            string `json:"contact_id"`
+	IssueID              string `json:"issue_id"`
+	Text                 string `json:"text"`
+	RequirementsRevision int    `json:"requirements_revision"`
+	CreatedAt            int64  `json:"created_at"`
+	State                string `json:"state"`
+	BatchID              string `json:"batch_id,omitempty"`
+	Detail               string `json:"detail,omitempty"`
+	SessionID            string `json:"session_id,omitempty"`
+	TaskID               string `json:"task_id,omitempty"`
+	MessageID            string `json:"message_id,omitempty"`
+	ExecutionID          string `json:"execution_id,omitempty"`
 }
 
 type issueSupplementSnapshot struct {
-	ID   string
-	Text string
+	ID   string `json:"id"`
+	Text string `json:"text"`
 }
 
 type issueSupplementBatch struct {
-	ID          string
-	Target      issueSupplementTarget
-	Snapshot    []issueSupplementSnapshot
-	Text        string
-	CreatedAt   int64
-	State       string
-	Stored      bool
-	SessionID   string
-	TaskID      string
-	MessageID   string
-	ExecutionID string
+	ID          string                    `json:"id"`
+	Target      issueSupplementTarget     `json:"target"`
+	Snapshot    []issueSupplementSnapshot `json:"snapshot"`
+	Text        string                    `json:"text"`
+	CreatedAt   int64                     `json:"created_at"`
+	State       string                    `json:"state"`
+	SessionID   string                    `json:"session_id,omitempty"`
+	TaskID      string                    `json:"task_id,omitempty"`
+	MessageID   string                    `json:"message_id,omitempty"`
+	ExecutionID string                    `json:"execution_id,omitempty"`
 }
 
 type issueSupplementAssociation struct {
@@ -91,9 +90,9 @@ type issueSupplementAssociation struct {
 	ExecutionID string
 }
 
-// issueSupplementHistory is the exact input record the Runtime actually
-// accepted. Matching requires the complete immutable batch text plus all
-// association identities; it does not claim model adoption.
+// issueSupplementHistory is a caller-provided record, not a claim that this
+// package parsed Runtime history. Matching requires a complete input string and
+// all association identities supplied by the caller.
 type issueSupplementHistory struct {
 	Text        string
 	SessionID   string
@@ -103,8 +102,9 @@ type issueSupplementHistory struct {
 }
 
 type issueSupplementLedger struct {
-	Items        []*issueSupplement
-	AutoContinue bool
+	Items        []*issueSupplement      `json:"items,omitempty"`
+	Batches      []*issueSupplementBatch `json:"batches,omitempty"`
+	AutoContinue bool                    `json:"auto_continue"`
 }
 
 func newIssueSupplementID() string {
@@ -119,29 +119,29 @@ func newIssueSupplementLedger() *issueSupplementLedger {
 	return &issueSupplementLedger{AutoContinue: true}
 }
 
-func (l *issueSupplementLedger) pendingBytes() int {
-	total := 0
-	for _, item := range l.Items {
-		if item != nil && (item.State == supplementStatePending || item.State == supplementStatePrepared) {
-			total += len(item.Text)
-		}
-	}
-	return total
-}
-
 func (l *issueSupplementLedger) pendingCount() int {
 	count := 0
 	for _, item := range l.Items {
-		if item != nil && (item.State == supplementStatePending || item.State == supplementStatePrepared) {
+		if item != nil && item.State == supplementStatePending {
 			count++
 		}
 	}
 	return count
 }
 
-// Add receives a supplement only after save succeeds. The callback is the
-// app's existing one-shot store save; a nil callback is rejected rather than
-// calling in-memory data received.
+func (l *issueSupplementLedger) pendingBytes() int {
+	total := 0
+	for _, item := range l.Items {
+		if item != nil && item.State == supplementStatePending {
+			total += len([]byte(item.Text))
+		}
+	}
+	return total
+}
+
+// Add receives a supplement only after save succeeds. The callback is the app's
+// existing one-shot store save; nil is rejected instead of calling in-memory
+// data received.
 func (l *issueSupplementLedger) Add(target issueSupplementTarget, text string, save func() error) (*issueSupplement, error) {
 	if err := validateSupplementTarget(target); err != nil {
 		return nil, err
@@ -172,7 +172,6 @@ func (l *issueSupplementLedger) Add(target issueSupplementTarget, text string, s
 		l.Items = l.Items[:len(l.Items)-1]
 		return nil, fmt.Errorf("could not save supplement: %w", err)
 	}
-	item.Stored = true
 	return item, nil
 }
 
@@ -193,7 +192,7 @@ func supplementTargetsEqual(a, b issueSupplementTarget) bool {
 func (l *issueSupplementLedger) pendingFor(target issueSupplementTarget) []*issueSupplement {
 	var out []*issueSupplement
 	for _, item := range l.Items {
-		if item != nil && item.State == supplementStatePending && item.Stored &&
+		if item != nil && item.State == supplementStatePending &&
 			item.ContactID == target.ContactID && item.IssueID == target.IssueID &&
 			item.RequirementsRevision == target.RequirementsRevision {
 			out = append(out, item)
@@ -202,23 +201,41 @@ func (l *issueSupplementLedger) pendingFor(target issueSupplementTarget) []*issu
 	return out
 }
 
-// Prepare creates an immutable batch from currently pending, already-saved
-// supplements. It captures the exact target and requirements revision and does
-// not later follow edits/additions to the original items.
-func (l *issueSupplementLedger) Prepare(target issueSupplementTarget) (*issueSupplementBatch, error) {
+func (l *issueSupplementLedger) activeBatch(target issueSupplementTarget) *issueSupplementBatch {
+	for _, batch := range l.Batches {
+		if batch == nil || !supplementTargetsEqual(batch.Target, target) {
+			continue
+		}
+		switch batch.State {
+		case supplementBatchPrepared, supplementBatchDispatching, supplementBatchUnknown:
+			return batch
+		}
+	}
+	return nil
+}
+
+// Prepare creates and durably stores an immutable batch from currently pending
+// supplements. It captures the exact target/requirements revision and copies
+// the text; later additions or edits cannot alter the batch.
+func (l *issueSupplementLedger) Prepare(target issueSupplementTarget, save func() error) (*issueSupplementBatch, error) {
 	if err := validateSupplementTarget(target); err != nil {
 		return nil, err
 	}
+	if save == nil {
+		return nil, errSupplementSaveRequired
+	}
 	if !l.AutoContinue {
 		return nil, errors.New("automatic supplement continuation is stopped")
+	}
+	if active := l.activeBatch(target); active != nil {
+		return nil, fmt.Errorf("a supplement batch is already %s for this issue", active.State)
 	}
 	items := l.pendingFor(target)
 	if len(items) == 0 {
 		return nil, errSupplementNoPending
 	}
 	batch := &issueSupplementBatch{
-		ID: newIssueSupplementID(), Target: target, CreatedAt: nowMillis(),
-		State: supplementBatchPrepared,
+		ID: newIssueSupplementID(), Target: target, CreatedAt: nowMillis(), State: supplementBatchPrepared,
 	}
 	var texts []string
 	for _, item := range items {
@@ -228,46 +245,83 @@ func (l *issueSupplementLedger) Prepare(target issueSupplementTarget) (*issueSup
 		item.BatchID = batch.ID
 	}
 	batch.Text = strings.Join(texts, "\n")
+	l.Batches = append(l.Batches, batch)
+	if err := save(); err != nil {
+		l.Batches = l.Batches[:len(l.Batches)-1]
+		for _, snapshot := range batch.Snapshot {
+			if item := l.itemByID(snapshot.ID); item != nil {
+				item.State = supplementStatePending
+				item.BatchID = ""
+			}
+		}
+		return nil, fmt.Errorf("could not save supplement batch: %w", err)
+	}
 	return batch, nil
 }
 
-// MarkBatchStored must be called after the one-shot store save of the batch.
-// Until then Accept rejects the batch.
-func (l *issueSupplementLedger) MarkBatchStored(batch *issueSupplementBatch) bool {
-	if batch == nil || batch.State != supplementBatchPrepared {
-		return false
-	}
-	batch.Stored = true
-	batch.State = supplementBatchStored
-	return true
-}
-
-// AbortPrepared returns a not-yet-submitted batch to its pending items without
-// deleting their text. It is for save/UI failure before dispatch.
-func (l *issueSupplementLedger) AbortPrepared(batch *issueSupplementBatch) bool {
-	if batch == nil || batch.State != supplementBatchPrepared {
-		return false
+func (l *issueSupplementLedger) snapshotBatchItems(batch *issueSupplementBatch) map[string]issueSupplement {
+	items := map[string]issueSupplement{}
+	if batch == nil {
+		return items
 	}
 	for _, snapshot := range batch.Snapshot {
-		if item := l.itemByID(snapshot.ID); item != nil && item.State == supplementStatePrepared && item.BatchID == batch.ID {
-			item.State = supplementStatePending
-			item.BatchID = ""
+		if item := l.itemByID(snapshot.ID); item != nil {
+			items[item.ID] = *item
 		}
 	}
-	batch.State = supplementBatchCanceled
+	return items
+}
+
+func (l *issueSupplementLedger) restoreBatchItems(batch *issueSupplementBatch, old map[string]issueSupplement) {
+	if batch == nil {
+		return
+	}
+	for _, snapshot := range batch.Snapshot {
+		if item := l.itemByID(snapshot.ID); item != nil {
+			if previous, ok := old[item.ID]; ok {
+				*item = previous
+			}
+		}
+	}
+}
+
+// BeginDispatch is the durable boundary before task.send. Only after this save
+// may the app start the RPC. A stopped/unknown dispatching batch must never be
+// folded back into pending.
+func (l *issueSupplementLedger) BeginDispatch(batch *issueSupplementBatch, save func() error) bool {
+	if save == nil || batch == nil || batch.State != supplementBatchPrepared || !l.AutoContinue || l.batchByID(batch.ID) == nil {
+		return false
+	}
+	old := batch.State
+	oldItems := l.snapshotBatchItems(batch)
+	batch.State = supplementBatchDispatching
+	for _, snapshot := range batch.Snapshot {
+		if item := l.itemByID(snapshot.ID); item != nil {
+			item.State = supplementStateDispatching
+		}
+	}
+	if err := save(); err != nil {
+		batch.State = old
+		l.restoreBatchItems(batch, oldItems)
+		return false
+	}
 	return true
 }
 
-// Accept records a submitted batch only when Runtime returned a real accepted
-// task with all four association identities. It says nothing about adoption.
-func (l *issueSupplementLedger) Accept(batch *issueSupplementBatch, association issueSupplementAssociation) bool {
-	if batch == nil || batch.State != supplementBatchStored || !batch.Stored || !l.AutoContinue {
+// Accept records a real Runtime acceptance with all four identities. It remains
+// valid even if auto-continuation was stopped after dispatch; submission does
+// not claim adoption, understanding, or requirement satisfaction.
+func (l *issueSupplementLedger) Accept(batch *issueSupplementBatch, association issueSupplementAssociation, save func() error) bool {
+	if save == nil || batch == nil || l.batchByID(batch.ID) == nil ||
+		(batch.State != supplementBatchDispatching && batch.State != supplementBatchUnknown) {
 		return false
 	}
 	if strings.TrimSpace(association.SessionID) == "" || strings.TrimSpace(association.TaskID) == "" ||
 		strings.TrimSpace(association.MessageID) == "" || strings.TrimSpace(association.ExecutionID) == "" {
 		return false
 	}
+	old := *batch
+	oldItems := l.snapshotBatchItems(batch)
 	batch.State = supplementBatchAccepted
 	batch.SessionID, batch.TaskID, batch.MessageID, batch.ExecutionID = association.SessionID, association.TaskID, association.MessageID, association.ExecutionID
 	for _, snapshot := range batch.Snapshot {
@@ -276,13 +330,21 @@ func (l *issueSupplementLedger) Accept(batch *issueSupplementBatch, association 
 			item.SessionID, item.TaskID, item.MessageID, item.ExecutionID = batch.SessionID, batch.TaskID, batch.MessageID, batch.ExecutionID
 		}
 	}
+	if err := save(); err != nil {
+		*batch = old
+		l.restoreBatchItems(batch, oldItems)
+		return false
+	}
 	return true
 }
 
-func (l *issueSupplementLedger) Reject(batch *issueSupplementBatch, detail string) bool {
-	if batch == nil || (batch.State != supplementBatchPrepared && batch.State != supplementBatchStored) {
+func (l *issueSupplementLedger) Reject(batch *issueSupplementBatch, detail string, save func() error) bool {
+	if save == nil || batch == nil || l.batchByID(batch.ID) == nil ||
+		(batch.State != supplementBatchPrepared && batch.State != supplementBatchDispatching) {
 		return false
 	}
+	old := *batch
+	oldItems := l.snapshotBatchItems(batch)
 	batch.State = supplementBatchRejected
 	for _, snapshot := range batch.Snapshot {
 		if item := l.itemByID(snapshot.ID); item != nil {
@@ -290,13 +352,21 @@ func (l *issueSupplementLedger) Reject(batch *issueSupplementBatch, detail strin
 			item.Detail = detail
 		}
 	}
+	if err := save(); err != nil {
+		*batch = old
+		l.restoreBatchItems(batch, oldItems)
+		return false
+	}
 	return true
 }
 
-func (l *issueSupplementLedger) NotDispatched(batch *issueSupplementBatch, detail string) bool {
-	if batch == nil || (batch.State != supplementBatchPrepared && batch.State != supplementBatchStored) {
+func (l *issueSupplementLedger) NotDispatched(batch *issueSupplementBatch, detail string, save func() error) bool {
+	if save == nil || batch == nil || l.batchByID(batch.ID) == nil ||
+		(batch.State != supplementBatchPrepared && batch.State != supplementBatchDispatching) {
 		return false
 	}
+	old := *batch
+	oldItems := l.snapshotBatchItems(batch)
 	batch.State = supplementBatchNotDispatched
 	for _, snapshot := range batch.Snapshot {
 		if item := l.itemByID(snapshot.ID); item != nil {
@@ -304,13 +374,21 @@ func (l *issueSupplementLedger) NotDispatched(batch *issueSupplementBatch, detai
 			item.Detail = detail
 		}
 	}
+	if err := save(); err != nil {
+		*batch = old
+		l.restoreBatchItems(batch, oldItems)
+		return false
+	}
 	return true
 }
 
-func (l *issueSupplementLedger) Unknown(batch *issueSupplementBatch, detail string) bool {
-	if batch == nil || (batch.State != supplementBatchPrepared && batch.State != supplementBatchStored) {
+func (l *issueSupplementLedger) Unknown(batch *issueSupplementBatch, detail string, save func() error) bool {
+	if save == nil || batch == nil || l.batchByID(batch.ID) == nil ||
+		(batch.State != supplementBatchPrepared && batch.State != supplementBatchDispatching) {
 		return false
 	}
+	old := *batch
+	oldAuto, oldItems := l.AutoContinue, l.snapshotBatchItems(batch)
 	batch.State = supplementBatchUnknown
 	l.AutoContinue = false
 	for _, snapshot := range batch.Snapshot {
@@ -319,28 +397,61 @@ func (l *issueSupplementLedger) Unknown(batch *issueSupplementBatch, detail stri
 			item.Detail = detail
 		}
 	}
+	if err := save(); err != nil {
+		*batch = old
+		l.AutoContinue = oldAuto
+		l.restoreBatchItems(batch, oldItems)
+		return false
+	}
 	return true
 }
 
-// StopAutoContinue revokes automatic continuation while preserving all text and
-// the record of what happened. A prepared-but-not-dispatched batch is aborted.
-func (l *issueSupplementLedger) StopAutoContinue(batch *issueSupplementBatch) {
-	l.AutoContinue = false
-	if batch == nil || (batch.State != supplementBatchPrepared && batch.State != supplementBatchStored) {
-		return
+// StopAutoContinue revokes future scheduling only. Prepared, never-dispatched
+// batches return to pending; dispatching/unknown batches retain their identity
+// so a late accepted response can still be recorded.
+func (l *issueSupplementLedger) StopAutoContinue(batch *issueSupplementBatch, save func() error) bool {
+	if save == nil {
+		return false
 	}
-	for _, snapshot := range batch.Snapshot {
-		if item := l.itemByID(snapshot.ID); item != nil && item.BatchID == batch.ID &&
-			(item.State == supplementStatePrepared || item.State == supplementStatePending) {
-			item.State = supplementStatePending
-			item.BatchID = ""
+	oldAuto := l.AutoContinue
+	oldBatch := issueSupplementBatch{}
+	var oldItems map[string]issueSupplement
+	l.AutoContinue = false
+	if batch != nil && l.batchByID(batch.ID) != nil {
+		oldBatch = *batch
+		oldItems = l.snapshotBatchItems(batch)
+		if batch.State == supplementBatchPrepared {
+			for _, snapshot := range batch.Snapshot {
+				if item := l.itemByID(snapshot.ID); item != nil {
+					item.State = supplementStatePending
+					item.BatchID = ""
+				}
+			}
+			batch.State = supplementBatchCanceled
 		}
 	}
-	batch.State = supplementBatchCanceled
+	if err := save(); err != nil {
+		l.AutoContinue = oldAuto
+		if batch != nil && l.batchByID(batch.ID) != nil {
+			*batch = oldBatch
+			l.restoreBatchItems(batch, oldItems)
+		}
+		return false
+	}
+	return true
 }
 
-func (l *issueSupplementLedger) ResumeAutoContinue() {
+func (l *issueSupplementLedger) ResumeAutoContinue(save func() error) bool {
+	if save == nil {
+		return false
+	}
+	old := l.AutoContinue
 	l.AutoContinue = true
+	if err := save(); err != nil {
+		l.AutoContinue = old
+		return false
+	}
+	return true
 }
 
 func (l *issueSupplementLedger) itemByID(id string) *issueSupplement {
@@ -352,25 +463,26 @@ func (l *issueSupplementLedger) itemByID(id string) *issueSupplement {
 	return nil
 }
 
-func (b *issueSupplementBatch) MatchHistory(records []issueSupplementHistory) bool {
+func (l *issueSupplementLedger) batchByID(id string) *issueSupplementBatch {
+	for _, batch := range l.Batches {
+		if batch != nil && batch.ID == id {
+			return batch
+		}
+	}
+	return nil
+}
+
+// MatchProvidedHistory matches a caller-supplied complete send input and
+// association against an accepted batch. It does not parse Runtime history and
+// batch.Text is not claimed to be the full model input.
+func (b *issueSupplementBatch) MatchProvidedHistory(fullInput string, records []issueSupplementHistory) bool {
 	if b == nil || b.State != supplementBatchAccepted || b.Text == "" ||
 		b.SessionID == "" || b.TaskID == "" || b.MessageID == "" || b.ExecutionID == "" {
 		return false
 	}
 	for _, record := range records {
-		if record.Text != b.Text {
-			continue
-		}
-		if b.SessionID != "" && record.SessionID != b.SessionID {
-			continue
-		}
-		if b.TaskID != "" && record.TaskID != b.TaskID {
-			continue
-		}
-		if b.MessageID != "" && record.MessageID != b.MessageID {
-			continue
-		}
-		if b.ExecutionID != "" && record.ExecutionID != b.ExecutionID {
+		if record.Text != fullInput || record.SessionID != b.SessionID || record.TaskID != b.TaskID ||
+			record.MessageID != b.MessageID || record.ExecutionID != b.ExecutionID {
 			continue
 		}
 		return true
