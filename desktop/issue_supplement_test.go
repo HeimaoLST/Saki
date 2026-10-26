@@ -625,3 +625,57 @@ func TestIssueSupplementSelectionAndActiveBatchStayPerIssue(t *testing.T) {
 		t.Fatalf("issue B receipt = %+v", l.Items[1])
 	}
 }
+
+func TestIssueSupplementPrepareDispatchObservesExecutionAndBatchInOneSave(t *testing.T) {
+	l := newIssueSupplementLedger()
+	data := []byte{}
+	target := supplementTarget()
+	addSupplement(t, l, target, "atomic dispatch", &data)
+	execution := &issueExecution{ID: "execution-atomic"}
+	var savedBatch *issueSupplementBatch
+	var savedExecutionID string
+	var batch *issueSupplementBatch
+	var err error
+	batch, err = l.PrepareDispatch(target, execution, func() error {
+		if execution.SupplementBatchID == "" {
+			t.Fatal("execution had no supplement batch before the save")
+		}
+		if len(l.Batches) != 1 || l.Batches[0].State != supplementBatchDispatching ||
+			l.Batches[0].ExecutionID != execution.ID {
+			t.Fatalf("batch at save = %+v", l.Batches)
+		}
+		if len(l.Batches) != 1 || l.Batches[0].State != supplementBatchDispatching ||
+			l.Items[0].State != supplementStateDispatching {
+			t.Fatalf("ledger at save = %+v / %+v", l.Batches, l.Items)
+		}
+		payload, marshalErr := json.Marshal(l)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		data = append(data[:0], payload...)
+		savedBatch = l.Batches[0]
+		savedExecutionID = execution.SupplementBatchID
+		return nil
+	})
+	if err != nil || batch == nil || savedBatch != batch || savedExecutionID != batch.ID {
+		t.Fatalf("prepare dispatch = %+v / execution %q / saved %q / %v", batch, execution.SupplementBatchID, savedExecutionID, err)
+	}
+	restored := reloadLedger(t, data)
+	if len(restored.Batches) != 1 || restored.Batches[0].State != supplementBatchDispatching ||
+		restored.Batches[0].ExecutionID != execution.ID ||
+		restored.Batches[0].Snapshot[0].RequirementsRevision != target.RequirementsRevision {
+		t.Fatalf("persisted dispatch = %+v", restored.Batches)
+	}
+
+	failed := newIssueSupplementLedger()
+	failedData := []byte{}
+	addSupplement(t, failed, target, "rollback dispatch", &failedData)
+	execution = &issueExecution{ID: "execution-failed"}
+	if batch, err := failed.PrepareDispatch(target, execution, func() error { return errSupplementSaveRequired }); err == nil || batch != nil {
+		t.Fatalf("failed dispatch = %+v / %v", batch, err)
+	}
+	if execution.SupplementBatchID != "" || len(failed.Batches) != 0 ||
+		failed.Items[0].State != supplementStatePending || failed.Items[0].BatchID != "" {
+		t.Fatalf("failed dispatch left partial state: execution=%q batches=%+v item=%+v", execution.SupplementBatchID, failed.Batches, failed.Items[0])
+	}
+}

@@ -66,8 +66,9 @@ type issueSupplement struct {
 }
 
 type issueSupplementSnapshot struct {
-	ID   string `json:"id"`
-	Text string `json:"text"`
+	ID                   string `json:"id"`
+	Text                 string `json:"text"`
+	RequirementsRevision int    `json:"requirements_revision,omitempty"`
 }
 
 type issueSupplementBatch struct {
@@ -208,6 +209,17 @@ func (l *issueSupplementLedger) pendingFor(target issueSupplementTarget) []*issu
 	return out
 }
 
+func (l *issueSupplementLedger) pendingText(target issueSupplementTarget) string {
+	items := l.pendingFor(target)
+	var texts []string
+	for _, item := range items {
+		if item != nil {
+			texts = append(texts, item.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
 func (l *issueSupplementLedger) activeBatch(target issueSupplementTarget) *issueSupplementBatch {
 	for _, batch := range l.Batches {
 		if batch == nil || !supplementTargetsSameIssue(batch.Target, target) {
@@ -246,7 +258,9 @@ func (l *issueSupplementLedger) Prepare(target issueSupplementTarget, save func(
 	}
 	var texts []string
 	for _, item := range items {
-		batch.Snapshot = append(batch.Snapshot, issueSupplementSnapshot{ID: item.ID, Text: item.Text})
+		batch.Snapshot = append(batch.Snapshot, issueSupplementSnapshot{
+			ID: item.ID, Text: item.Text, RequirementsRevision: item.RequirementsRevision,
+		})
 		texts = append(texts, item.Text)
 		item.State = supplementStatePrepared
 		item.BatchID = batch.ID
@@ -317,13 +331,92 @@ func (l *issueSupplementLedger) BeginDispatch(batch *issueSupplementBatch, save 
 	return true
 }
 
+// PrepareDispatch creates and durably stores a batch already at the dispatch
+// boundary. The caller has appended the execution and set Work submitting
+// before save; the same save therefore records the execution, batch, items and
+// Work intent. It does not invoke Runtime. It deliberately does not create an
+// intermediate prepared batch.
+func (l *issueSupplementLedger) PrepareDispatch(target issueSupplementTarget, execution *issueExecution, save func() error) (*issueSupplementBatch, error) {
+	if err := validateSupplementTarget(target); err != nil {
+		return nil, err
+	}
+	if save == nil {
+		return nil, errSupplementSaveRequired
+	}
+	if execution == nil || strings.TrimSpace(execution.ID) == "" {
+		return nil, errors.New("supplement dispatch requires an execution")
+	}
+	if active := l.activeBatch(target); active != nil {
+		return nil, fmt.Errorf("a supplement batch is already %s for this issue", active.State)
+	}
+	items := l.pendingFor(target)
+	if len(items) == 0 {
+		return nil, errSupplementNoPending
+	}
+	batch := &issueSupplementBatch{
+		ID: newIssueSupplementID(), Target: target, CreatedAt: nowMillis(), State: supplementBatchDispatching,
+		ExecutionID: execution.ID,
+	}
+	var texts []string
+	for _, item := range items {
+		batch.Snapshot = append(batch.Snapshot, issueSupplementSnapshot{
+			ID: item.ID, Text: item.Text, RequirementsRevision: item.RequirementsRevision,
+		})
+		texts = append(texts, item.Text)
+		item.State = supplementStateDispatching
+		item.BatchID = batch.ID
+	}
+	batch.Text = strings.Join(texts, "\n")
+	execution.SupplementBatchID = batch.ID
+	l.Batches = append(l.Batches, batch)
+	if err := save(); err != nil {
+		execution.SupplementBatchID = ""
+		l.Batches = l.Batches[:len(l.Batches)-1]
+		for _, snapshot := range batch.Snapshot {
+			if item := l.itemByID(snapshot.ID); item != nil {
+				item.State = supplementStatePending
+				item.BatchID = ""
+			}
+		}
+		return nil, fmt.Errorf("could not save supplement dispatch: %w", err)
+	}
+	return batch, nil
+}
+
+// DeferDispatch is the local rollback for a dispatch that Runtime explicitly
+// rejected as busy/capacity before accepting a task. The immutable batch stays
+// as audit history, its items return to pending, and AutoContinue is unchanged
+// so the next real capacity/idle signal can try once. It must not be used for
+// accepted, rejected, or unknown dispatch results.
+func (l *issueSupplementLedger) DeferDispatch(batch *issueSupplementBatch, save func() error) bool {
+	canonical := l.canonicalBatch(batch)
+	if save == nil || canonical == nil || canonical.State != supplementBatchDispatching {
+		return false
+	}
+	old := *canonical
+	oldItems := l.snapshotBatchItems(canonical)
+	for _, snapshot := range canonical.Snapshot {
+		if item := l.itemByID(snapshot.ID); item != nil {
+			item.State = supplementStatePending
+			item.BatchID = ""
+		}
+	}
+	canonical.State = supplementBatchCanceled
+	if err := save(); err != nil {
+		*canonical = old
+		l.restoreBatchItems(canonical, oldItems)
+		return false
+	}
+	return true
+}
+
 // ReleasePrepared abandons only a local prepared batch that has not crossed the
 // BeginDispatch boundary. It returns the exact snapshot items to pending, keeps
 // AutoContinue unchanged, and leaves the canceled batch as audit history. It is
 // deliberately narrower than StopAutoContinue, which revokes user intent.
 func (l *issueSupplementLedger) ReleasePrepared(batch *issueSupplementBatch, save func() error) bool {
 	canonical := l.canonicalBatch(batch)
-	if save == nil || canonical == nil || canonical.State != supplementBatchPrepared {
+	if save == nil || canonical == nil || canonical.State != supplementBatchPrepared || canonical.ExecutionID != "" {
 		return false
 	}
 	old := *canonical
@@ -552,4 +645,37 @@ func (b *issueSupplementBatch) MatchProvidedHistory(fullInput string, records []
 		return true
 	}
 	return false
+}
+
+// cloneIssueSupplementLedger copies every persisted supplement object so an
+// app/store reload cannot alias the in-memory ledger with the stored snapshot.
+func cloneIssueSupplementLedger(ledger *issueSupplementLedger) *issueSupplementLedger {
+	if ledger == nil {
+		return nil
+	}
+	out := &issueSupplementLedger{AutoContinue: ledger.AutoContinue}
+	if len(ledger.Items) > 0 {
+		out.Items = make([]*issueSupplement, 0, len(ledger.Items))
+		for _, item := range ledger.Items {
+			if item == nil {
+				out.Items = append(out.Items, nil)
+				continue
+			}
+			copyItem := *item
+			out.Items = append(out.Items, &copyItem)
+		}
+	}
+	if len(ledger.Batches) > 0 {
+		out.Batches = make([]*issueSupplementBatch, 0, len(ledger.Batches))
+		for _, batch := range ledger.Batches {
+			if batch == nil {
+				out.Batches = append(out.Batches, nil)
+				continue
+			}
+			copyBatch := *batch
+			copyBatch.Snapshot = append([]issueSupplementSnapshot(nil), batch.Snapshot...)
+			out.Batches = append(out.Batches, &copyBatch)
+		}
+	}
+	return out
 }

@@ -566,7 +566,7 @@ func TestTaskContextUnknownSendSurvivesStoreRestartWithoutAutoReplay(t *testing.
 	}
 }
 
-func TestTaskContextStoreV5ReadsOldV4WithoutContext(t *testing.T) {
+func TestTaskContextStoreV6ReadsOldV4WithoutContext(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "contacts.json")
 	legacy := storedState{
 		Version: 4, Selected: "c1",
@@ -589,8 +589,8 @@ func TestTaskContextStoreV5ReadsOldV4WithoutContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.state.Version != 5 {
-		t.Fatalf("old v4 data was not saved as v5: %d", reloaded.state.Version)
+	if reloaded.state.Version != contactStoreVersion {
+		t.Fatalf("old v4 data was not saved as the current version: %d", reloaded.state.Version)
 	}
 }
 

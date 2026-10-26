@@ -165,6 +165,7 @@ type appModel struct {
 	issueActionError       string
 	issueRequirementDrafts map[string]*string
 	issueCompletionDrafts  map[string]*string
+	supplementAutoPass     bool
 
 	// Runtime mode. demo keeps the local fixture path for tests/screenshots;
 	// the shipped app is runtime-backed.

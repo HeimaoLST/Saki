@@ -16,11 +16,12 @@ import (
 	"time"
 )
 
-// v3 added issue.work_session_id. v4 makes structured requirements the
-// persisted truth. v5 adds owned task-context snapshots and pending-send
-// intent. v1-v4 remain readable here. Older v4 apps reject v5 instead of
-// saving over it and silently discarding context materials.
-const contactStoreVersion = 5
+// v3 added issue.work_session_id. v4 made structured requirements the
+// persisted truth. v5 added owned task-context snapshots and pending-send
+// intent. v6 adds the issue supplement ledger and its execution association.
+// v1-v5 remain readable here. Older apps reject v6 instead of saving over it
+// and silently discarding supplement receipts.
+const contactStoreVersion = 6
 
 type storedContact struct {
 	ID           string            `json:"id"`
@@ -46,6 +47,7 @@ type storedIssueExecution struct {
 	Detail               string            `json:"detail,omitempty"`
 	RequirementsRevision int               `json:"requirements_revision,omitempty"`
 	Context              []taskContextItem `json:"context,omitempty"`
+	SupplementBatchID    string            `json:"supplement_batch_id,omitempty"`
 }
 
 type storedRequirement struct {
@@ -70,6 +72,7 @@ type storedIssue struct {
 	UpdatedAt            int64                  `json:"updated_at,omitempty"`
 	WorkSessionID        string                 `json:"work_session_id,omitempty"`
 	TaskContext          []taskContextItem      `json:"task_context,omitempty"`
+	Supplements          *issueSupplementLedger `json:"supplements,omitempty"`
 	Executions           []storedIssueExecution `json:"executions,omitempty"`
 }
 
@@ -217,7 +220,7 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 				Status: issue.Status, Archived: issue.Archived,
 				Evidence: issue.Evidence, CreatedAt: issue.CreatedAt, UpdatedAt: issue.UpdatedAt,
 				WorkSessionID: issue.WorkSessionID, RequirementsRevision: issue.RequirementsRevision,
-				TaskContext: issue.Context.snapshot(),
+				TaskContext: issue.Context.snapshot(), Supplements: issue.Supplements,
 			}
 			for _, requirement := range issue.Requirements {
 				if requirement == nil || strings.TrimSpace(requirement.Text) == "" {
@@ -235,6 +238,7 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 					Status: execution.Status, Detail: execution.Detail,
 					RequirementsRevision: execution.RequirementsRevision,
 					Context:              cloneTaskContextItems(execution.Context),
+					SupplementBatchID:    execution.SupplementBatchID,
 				})
 			}
 			s.state.Issues = append(s.state.Issues, stored)
