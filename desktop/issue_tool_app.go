@@ -1182,6 +1182,34 @@ func issueToolResponseError(response issueToolForwardResponse) *IssueToolError {
 	return &toolErr
 }
 
+// issueToolCreateContext returns only the user context snapshot belonging to
+// the exact conversation scope/turn that issued create. It prefers the
+// pre-accept pendingSend snapshot and otherwise uses the live msgUser record
+// with the scope's real Runtime task. It never reads the current draft, scans
+// chat history, or treats the scope token as user material.
+func (a *appModel) issueToolCreateContext(ct *contact, scope IssueToolScope) []taskContextItem {
+	if ct == nil || ct.ID != scope.ContactID {
+		return nil
+	}
+	sessionID := scope.RuntimeSession()
+	if sessionID == "" || ct.SessionID != sessionID {
+		return nil
+	}
+	if ct.pendingSend != nil && ct.pendingSend.ToolScopeRef == scope.Ref {
+		return cloneTaskContextItems(ct.pendingSend.Context)
+	}
+	if scope.RuntimeTaskID == "" {
+		return nil
+	}
+	for index := len(ct.Messages) - 1; index >= 0; index-- {
+		message := ct.Messages[index]
+		if message != nil && message.Kind == msgUser && message.TaskID == scope.RuntimeTaskID {
+			return cloneTaskContextItems(message.Context)
+		}
+	}
+	return nil
+}
+
 func (a *appModel) issueToolCreate(scope IssueToolScope, request IssueToolActionRequest, operation *IssueToolOperation) (issueToolForwardResponse, error) {
 	var callErr error
 	var receipt *IssueToolReceipt
@@ -1196,7 +1224,18 @@ func (a *appModel) issueToolCreate(scope IssueToolScope, request IssueToolAction
 			return
 		}
 		previousAllowed := append([]string(nil), scope.AllowedIssueIDs...)
+		latestScope, latestErr := a.issueToolScopeByRef(scope.Ref)
+		if latestErr != nil {
+			callErr = latestErr
+			return
+		}
+		capturedContext := a.issueToolCreateContext(ct, latestScope)
+		if err := validateTaskContext(capturedContext); err != nil {
+			callErr = err
+			return
+		}
 		_, callErr = a.createIssueForWithSave(ct, request.Goal, strings.Join(request.Requirements, "\n"), func(created *productIssue) error {
+			created.Context.items = capturedContext
 			receipt = &IssueToolReceipt{
 				State: issueToolReceiptSaved, IssueID: created.ID, IssueStatus: created.Status,
 				RequirementsRevision: issueToolRevisionPointer(created.RequirementsRevision),
