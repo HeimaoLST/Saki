@@ -453,7 +453,7 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 			ui.Text(c, evidence).FontSize(12).LineHeight(1.4).TextColor(t.Text).MaxLines(4)
 			a.issueRequirementEvidence(c, t, ct, issue, editable)
 			a.issueSupplementSection(c, t, ct, issue, editable)
-			a.issueExecutions(c, t, ct, issue, editable)
+			a.issueExecutions(c, t, ct, issue)
 		} else if a.issueSupplementFormID == issue.ID {
 			a.issueSupplementSection(c, t, ct, issue, editable)
 		}
@@ -580,7 +580,7 @@ func (a *appModel) issueRequirementEvidence(c *ui.Context, t *ui.Theme, ct *cont
 	}
 }
 
-func (a *appModel) issueExecutions(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue, editable bool) {
+func (a *appModel) issueExecutions(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue) {
 	if len(issue.Executions) == 0 {
 		return
 	}
