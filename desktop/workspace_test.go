@@ -542,8 +542,9 @@ func TestWorkspaceToolCardActionsStayVisibleAtAllWidths(t *testing.T) {
 	w := a.ensureWork(ct, "t1", "m1")
 	w.State = workRunning
 	w.Prompt = "long work"
-	output := `{"content":"` + strings.Repeat("x", 240) + `"}`
-	w.Tools = []*workTool{{CallID: "c1", Name: "read", Finished: true, Output: output}}
+	longPath := "/Users/someone/" + strings.Repeat("非常长的目录/", 20) + "file.json"
+	output := `{"content":"` + strings.Repeat("x", 240) + `","path":"` + longPath + `"}`
+	w.Tools = []*workTool{{CallID: "c1", Name: "read", Finished: true, Args: `{"path":"` + longPath + `"}`, Output: output}}
 
 	for _, size := range []struct{ width, height int }{{1040, 720}, {960, 640}, {720, 640}, {1380, 900}} {
 		a.windowWidth = size.width
@@ -554,10 +555,10 @@ func TestWorkspaceToolCardActionsStayVisibleAtAllWidths(t *testing.T) {
 		if !ok || panel.W <= 0 {
 			t.Fatalf("%dx%d activity panel = %+v ok=%v", size.width, size.height, panel, ok)
 		}
-		for _, label := range []string{"Copy received output", "Details"} {
+		for _, label := range []string{"Finished", "Copy received output", "Details"} {
 			r, ok := tr.Find(label)
 			if !ok || r.W <= 0 || r.H <= 0 || r.X < panel.X || r.X+r.W > panel.X+panel.W ||
-				r.X < 0 || r.X+r.W > float32(size.width) || r.Y+r.H > float32(size.height) {
+				r.Y < panel.Y || r.X < 0 || r.X+r.W > float32(size.width) || r.Y+r.H > float32(size.height) {
 				t.Fatalf("%dx%d %q bounds = %+v panel=%+v ok=%v", size.width, size.height, label, r, panel, ok)
 			}
 		}

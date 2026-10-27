@@ -33,9 +33,11 @@ func TestPreviewWorkspaceToolCardWrapping(t *testing.T) {
 			w := a.ensureWork(ct, "t1", "m1")
 			w.State = workRunning
 			w.Prompt = "整理测试资料并报告结果"
+			longPath := "/Users/someone/" + strings.Repeat("非常长的目录/", 20) + "file.json"
 			w.Tools = []*workTool{{
 				CallID: "c1", Name: "read", Finished: true,
-				Output: `{"content":"` + strings.Repeat("非常长的未换行工具输出/very/long/unbroken/path/", 12) + `"}`,
+				Args:   `{"path":"` + longPath + `"}`,
+				Output: `{"content":"` + strings.Repeat("非常长的未换行工具输出/very/long/unbroken/path/", 12) + `","path":"` + longPath + `"}`,
 			}}
 			a.windowWidth = size.width
 			tr := ui.NewTester(a.view, size.width, size.height)
