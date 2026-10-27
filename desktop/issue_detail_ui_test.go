@@ -306,8 +306,13 @@ func TestIssueLatestExecutionShowsNonSuccessStatesAndToolOnly(t *testing.T) {
 				tr.HasText("terminal state is unknown")) {
 				t.Fatalf("interrupted execution was described as unknown: %v", tr.Texts())
 			}
-			tr.Click("More issue actions")
+			if err := tr.Click("More issue actions"); err != nil {
+				t.Fatal(err)
+			}
 			tr.Frame()
+			if !tr.HasText("Hide issue actions") {
+				t.Fatalf("issue actions did not expand: %v", tr.Texts())
+			}
 			if tr.HasText("Show sent snapshot") {
 				t.Fatal("empty sent snapshot rendered a dead action")
 			}
