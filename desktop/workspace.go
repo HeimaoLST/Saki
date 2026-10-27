@@ -469,20 +469,48 @@ func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, is
 		ui.Text(c, "No execution yet").FontSize(12).FontWeight(500).TextColor(t.TextMuted)
 		return
 	}
-	ui.Text(c, "Latest result").FontSize(11).FontWeight(500).TextColor(t.TextMuted)
+	ui.Text(c, "Latest execution").FontSize(12).FontWeight(500).TextColor(t.TextMuted)
+	ui.Text(c, issueExecutionLabel(execution)).FontSize(12).TextColor(a.issueStatusColor(t, issue))
 	text := strings.TrimSpace(ct.resultTextForExecution(execution))
-	if execution.Status == issueExecutionAccepted || execution.Status == issueExecutionRunning {
+	work := workFor(ct, execution.TaskID)
+	switch {
+	case execution.Status == issueExecutionAccepted || execution.Status == issueExecutionRunning:
 		if text == "" {
 			ui.Text(c, "No result yet; this execution is still running.").FontSize(12).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
 		} else {
 			ui.Text(c, "Current response (execution still running): "+truncate(text, 300)).FontSize(12).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
 		}
-	} else if text == "" {
-		ui.Text(c, "No assistant message was recorded for this execution.").FontSize(12).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
-	} else {
-		ui.Text(c, "Result preview: "+truncate(text, 300)).FontSize(12).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
+	case execution.Status == issueExecutionCompleted:
+		if text == "" {
+			if work != nil && len(work.Tools) > 0 {
+				ui.Text(c, "No assistant message was recorded; open the execution to inspect tool output.").FontSize(12).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
+			} else {
+				ui.Text(c, "No assistant message was recorded for this execution.").FontSize(12).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
+			}
+		} else {
+			ui.Text(c, "Result preview: "+truncate(text, 300)).FontSize(12).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
+		}
+	default:
+		if text != "" {
+			ui.Text(c, "Result preview: "+truncate(text, 300)).FontSize(12).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
+		}
+		reason := strings.TrimSpace(execution.Detail)
+		if reason == "" {
+			switch execution.Status {
+			case issueExecutionPending:
+				reason = "Prepared but not dispatched yet."
+			case issueExecutionNotDispatched:
+				reason = "No task was dispatched."
+			case issueExecutionRejected:
+				reason = "The Runtime rejected this execution."
+			case issueExecutionFailed:
+				reason = "Execution failed; inspect the execution details for the recorded reason."
+			default:
+				reason = "The terminal state is unknown; inspect the execution details before continuing."
+			}
+		}
+		ui.Text(c, truncate(reason, 180)).FontSize(12).LineHeight(1.4).TextColor(t.Warning).MaxLines(3)
 	}
-	work := workFor(ct, execution.TaskID)
 	ui.Row(c).Gap(10).Children(func() {
 		ui.Button(c, "Open result").FontSize(11).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openIssueResult(issue.ID, execution.ID) })
 		if work != nil {
@@ -599,18 +627,21 @@ func (a *appModel) issueExecutions(c *ui.Context, t *ui.Theme, ct *contact, issu
 					ui.Text(c, fmt.Sprintf("revision %d", execution.RequirementsRevision)).FontSize(11).TextColor(t.TextMuted)
 				}
 			})
-			label := "Show sent snapshot"
-			if count := len(executionTaskContextItems(ct, issue, execution)); count > 0 {
-				label = fmt.Sprintf("Sent task context · %d", count)
-				if execution.ContextExpanded {
-					label = "Hide sent task context"
+			contextCount := len(executionTaskContextItems(ct, issue, execution))
+			if execution.Prompt != "" || contextCount > 0 {
+				label := "Show sent snapshot"
+				if contextCount > 0 {
+					label = fmt.Sprintf("Sent task context · %d", contextCount)
+					if execution.ContextExpanded {
+						label = "Hide sent task context"
+					}
+				} else if execution.ContextExpanded {
+					label = "Hide sent snapshot"
 				}
-			} else if execution.ContextExpanded {
-				label = "Hide sent snapshot"
+				ui.Button(c, label).FontSize(11).Padding(1, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+					execution.ContextExpanded = !execution.ContextExpanded
+				})
 			}
-			ui.Button(c, label).FontSize(11).Padding(1, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
-				execution.ContextExpanded = !execution.ContextExpanded
-			})
 			if execution.ContextExpanded {
 				if execution.Prompt != "" {
 					ui.Text(c, "Sent snapshot: "+truncate(execution.Prompt, 240)).FontSize(12).LineHeight(1.3).TextColor(t.TextMuted).MaxLines(3)

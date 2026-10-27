@@ -36,7 +36,7 @@ func TestIssueDetailDefaultsToResultAndKeepsSecondaryDetailsCollapsed(t *testing
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	for _, want := range []string{"Latest result", "readable result body", "Requirements", "Continue issue", "More issue actions"} {
+	for _, want := range []string{"Latest execution", "readable result body", "Requirements", "Continue issue", "More issue actions"} {
 		if !tr.HasText(want) {
 			t.Fatalf("default issue detail missing %q: %v", want, tr.Texts())
 		}
@@ -45,7 +45,7 @@ func TestIssueDetailDefaultsToResultAndKeepsSecondaryDetailsCollapsed(t *testing
 		t.Fatalf("secondary execution details visible by default: %v", tr.Texts())
 	}
 	goal, _ := tr.Find("prepare the readable summary")
-	latest, _ := tr.Find("Latest result")
+	latest, _ := tr.Find("Latest execution")
 	requirements, _ := tr.Find("Requirements")
 	primary, _ := tr.Find("Continue issue")
 	more, _ := tr.Find("More issue actions")
@@ -259,5 +259,70 @@ func TestIssueExecutionContextExpandsAndCopiesAt720(t *testing.T) {
 	clickAfterBoundedScroll(t, tr, "Copy context text", 1040, 720)
 	if got := tr.Clipboard(); got != "exact context text" {
 		t.Fatalf("720 context copy = %q", got)
+	}
+}
+
+func TestIssueLatestExecutionShowsNonSuccessStatesAndToolOnly(t *testing.T) {
+	cases := []struct {
+		status string
+		label  string
+		detail string
+	}{
+		{issueExecutionPending, "Prepared, not dispatched", ""},
+		{issueExecutionRejected, "Rejected", "Runtime rejected the task"},
+		{issueExecutionFailed, "Execution failed", "provider failed after dispatch"},
+		{issueExecutionUnknown, "Result unknown", "no trusted terminal state"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.status, func(t *testing.T) {
+			a, ct := workspaceTestApp(t)
+			issue := &productIssue{ID: "i-" + tc.status, ContactID: ct.ID, Goal: "latest status", Status: issueStatusInProgress,
+				RequirementsRevision: 1, Requirements: parseIssueRequirements("remain visible"), WorkSessionID: "work-latest",
+				Executions: []*issueExecution{
+					{ID: "old", SessionID: "work-latest", TaskID: "old-task", Status: issueExecutionCompleted},
+					{ID: "latest", SessionID: "work-latest", TaskID: "latest-task", Status: tc.status, Detail: tc.detail},
+				},
+			}
+			ct.Issues = []*productIssue{issue}
+			ct.SelectedIssueID = issue.ID
+			ct.Works = []*workItem{{TaskID: "old-task", State: workCompleted}}
+			issue.Work.Messages = []*message{{Key: "old-success", Kind: msgContact, TaskID: "old-task", Text: "old success"}}
+			tr := ui.NewTester(a.view, 1040, 720)
+			tr.Frame()
+			if !tr.HasText("Latest execution") || !tr.HasText(tc.label) {
+				t.Fatalf("latest status %q not visible: %v", tc.label, tr.Texts())
+			}
+			if tc.detail != "" && !tr.HasText(tc.detail) {
+				t.Fatalf("latest reason %q not visible: %v", tc.detail, tr.Texts())
+			}
+			if tr.HasText("old success") {
+				t.Fatal("older successful execution was presented as latest")
+			}
+			if tc.status == issueExecutionPending && !tr.HasText("Prepared but not dispatched yet.") {
+				t.Fatalf("pending execution lacks actionable short state: %v", tr.Texts())
+			}
+			tr.Click("More issue actions")
+			tr.Frame()
+			if tr.HasText("Show sent snapshot") {
+				t.Fatal("empty sent snapshot rendered a dead action")
+			}
+		})
+	}
+
+	a, ct := workspaceTestApp(t)
+	issue := &productIssue{ID: "i-tool-only", ContactID: ct.ID, Goal: "tool only", Status: issueStatusInProgress,
+		RequirementsRevision: 1, WorkSessionID: "work-tool-only", Work: issueWorkSession{Loaded: true},
+		Executions: []*issueExecution{{ID: "tool", SessionID: "work-tool-only", TaskID: "tool-task", Status: issueExecutionCompleted}},
+	}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	ct.Works = []*workItem{{TaskID: "tool-task", State: workCompleted, Tools: []*workTool{{CallID: "tool", Name: "write", Finished: true, Output: `{"bytes_written":1}`}}}}
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if !tr.HasText("No assistant message was recorded; open the execution to inspect tool output.") || !tr.HasText("View execution") {
+		t.Fatalf("tool-only execution lacks honest guidance: %v", tr.Texts())
+	}
+	if tr.HasText("tool raw output") || tr.HasText(`"bytes_written"`) {
+		t.Fatal("tool-only execution leaked raw output into default result")
 	}
 }
