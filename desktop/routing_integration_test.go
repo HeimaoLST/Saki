@@ -1193,27 +1193,36 @@ func TestIssueWorkStopButtonStopsIssueNotConversation(t *testing.T) {
 	defer provider.release("ui-stop-B")
 	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 2)
 	var issueID string
+	var setupErr error
 	h.pump.do(func() {
 		if !h.app.createIssue("ui-stop-A issue", "Stop issue only.") {
-			t.Fatalf("createIssue: %s", h.app.issueFormError)
+			setupErr = fmt.Errorf("createIssue: %s", h.app.issueFormError)
+			return
 		}
 		issueID = h.app.selectedContact().SelectedIssueID
 		if !h.app.runIssue(issueID) {
-			t.Fatalf("runIssue: %s", h.app.issueFormError)
+			setupErr = fmt.Errorf("runIssue: %s", h.app.issueFormError)
 		}
 	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
 	select {
 	case <-provider.arrived["ui-stop-A"]:
 	case <-time.After(15 * time.Second):
 		t.Fatal("provider did not receive A")
 	}
+	var sendErr error
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
 		ct.Draft = "ui-stop-B conversation"
 		if !h.app.sendCurrent() {
-			t.Fatalf("conversation B rejected: %s", ct.SendError)
+			sendErr = fmt.Errorf("conversation B rejected: %s", ct.SendError)
 		}
 	})
+	if sendErr != nil {
+		t.Fatal(sendErr)
+	}
 	select {
 	case <-provider.arrived["ui-stop-B"]:
 	case <-time.After(15 * time.Second):
@@ -1233,12 +1242,27 @@ func TestIssueWorkStopButtonStopsIssueNotConversation(t *testing.T) {
 		issueTask = issue.Work.ActiveTaskID
 		tr := ui.NewTester(h.app.view, 1040, 720)
 		tr.Frame()
-		if _, ok := tr.Find("Stop issue task"); !ok {
-			issueClickErr = fmt.Errorf("Stop issue task control has no visible geometry")
+		if err := tr.Click("Work"); err != nil {
+			issueClickErr = fmt.Errorf("click Work: %w", err)
 			return
 		}
-		if _, ok := tr.Find("Stop conversation"); !ok {
-			issueClickErr = fmt.Errorf("Stop conversation control has no visible geometry")
+		tr.Frame()
+		if !h.app.workspaceOpen {
+			issueClickErr = fmt.Errorf("Work click did not open the work panel")
+			return
+		}
+		if r, ok := tr.Find("Close work"); !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 1040 || r.Y < 0 || r.Y+r.H > 720 {
+			issueClickErr = fmt.Errorf("Close work geometry = rect=%+v ok=%v", r, ok)
+			return
+		}
+		stop, ok := tr.Find("Stop issue task")
+		if !ok || stop.W <= 0 || stop.H <= 0 || stop.X < 0 || stop.X+stop.W > 1040 || stop.Y < 0 || stop.Y+stop.H > 720 {
+			issueClickErr = fmt.Errorf("Stop issue task control has no visible geometry: ok=%v rect=%+v", ok, stop)
+			return
+		}
+		chatStop, ok := tr.Find("Stop conversation")
+		if !ok || chatStop.W <= 0 || chatStop.H <= 0 || chatStop.X < 0 || chatStop.X+chatStop.W > 1040 || chatStop.Y < 0 || chatStop.Y+chatStop.H > 720 {
+			issueClickErr = fmt.Errorf("Stop conversation control has no visible geometry: ok=%v rect=%+v", ok, chatStop)
 			return
 		}
 		issueClickErr = tr.Click("Stop issue task")

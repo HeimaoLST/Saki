@@ -6,6 +6,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1018,15 +1019,29 @@ func TestIssueSupplementUIStartWithSupplementActuallyDispatches(t *testing.T) {
 		t.Fatal(setupErr)
 	}
 	var clickErr error
+	var workOpen bool
 	h.pump.do(func() {
 		h.app.windowWidth = 1040
 		tr := ui.NewTester(h.app.view, 1040, 720)
 		tr.Frame()
-		clickErr = tr.Click("Start with supplement")
+		if err := tr.Click("Work"); err != nil {
+			clickErr = fmt.Errorf("click Work: %w", err)
+			return
+		}
+		tr.Frame()
+		workOpen = h.app.workspaceOpen
+		if r, ok := tr.Find("Close work"); !workOpen || !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 1040 || r.Y < 0 || r.Y+r.H > 720 {
+			clickErr = fmt.Errorf("Work open geometry = open=%v rect=%+v ok=%v", workOpen, r, ok)
+			return
+		}
+		clickErr = clickWithinBounds(tr, "Start with supplement", 1040, 720)
 		tr.Frame()
 	})
 	if clickErr != nil {
 		t.Fatalf("UI Start with supplement: %v", clickErr)
+	}
+	if !workOpen {
+		t.Fatal("clicking Work did not open the supplemental issue detail")
 	}
 	h.pump.wait(func() bool {
 		issue := h.app.selectedContact().issueByID(issueID)
