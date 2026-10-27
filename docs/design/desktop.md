@@ -679,7 +679,7 @@ type resolvedTheme struct {
 
 ## #182 可读事项工作台与恢复边界（实现事实，2026-10-27）
 
-代码来源：`agent/gui/182-readable-workspace`，从 QA 基线 `7a6b9b1` 开出；当前增量实现源 `72247d87a982a8455e95c63817470153adab6cfe`（前序 `7f37afc` 的完整矩阵证据是历史候选，不自动覆盖此增量）。本节只描述本轮工作台可读性修复，不代表 #156 全 MVP、原生包或在线模型验收通过。
+代码来源：`agent/gui/182-readable-workspace`，从 QA 基线 `7a6b9b1` 开出；当前增量实现源 `003df7a7c66f9612049c42651acf04c14bf2163d`（前序 `7f37afc` 的完整矩阵证据是历史候选，不自动覆盖此增量）。本节只描述本轮工作台可读性修复，不代表 #156 全 MVP、原生包或在线模型验收通过。
 
 - **工具卡**：工具摘要独占整行，Copy received output/Details 放进独立操作行；长中文、未换行路径和 JSON 不再把按钮推出卡片。结构化 `write`/`edit` 结果没有可读 content/stdout/error 等字段时只显示中性的“Structured output received; open Details for the exact record.”，原始记录仍只在 Copy/Details 中；错误/超时事实摘要继续可见。1040×720、960×640、720×640 drawer 和宽屏使用实际 `ui.Tester` bounds + 点击副作用验证，预览为 headless，不是 native。
 - **事项详情**：默认顺序为事项目的/状态、当前开放问题、最新执行（`Latest execution`）、简短要求状态、继续/回答主动作；最新执行直接显示既有 `issueExecutionLabel`；pending/rejected/failed/unknown 无助手文本时显示简短原因，原始 Detail 仍在展开的执行详情中。latest 始终取最后 execution，不能用更早成功冒充；completed 无助手但有工具输出时引导查看执行/成果，不推断成功。`More issue actions` 才展开编辑要求/证据、任务上下文、补充、生命周期和完成表单；执行快照/工具原文默认收起。已完成执行详情和工具原文默认不进入右侧 Work 区；当前 active work 保留顶部 hero 与定向 Stop，completed execution 通过明确 `View execution` 打开，顶部有 `Back to issue` 回到 compact，不改变 `SelectedWorkTaskID` 的单一选择事实。浏览、展开和折叠不执行任务、不进行业务保存；切换联系人只沿既有 `selectContact` 路径保存选择并保持各 owner 的草稿隔离。
