@@ -470,7 +470,7 @@ func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, is
 			text = "No assistant result recorded for this execution."
 		}
 	}
-	ui.Text(c, truncate(text, 300)).FontSize(11).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
+	ui.Text(c, "Result preview: "+truncate(text, 300)).FontSize(11).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
 	work := workFor(ct, execution.TaskID)
 	ui.Row(c).Gap(10).Children(func() {
 		ui.Button(c, "Open result").FontSize(10).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openIssueResult(issue.ID, execution.ID) })
