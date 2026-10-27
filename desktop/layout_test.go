@@ -387,3 +387,26 @@ func TestLayoutExplicitTogglePersistsOpenAndClosed(t *testing.T) {
 		t.Fatalf("reloaded closed layout = %+v", reloaded.state.Layout)
 	}
 }
+
+func TestLayoutRuntimeEntryLoadsSavedPreference(t *testing.T) {
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "contacts.json")
+	store, err := openContactStore(storePath, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.state.Layout = &storedLayout{LeftWidth: 230, RightWidth: 360, WorkspaceOpen: true}
+	if err := store.saveState(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SAKI_GUI_STORE", storePath)
+	t.Setenv("SAKI_SESSION_DIR", filepath.Join(dir, "sessions"))
+	t.Setenv("SAKI_GUI_WORKDIR", dir)
+	a, err := newRuntimeApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.workspaceOpen || a.railWidth() != 230 || a.workWidth() != 360 {
+		t.Fatalf("runtime entry layout = open=%v left=%v right=%v", a.workspaceOpen, a.railWidth(), a.workWidth())
+	}
+}
