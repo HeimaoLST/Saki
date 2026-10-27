@@ -105,7 +105,7 @@ func TestCreateIssueRequiresGoalAndPersistsBeforeAnyRun(t *testing.T) {
 func TestIssueEvidenceDoesNotInferCompletion(t *testing.T) {
 	issue := &productIssue{ID: "i1", Goal: "draft", Requirements: parseIssueRequirements("needs approval")}
 	text := issueEvidenceText(issue)
-	if !strings.Contains(text, "not recorded") || !strings.Contains(text, "not item completion") {
+	if !strings.Contains(text, "Completion not verified") {
 		t.Fatalf("evidence text = %q", text)
 	}
 	issue.Evidence = "user supplied: reviewer approved"

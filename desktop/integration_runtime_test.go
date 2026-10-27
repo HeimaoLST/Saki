@@ -865,7 +865,7 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 	if issue.Status != issueStatusInProgress {
 		t.Fatalf("runtime completion changed issue status: %q", issue.Status)
 	}
-	if !strings.Contains(issueEvidenceText(issue), "not recorded") {
+	if !strings.Contains(issueEvidenceText(issue), "Completion not verified") {
 		t.Fatalf("completion evidence = %q", issueEvidenceText(issue))
 	}
 	if draftAfterRun != prompt {

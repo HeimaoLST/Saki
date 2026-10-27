@@ -443,7 +443,7 @@ func issueEvidenceText(issue *productIssue) string {
 	if strings.TrimSpace(issue.Evidence) != "" {
 		return issue.Evidence
 	}
-	return "not recorded; a completed Runtime task is not item completion."
+	return "Completion not verified."
 }
 
 func issueExecutionLabel(execution *issueExecution) string {
@@ -459,11 +459,11 @@ func issueExecutionLabel(execution *issueExecution) string {
 	case issueExecutionRunning:
 		return "Running"
 	case issueExecutionCompleted:
-		return "Runtime completed"
+		return "Execution completed"
 	case issueExecutionFailed:
-		return "Runtime failed"
+		return "Execution failed"
 	case issueExecutionInterrupted:
-		return "Runtime interrupted"
+		return "Execution interrupted"
 	default:
 		return "Result unknown"
 	}

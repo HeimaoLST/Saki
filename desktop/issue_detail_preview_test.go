@@ -54,49 +54,22 @@ func TestPreviewIssueReadableDetails(t *testing.T) {
 	if err := loadAvatar(); err != nil {
 		t.Fatal(err)
 	}
+	scenes := []string{"compact", "expanded", "completed", "working", "no-assistant", "long-connection", "view-execution"}
 	for _, dark := range []bool{false, true} {
 		theme := "light"
 		if dark {
 			theme = "dark"
 		}
-		for _, expanded := range []bool{false, true} {
+		for _, scene := range scenes {
 			for _, size := range []struct{ width, height int }{{1040, 720}, {960, 640}, {720, 640}, {1380, 900}} {
-				a, _ := issueDetailPreviewApp(t, expanded)
-				a.windowWidth = size.width
-				tr := ui.NewTester(a.view, size.width, size.height)
-				tr.SetDark(dark)
-				tr.Frame()
-				state := "compact"
-				if expanded {
-					state = "expanded"
-				}
-				writePreviewPNG(t, filepath.Join(dir,
-					fmt.Sprintf("headless-%s-issue-detail-%s-%dx%d.png", theme, state, size.width, size.height)), tr.Image())
-			}
-		}
-	}
-}
-
-func TestPreviewIssueReadableStates(t *testing.T) {
-	dir := os.Getenv("SAKI_PREVIEW_DIR")
-	if dir == "" {
-		t.Skip("set SAKI_PREVIEW_DIR to write issue-detail previews")
-	}
-	if err := loadAvatar(); err != nil {
-		t.Fatal(err)
-	}
-	for _, dark := range []bool{false, true} {
-		theme := "light"
-		if dark {
-			theme = "dark"
-		}
-		for _, scene := range []string{"completed", "working", "no-assistant", "long-connection", "view-execution"} {
-			for _, size := range []struct{ width, height int }{{1040, 720}, {960, 640}, {720, 640}, {1380, 900}} {
-				a, issue := issueDetailPreviewApp(t, false)
+				a, issue := issueDetailPreviewApp(t, scene == "expanded")
 				ct := a.selectedContact()
 				issue.Work.Loaded = true
 				ct.Works = []*workItem{{TaskID: "task-detail", MessageID: "message-detail", State: workCompleted, Prompt: "actual work projection", Tools: []*workTool{{CallID: "call-detail", Name: "write", Args: `{"path":"result.txt"}`, Output: `{"bytes_written":42,"path":"result.txt"}`, Started: true, Finished: true}}}}
 				switch scene {
+				case "completed":
+					issue.Status = issueStatusCompleted
+					issue.Evidence = "User confirmed the rendered result and remaining verification note."
 				case "working":
 					issue.Work.ActiveTaskID = "task-detail"
 					issue.Work.SendState = sendAccepted
@@ -115,7 +88,7 @@ func TestPreviewIssueReadableStates(t *testing.T) {
 				tr.SetDark(dark)
 				tr.Frame()
 				writePreviewPNG(t, filepath.Join(dir,
-					fmt.Sprintf("headless-%s-issue-state-%s-%dx%d.png", theme, scene, size.width, size.height)), tr.Image())
+					fmt.Sprintf("headless-%s-issue-detail-%s-%dx%d.png", theme, scene, size.width, size.height)), tr.Image())
 			}
 		}
 	}

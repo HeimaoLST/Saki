@@ -456,7 +456,7 @@ func (a *appModel) emptyState(c *ui.Context, t *ui.Theme) {
 		if a.demo {
 			ui.Text(c, "Start typing below to talk with "+ct.Name+"; you can personalize name, purpose, instructions and workspace any time in Settings.").FontSize(12).LineHeight(1.45).TextColor(t.TextMuted)
 		} else {
-			ui.Text(c, "Start typing below to talk with "+ct.Name+". You can update the profile in Settings; a new conversation uses the updated profile, while this conversation keeps its existing session.").FontSize(12).LineHeight(1.45).TextColor(t.TextMuted)
+			ui.Text(c, "Start a conversation with "+ct.Name+". Edit this contact in Settings. Changes apply to new conversations.").FontSize(12).LineHeight(1.45).TextColor(t.TextMuted)
 		}
 		ui.Row(c).Children(func() {
 			ui.Button(c, "Settings").FontSize(12).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openSettings() })
