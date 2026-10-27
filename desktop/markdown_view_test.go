@@ -52,13 +52,24 @@ func TestAppAssistantMarkdownStreamsFinalRestoresAndCopies(t *testing.T) {
 				t.Fatalf("%dx%d final markdown missing %q: %q", size.width, size.height, want, tr.Texts())
 			}
 		}
+		tr.Scroll(360, 400, 0, -1000)
+		tr.Frame()
 		if err := tr.Click("Copy message"); err != nil {
 			t.Fatal(err)
 		}
 		if got := tr.Clipboard(); got != md {
 			t.Fatalf("%dx%d full message copy = %q, want exact source", size.width, size.height, got)
 		}
-		if err := tr.Click("Copy code"); err != nil {
+		if tr.HasText("Back to latest") {
+			if err := tr.Click("Back to latest"); err != nil {
+				t.Fatal(err)
+			}
+			tr.Frame()
+		}
+		if r, ok := tr.Find("Copy"); !ok || r.W <= 0 || r.H <= 0 {
+			t.Fatalf("%dx%d code copy control is not visible after returning to latest: %v", size.width, size.height, tr.Texts())
+		}
+		if err := tr.Click("Copy"); err != nil {
 			t.Fatal(err)
 		}
 		if got, want := tr.Clipboard(), "\tfmt.Println(\"x\")\n"; got != want {
@@ -80,6 +91,8 @@ func TestAppAssistantMarkdownStreamsFinalRestoresAndCopies(t *testing.T) {
 		if !tr.HasText("第一项") || !tr.HasText("引用") || !tr.HasText("fmt.Println") {
 			t.Fatalf("%dx%d restored markdown missing: %q", size.width, size.height, tr.Texts())
 		}
+		tr.Scroll(360, 400, 0, -2000)
+		tr.Frame()
 		if err := tr.Click("Copy message"); err != nil {
 			t.Fatal(err)
 		}

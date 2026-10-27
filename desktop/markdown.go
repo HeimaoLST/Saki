@@ -145,7 +145,7 @@ func markdownReaderCodeBlock(c *ui.Context, b *markdown.CodeBlockView, st *markd
 		head := ui.Row(c).AlignItems(ui.Center).Padding(em(0.35), em(0.4), 0, em(th.CodeBlockPadding)).Key("code-head")
 		head.Children(func() {
 			if b.Language != "" {
-				ui.Text(c, b.Language).FontSize(em(0.8)).TextColor(th.Muted).Unselectable()
+				ui.Text(c, b.Language).FontSize(max(12, em(0.8))).TextColor(th.Muted).Unselectable()
 			}
 			ui.Spacer(c)
 			accessible := "Copy code"
@@ -172,7 +172,7 @@ func markdownReaderTable(c *ui.Context, d *parser.Document, i int, th markdown.T
 	padX, padY := th.TableCellPadding[0]*th.FontSize, th.TableCellPadding[1]*th.FontSize
 	wrap := ui.Column(c).AlignSelf(ui.Stretch)
 	wrap.Children(func() {
-		ui.Text(c, "Table · plain text").FontSize(th.FontSize * 0.8).TextColor(th.Muted).Unselectable()
+		ui.Text(c, "Table · plain text").FontSize(max(12, th.FontSize*0.8)).TextColor(th.Muted).Unselectable()
 		table := ui.Column(c).AlignSelf(ui.Stretch).Border(1, th.TableBorder).Radius(th.FontSize * 0.3).Clip().Role(ui.RoleTable).Label("Table, wrapped plain text")
 		table.Children(func() {
 			n := 0
@@ -249,9 +249,12 @@ func (st *markdownReaderState) copyButton(c *ui.Context, now time.Time, accessib
 			}
 		}
 		btn := ui.ButtonBase(c).Label(accessible)
-		btn.Padding(3, 7).Radius(5)
-		if btn.Hovered() {
-			btn.Background(th.Text.Alpha(0.07))
+		theme := c.Theme()
+		btn.Height(32).Padding(6, 10).Radius(6).Border(1, theme.Border).Background(theme.Surface)
+		if btn.Pressed() {
+			btn.Background(theme.SurfacePressed)
+		} else if btn.Hovered() {
+			btn.Background(theme.SurfaceHover)
 		}
 		if fb.err != nil {
 			if visibleNow, failed := fb.show(now); visibleNow && failed {
@@ -259,7 +262,7 @@ func (st *markdownReaderState) copyButton(c *ui.Context, now time.Time, accessib
 			}
 		}
 		btn.Children(func() {
-			ui.Text(c, visible).FontSize(12).TextColor(color)
+			ui.Text(c, visible).FontSize(13).TextColor(color)
 		})
 		if btn.Clicked() {
 			fb.at = now

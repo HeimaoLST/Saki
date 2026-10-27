@@ -71,3 +71,8 @@ func resolveWorkbenchTheme(dark bool) workbenchTheme {
 		WorkMuted: ui.Hex("#c9d5bd"), WorkAttention: ui.Hex("#f2c2a0"),
 	}
 }
+
+// secondaryButton is the visible secondary-action face; PrimaryButton stays reserved for the main action.
+func secondaryButton(c *ui.Context, label string) ui.Element {
+	return ui.Button(c, label).FontSize(13).MinHeight(32).Padding(6, 10)
+}

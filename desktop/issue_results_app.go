@@ -242,32 +242,32 @@ func (a *appModel) issueResultPanelView(c *ui.Context, t *ui.Theme) {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			ui.Text(c, "Run results").FontSize(16).FontWeight(600).TextColor(t.Text).Grow(1)
 			if !page.Loading {
-				ui.Button(c, "Reload result").FontSize(12).OnClick(func() { a.reloadIssueResult(page.Generation) })
+				secondaryButton(c, "Reload result").OnClick(func() { a.reloadIssueResult(page.Generation) })
 			}
-			ui.Button(c, "Close results").FontSize(12).OnClick(func() { a.closeIssueResult() })
+			secondaryButton(c, "Close results").OnClick(func() { a.closeIssueResult() })
 		})
 		if page.Panel.RunLabel != "" {
-			ui.Text(c, page.Panel.RunLabel).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, page.Panel.RunLabel).FontSize(14).TextColor(t.TextMuted)
 		}
 		if page.Panel.RunStatus != "" {
-			ui.Text(c, page.Panel.RunStatus).FontSize(11).FontWeight(500).TextColor(t.TextMuted)
+			ui.Text(c, page.Panel.RunStatus).FontSize(14).FontWeight(500).TextColor(t.TextMuted)
 		}
 		if page.Loading {
-			ui.Text(c, "Loading execution history from Runtime…").FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, "Loading execution history from Runtime…").FontSize(14).TextColor(t.TextMuted)
 		}
 		if page.LoadError != "" {
-			ui.Text(c, page.LoadError).FontSize(12).LineHeight(1.45).TextColor(t.Warning)
+			ui.Text(c, page.LoadError).FontSize(14).LineHeight(1.45).TextColor(t.Warning)
 		}
 		return
 	}
 	if page.Loading {
-		ui.Text(c, "Reloading result from Runtime… The recorded output below is the previous snapshot.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Reloading result from Runtime… The recorded output below is the previous snapshot.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 	}
 	if page.LoadError != "" {
-		ui.Text(c, page.LoadError).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
+		ui.Text(c, page.LoadError).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
 	}
 	if page.Notice != "" {
-		ui.Text(c, page.Notice).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
+		ui.Text(c, page.Notice).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
 	}
 	issueResultPanel(c, &page.Panel, a.issueResultPanelActions(page.Generation))
 }

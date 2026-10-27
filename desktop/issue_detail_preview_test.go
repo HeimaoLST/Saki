@@ -61,7 +61,7 @@ func TestPreviewIssueReadableDetails(t *testing.T) {
 			theme = "dark"
 		}
 		for _, scene := range scenes {
-			for _, size := range []struct{ width, height int }{{1040, 720}, {960, 640}, {720, 640}, {1380, 900}} {
+			for _, size := range []struct{ width, height int }{{1040, 720}, {960, 640}, {720, 640}, {320, 900}, {360, 800}, {1380, 900}} {
 				a, issue := issueDetailPreviewApp(t, scene == "expanded")
 				ct := a.selectedContact()
 				issue.Work.Loaded = true

@@ -338,7 +338,7 @@ func TestIssueResultAttributionFollowsSelectedIssue(t *testing.T) {
 	if tr.HasText("No current work") {
 		t.Fatal("selected issue fell back to unrelated empty work")
 	}
-	if err := tr.Click("In progress · Second issue"); err != nil {
+	if err := tr.Click("Second issue"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()

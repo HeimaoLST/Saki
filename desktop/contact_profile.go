@@ -136,44 +136,44 @@ func (e *contactProfileEditor) view(c *ui.Context, t *ui.Theme, actions contactP
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Contact profile").FontSize(17).FontWeight(600).TextColor(t.Text)
 			ui.Spacer(c)
-			ui.Button(c, "Cancel").Disabled(e.Busy).OnClick(func() {
+			secondaryButton(c, "Cancel").Disabled(e.Busy).OnClick(func() {
 				e.ResetDraft()
 				if actions.Cancel != nil {
 					actions.Cancel()
 				}
 			})
 		})
-		ui.Text(c, "Saving updates this contact's name. Purpose, instructions and workspace are defaults for future conversations and issues; existing conversations and issue work keep the snapshots they were created with.").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Saving updates this contact's name. Purpose, instructions and workspace are defaults for future conversations and issues; existing conversations and issue work keep the snapshots they were created with.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 		if reason := e.activityReason(); reason != "" {
-			ui.Text(c, reason).FontSize(12).LineHeight(1.4).TextColor(t.Warning)
+			ui.Text(c, reason).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
 		}
 		if e.Archived {
-			ui.Text(c, "Archived").FontSize(12).FontWeight(500).TextColor(t.Warning)
+			ui.Text(c, "Archived").FontSize(14).FontWeight(500).TextColor(t.Warning)
 		}
 
-		ui.Text(c, "Name").FontSize(12).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Name").FontSize(14).FontWeight(500).TextColor(t.Text)
 		name := ui.TextInput(c, &e.Draft.Name).Label("Contact name").FontSize(14).Placeholder("Name").Disabled(!editable)
 		if e.focusField == "Name" {
 			name.Focus()
 			e.focusField = ""
 		}
 		if message := e.Errors["Name"]; message != "" {
-			ui.Text(c, message).FontSize(12).TextColor(t.Danger)
+			ui.Text(c, message).FontSize(14).TextColor(t.Danger)
 		}
-		ui.Text(c, "Purpose").FontSize(12).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Purpose").FontSize(14).FontWeight(500).TextColor(t.Text)
 		ui.TextArea(c, &e.Draft.Purpose).Label("Contact purpose").FontSize(14).Placeholder("Purpose").Disabled(!editable)
-		ui.Text(c, "Instructions").FontSize(12).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Instructions").FontSize(14).FontWeight(500).TextColor(t.Text)
 		ui.TextArea(c, &e.Draft.Instructions).Label("Contact instructions").FontSize(14).Placeholder("Instructions").Disabled(!editable)
-		ui.Text(c, "Workspace").FontSize(12).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Workspace").FontSize(14).FontWeight(500).TextColor(t.Text)
 		workspace := ui.TextInput(c, &e.Draft.Workspace).Label("Contact workspace").FontSize(14).Placeholder("/absolute/path/to/workspace (empty uses default)").Disabled(!editable)
 		if e.focusField == "Workspace" {
 			workspace.Focus()
 			e.focusField = ""
 		}
 		if message := e.Errors["Workspace"]; message != "" {
-			ui.Text(c, message).FontSize(12).TextColor(t.Danger)
+			ui.Text(c, message).FontSize(14).TextColor(t.Danger)
 		}
-		ui.Text(c, "Leave Workspace empty to use the applied default directory.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Leave Workspace empty to use the applied default directory.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 
 		ui.Column(c).Gap(6).Children(func() {
 			ui.PrimaryButton(c, "Save changes").FontSize(13).Disabled(!editable).OnClick(func() {
@@ -182,20 +182,20 @@ func (e *contactProfileEditor) view(c *ui.Context, t *ui.Theme, actions contactP
 				}
 			})
 			if e.HasConversation && !e.Archived {
-				ui.Button(c, "Save and start new conversation").FontSize(13).Disabled(!editable || e.ActiveWork || e.UnknownWork).OnClick(func() {
+				secondaryButton(c, "Save and start new conversation").Disabled(!editable || e.ActiveWork || e.UnknownWork).OnClick(func() {
 					if draft, ok := e.Request(true); ok && actions.SaveAndNew != nil {
 						actions.SaveAndNew(draft)
 					}
 				})
 			}
 			if e.Archived {
-				ui.Button(c, "Restore").FontSize(13).Disabled(e.Busy).OnClick(func() {
+				secondaryButton(c, "Restore").Disabled(e.Busy).OnClick(func() {
 					if actions.Restore != nil {
 						actions.Restore()
 					}
 				})
 			} else {
-				ui.Button(c, "Archive").FontSize(13).Disabled(e.Busy || e.ActiveWork || e.UnknownWork).OnClick(func() {
+				secondaryButton(c, "Archive").Disabled(e.Busy || e.ActiveWork || e.UnknownWork).OnClick(func() {
 					if actions.Archive != nil {
 						actions.Archive()
 					}
@@ -203,13 +203,13 @@ func (e *contactProfileEditor) view(c *ui.Context, t *ui.Theme, actions contactP
 			}
 		})
 		if e.Busy {
-			ui.Text(c, "Saving…").FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, "Saving…").FontSize(14).TextColor(t.TextMuted)
 		}
 		if e.Error != "" {
-			ui.Text(c, e.Error).FontSize(12).LineHeight(1.4).TextColor(t.Danger)
+			ui.Text(c, e.Error).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
 		}
 		if e.Status != "" {
-			ui.Text(c, e.Status).FontSize(12).LineHeight(1.4).TextColor(t.Text)
+			ui.Text(c, e.Status).FontSize(14).LineHeight(1.4).TextColor(t.Text)
 		}
 	})
 }

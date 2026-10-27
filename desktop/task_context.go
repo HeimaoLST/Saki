@@ -487,7 +487,7 @@ func taskContextReadOnlyView(c *ui.Context, theme workbenchTheme, items []taskCo
 	}
 	t := theme.Theme
 	ui.Column(c).Gap(4).Children(func() {
-		ui.Text(c, fmt.Sprintf("Task context · %d %s", len(items), taskContextItemWord(len(items)))).FontSize(10).FontWeight(500).TextColor(t.TextMuted)
+		ui.Text(c, fmt.Sprintf("Task context · %d %s", len(items), taskContextItemWord(len(items)))).FontSize(14).FontWeight(500).TextColor(t.TextMuted)
 		for index, item := range items {
 			item := item
 			key := item.ID
@@ -495,10 +495,10 @@ func taskContextReadOnlyView(c *ui.Context, theme workbenchTheme, items []taskCo
 				key = fmt.Sprintf("readonly-context-%d", index)
 			}
 			ui.Column(c).Key(key).Padding(7).Radius(7).Background(t.Surface).Gap(3).Children(func() {
-				ui.Text(c, item.inputName()).FontSize(10).LineHeight(1.3).TextColor(t.TextMuted)
+				ui.Text(c, item.inputName()).FontSize(14).LineHeight(1.3).TextColor(t.TextMuted)
 				ui.Scroll(c).Height(96).Padding(6).Radius(5).Background(t.SurfaceHover).Children(func() {
 					markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy context text"}).
-						FontSize(11).LineHeight(1.4).TextColor(t.Text)
+						FontSize(14).LineHeight(1.4).TextColor(t.Text)
 				})
 			})
 		}
@@ -513,43 +513,43 @@ func (tc *taskContext) view(c *ui.Context, theme workbenchTheme) {
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Task context").FontSize(14).FontWeight(600).TextColor(t.Text)
 			ui.Spacer(c)
-			ui.Text(c, fmt.Sprintf("%d %s · %s / 1 MiB", len(tc.items), taskContextItemWord(len(tc.items)), taskContextSizeLabel(tc))).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, fmt.Sprintf("%d %s · %s / 1 MiB", len(tc.items), taskContextItemWord(len(tc.items)), taskContextSizeLabel(tc))).FontSize(14).TextColor(t.TextMuted)
 		})
-		ui.Text(c, "Saved text is sent as caller-provided context with the next send. A file snapshot changes only when you refresh it.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Saved text is sent as caller-provided context with the next send. A file snapshot changes only when you refresh it.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 
 		if tc.actionError != "" {
-			ui.Text(c, tc.actionError).FontSize(11).LineHeight(1.4).TextColor(t.Danger)
+			ui.Text(c, tc.actionError).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
 		}
 		if !tc.formOpen {
 			ui.Row(c).Gap(8).Children(func() {
-				ui.Button(c, "Add snippet").FontSize(12).OnClick(func() { tc.openSnippetForm() })
-				ui.Button(c, "Add file").FontSize(12).OnClick(func() { tc.openFileForm() })
+				secondaryButton(c, "Add snippet").OnClick(func() { tc.openSnippetForm() })
+				secondaryButton(c, "Add file").OnClick(func() { tc.openFileForm() })
 			})
 		} else {
 			tc.formView(c, theme)
 		}
 
 		if len(tc.items) == 0 {
-			ui.Text(c, "No saved context. The next send will not include caller context.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "No saved context. The next send will not include caller context.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 		}
 		for _, item := range tc.items {
 			item := item
 			ui.Column(c).Key(item.ID).Padding(9).Radius(8).Background(t.SurfaceHover).Gap(4).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, item.Name).FontSize(12).FontWeight(600).TextColor(t.Text)
+					ui.Text(c, item.Name).FontSize(14).FontWeight(600).TextColor(t.Text)
 					ui.Spacer(c)
-					ui.Text(c, taskContextSourceLabel(item)).FontSize(11).TextColor(t.TextMuted)
+					ui.Text(c, taskContextSourceLabel(item)).FontSize(14).TextColor(t.TextMuted)
 				})
 				if item.Source != "" {
-					ui.Text(c, "Source · "+item.Source).FontSize(11).LineHeight(1.35).TextColor(t.TextMuted)
+					ui.Text(c, "Source · "+item.Source).FontSize(14).LineHeight(1.35).TextColor(t.TextMuted)
 				}
 				ui.Row(c).Gap(8).Children(func() {
-					ui.Button(c, "Preview").FontSize(11).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { tc.previewID = item.ID })
-					ui.Button(c, "Edit").FontSize(11).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { tc.openEditForm(item.ID) })
+					secondaryButton(c, "Preview").OnClick(func() { tc.previewID = item.ID })
+					secondaryButton(c, "Edit").OnClick(func() { tc.openEditForm(item.ID) })
 					if item.Source != "" {
-						ui.Button(c, "Refresh from file").FontSize(11).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { tc.refreshItem(item.ID) })
+						secondaryButton(c, "Refresh from file").OnClick(func() { tc.refreshItem(item.ID) })
 					}
-					ui.Button(c, "Remove").FontSize(11).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { tc.Remove(item.ID) })
+					secondaryButton(c, "Remove").OnClick(func() { tc.Remove(item.ID) })
 				})
 				if tc.previewID == item.ID {
 					tc.previewView(c, theme, item)
@@ -569,28 +569,28 @@ func (tc *taskContext) formView(c *ui.Context, theme workbenchTheme) {
 			title = "Edit context"
 		}
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(t.Text)
+			ui.Text(c, title).FontSize(14).FontWeight(600).TextColor(t.Text)
 			ui.Spacer(c)
-			ui.Button(c, "Cancel").FontSize(11).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { tc.cancelForm() })
+			secondaryButton(c, "Cancel").OnClick(func() { tc.cancelForm() })
 		})
 		switch tc.formMode {
 		case "file":
-			ui.Text(c, "Name (optional)").FontSize(11).FontWeight(500).TextColor(t.Text)
-			ui.TextInput(c, &tc.formName).Label("Context file name").FontSize(13).Placeholder("Defaults to the file name")
-			ui.Text(c, "Path").FontSize(11).FontWeight(500).TextColor(t.Text)
-			ui.TextInput(c, &tc.formPath).Label("Context file path").FontSize(13).Placeholder("/absolute/path/to/file.txt")
-			ui.Text(c, "Only UTF-8 text files are supported; PDF, Office, and other binary files are rejected. The file is read once now; later changes need Refresh.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "Name (optional)").FontSize(14).FontWeight(500).TextColor(t.Text)
+			ui.TextInput(c, &tc.formName).Label("Context file name").FontSize(14).Placeholder("Defaults to the file name")
+			ui.Text(c, "Path").FontSize(14).FontWeight(500).TextColor(t.Text)
+			ui.TextInput(c, &tc.formPath).Label("Context file path").FontSize(14).Placeholder("/absolute/path/to/file.txt")
+			ui.Text(c, "Only UTF-8 text files are supported; PDF, Office, and other binary files are rejected. The file is read once now; later changes need Refresh.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 		default:
-			ui.Text(c, "Name").FontSize(11).FontWeight(500).TextColor(t.Text)
-			ui.TextInput(c, &tc.formName).Label("Context name").FontSize(13).Placeholder("Release notes")
-			ui.Text(c, "Text").FontSize(11).FontWeight(500).TextColor(t.Text)
-			ui.TextArea(c, &tc.formText).Label("Context text").FontSize(13).Height(84).Placeholder("Text to include exactly as written")
+			ui.Text(c, "Name").FontSize(14).FontWeight(500).TextColor(t.Text)
+			ui.TextInput(c, &tc.formName).Label("Context name").FontSize(14).Placeholder("Release notes")
+			ui.Text(c, "Text").FontSize(14).FontWeight(500).TextColor(t.Text)
+			ui.TextArea(c, &tc.formText).Label("Context text").FontSize(14).Height(84).Placeholder("Text to include exactly as written")
 			if tc.formMode == "edit" && tc.formPath != "" {
-				ui.Text(c, "Editing the snapshot does not change the source file. Refresh re-reads it.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+				ui.Text(c, "Editing the snapshot does not change the source file. Refresh re-reads it.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 			}
 		}
 		if tc.formError != "" {
-			ui.Text(c, tc.formError).FontSize(11).LineHeight(1.4).TextColor(t.Danger)
+			ui.Text(c, tc.formError).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
 		}
 		label := "Save snippet"
 		if tc.formMode == "file" {
@@ -598,7 +598,7 @@ func (tc *taskContext) formView(c *ui.Context, theme workbenchTheme) {
 		} else if tc.formMode == "edit" {
 			label = "Save changes"
 		}
-		ui.PrimaryButton(c, label).FontSize(12).OnClick(func() { tc.saveForm() })
+		ui.PrimaryButton(c, label).FontSize(13).OnClick(func() { tc.saveForm() })
 	})
 }
 
@@ -606,16 +606,16 @@ func (tc *taskContext) previewView(c *ui.Context, theme workbenchTheme, item tas
 	t := theme.Theme
 	ui.Column(c).Gap(4).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Preview · "+item.Name).FontSize(11).FontWeight(600).TextColor(t.Text)
+			ui.Text(c, "Preview · "+item.Name).FontSize(14).FontWeight(600).TextColor(t.Text)
 			ui.Spacer(c)
-			ui.Button(c, "Close preview").FontSize(11).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { tc.previewID = "" })
+			secondaryButton(c, "Close preview").OnClick(func() { tc.previewID = "" })
 		})
 		if item.Source != "" {
-			ui.Text(c, item.Source).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, item.Source).FontSize(14).TextColor(t.TextMuted)
 		}
 		ui.Scroll(c).Height(220).Padding(8).Radius(6).Background(t.Surface).Children(func() {
 			markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy context text"}).
-				FontSize(12).LineHeight(1.45).TextColor(t.Text)
+				FontSize(14).LineHeight(1.45).TextColor(t.Text)
 		})
 	})
 }

@@ -329,17 +329,17 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Session model").FontSize(17).FontWeight(600).TextColor(t.Text)
 			ui.Spacer(c)
-			ui.Button(c, "Cancel").Disabled(s.Busy).OnClick(func() {
+			secondaryButton(c, "Cancel").Disabled(s.Busy).OnClick(func() {
 				s.ResetDraft()
 				if actions.Cancel != nil {
 					actions.Cancel()
 				}
 			})
 		})
-		ui.Text(c, "Target: "+s.targetLabel()).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
-		ui.Text(c, "Session: "+valueOr(s.Target.Config.SessionID, "not created")).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, "Target: "+s.targetLabel()).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Session: "+valueOr(s.Target.Config.SessionID, "not created")).FontSize(14).TextColor(t.TextMuted)
 		if id := connectionIdentity(effective.ConnectionID); id != "" {
-			ui.Text(c, "Connection: "+id).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, "Connection: "+id).FontSize(14).TextColor(t.TextMuted)
 		}
 		modelLabel := "Effective model: "
 		limitsLabel := "Effective limits: "
@@ -347,48 +347,48 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 			modelLabel = "Last read model: "
 			limitsLabel = "Last read limits: "
 		}
-		ui.Text(c, modelLabel+valueOr(effective.Model, "unknown")).FontSize(13).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, modelLabel+valueOr(effective.Model, "unknown")).FontSize(14).FontWeight(500).TextColor(t.Text)
 		source := capacitySourceLabel(s.Effective)
 		if catalogID := s.effectiveCatalogID(); catalogID != "" {
 			source += " (" + catalogID + ")"
 		}
 		ui.Text(c, fmt.Sprintf("%scontext %d / output %d · %s · revision %d",
 			limitsLabel, compaction.ContextTokens, compaction.OutputTokens, source, s.Target.Config.ConfigRevision)).
-			FontSize(11).TextColor(t.TextMuted)
+			FontSize(14).TextColor(t.TextMuted)
 		if s.Unconfirmed {
-			ui.Text(c, "Runtime has not confirmed the current configuration; these are the last read values. Refresh is available.").FontSize(12).LineHeight(1.4).TextColor(t.Warning)
+			ui.Text(c, "Runtime has not confirmed the current configuration; these are the last read values. Refresh is available.").FontSize(14).LineHeight(1.4).TextColor(t.Warning)
 		}
 		if s.Error != "" {
-			ui.Text(c, s.Error).FontSize(12).LineHeight(1.4).TextColor(t.Danger)
+			ui.Text(c, s.Error).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
 		}
-		ui.Text(c, "Provider model ID").FontSize(12).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Provider model ID").FontSize(14).FontWeight(500).TextColor(t.Text)
 		input := ui.TextInput(c, &s.Draft.Model).Label("Provider model ID").FontSize(14).Placeholder("Provider model ID").Disabled(s.Busy)
 		if s.focusField == "Model" {
 			input.Focus()
 			s.focusField = ""
 		}
-		ui.Text(c, "Catalog entries supply capacity only; they do not prove that the provider endpoint supports a model.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Catalog entries supply capacity only; they do not prove that the provider endpoint supports a model.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 		ui.Row(c).Gap(6).Children(func() {
-			catalogButton := ui.Button(c, "Use Runtime catalog").FontSize(12).Disabled(s.Busy || len(s.Catalog.Models) == 0).OnClick(func() { s.SelectCapacityMode(modelCapacityCatalog) })
+			catalogButton := secondaryButton(c, "Use Runtime catalog").Disabled(s.Busy || len(s.Catalog.Models) == 0).OnClick(func() { s.SelectCapacityMode(modelCapacityCatalog) })
 			if s.Draft.CapacityMode == modelCapacityCatalog {
-				catalogButton.Background(t.Accent).TextColor(t.AccentText)
+				catalogButton.BorderWidth(2).BorderColor(t.Accent)
 			}
-			explicitButton := ui.Button(c, "Set explicit limits").FontSize(12).Disabled(s.Busy).OnClick(func() { s.SelectCapacityMode(modelCapacityExplicit) })
+			explicitButton := secondaryButton(c, "Set explicit limits").Disabled(s.Busy).OnClick(func() { s.SelectCapacityMode(modelCapacityExplicit) })
 			if s.Draft.CapacityMode != modelCapacityCatalog {
-				explicitButton.Background(t.Accent).TextColor(t.AccentText)
+				explicitButton.BorderWidth(2).BorderColor(t.Accent)
 			}
 		})
 		if s.Draft.CapacityMode == modelCapacityCatalog {
-			ui.Text(c, "Capacity comes from the selected Runtime catalog entry. Endpoint/model availability is not implied.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "Capacity comes from the selected Runtime catalog entry. Endpoint/model availability is not implied.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 		} else {
-			ui.Text(c, "Context tokens").FontSize(12).FontWeight(500).TextColor(t.Text)
+			ui.Text(c, "Context tokens").FontSize(14).FontWeight(500).TextColor(t.Text)
 			ui.TextInput(c, &s.Draft.ContextTokens).Label("Context tokens").FontSize(14).Placeholder("131072").Disabled(s.Busy)
-			ui.Text(c, "Output tokens").FontSize(12).FontWeight(500).TextColor(t.Text)
+			ui.Text(c, "Output tokens").FontSize(14).FontWeight(500).TextColor(t.Text)
 			ui.TextInput(c, &s.Draft.OutputTokens).Label("Output tokens").FontSize(14).Placeholder("8192").Disabled(s.Busy)
-			ui.Text(c, "Other compaction strategy values are preserved from the effective config.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "Other compaction strategy values are preserved from the effective config.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 		}
 		ui.Row(c).Gap(8).Children(func() {
-			ui.Button(c, "Refresh").FontSize(13).Disabled(s.Busy).OnClick(func() {
+			secondaryButton(c, "Refresh").Disabled(s.Busy).OnClick(func() {
 				if actions.Refresh != nil {
 					actions.Refresh(s.Target)
 				}
@@ -400,47 +400,47 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 			})
 		})
 		if s.Busy {
-			ui.Text(c, "Waiting for Runtime…").FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, "Waiting for Runtime…").FontSize(14).TextColor(t.TextMuted)
 		}
 		if s.Status != "" {
-			ui.Text(c, s.Status).FontSize(12).LineHeight(1.4).TextColor(t.Text)
+			ui.Text(c, s.Status).FontSize(14).LineHeight(1.4).TextColor(t.Text)
 		}
-		ui.Text(c, "Filter candidates").FontSize(12).FontWeight(500).TextColor(t.Text)
-		ui.TextInput(c, &s.Filter).Label("Filter").FontSize(13).Placeholder("Model or catalog ID").Disabled(s.Busy)
+		ui.Text(c, "Filter candidates").FontSize(14).FontWeight(500).TextColor(t.Text)
+		ui.TextInput(c, &s.Filter).Label("Filter").FontSize(14).Placeholder("Model or catalog ID").Disabled(s.Busy)
 		configured := s.visibleConfiguredModels()
 		if len(configured) > 0 {
-			ui.Text(c, "Configured models").FontSize(12).FontWeight(500).TextColor(t.Text)
-			ui.Text(c, "Host-provided declarations, not verified availability.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "Configured models").FontSize(14).FontWeight(500).TextColor(t.Text)
+			ui.Text(c, "Host-provided declarations, not verified availability.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 			for _, entry := range configured {
 				entry := entry
-				button := ui.Button(c, entry.Model+" · context "+strconv.Itoa(entry.Compaction.ContextTokens)).FontSize(12).Disabled(s.Busy).OnClick(func() { s.SelectConfiguredModel(entry.Model) })
+				button := secondaryButton(c, entry.Model+" · context "+strconv.Itoa(entry.Compaction.ContextTokens)).Disabled(s.Busy).OnClick(func() { s.SelectConfiguredModel(entry.Model) })
 				if s.Draft.Model == entry.Model && s.Draft.CapacityMode == modelCapacityExplicit {
-					button.Background(t.Accent).TextColor(t.AccentText)
+					button.BorderWidth(2).BorderColor(t.Accent)
 				}
 			}
 			if len(configured) < len(s.Catalog.ConfiguredModels) {
-				ui.Text(c, fmt.Sprintf("Showing %d of %d configured models; refine Filter to see more.", len(configured), len(s.Catalog.ConfiguredModels))).FontSize(11).TextColor(t.TextMuted)
+				ui.Text(c, fmt.Sprintf("Showing %d of %d configured models; refine Filter to see more.", len(configured), len(s.Catalog.ConfiguredModels))).FontSize(14).TextColor(t.TextMuted)
 			}
 		}
 		catalog := s.visibleCatalogModels()
 		if len(catalog) > 0 {
-			ui.Text(c, "Runtime catalog capacity").FontSize(12).FontWeight(500).TextColor(t.Text)
+			ui.Text(c, "Runtime catalog capacity").FontSize(14).FontWeight(500).TextColor(t.Text)
 			for _, entry := range catalog {
 				entry := entry
 				label := entry.Name
 				if label == "" {
 					label = entry.CatalogID
 				}
-				button := ui.Button(c, label+" · context "+strconv.Itoa(entry.Limits.Context)).FontSize(12).Disabled(s.Busy).OnClick(func() { s.SelectCatalogID(entry.CatalogID) })
+				button := secondaryButton(c, label+" · context "+strconv.Itoa(entry.Limits.Context)).Disabled(s.Busy).OnClick(func() { s.SelectCatalogID(entry.CatalogID) })
 				if s.Draft.CatalogID != "" && s.Draft.CatalogID == entry.CatalogID {
-					button.Background(t.Accent).TextColor(t.AccentText)
+					button.BorderWidth(2).BorderColor(t.Accent)
 				}
 			}
 			if len(catalog) < len(s.Catalog.Models) {
-				ui.Text(c, fmt.Sprintf("Showing %d of %d catalog entries; refine Filter to see more.", len(catalog), len(s.Catalog.Models))).FontSize(11).TextColor(t.TextMuted)
+				ui.Text(c, fmt.Sprintf("Showing %d of %d catalog entries; refine Filter to see more.", len(catalog), len(s.Catalog.Models))).FontSize(14).TextColor(t.TextMuted)
 			}
 		} else if len(s.Catalog.Models) == 0 {
-			ui.Text(c, "No Runtime catalog entries are available; enter explicit limits.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "No Runtime catalog entries are available; enter explicit limits.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 		}
 	})
 }

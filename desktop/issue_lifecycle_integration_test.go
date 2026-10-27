@@ -508,7 +508,7 @@ func TestIssueUIStatusFilterSelection(t *testing.T) {
 	if a.issueFilter != "completed" {
 		t.Fatalf("status filter = %q", a.issueFilter)
 	}
-	if !tr.HasText("Completed · filtered issue") {
+	if !tr.HasText("filtered issue") || !tr.HasText("Completed") {
 		t.Fatalf("completed filter did not list issue: %v", tr.Texts())
 	}
 }

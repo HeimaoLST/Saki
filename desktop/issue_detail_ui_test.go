@@ -59,9 +59,9 @@ func TestIssueDetailDefaultsToResultAndKeepsSecondaryDetailsCollapsed(t *testing
 	if !tr.HasText("Execution history") || !tr.HasText("Show sent snapshot") {
 		t.Fatalf("expanded issue detail did not expose execution details: %v", tr.Texts())
 	}
-	if err := tr.Click("Show sent snapshot"); err != nil {
-		t.Fatal(err)
-	}
+	clickAfterBoundedScroll(t, tr, "Show sent snapshot", 1040, 720)
+	tr.Frame()
+	tr.Scroll(850, 500, 0, 500)
 	tr.Frame()
 	if !tr.HasText("Sent snapshot: the exact sent snapshot") {
 		t.Fatalf("sent snapshot was not readable after explicit expansion: %v", tr.Texts())
@@ -335,4 +335,27 @@ func TestIssueLatestExecutionShowsNonSuccessStatesAndToolOnly(t *testing.T) {
 	if tr.HasText("tool raw output") || tr.HasText(`"bytes_written"`) {
 		t.Fatal("tool-only execution leaked raw output into default result")
 	}
+}
+
+func TestIssueListLongGoalFitsAt320(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	issue := &productIssue{ID: "i-long", ContactID: ct.ID, Goal: "这是一个非常长的中文事项目标，需要换行显示但不能横向裁切或缩小字号", Status: issueStatusInProgress, RequirementsRevision: 1}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	a.windowWidth = 320
+	tr := ui.NewTester(a.view, 320, 900)
+	tr.Frame()
+	label := issue.Goal
+	var last ui.Rect
+	for attempt := 0; attempt < 12; attempt++ {
+		if r, ok := tr.Find(label); ok {
+			last = r
+			if r.W > 0 && r.H > 0 && r.X >= 0 && r.X+r.W <= 320 && r.Y >= 0 && r.Y+r.H <= 900 {
+				return
+			}
+		}
+		tr.Scroll(160, 500, 0, 400)
+		tr.Frame()
+	}
+	t.Fatalf("long issue-list entry %q was not contained at 320: rect=%+v texts=%v", label, last, tr.Texts())
 }

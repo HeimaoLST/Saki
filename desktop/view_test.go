@@ -700,3 +700,18 @@ func TestToolFailureIsVisibleBeforeDetails(t *testing.T) {
 		})
 	}
 }
+
+func TestContactRailControlsStayVisibleAtNarrowWidths(t *testing.T) {
+	a, _ := workspaceTestApp(t)
+	for _, width := range []int{1040, 960} {
+		a.windowWidth = width
+		tr := ui.NewTester(a.view, width, 720)
+		tr.Frame()
+		for _, label := range []string{"Add contact", "Active", "Archived", "All"} {
+			r, ok := tr.Find(label)
+			if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 160 || r.Y < 0 || r.Y+r.H > 720 {
+				t.Fatalf("%dx720 contact rail %q out of rail: ok=%v rect=%+v", width, label, ok, r)
+			}
+		}
+	}
+}

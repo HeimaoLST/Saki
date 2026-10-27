@@ -26,7 +26,7 @@ func TestPreviewWorkspaceToolCardWrapping(t *testing.T) {
 		if dark {
 			theme = "dark"
 		}
-		for _, size := range []struct{ width, height int }{{1040, 720}, {960, 640}, {720, 640}, {1380, 900}} {
+		for _, size := range []struct{ width, height int }{{1040, 720}, {960, 640}, {720, 640}, {320, 900}, {360, 800}, {1380, 900}} {
 			a, ct := workspaceTestApp(t)
 			ct.ActiveTaskID = "t1"
 			ct.LastTaskID = "t1"
