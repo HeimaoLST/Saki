@@ -10,6 +10,14 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func expandIssueDetails(t *testing.T, tr *ui.Tester) {
+	t.Helper()
+	if err := tr.Click("More issue actions"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+}
+
 func TestCancelWhileIssueSendPendingLatchesToAcceptedTask(t *testing.T) {
 	binary := requireRuntimeBinary(t)
 	provider := newGatedProvider("cancel-latch")
@@ -164,9 +172,15 @@ func TestIssueUITargetsLifecycleActions(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	for _, want := range []string{"In progress", "Requirements · revision 1", "Satisfied", "Unmet", "Unverified", "Continue issue", "Mark waiting", "Cancel issue", "Archive", "Mark complete"} {
+	for _, want := range []string{"In progress", "Requirements", "Unverified", "Continue issue"} {
 		if !tr.HasText(want) {
-			t.Errorf("lifecycle UI missing %q: %v", want, tr.Texts())
+			t.Errorf("lifecycle default UI missing %q: %v", want, tr.Texts())
+		}
+	}
+	expandIssueDetails(t, tr)
+	for _, want := range []string{"Satisfied", "Unmet", "Unverified", "Mark waiting", "Cancel issue", "Archive", "Mark complete"} {
+		if !tr.HasText(want) {
+			t.Errorf("lifecycle details UI missing %q: %v", want, tr.Texts())
 		}
 	}
 	if err := tr.Click("Mark waiting"); err != nil {
@@ -190,6 +204,7 @@ func TestIssueUIFilterArchiveAndRestore(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	expandIssueDetails(t, tr)
 	if err := tr.Click("Archive"); err != nil {
 		t.Fatal(err)
 	}
@@ -216,6 +231,7 @@ func TestIssueUIEditPrefillsRequirementsAndSavesRevision(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	expandIssueDetails(t, tr)
 	if err := tr.Click("Edit issue"); err != nil {
 		t.Fatal(err)
 	}
@@ -428,6 +444,7 @@ func TestIssueUICompleteAndReopenActions(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	expandIssueDetails(t, tr)
 	if err := tr.Click("Mark complete"); err != nil {
 		t.Fatal(err)
 	}
@@ -454,6 +471,7 @@ func TestIssueUIRequirementEvidenceActionPersists(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	expandIssueDetails(t, tr)
 	requirement := issue.Requirements[0]
 	draft := a.requirementDraft(requirement)
 	*draft = "checked by the user"

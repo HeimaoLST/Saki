@@ -173,6 +173,7 @@ type appModel struct {
 	resultInFlight           int
 
 	issueFormOpen                 bool
+	issueDetailOpen               map[string]bool
 	issueFormEditingID            string
 	issueGoal                     string
 	issueRequirements             string
@@ -224,6 +225,7 @@ type appModel struct {
 	connectionLegacy       bool
 	connectionGeneration   int
 	connectionApplying     bool
+	connectionDetailsOpen  map[string]bool
 	connectionSaveInFlight bool
 	connectionTesting      bool
 	connectionTestCancel   func()

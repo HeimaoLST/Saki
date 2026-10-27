@@ -77,6 +77,7 @@ func TestIssueRecoveryControlsRenderForUnknownExecution(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	expandIssueDetails(t, tr)
 	if !tr.HasText("Check execution") || !tr.HasText("Confirm not dispatched") {
 		t.Fatalf("recovery controls missing: %v", tr.Texts())
 	}
@@ -132,6 +133,7 @@ func TestIssueConfirmNotDispatchedTargetsSelectedExecution(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	expandIssueDetails(t, tr)
 	if err := tr.Click("Confirm not dispatched"); err != nil {
 		t.Fatal(err)
 	}

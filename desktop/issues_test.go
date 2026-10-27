@@ -228,7 +228,7 @@ func TestIssueFormCreatesExplicitItemWithoutTouchingComposer(t *testing.T) {
 	if !tr.Focused("New issue") {
 		t.Fatal("saving the issue did not return focus to New issue")
 	}
-	for _, want := range []string{"Implement login", "Must use SMS.", "Requirements · revision 1", "Unverified", "Start issue"} {
+	for _, want := range []string{"Implement login", "Must use SMS.", "Requirements", "Unverified", "Start issue"} {
 		if !tr.HasText(want) {
 			t.Errorf("workspace missing %q", want)
 		}

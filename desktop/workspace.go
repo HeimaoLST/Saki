@@ -384,17 +384,25 @@ func (a *appModel) issueSection(c *ui.Context, t *ui.Theme, ct *contact) {
 	a.issueList(c, t, ct)
 }
 
+func latestIssueExecution(issue *productIssue) *issueExecution {
+	if issue == nil {
+		return nil
+	}
+	for index := len(issue.Executions) - 1; index >= 0; index-- {
+		if issue.Executions[index] != nil {
+			return issue.Executions[index]
+		}
+	}
+	return nil
+}
+
 func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue) {
 	editable := !issue.Archived && issue.Status != issueStatusCompleted && issue.Status != issueStatusCanceled
+	expanded := a.issueDetailOpen[issue.ID]
 	ui.Column(c).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(5).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-			ui.Text(c, "Issue · "+issue.Goal).FontSize(13).FontWeight(600).TextColor(t.Text).MaxLines(2)
+			ui.Text(c, issue.Goal).FontSize(13).FontWeight(600).TextColor(t.Text).MaxLines(2)
 			ui.Spacer(c)
-			if issue.WorkSessionID != "" {
-				ui.Button(c, "Issue model").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
-					a.openSessionModel(issue.WorkSessionID, "work", issue.Goal)
-				})
-			}
 			ui.Text(c, issueStatusLabel(issue)).FontSize(11).TextColor(a.issueStatusColor(t, issue))
 		})
 		if a.issueActionError != "" {
@@ -402,141 +410,223 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 		}
 		if question := issue.openQuestion(); question != nil {
 			ui.Column(c).Padding(8).Radius(8).Background(t.Surface).Gap(3).Children(func() {
-				ui.Text(c, fmt.Sprintf("Waiting for your answer · requirement revision %d", question.RequirementsRevision)).FontSize(11).FontWeight(500).TextColor(t.Warning)
+				ui.Text(c, "Waiting for your answer").FontSize(11).FontWeight(500).TextColor(t.Warning)
 				ui.Text(c, question.Text).FontSize(11).LineHeight(1.4).TextColor(t.Text)
-			})
-		}
-		if editable {
-			ui.Button(c, "Edit issue").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openEditIssueForm(issue) })
-		}
-		ui.Text(c, fmt.Sprintf("Requirements · revision %d", issue.RequirementsRevision)).FontSize(11).FontWeight(500).TextColor(t.TextMuted)
-		if len(issue.Requirements) == 0 {
-			ui.Text(c, "No requirements recorded.").FontSize(11).TextColor(t.TextMuted)
-		}
-		for _, requirement := range issue.Requirements {
-			requirement := requirement
-			if requirement == nil {
-				continue
-			}
-			ui.Column(c).Padding(7).Radius(7).Background(t.Surface).Gap(3).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(5).Children(func() {
-					ui.Text(c, requirement.Text).FontSize(11).LineHeight(1.4).TextColor(t.Text).Grow(1)
-					ui.Text(c, requirementStateLabel(requirement.State)).FontSize(10).TextColor(requirementStateColor(t, requirement.State))
-				})
 				if editable {
-					draft := a.requirementDraft(requirement)
-					ui.TextInput(c, draft).Label("Evidence for " + requirement.Text).FontSize(11).Placeholder("Evidence or user judgment")
-					ui.Row(c).Gap(4).Children(func() {
-						ui.Button(c, "Satisfied").FontSize(10).Padding(2, 6).Background(ui.Transparent).BorderWidth(0).TextColor(t.Success).OnClick(func() {
-							if !a.setIssueRequirementState(issue.ID, requirement.ID, requirementSatisfied, *draft) {
-								a.issueActionError = "Could not save the requirement state."
-							}
-						})
-						ui.Button(c, "Unmet").FontSize(10).Padding(2, 6).Background(ui.Transparent).BorderWidth(0).TextColor(t.Warning).OnClick(func() {
-							if !a.setIssueRequirementState(issue.ID, requirement.ID, requirementUnmet, *draft) {
-								a.issueActionError = "Could not save the requirement state."
-							}
-						})
-						ui.Button(c, "Unverified").FontSize(10).Padding(2, 6).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
-							if !a.setIssueRequirementState(issue.ID, requirement.ID, requirementUnverified, *draft) {
-								a.issueActionError = "Could not save the requirement state."
-							}
-						})
-					})
-				} else if requirement.Evidence != "" {
-					ui.Text(c, "Evidence: "+requirement.Evidence).FontSize(10).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
+					ui.Button(c, "Answer question").FontSize(10).Padding(2, 6).Background(ui.Transparent).BorderWidth(0).TextColor(t.Text).OnClick(func() { a.openIssueSupplementForm(issue.ID) })
 				}
 			})
 		}
-		completion := issueEvidenceText(issue)
-		if issue.Evidence != "" && issue.Status != issueStatusCompleted {
-			completion = "Previous completion evidence: " + issue.Evidence
+		a.issueLatestResult(c, t, ct, issue)
+		a.issueRequirementSummary(c, t, issue)
+		if editable {
+			a.issueStartAction(c, t, ct, issue)
 		}
-		ui.Text(c, "Completion: "+completion).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
-		a.issueActions(c, t, ct, issue, editable)
-		a.issueSupplementSection(c, t, ct, issue, editable)
-
-		ui.Divider(c)
-		ui.Text(c, "Executions").FontSize(11).FontWeight(500).TextColor(t.TextMuted)
-		for index, execution := range issue.Executions {
-			execution := execution
-			w := workFor(ct, execution.TaskID)
-			resultText := ct.resultTextForExecution(execution)
-			ui.Column(c).Padding(8).Radius(8).Background(t.Surface).Gap(2).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, fmt.Sprintf("Run %d · %s", index+1, issueExecutionLabel(execution))).FontSize(11).TextColor(t.TextMuted)
-					ui.Spacer(c)
-					if execution.RequirementsRevision > 0 {
-						ui.Text(c, fmt.Sprintf("req r%d", execution.RequirementsRevision)).FontSize(10).TextColor(t.TextMuted)
-					}
+		label := "More issue actions"
+		if expanded {
+			label = "Hide issue actions"
+		}
+		ui.Button(c, label).FontSize(10).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+			if a.issueDetailOpen == nil {
+				a.issueDetailOpen = map[string]bool{}
+			}
+			a.issueDetailOpen[issue.ID] = !a.issueDetailOpen[issue.ID]
+		})
+		if expanded {
+			ui.Divider(c)
+			if editable {
+				ui.Button(c, "Edit issue").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openEditIssueForm(issue) })
+			}
+			if issue.WorkSessionID != "" {
+				ui.Button(c, "Issue model").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+					a.openSessionModel(issue.WorkSessionID, "work", issue.Goal)
 				})
-				if execution.Prompt != "" {
-					ui.Text(c, "Sent snapshot: "+truncate(execution.Prompt, 240)).FontSize(10).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
-				}
-				if count := len(executionTaskContextItems(ct, issue, execution)); count > 0 {
-					label := fmt.Sprintf("Sent task context · %d", count)
-					if execution.ContextExpanded {
-						label = "Hide sent task context"
-					}
-					ui.Button(c, label).FontSize(10).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
-						execution.ContextExpanded = !execution.ContextExpanded
-					})
-					if execution.ContextExpanded {
-						a.executionTaskContextView(c, t, ct, issue, execution)
-					}
-				}
-				if execution.Detail != "" {
-					ui.Text(c, execution.Detail).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
-				}
-				if execution.Status == issueExecutionUnknown || execution.Status == issueExecutionPending {
-					ui.Row(c).Gap(6).Children(func() {
-						ui.Button(c, "Check execution").FontSize(10).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
-							if !a.reconcileIssueExecution(issue.ID, execution.ID) {
-								a.issueActionError = execution.Detail
-							}
-						})
-						if execution.TaskID == "" && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle {
-							ui.Button(c, "Confirm not dispatched").FontSize(10).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
-								if !a.confirmIssueExecutionNotDispatched(issue.ID, execution.ID) {
-									a.issueActionError = "Could not confirm this execution."
-								}
-							})
-						}
-					})
-				}
-				if resultText != "" {
-					label := "Result preview"
-					if execution.Status == issueExecutionAccepted || execution.Status == issueExecutionRunning {
-						label = "Partial result preview"
-					}
-					ui.Text(c, label+": "+truncate(resultText, 300)).FontSize(11).LineHeight(1.4).TextColor(t.Text).MaxLines(4)
-				} else if w != nil {
-					switch {
-					case len(w.Tools) > 0:
-						last := w.Tools[len(w.Tools)-1]
-						lead := "No assistant message recorded for this run; tool output only: "
-						if execution.Status == issueExecutionAccepted || execution.Status == issueExecutionRunning {
-							lead = "No assistant message yet; tool output only: "
-						}
-						ui.Text(c, lead+toolTitleFor(last.Name, last.Args)+" · "+toolOutputSummary(last.Output)).FontSize(11).LineHeight(1.4).TextColor(t.TextMuted).MaxLines(3)
-					case execution.Status == issueExecutionCompleted:
-						ui.Text(c, "No assistant message was recorded for this run. Use View execution to inspect its tool activity.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
-					}
-				}
-				ui.Row(c).Gap(10).Children(func() {
-					ui.Button(c, "Open result").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
-						a.openIssueResult(issue.ID, execution.ID)
-					})
-					if w != nil {
-						ui.Button(c, "View execution").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.showIssueWork(issue.ID, execution.TaskID) })
-					}
-				})
-			})
+			}
+			a.issueActions(c, t, ct, issue, editable)
+			a.issueRequirementEvidence(c, t, ct, issue, editable)
+			a.issueSupplementSection(c, t, ct, issue, editable)
+			a.issueExecutions(c, t, ct, issue, editable)
+		} else if a.issueSupplementFormID == issue.ID {
+			a.issueSupplementSection(c, t, ct, issue, editable)
 		}
 		if executionHasUnknownRecovery(issue) {
-			ui.Text(c, "Recovery is available for an execution without a trusted terminal state.").FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "Recovery is available for an execution without a trusted terminal state.").FontSize(10).LineHeight(1.35).TextColor(t.TextMuted)
 		}
 	})
+}
+
+func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue) {
+	execution := latestIssueExecution(issue)
+	if execution == nil {
+		ui.Text(c, "No execution yet").FontSize(11).FontWeight(500).TextColor(t.TextMuted)
+		ui.Text(c, "Run this issue when you are ready; execution is not completion.").FontSize(10).LineHeight(1.35).TextColor(t.TextMuted)
+		return
+	}
+	ui.Text(c, "Latest result").FontSize(11).FontWeight(500).TextColor(t.TextMuted)
+	text := strings.TrimSpace(ct.resultTextForExecution(execution))
+	if text == "" {
+		if work := workFor(ct, execution.TaskID); work != nil && len(work.Tools) > 0 {
+			last := work.Tools[len(work.Tools)-1]
+			text = toolTitleFor(last.Name, last.Args) + " · " + toolOutputSummary(last.Output)
+		} else {
+			text = "No assistant result recorded for this execution."
+		}
+	}
+	ui.Text(c, truncate(text, 300)).FontSize(11).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
+	work := workFor(ct, execution.TaskID)
+	ui.Row(c).Gap(10).Children(func() {
+		ui.Button(c, "Open result").FontSize(10).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openIssueResult(issue.ID, execution.ID) })
+		if work != nil {
+			ui.Button(c, "View execution").FontSize(10).Padding(2, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.showIssueWork(issue.ID, execution.TaskID) })
+		}
+	})
+}
+
+func (a *appModel) issueRequirementSummary(c *ui.Context, t *ui.Theme, issue *productIssue) {
+	if len(issue.Requirements) == 0 {
+		ui.Text(c, "Requirements").FontSize(11).FontWeight(500).TextColor(t.TextMuted)
+		ui.Text(c, "No requirements recorded.").FontSize(10).TextColor(t.TextMuted)
+		return
+	}
+	ui.Text(c, "Requirements").FontSize(11).FontWeight(500).TextColor(t.TextMuted)
+	for _, requirement := range issue.Requirements {
+		if requirement == nil {
+			continue
+		}
+		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+			ui.Text(c, requirement.Text).FontSize(10).LineHeight(1.35).TextColor(t.Text).Grow(1)
+			ui.Text(c, requirementStateLabel(requirement.State)).FontSize(9).TextColor(requirementStateColor(t, requirement.State))
+		})
+	}
+}
+
+func (a *appModel) issueStartAction(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue) {
+	if issue.Archived || issue.Status == issueStatusCompleted || issue.Status == issueStatusCanceled {
+		return
+	}
+	reason := issueLifecycleStartBlocked(issue)
+	if reason == "" {
+		reason = a.canStartIssue(ct, issue)
+	}
+	if reason == "" {
+		reason = issueRunBlocked(issue)
+	}
+	if reason != "" {
+		ui.Text(c, "Next action unavailable: "+reason).FontSize(10).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
+		return
+	}
+	label := "Start issue"
+	if len(issue.Executions) > 0 {
+		label = "Continue issue"
+	}
+	if issue.Supplements != nil && issue.Supplements.pendingCount() > 0 {
+		if len(issue.Executions) == 0 {
+			label = "Start with supplement"
+		} else {
+			label = "Continue with supplement"
+		}
+	}
+	ui.Button(c, label).FontSize(12).OnClick(func() {
+		if !a.runIssue(issue.ID) {
+			a.issueActionError = a.issueFormError
+		}
+	})
+}
+
+func (a *appModel) issueRequirementEvidence(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue, editable bool) {
+	if len(issue.Requirements) == 0 {
+		return
+	}
+	ui.Text(c, "Requirement evidence").FontSize(10).FontWeight(500).TextColor(t.TextMuted)
+	for _, requirement := range issue.Requirements {
+		if requirement == nil {
+			continue
+		}
+		ui.Column(c).Padding(6).Radius(6).Background(t.Surface).Gap(3).Children(func() {
+			ui.Text(c, requirement.Text).FontSize(10).LineHeight(1.35).TextColor(t.Text).MaxLines(2)
+			if editable {
+				draft := a.requirementDraft(requirement)
+				ui.TextInput(c, draft).Label("Evidence for " + requirement.Text).FontSize(10).Placeholder("Evidence or user judgment")
+				ui.Row(c).Gap(4).Children(func() {
+					for _, action := range []struct {
+						label, state string
+						color        ui.Color
+					}{
+						{"Satisfied", requirementSatisfied, t.Success},
+						{"Unmet", requirementUnmet, t.Warning},
+						{"Unverified", requirementUnverified, t.TextMuted},
+					} {
+						action := action
+						ui.Button(c, action.label).FontSize(9).Padding(2, 5).Background(ui.Transparent).BorderWidth(0).TextColor(action.color).OnClick(func() {
+							if !a.setIssueRequirementState(issue.ID, requirement.ID, action.state, *draft) {
+								a.issueActionError = "Could not save the requirement state."
+							}
+						})
+					}
+				})
+			} else if requirement.Evidence != "" {
+				ui.Text(c, "Evidence: "+requirement.Evidence).FontSize(9).LineHeight(1.3).TextColor(t.TextMuted).MaxLines(2)
+			}
+		})
+	}
+}
+
+func (a *appModel) issueExecutions(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue, editable bool) {
+	if len(issue.Executions) == 0 {
+		return
+	}
+	ui.Divider(c)
+	ui.Text(c, "Execution history").FontSize(11).FontWeight(500).TextColor(t.TextMuted)
+	for index, execution := range issue.Executions {
+		if execution == nil {
+			continue
+		}
+		w := workFor(ct, execution.TaskID)
+		ui.Column(c).Padding(7).Radius(7).Background(t.Surface).Gap(2).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, fmt.Sprintf("Execution %d · %s", index+1, issueExecutionLabel(execution))).FontSize(10).TextColor(t.TextMuted)
+				ui.Spacer(c)
+				if execution.RequirementsRevision > 0 {
+					ui.Text(c, fmt.Sprintf("revision %d", execution.RequirementsRevision)).FontSize(9).TextColor(t.TextMuted)
+				}
+			})
+			label := "Show sent snapshot"
+			if execution.ContextExpanded {
+				label = "Hide sent snapshot"
+			}
+			ui.Button(c, label).FontSize(9).Padding(1, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+				execution.ContextExpanded = !execution.ContextExpanded
+			})
+			if execution.ContextExpanded {
+				if execution.Prompt != "" {
+					ui.Text(c, "Sent snapshot: "+truncate(execution.Prompt, 240)).FontSize(9).LineHeight(1.3).TextColor(t.TextMuted).MaxLines(3)
+				}
+				a.executionTaskContextView(c, t, ct, issue, execution)
+			}
+			if execution.Detail != "" {
+				ui.Text(c, execution.Detail).FontSize(10).LineHeight(1.35).TextColor(t.Warning)
+			}
+			if execution.Status == issueExecutionUnknown || execution.Status == issueExecutionPending {
+				ui.Row(c).Gap(6).Children(func() {
+					ui.Button(c, "Check execution").FontSize(9).Padding(1, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+						if !a.reconcileIssueExecution(issue.ID, execution.ID) {
+							a.issueActionError = execution.Detail
+						}
+					})
+					if execution.TaskID == "" && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle {
+						ui.Button(c, "Confirm not dispatched").FontSize(9).Padding(1, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+							if !a.confirmIssueExecutionNotDispatched(issue.ID, execution.ID) {
+								a.issueActionError = "Could not confirm this execution."
+							}
+						})
+					}
+				})
+			}
+			if w != nil {
+				ui.Button(c, "View execution").FontSize(9).Padding(1, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.showIssueWork(issue.ID, execution.TaskID) })
+			}
+		})
+	}
 }
 
 func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue, editable bool) {
@@ -565,34 +655,6 @@ func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *
 			}
 			ui.Button(c, label).FontSize(11).Padding(2, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openIssueSupplementForm(issue.ID) })
 		}
-		reason := issueLifecycleStartBlocked(issue)
-		if reason == "" {
-			reason = a.canStartIssue(ct, issue)
-		}
-		if reason == "" {
-			reason = issueRunBlocked(issue)
-		}
-		var startButton func()
-		if reason == "" {
-			label := "Start issue"
-			if len(issue.Executions) > 0 {
-				label = "Continue issue"
-			}
-			if issue.Supplements != nil && issue.Supplements.pendingCount() > 0 {
-				if len(issue.Executions) == 0 {
-					label = "Start with supplement"
-				} else {
-					label = "Continue with supplement"
-				}
-			}
-			startButton = func() {
-				ui.Button(c, label).FontSize(12).OnClick(func() {
-					if !a.runIssue(issue.ID) {
-						a.issueActionError = a.issueFormError
-					}
-				})
-			}
-		}
 		waitButton := func() {
 			if issue.openQuestion() != nil {
 				return
@@ -611,12 +673,7 @@ func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *
 				})
 			}
 		}
-		if startButton != nil {
-			ui.Row(c).Gap(6).Children(startButton)
-		}
-		if reason != "" {
-			ui.Text(c, "Start unavailable: "+reason).FontSize(10).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
-		}
+
 		ui.Row(c).Gap(6).Children(func() {
 			taskContextButton()
 			addSupplementButton()

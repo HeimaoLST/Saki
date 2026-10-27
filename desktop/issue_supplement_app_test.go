@@ -208,6 +208,7 @@ func TestIssueSupplementUITesterPreviewCopyAndSaveFailure(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	expandIssueDetails(t, tr)
 	if err := tr.Click("Add supplement"); err != nil {
 		t.Fatal(err)
 	}
@@ -258,6 +259,7 @@ func TestIssueSupplementOwnerDraftsStayIsolatedAcrossContactSwitch(t *testing.T)
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	expandIssueDetails(t, tr)
 	if err := tr.Click("Add supplement"); err != nil {
 		t.Fatal(err)
 	}
@@ -294,6 +296,7 @@ func TestIssueSupplementUnknownActionIsExposedWithoutFakeRecovery(t *testing.T) 
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	expandIssueDetails(t, tr)
 	if err := tr.Click("Check execution"); err != nil {
 		t.Fatal(err)
 	}

@@ -459,11 +459,12 @@ func TestTaskContextIssueDetailsOpenOwnEditor(t *testing.T) {
 	a.workspaceOpen = true
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	expandIssueDetails(t, tr)
 	if err := tr.Click("Task context · 1"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	for _, want := range []string{"Issue · Ship the issue context", "Issue notes", "Close task context"} {
+	for _, want := range []string{"Ship the issue context", "Issue notes", "Close task context"} {
 		if !tr.HasText(want) {
 			t.Fatalf("issue context modal missing %q: %v", want, tr.Texts())
 		}
