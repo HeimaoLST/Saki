@@ -120,19 +120,6 @@ func clickIssueResultAction(tr *ui.Tester, label string) error {
 	return fmt.Errorf("issue result action %q was not reachable: %v", label, tr.Texts())
 }
 
-// clickWithinBounds reaches a control through the real tester without calling
-// t.Fatal from a UI pump callback.
-func clickWithinBounds(tr *ui.Tester, label string, width, height int) error {
-	for attempt := 0; attempt < 12; attempt++ {
-		if r, ok := tr.Find(label); ok && r.W > 0 && r.H > 0 && r.X >= 0 && r.X+r.W <= float32(width) && r.Y >= 0 && r.Y+r.H <= float32(height) {
-			return tr.Click(label)
-		}
-		tr.Scroll(float32(width-150), float32(height/2), 0, 200)
-		tr.Frame()
-	}
-	return fmt.Errorf("control %q was not reachable at %dx%d: %v", label, width, height, tr.Texts())
-}
-
 func issueResultTesterRun(h *guiHarness, fn func(*ui.Tester) error) error {
 	var err error
 	h.pump.do(func() {
@@ -761,15 +748,17 @@ func TestIssueResultPageFromActualIssueRunsAndRestart(t *testing.T) {
 		workOpen = h.app.workspaceOpen
 		if r, ok := tr.Find("Close work"); !workOpen || !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 1040 || r.Y < 0 || r.Y+r.H > 720 {
 			workErr = fmt.Errorf("Work open geometry = open=%v rect=%+v ok=%v", workOpen, r, ok)
-			return
 		}
-		workErr = clickWithinBounds(tr, "Open result", 1040, 720)
 	})
 	if workErr != nil {
 		t.Fatal(workErr)
 	}
 	if !workOpen {
 		t.Fatal("clicking Work did not open the work panel")
+	}
+	issueResultRequireTexts(t, h, "Open result")
+	if err := issueResultClick(h, "Open result"); err != nil {
+		t.Fatal(err)
 	}
 	h.pump.wait(func() bool {
 		page := h.app.issueResult
@@ -862,11 +851,13 @@ func TestIssueResultPageFromActualIssueRunsAndRestart(t *testing.T) {
 	beforeRestart := provider.count()
 	h.shutdown(t)
 	restarted := startIssueResultPageApp(t)
-	var reopened, restoredLayout bool
+	var restoredOpen bool
+	var reopenErr error
 	restarted.pump.do(func() {
-		restoredLayout = restarted.app.workspaceOpen
+		restoredOpen = restarted.app.workspaceOpen
 		ct := restarted.app.contactByID(contactID)
 		if ct == nil {
+			reopenErr = fmt.Errorf("restart did not restore the contact")
 			return
 		}
 		for index, candidate := range restarted.app.contacts {
@@ -876,16 +867,16 @@ func TestIssueResultPageFromActualIssueRunsAndRestart(t *testing.T) {
 		}
 		issue := ct.issueByID(issueID)
 		if issue == nil || len(issue.Executions) != 2 {
+			reopenErr = fmt.Errorf("restart did not restore the dispatched issue executions")
 			return
 		}
 		restarted.app.openIssueResult(issueID, issue.Executions[1].ID)
-		reopened = true
 	})
-	if !restoredLayout {
+	if !restoredOpen {
 		t.Fatal("restart did not restore the persisted Work open preference")
 	}
-	if !reopened {
-		t.Fatal("restart did not restore the dispatched issue executions")
+	if reopenErr != nil {
+		t.Fatal(reopenErr)
 	}
 	restarted.pump.wait(func() bool {
 		page := restarted.app.issueResult
