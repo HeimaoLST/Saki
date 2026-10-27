@@ -13,6 +13,7 @@
 - **字号基线**：正文、要求和结果摘要使用 14 逻辑 px；普通动作 13；辅助状态、来源和日期至少 12。已有更大的正文不缩小；重要标题用字号、字重和留白分层。禁止为了装下内容退回 9–11 px；字号只是基线，必须结合实际渲染验证可读性。
 - **主动作与次动作**：真正的下一步使用 `ui.PrimaryButton`；普通次操作复用 `desktop/theme.go` 的 `secondaryButton`，静止态要有可见底面/边界、至少 32 逻辑 px 的有效高度和内边距；状态标签不能伪装成按钮。不要把通用动作做成无底无框灰字，也不要靠 hover 才揭示操作；保留 hover/pressed/focus/disabled 语义。既有 Markdown Copy 的受控实现继续保留，统一相同外观即可。
 - **主题与样式复用**：颜色走现有 theme 语义角色，避免局部散写颜色或重复同值字体/padding 覆盖。优先使用现有控件；不为本规范新增多层 UI 框架。
+- **主次区域与布局偏好**：中间对话是主要交互区域；三栏时中心应保持最宽。右侧工作/详情默认关闭，开合由用户选择并跨重启恢复；切换联系人、收消息或 task start/finish 不自动改变它。两侧可真实调宽；空间不足时右侧改用覆盖抽屉，临时窄布局不得覆盖保存的宽屏偏好。具体宽度、中心下限和持久化值见 [可调三栏具体值](#adjustable-layout-values)。
 - **布局与响应宽度**：用换行、折叠、重排和正常纵向滚动解决空间；不靠缩小文字掩盖溢出，也不用横向滚动访问普通操作。默认 1040×720、紧凑 960×640、最小 720×640 和宽 1380×900；按改动涉及的状态检查，明暗两色分别检查。抽屉 320/360 宽度可独立验证边界，但不能把 320 宽测试称作原生支持窗口。
 - **可交互性验收**：相关按钮要默认可辨、完整可见、点击有效；键盘焦点返回正确且不被裁切。测试必须定位目标本身；必要时检查边界、滚动后点击和业务状态，不用 `HasText`、重复文案或字号字面量充当交互验收。
 - **交付证据**：每次 GUI 变更先查本节和现有样式。交付按受影响流程提供同 SHA 截图与实际交互记录，分别标明 headless/native/未验；不借 CI 绿或旧包绿称产品通过，也不要求无关的全量人工 QA。偏离规范需在当前 PR 说明具体原因、替代方案及证据，由既有评审流程处理，不新增人类审批队列。
@@ -106,11 +107,11 @@ SAKI_GUI_WORKDIR=/abs/working-directory \
 ```
 Finder 启动不继承 shell 环境。空配置时通过 Connection settings 保存并 Apply；已有 GUI 配置从持久文件恢复。上述命令保留为开发者外部环境模式入口。不要把 key 放进 Info.plist、候选包或仓库。
 
-## 原生工作台（#130，实现事实）
+## 原生工作台（#130，历史实现事实；固定布局比例已由 #184 替代）
 
-更新于 2026-10-23。当前实现/测试 HEAD `c1b804e`（栈上合并 112 `31d3cff`；产品 formatter merge `4ec3ad5`）；本条只记录 GUI 实现事实，不修改 [desktop-workbench.md](desktop-workbench.md) 的 PM 设计权威内容。
+更新于 2026-10-23。当前实现/测试 HEAD `c1b804e`（栈上合并 112 `31d3cff`；产品 formatter merge `4ec3ad5`）；本条只保留当轮 GUI 实现事实。当前布局规范和宽度偏好以顶部 [GUI 设计约束（当前规范）](#gui-design-constraints) 为准；当轮的固定 1120/960 列宽已由 [#184 可调三栏具体值](#adjustable-layout-values) 替代。
 
-- 三栏布局：宽度 ≥1120 时联系人栏 200px、工作区 360px；960–1119 使用 160px／320px 紧凑列；低于 960 时工作区通过带遮罩的模态覆盖打开，Close 始终可见。原生窗口最低宽度调整为 720px（高度仍 640px），使 900px 的覆盖分支可由实际 `ContentSize` 到达；960/1040/宽屏同样由实际内容宽度分类，headless 显式设置对应宽度。联系人栏可收起并由页头 Contacts 重开；工作区可收起并由 Work 重开；收起、覆盖、关闭和 Escape 后恢复入口焦点，侧栏/工作区状态不停止任务。
+- 三栏布局（历史，已由 #184 可调三栏替代）：宽度 ≥1120 时联系人栏 200px、工作区 360px；960–1119 使用 160px／320px 紧凑列；低于 960 时工作区通过带遮罩的模态覆盖打开，Close 始终可见。原生窗口最低宽度调整为 720px（高度仍 640px），使 900px 的覆盖分支可由实际 `ContentSize` 到达；960/1040/宽屏同样由实际内容宽度分类，headless 显式设置对应宽度。联系人栏可收起并由页头 Contacts 重开；工作区可收起并由 Work 重开；收起、覆盖、关闭和 Escape 后恢复入口焦点，侧栏/工作区状态不停止任务。
 - 颜色：按 PM 固定 `2182c1a` 的 root/night 数值，一次解析为小型 `workbenchTheme`（既有 `ui.Theme` + `Rail`/`BubbleUser`/`WorkSurface`/`WorkText`/`WorkMuted`/`WorkAttention`），组件不写 hex、不按品牌分支。用户气泡使用 `BubbleUser`，联系人栏使用 `Rail`，当前工作卡使用深色 `WorkSurface` hero；完整 Appearance 模式与持久化仍归 #96，联系人设置不承载应用外观。
 - 消息与工作分开：用户/助手真实文本留在左右气泡，按 task/item 稳定 key 聚合增量、最终和历史，不因工具或完成追加占位回复。工具活动进入按 task/call 归属的 Work 投影，显示状态、摘要、详情和原文 Copy；工具失败只影响工具/工作呈现，不直接把任务判为失败。没有 Task ID 的旧工具记录保留为 “Earlier activity”，不伪造 task 归属。当前工作卡是 `WorkSurface` hero，标题只保留一次 Current/Recent work，任务目的、状态与最新动作分层；工具正文不套用 hero。
 - 执行事实：`task_started`、`tool_started/finished`、`task_finished` 与 cancel 回复驱动 accepted/running/stopping/completed/failed/interrupted/unknown；Stop 针对当前 `ActiveTaskID`，取消结果不直接生成“已停止”，等待 `task_finished`；由 Stop 请求后的 interrupted 显示 `Stopped · interrupted`，保留中断原因。同进程的 `StopRequestedTasks` 本地 map 让自动 history reload 保留同一 task 的停因；该事实不写入 store，重启后没有停因契约时仍诚实显示 Interrupted。未请求停止的历史也显示 Interrupted。旧任务迟到 start/terminal 不会复活或污染新任务。单执行槽下其他联系人明确显示 busy/disabled，草稿不丢、不停止当前任务。
@@ -248,7 +249,7 @@ v2 `8a04d63` 的原生修复证据（13..18）：
 
 ## 布局与断点（浏览器历史示意）
 
-本节保留浏览器历史示意；当前原生布局以“布局打磨（#90）”为准。
+本节保留早期浏览器历史示意；当前原生布局以顶部 [GUI 设计约束（当前规范）](#gui-design-constraints) 和 [#184 可调三栏具体值](#adjustable-layout-values) 为准，不再以 #90 或本节比例作为当前实现。
 
 - **≥920px**：`contact rail (默认 220px)` ｜ conversation ｜ 右侧 aux 300px，仅在 source/settings 等操作后出现；没有常驻第三栏。
 - **640–919px**：rail + 单栏内容；source/settings 直接替换主内容，而不是压缩两栏。
@@ -703,6 +704,8 @@ type resolvedTheme struct {
 - **清理**：调用方直接使用既有 `toolTitleFor`，删除 `toolTitle` wrapper；移除纯转发连接 helper；`issueWork` 去掉未使用的第二返回值；测试仅使用 `issueStatusNotStarted`，保留 `normalize` 对旧 `open` 的迁移；冗余状态映射分支合并但保留状态语义。对应独立 cleanup commit 与行为测试保留。
 - **验证**：历史 `7f37afc` 候选已完成完整 race 204.713s、exit 0，checker 18 MUST PASS，来源前后 clean/包 hash 不变；该计数不转给本增量。当前增量完成定向 UI/race 回归（含 1040×720 bounded scroll、latest pending/rejected/failed/unknown/tool-only、View/Back、completion evidence、known/unknown connection、rail/nav 320/960/1040 bounds、长中文 issue list、720px reader copy）；Go 全包最终由父在新 SHA 重跑。真实 Rust 离线链使用 `SAKI_TEST_RUNTIME_BIN=dfdc5358...`，未设置 `SAKI_TEST_ONLINE`，没有模型请求。headless 预览覆盖 light/dark、1040×720、960×640、720×640 drawer、320×900、360×800 和 1380×900；本增量另以 bounds/点击测试验证 320px 联系人栏、事项列表与滚动后的行内操作，并保留 720px Markdown exact-source copy 断言。最后原生图和最终包由父/PM 在冻结 SHA 重做，旧图不作为最终证据。原生窗口、IME、原生包仍由 PM／父验证，本单不新造打包流程。
 
+<a id="adjustable-layout-values"></a>
+
 ## #184 可调三栏与全局布局偏好（实现事实，2026-10-27）
 
 代码来源：`agent/gui/184-adjustable-layout`，从 `549ac98` 开出；本片源 `6b2f67ae8808f4430b1035b02caf3fa6a6d17f23`。本节只记录本片接线的布局与持久化事实，不代表原生拖动或最终包验收。
@@ -711,4 +714,4 @@ type resolvedTheme struct {
 - **分栏与约束**：复用 MyGo `ui.Split` 的 first-width、1 DIP 分隔和键盘焦点；外层 rail/main、内层 main/work，均用 `OnChange` 在 bound width 更新后立即 clamp。左 180–280、右 280–440、三栏中心至少 480 且宽于两侧；1040 默认 200/498/340，1380 将剩余空间给中心。960/720 在默认偏好下自动使用既有右侧抽屉，Close/Escape/焦点恢复保留；左栏仍可收起。右侧没有使用 RTL Direction，main/work 子树保持正常文字方向。
 - **交互与事件**：开/关右栏和显式 `View execution` 通过同一条设置入口；切换联系人、收消息、task start/finish 不改开合。右栏关闭时 Work 入口保留，并用既有 active work/issue notice/contact status 显示 `Work running` 或 `Work needs attention`，不生成聊天消息或伪完成。
 - **保存边界**：显式开/关、正常 `beginShutdown` 和既有 `persist` 保存当前偏好；拖动只改内存，不在每次 mousemove 落盘。窄窗口的 overlay/有效宽度不覆盖保存的偏好宽度；宽度在读取时 clamp。
-- **验证**：`layout_test.go` 用真实 `ui.Tester` Press→Move（仍 held）→Release 验证两条分隔边、中心最小值和应用宽度上限，另测键盘物理方向、OnChange clamp、960/720 Close/Escape/focus、旧/新 store、显式开合重启、事件不强开、右栏关闭提示；`layout_preview_test.go` 生成明暗 1040/1380/960/720 的 closed/open/dragged 24 张 headless 图，位于 `/private/tmp/saki-gui-184/previews-final/`。当前 `go test ./...` 4.565s PASS，定向 race 2.631s PASS；原生拖动、原生窗口和最终包仍未验，headless 图不替代 native。
+- **验证**：`layout_test.go` 用真实 `ui.Tester` Press→Move（仍 held）→Release 验证两条分隔边、中心最小值和应用宽度上限，另测键盘物理方向、OnChange clamp、960/720 Close/Escape/focus、旧/新 store、显式开合重启、事件不强开、右栏关闭提示。`layout_preview_test.go` 生成明暗 1040/1380/960/720 的 closed/open/dragged 24 张 headless 图，位于 `/private/tmp/saki-gui-184/previews-final/`；其中 `dragged` 是通过直接赋宽度偏好构造的静态场景，不是实际拖动证据。真实拖动只在 `layout_test.go` 的 Press/Move/Release 测试中；原生拖动、原生窗口和最终包仍未验，headless 图不替代 native。当前 `go test ./...` 4.565s PASS，定向 race 2.631s PASS。
