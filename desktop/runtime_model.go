@@ -338,7 +338,7 @@ func (a *appModel) startRuntime() {
 func (a *appModel) protocolFailed(message string) {
 	a.runtimeStatus = runtimeStateFailed
 	a.runtimeStage = "Runtime protocol"
-	a.runtimeErr = "Runtime protocol error: " + a.connectionSafeText(message)
+	a.runtimeErr = "Runtime protocol error: " + a.redactConnectionText(message)
 	a.runtimeHint = "Restart Saki; delivery or result may be unconfirmed. No automatic retry."
 	for _, ct := range a.contacts {
 		if ct.SendState == sendSubmitting || ct.ActiveTaskID != "" {
@@ -418,7 +418,7 @@ func (a *appModel) applyRuntimeExit(err error) {
 	diagnostic := ""
 	if a.rt != nil {
 		if lines := a.rt.diagnostics(); len(lines) > 0 {
-			diagnostic = a.connectionSafeText(lines[len(lines)-1])
+			diagnostic = a.redactConnectionText(lines[len(lines)-1])
 		}
 	}
 	wasReady := a.runtimeHandshake
@@ -427,7 +427,7 @@ func (a *appModel) applyRuntimeExit(err error) {
 		a.runtimeStage = "Runtime connection"
 		a.runtimeErr = "Runtime connection lost"
 		if err != nil {
-			a.runtimeErr += ": " + a.connectionSafeText(err.Error())
+			a.runtimeErr += ": " + a.redactConnectionText(err.Error())
 		}
 		a.runtimeHint = "Restart Saki and reload history. Accepted work may be unconfirmed; no automatic retry."
 	} else {
@@ -446,7 +446,7 @@ func (a *appModel) applyRuntimeExit(err error) {
 			if diagnostic != "" {
 				a.runtimeErr = "Runtime exited before ready: " + diagnostic
 			} else if err != nil {
-				a.runtimeErr = "Runtime exited before ready: " + a.connectionSafeText(err.Error())
+				a.runtimeErr = "Runtime exited before ready: " + a.redactConnectionText(err.Error())
 			} else {
 				a.runtimeErr = "Runtime exited before ready."
 			}

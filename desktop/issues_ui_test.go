@@ -10,7 +10,7 @@ import (
 func TestIssueWorkCardAndComposerStopLabelsAreSeparate(t *testing.T) {
 	a, ct := workspaceTestApp(t)
 	ct.Messages = nil
-	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "work A", Status: issueStatusOpen, WorkSessionID: "work-session"}
+	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "work A", Status: issueStatusNotStarted, WorkSessionID: "work-session"}
 	issue.Work.ActiveTaskID = "task-A"
 	issue.Work.SendState = sendAccepted
 	issue.Executions = []*issueExecution{{ID: "e1", SessionID: "work-session", TaskID: "task-A", Status: issueExecutionRunning}}
@@ -36,7 +36,7 @@ func TestIssueWorkCardAndComposerStopLabelsAreSeparate(t *testing.T) {
 func TestIssueResultUsesIssueWorkMessages(t *testing.T) {
 	a, ct := workspaceTestApp(t)
 	ct.Messages = nil
-	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "work A", Status: issueStatusOpen, WorkSessionID: "work-session"}
+	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "work A", Status: issueStatusNotStarted, WorkSessionID: "work-session"}
 	issue.Executions = []*issueExecution{{ID: "e1", SessionID: "work-session", TaskID: "task-A", Status: issueExecutionCompleted}}
 	issue.Work.Messages = []*message{{Key: "work-live", Kind: msgContact, TaskID: "task-A", Text: "issue-owned result"}}
 	ct.Issues = []*productIssue{issue}
@@ -52,7 +52,7 @@ func TestIssueResultUsesIssueWorkMessages(t *testing.T) {
 
 func TestRailShowsIssueWorkAttentionWithoutChatUnread(t *testing.T) {
 	a, ct := workspaceTestApp(t)
-	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "failed work", Status: issueStatusOpen}
+	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "failed work", Status: issueStatusNotStarted}
 	issue.Executions = []*issueExecution{{ID: "e1", SessionID: "work-session", TaskID: "task-A", Status: issueExecutionFailed, Detail: "provider failed"}}
 	ct.Issues = []*productIssue{issue}
 	ct.Unread = 2
@@ -70,7 +70,7 @@ func TestRailShowsIssueWorkAttentionWithoutChatUnread(t *testing.T) {
 
 func TestIssueRecoveryControlsRenderForUnknownExecution(t *testing.T) {
 	a, ct := workspaceTestApp(t)
-	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "recover me", Status: issueStatusOpen}
+	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "recover me", Status: issueStatusNotStarted}
 	issue.Executions = []*issueExecution{{ID: "e1", SessionID: "work-session", Status: issueExecutionUnknown, Detail: "unknown"}}
 	ct.Issues = []*productIssue{issue}
 	ct.SelectedIssueID = issue.ID
@@ -105,7 +105,7 @@ func TestCapacityUnknownNoticeIsDistinctFromRealSingleSlot(t *testing.T) {
 
 func TestRailShowsActiveIssueWorkCount(t *testing.T) {
 	a, ct := workspaceTestApp(t)
-	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "active work", Status: issueStatusOpen, WorkSessionID: "work-session"}
+	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "active work", Status: issueStatusNotStarted, WorkSessionID: "work-session"}
 	issue.Work.ActiveTaskID = "task-A"
 	issue.Work.SendState = sendAccepted
 	issue.Executions = []*issueExecution{{ID: "e1", SessionID: "work-session", TaskID: "task-A", Status: issueExecutionRunning}}
@@ -124,7 +124,7 @@ func TestRailShowsActiveIssueWorkCount(t *testing.T) {
 
 func TestIssueConfirmNotDispatchedTargetsSelectedExecution(t *testing.T) {
 	a, ct := workspaceTestApp(t)
-	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "recover me", Status: issueStatusOpen}
+	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "recover me", Status: issueStatusNotStarted}
 	target := &issueExecution{ID: "e1", SessionID: "work-session", Status: issueExecutionUnknown, Prompt: "target"}
 	other := &issueExecution{ID: "e2", SessionID: "other-session", TaskID: "task-other", Status: issueExecutionCompleted, Prompt: "other"}
 	issue.Executions = []*issueExecution{target, other}

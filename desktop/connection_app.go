@@ -196,7 +196,7 @@ func (a *appModel) saveConnection(config connectionConfig) {
 			a.connectionForm.Status = "Saved. Apply saved to use this connection."
 			a.connectionForm.Error = ""
 			if err != nil {
-				a.connectionForm.Error = "Configuration was saved, but the local contact store could not be created: " + a.connectionSafeText(err.Error())
+				a.connectionForm.Error = "Configuration was saved, but the local contact store could not be created: " + a.redactConnectionText(err.Error())
 			} else if store != nil {
 				a.workDir = config.WorkingDirectory
 				a.startupDetailsOpen = false
@@ -284,7 +284,7 @@ func (a *appModel) applyConnectionWorker(gen int, path, sessionDir, helperHint s
 			a.connectionApplying = false
 			a.connectionForm.Busy = false
 			a.connectionForm.Status = ""
-			a.connectionForm.Error = a.connectionSafeText(message)
+			a.connectionForm.Error = a.redactConnectionText(message)
 			if a.shutdownStarted {
 				a.finishShutdown()
 			}
@@ -531,11 +531,7 @@ func (a *appModel) connectionSafeMessage(err error) string {
 	if err == nil {
 		return ""
 	}
-	return a.connectionSafeText(err.Error())
-}
-
-func (a *appModel) connectionSafeText(text string) string {
-	return a.redactConnectionText(text)
+	return a.redactConnectionText(err.Error())
 }
 
 func (a *appModel) redactConnectionText(text string) string {

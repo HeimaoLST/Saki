@@ -267,8 +267,10 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	issueResultRequireTexts(t, h, "Open result")
-	if err := issueResultClick(h, "Open result"); err != nil {
+	if err := issueResultClick(h, "More issue actions"); err != nil {
+		t.Fatal(err)
+	}
+	if err := issueResultClick(h, "Open result · run 1"); err != nil {
 		t.Fatal(err)
 	}
 	h.pump.wait(func() bool {

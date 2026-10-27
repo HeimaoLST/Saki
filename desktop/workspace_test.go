@@ -578,3 +578,36 @@ func TestWorkspaceToolCardActionsStayVisibleAtAllWidths(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkspaceStructuredToolOutputDoesNotLeakRawJSON(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.ActiveTaskID = "t-write"
+	ct.LastTaskID = "t-write"
+	w := a.ensureWork(ct, "t-write", "m-write")
+	w.State = workRunning
+	raw := `{"path":"/Users/someone/result.txt","bytes_written":42}`
+	w.Tools = []*workTool{{CallID: "write-call", Name: "write", Args: `{"path":"/Users/someone/result.txt"}`, Finished: true, Output: raw}}
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if tr.HasText(`"bytes_written"`) || tr.HasText(`{"path"`) {
+		t.Fatalf("raw structured result leaked into preview: %v", tr.Texts())
+	}
+	if !tr.HasText("Structured output received; open Details for the exact record.") {
+		t.Fatalf("neutral structured summary missing: %v", tr.Texts())
+	}
+	tr.SetClipboard("")
+	if err := tr.Click("Copy received output"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != raw {
+		t.Fatalf("copy lost exact structured output: %q", got)
+	}
+	if err := tr.Click("Details"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.HasText(`"bytes_written"`) {
+		t.Fatalf("details did not expose exact structured output: %v", tr.Texts())
+	}
+}

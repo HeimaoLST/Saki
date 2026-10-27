@@ -371,7 +371,7 @@ func TestAppChatScrollUpSurvivesStreamAppendAndBackToLatest(t *testing.T) {
 func TestAppWorkspaceResultSummaryIsPreview(t *testing.T) {
 	a, ct := workspaceTestApp(t)
 	longResult := strings.Repeat("result-line ", 40) + "tail-marker"
-	ct.Issues = []*productIssue{{ID: "i1", ContactID: "saki", Goal: "First issue", Status: issueStatusOpen, Executions: []*issueExecution{{ID: "e1", TaskID: "t1", Status: issueExecutionCompleted}}}}
+	ct.Issues = []*productIssue{{ID: "i1", ContactID: "saki", Goal: "First issue", Status: issueStatusNotStarted, Executions: []*issueExecution{{ID: "e1", TaskID: "t1", Status: issueExecutionCompleted}}}}
 	ct.SelectedIssueID = "i1"
 	ct.Works = []*workItem{{TaskID: "t1", MessageID: "m1", State: workCompleted, Prompt: "prompt"}}
 	ct.Messages = []*message{{ID: 1, Kind: msgContact, TaskID: "t1", MessageID: "m1", Text: longResult}}

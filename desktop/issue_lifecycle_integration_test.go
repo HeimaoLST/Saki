@@ -445,12 +445,17 @@ func TestIssueUICompleteAndReopenActions(t *testing.T) {
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
 	expandIssueDetails(t, tr)
+	completion := a.completionDraft(issue)
+	*completion = "user verified the saved result"
 	if err := tr.Click("Mark complete"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if issue.Status != issueStatusCompleted {
-		t.Fatalf("UI completion = %q", issue.Status)
+	if issue.Status != issueStatusCompleted || issue.Evidence != "user verified the saved result" {
+		t.Fatalf("UI completion = %q evidence=%q", issue.Status, issue.Evidence)
+	}
+	if !tr.HasText("Completion evidence") || !tr.HasText("user verified the saved result") {
+		t.Fatalf("completion evidence is not readable after completion: %v", tr.Texts())
 	}
 	if err := tr.Click("Reopen issue"); err != nil {
 		t.Fatal(err)
@@ -458,6 +463,9 @@ func TestIssueUICompleteAndReopenActions(t *testing.T) {
 	tr.Frame()
 	if issue.Status != issueStatusNotStarted {
 		t.Fatalf("UI reopen = %q", issue.Status)
+	}
+	if !tr.HasText("Previous completion evidence: user verified the saved result") {
+		t.Fatalf("previous completion evidence is not readable after reopen: %v", tr.Texts())
 	}
 }
 

@@ -139,6 +139,10 @@ func TestModelSelectionGUIActualTargetsAndRestart(t *testing.T) {
 					t.Error("work and conversation shared an execution context")
 				}
 			})
+			if err := issueResultClick(h, "More issue actions"); err != nil {
+				t.Error(err)
+				return
+			}
 			openModelPanel(t, h, "Issue model")
 			h.pump.do(func() {
 				if h.app.modelForm.Target.Config.SessionID != workSession || h.app.modelForm.Effective.Config.EffectiveConfig.Model != "model-A" {

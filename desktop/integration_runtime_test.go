@@ -946,7 +946,7 @@ func TestGUIAppIssueSaveFailureStopsBeforeDispatch(t *testing.T) {
 		}
 	})
 	ct := h.app.selectedContact()
-	if len(ct.Issues[0].Executions) != 0 || ct.Issues[0].Status != issueStatusOpen {
+	if len(ct.Issues[0].Executions) != 0 || ct.Issues[0].Status != issueStatusNotStarted {
 		t.Fatalf("failed pre-save issue state = %+v", ct.Issues[0])
 	}
 	if ct.Draft != "ordinary draft" || provider.count() != 0 {

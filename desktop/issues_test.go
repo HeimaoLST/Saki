@@ -159,7 +159,7 @@ func TestStoreRejectsIssueWithoutValidContact(t *testing.T) {
 
 func TestAcceptedAssociationSaveFailureLeavesUnknownSnapshot(t *testing.T) {
 	ct := &contact{ID: "c1", Name: "Saki", Draft: "later draft"}
-	issue := &productIssue{ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusOpen}
+	issue := &productIssue{ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusNotStarted}
 	execution := &issueExecution{ID: "e1", Prompt: "work", Status: issueExecutionPending}
 	issue.Executions = append(issue.Executions, execution)
 	ct.Issues = append(ct.Issues, issue)
@@ -169,14 +169,14 @@ func TestAcceptedAssociationSaveFailureLeavesUnknownSnapshot(t *testing.T) {
 	if execution.Status != issueExecutionUnknown || execution.Prompt != "work" || execution.TaskID != "t1" {
 		t.Fatalf("accepted save failure lost snapshot: %+v", execution)
 	}
-	if ct.pendingIssueExecution != "" || issue.Status != issueStatusOpen || ct.Draft != "later draft" {
+	if ct.pendingIssueExecution != "" || issue.Status != issueStatusNotStarted || ct.Draft != "later draft" {
 		t.Fatalf("accepted save failure changed item/draft: issue=%+v pending=%q draft=%q", issue, ct.pendingIssueExecution, ct.Draft)
 	}
 }
 
 func TestStoredPendingExecutionIsUnknownAfterRestart(t *testing.T) {
 	issues := issuesForStoredContact([]storedIssue{{
-		ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusOpen,
+		ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusNotStarted,
 		Executions: []storedIssueExecution{{ID: "e1", TaskID: "task-possible", Prompt: "work", Status: issueExecutionPending}},
 	}}, "c1")
 	if len(issues) != 1 || len(issues[0].Executions) != 1 {
@@ -237,7 +237,7 @@ func TestIssueFormCreatesExplicitItemWithoutTouchingComposer(t *testing.T) {
 
 func TestIssueRunPreservesComposerWhenDraftMatchesPrompt(t *testing.T) {
 	ct := &contact{ID: "c1", Name: "Saki", Draft: "work"}
-	issue := &productIssue{ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusOpen}
+	issue := &productIssue{ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusNotStarted}
 	execution := &issueExecution{ID: "e1", Prompt: "work", Status: issueExecutionPending}
 	issue.Executions = append(issue.Executions, execution)
 	ct.Issues = append(ct.Issues, issue)
@@ -261,7 +261,7 @@ func TestIssueRunPreservesComposerWhenDraftMatchesPrompt(t *testing.T) {
 
 func TestIssueConfirmedRejectIsPersistedAndRerunnable(t *testing.T) {
 	ct := &contact{ID: "c1", Name: "Saki"}
-	issue := &productIssue{ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusOpen}
+	issue := &productIssue{ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusNotStarted}
 	execution := &issueExecution{ID: "e1", Prompt: "work", Status: issueExecutionPending}
 	issue.Executions = append(issue.Executions, execution)
 	ct.Issues = append(ct.Issues, issue)
@@ -326,13 +326,13 @@ func TestIssueResultAttributionFollowsSelectedIssue(t *testing.T) {
 		{ID: 1, Kind: msgContact, TaskID: "t1", MessageID: "m1", Text: "first result"},
 		{ID: 2, Kind: msgContact, TaskID: "t2", MessageID: "m2", Text: "second result"},
 	}
-	if w, _ := ct.issueWork(ct.Issues[0]); w == nil || w.TaskID != "t1" {
+	if w := ct.issueWork(ct.Issues[0]); w == nil || w.TaskID != "t1" {
 		t.Fatalf("selected issue chose unrelated work: %+v", w)
 	}
 	a.windowWidth = 320
 	tr := ui.NewTester(a.view, 320, 640)
 	tr.Frame()
-	if !tr.HasText("Run 1 result · First issue") || !tr.HasText("first result") {
+	if !tr.HasText("Result preview: first result") {
 		t.Fatal("selected issue did not show its own known result")
 	}
 	if tr.HasText("No current work") {
@@ -342,17 +342,17 @@ func TestIssueResultAttributionFollowsSelectedIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if w, _ := ct.issueWork(ct.Issues[1]); w == nil || w.TaskID != "t2" {
+	if w := ct.issueWork(ct.Issues[1]); w == nil || w.TaskID != "t2" {
 		t.Fatalf("second selected issue chose unrelated work: %+v", w)
 	}
-	if !tr.HasText("Run 1 in progress · Second issue") || !tr.HasText("second result") {
+	if !tr.HasText("Current response (execution still running): second result") {
 		t.Fatal("selecting the second issue did not switch result attribution")
 	}
 }
 
 func TestIssueNotDispatchedIsPersistedAndRerunnable(t *testing.T) {
 	ct := &contact{ID: "c1", Name: "Saki"}
-	issue := &productIssue{ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusOpen}
+	issue := &productIssue{ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusNotStarted}
 	execution := &issueExecution{ID: "e1", Prompt: "work", Status: issueExecutionPending}
 	issue.Executions = append(issue.Executions, execution)
 	ct.Issues = append(ct.Issues, issue)
@@ -394,7 +394,7 @@ func TestIssueFormCancelReturnsFocusToNewIssue(t *testing.T) {
 func TestRestoredNonterminalExecutionWithoutTaskIsUnknown(t *testing.T) {
 	for _, status := range []string{issueExecutionPending, issueExecutionAccepted, issueExecutionRunning} {
 		issues := issuesForStoredContact([]storedIssue{{
-			ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusOpen,
+			ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusNotStarted,
 			Executions: []storedIssueExecution{{ID: "e1", Prompt: "work", Status: status}},
 		}}, "c1")
 		execution := issues[0].Executions[0]
@@ -403,7 +403,7 @@ func TestRestoredNonterminalExecutionWithoutTaskIsUnknown(t *testing.T) {
 		}
 	}
 	issues := issuesForStoredContact([]storedIssue{{
-		ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusOpen,
+		ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusNotStarted,
 		Executions: []storedIssueExecution{{ID: "e1", TaskID: "t1", Prompt: "work", Status: issueExecutionRunning}},
 	}}, "c1")
 	if issues[0].Executions[0].Status != issueExecutionRunning || issueRunBlocked(issues[0]) == "" {
@@ -428,7 +428,7 @@ func TestStoreV2IssuesRemainReadableAndGainWorkSession(t *testing.T) {
 		Version: 2, Selected: "c1",
 		Contacts: []storedContact{{ID: "c1", Name: "Saki", SessionID: "conversation-old"}},
 		Issues: []storedIssue{{
-			ID: "i1", ContactID: "c1", Goal: "legacy issue", Status: issueStatusOpen,
+			ID: "i1", ContactID: "c1", Goal: "legacy issue", Status: issueStatusNotStarted,
 			Executions: []storedIssueExecution{{ID: "e1", SessionID: "conversation-old", TaskID: "t1", Status: issueExecutionCompleted}},
 		}},
 	}
@@ -505,7 +505,7 @@ func TestRuntimeExitMarksAllActiveIssueWorkUnknown(t *testing.T) {
 
 func TestUnknownIssueExecutionCanBeConfirmedNotDispatched(t *testing.T) {
 	ct := &contact{ID: "c1", Name: "Saki"}
-	issue := &productIssue{ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusOpen}
+	issue := &productIssue{ID: "i1", ContactID: "c1", Goal: "work", Status: issueStatusNotStarted}
 	execution := &issueExecution{ID: "e1", SessionID: "work", Prompt: "work", Status: issueExecutionUnknown}
 	issue.Executions = append(issue.Executions, execution)
 	ct.Issues = append(ct.Issues, issue)

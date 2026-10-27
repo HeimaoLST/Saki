@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -71,6 +72,50 @@ func TestPreviewIssueReadableDetails(t *testing.T) {
 				}
 				writePreviewPNG(t, filepath.Join(dir,
 					fmt.Sprintf("headless-%s-issue-detail-%s-%dx%d.png", theme, state, size.width, size.height)), tr.Image())
+			}
+		}
+	}
+}
+
+func TestPreviewIssueReadableStates(t *testing.T) {
+	dir := os.Getenv("SAKI_PREVIEW_DIR")
+	if dir == "" {
+		t.Skip("set SAKI_PREVIEW_DIR to write issue-detail previews")
+	}
+	if err := loadAvatar(); err != nil {
+		t.Fatal(err)
+	}
+	for _, dark := range []bool{false, true} {
+		theme := "light"
+		if dark {
+			theme = "dark"
+		}
+		for _, scene := range []string{"completed", "working", "no-assistant", "long-connection", "view-execution"} {
+			for _, size := range []struct{ width, height int }{{1040, 720}, {960, 640}, {720, 640}, {1380, 900}} {
+				a, issue := issueDetailPreviewApp(t, false)
+				ct := a.selectedContact()
+				issue.Work.Loaded = true
+				ct.Works = []*workItem{{TaskID: "task-detail", MessageID: "message-detail", State: workCompleted, Prompt: "actual work projection", Tools: []*workTool{{CallID: "call-detail", Name: "write", Args: `{"path":"result.txt"}`, Output: `{"bytes_written":42,"path":"result.txt"}`, Started: true, Finished: true}}}}
+				switch scene {
+				case "working":
+					issue.Work.ActiveTaskID = "task-detail"
+					issue.Work.SendState = sendAccepted
+					issue.Status = issueStatusInProgress
+					ct.Works[0].State = workRunning
+					issue.Executions[0].Status = issueExecutionRunning
+				case "no-assistant":
+					issue.Work.Messages = nil
+				case "long-connection":
+					ct.LoadErr = "connection_mismatch: " + strings.Repeat("the session is bound to a connection with a different owner and endpoint; review details before continuing. ", 4)
+				case "view-execution":
+					ct.SelectedWorkTaskID = "task-detail"
+				}
+				a.windowWidth = size.width
+				tr := ui.NewTester(a.view, size.width, size.height)
+				tr.SetDark(dark)
+				tr.Frame()
+				writePreviewPNG(t, filepath.Join(dir,
+					fmt.Sprintf("headless-%s-issue-state-%s-%dx%d.png", theme, scene, size.width, size.height)), tr.Image())
 			}
 		}
 	}

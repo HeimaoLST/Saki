@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -9,6 +11,7 @@ import (
 func TestIssueDetailDefaultsToResultAndKeepsSecondaryDetailsCollapsed(t *testing.T) {
 	a, ct := workspaceTestApp(t)
 	a.rt = &runtimeClient{}
+	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
 	a.runtimeCapabilitiesLoaded = true
 	a.runtimeMaxActiveTasks = 2
 	issue := &productIssue{
@@ -23,6 +26,13 @@ func TestIssueDetailDefaultsToResultAndKeepsSecondaryDetailsCollapsed(t *testing
 	issue.Work.Messages = []*message{{Key: "result", Kind: msgContact, TaskID: "task-1", Text: "readable result body"}}
 	ct.Issues = []*productIssue{issue}
 	ct.SelectedIssueID = issue.ID
+	if err := a.persist(); err != nil {
+		t.Fatal(err)
+	}
+	storeBefore, err := os.ReadFile(a.store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
@@ -56,6 +66,13 @@ func TestIssueDetailDefaultsToResultAndKeepsSecondaryDetailsCollapsed(t *testing
 	if !tr.HasText("Sent snapshot: the exact sent snapshot") {
 		t.Fatalf("sent snapshot was not readable after explicit expansion: %v", tr.Texts())
 	}
+	storeAfter, err := os.ReadFile(a.store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(storeAfter) != string(storeBefore) {
+		t.Fatal("browsing/collapsing issue detail changed the contact store")
+	}
 	if issue.Status != issueStatusInProgress || len(issue.Executions) != 1 || issue.Executions[0].Status != issueExecutionCompleted {
 		t.Fatalf("viewing issue detail changed lifecycle: %+v", issue)
 	}
@@ -80,14 +97,98 @@ func TestIssueDetailsOpenStateDoesNotCrossContacts(t *testing.T) {
 	if !a.issueDetailOpen[firstIssue.ID] {
 		t.Fatal("first issue details did not expand")
 	}
+	firstDraft := a.requirementDraft(firstIssue.Requirements[0])
+	*firstDraft = "first contact evidence draft"
 	a.selectContact(1)
 	tr.Frame()
-	if tr.HasText("Execution history") || a.issueDetailOpen[secondIssue.ID] {
+	if tr.HasText("Execution history") || a.issueDetailOpen[secondIssue.ID] || tr.HasText("first contact evidence draft") {
 		t.Fatalf("second contact inherited first edit/detail state: %v", tr.Texts())
 	}
 	a.selectContact(0)
 	tr.Frame()
-	if !a.issueDetailOpen[firstIssue.ID] || !tr.HasText("Hide issue actions") {
-		t.Fatal("first issue details were lost after contact switch")
+	if !a.issueDetailOpen[firstIssue.ID] || !tr.HasText("Hide issue actions") ||
+		firstDraft != a.requirementDraft(firstIssue.Requirements[0]) || *firstDraft != "first contact evidence draft" {
+		t.Fatal("first issue details/draft were lost after contact switch")
+	}
+}
+
+func TestIssueViewExecutionOpensAtTopAndBackRestoresCompact(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.rt = &runtimeClient{}
+	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
+	a.runtimeCapabilitiesLoaded = true
+	a.runtimeMaxActiveTasks = 2
+	issue := &productIssue{ID: "i-view", ContactID: ct.ID, Goal: "view execution", Status: issueStatusInProgress,
+		RequirementsRevision: 1, Requirements: parseIssueRequirements("result requirement"), WorkSessionID: "work-view",
+		Work:       issueWorkSession{Loaded: true},
+		Executions: []*issueExecution{{ID: "e-view", SessionID: "work-view", TaskID: "task-view", Prompt: "sent view prompt", Status: issueExecutionCompleted, RequirementsRevision: 1}},
+	}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	ct.Works = []*workItem{{TaskID: "task-view", MessageID: "message-view", State: workCompleted, Prompt: "view work", Tools: []*workTool{{CallID: "call-view", Name: "write", Output: `{"content":"tool raw output"}`}}}}
+	issue.Work.Messages = []*message{{Key: "result-view", Kind: msgContact, TaskID: "task-view", Text: "view result"}}
+	if err := a.persist(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(a.store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if tr.HasText("Back to issue") || tr.HasText("Execution history") {
+		t.Fatalf("execution detail visible before explicit View execution: %v", tr.Texts())
+	}
+	if err := tr.Click("View execution"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if ct.SelectedWorkTaskID != "task-view" || !tr.HasText("Back to issue") || !tr.HasText("view result") || !tr.HasText("tool raw output") {
+		t.Fatalf("View execution did not open the selected detail: %+v texts=%v", ct.SelectedWorkTaskID, tr.Texts())
+	}
+	back, ok := tr.Find("Back to issue")
+	if !ok || back.Y > 720 {
+		t.Fatalf("Back to issue is not reachable: %+v ok=%v", back, ok)
+	}
+	if err := tr.Click("Back to issue"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if ct.SelectedWorkTaskID != "" || tr.HasText("Back to issue") || tr.HasText("Execution history") {
+		t.Fatalf("Back to issue did not restore compact detail: selected=%q texts=%v", ct.SelectedWorkTaskID, tr.Texts())
+	}
+	after, err := os.ReadFile(a.store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("View execution/back browsing changed the contact store")
+	}
+	if len(issue.Executions) != 1 || issue.Executions[0].Status != issueExecutionCompleted {
+		t.Fatalf("View execution changed execution state: %+v", issue.Executions)
+	}
+}
+
+func TestActiveIssueWorkKeepsStopReachableBeforeRequirements(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.rt = &runtimeClient{}
+	a.runtimeCapabilitiesLoaded = true
+	a.runtimeMaxActiveTasks = 2
+	issue := &productIssue{ID: "i-active", ContactID: ct.ID, Goal: "active work", Status: issueStatusInProgress,
+		RequirementsRevision: 1, Requirements: parseIssueRequirements("one\n two\nthree"), WorkSessionID: "work-active",
+		Work:       issueWorkSession{Loaded: true, ActiveTaskID: "task-active", SendState: sendAccepted},
+		Executions: []*issueExecution{{ID: "e-active", SessionID: "work-active", TaskID: "task-active", Status: issueExecutionRunning}},
+	}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	ct.Works = []*workItem{{TaskID: "task-active", State: workRunning, Prompt: "active prompt"}}
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	stop, ok := tr.Find("Stop issue task")
+	requirements, reqOK := tr.Find("Requirements")
+	if !ok || !reqOK || !tr.HasText("Stop issue task") || stop.Y >= requirements.Y {
+		t.Fatalf("active Stop is not reachable before requirements: stop=%+v ok=%v requirements=%+v ok=%v", stop, ok, requirements, reqOK)
 	}
 }

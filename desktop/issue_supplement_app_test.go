@@ -206,7 +206,7 @@ func TestIssueSupplementUITesterPreviewCopyAndSaveFailure(t *testing.T) {
 	issue := ct.selectedIssue()
 	issueID := issue.ID
 	a.windowWidth = 1040
-	tr := ui.NewTester(a.view, 1040, 720)
+	tr := ui.NewTester(a.view, 1040, 1600)
 	tr.Frame()
 	expandIssueDetails(t, tr)
 	if err := tr.Click("Add supplement"); err != nil {
@@ -257,7 +257,7 @@ func TestIssueSupplementOwnerDraftsStayIsolatedAcrossContactSwitch(t *testing.T)
 	issue := ct.selectedIssue()
 	issueID := issue.ID
 	a.windowWidth = 1040
-	tr := ui.NewTester(a.view, 1040, 720)
+	tr := ui.NewTester(a.view, 1040, 1600)
 	tr.Frame()
 	expandIssueDetails(t, tr)
 	if err := tr.Click("Add supplement"); err != nil {
@@ -294,7 +294,7 @@ func TestIssueSupplementUnknownActionIsExposedWithoutFakeRecovery(t *testing.T) 
 		t.Fatal("unknown transition failed")
 	}
 	a.windowWidth = 1040
-	tr := ui.NewTester(a.view, 1040, 720)
+	tr := ui.NewTester(a.view, 1040, 1600)
 	tr.Frame()
 	expandIssueDetails(t, tr)
 	if err := tr.Click("Check execution"); err != nil {

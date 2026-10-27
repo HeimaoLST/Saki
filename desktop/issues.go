@@ -159,9 +159,6 @@ const (
 	issueStatusCompleted      = "completed"
 	issueStatusCanceled       = "canceled"
 
-	// Legacy name kept for old tests/data; new code uses NotStarted.
-	issueStatusOpen = issueStatusNotStarted
-
 	requirementUnverified = "unverified"
 	requirementSatisfied  = "satisfied"
 	requirementUnmet      = "unmet"
@@ -647,8 +644,6 @@ func issueExecutionStatusFromWork(state workState) string {
 		return issueExecutionFailed
 	case workInterrupted:
 		return issueExecutionInterrupted
-	case workStopping, workUnknown:
-		return issueExecutionUnknown
 	default:
 		return issueExecutionUnknown
 	}

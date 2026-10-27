@@ -186,8 +186,10 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 			}
 		}
 		a.connectionErrorBanner(c, t, ct)
-		if ct.LoadErr != "" && !a.connectionFailureKnown(ct) {
-			ui.Text(c, ct.LoadErr).FontSize(12).Padding(8, 16).TextColor(t.Warning)
+		if ct.LoadErr != "" {
+			if _, known := knownConnectionFailure(ct.LoadErr); !known {
+				ui.Text(c, ct.LoadErr).FontSize(12).Padding(8, 16).TextColor(t.Warning)
+			}
 		}
 		if ct.Archived {
 			ui.Row(c).AlignItems(ui.Center).Gap(8).Padding(6, 16).Background(t.SurfaceHover).Children(func() {
@@ -340,7 +342,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 	switch m.Kind {
 	case msgActivity:
 		if m.ToolName != "" || m.ToolOutput != "" {
-			title := toolTitle(m)
+			title := toolTitleFor(m.ToolName, m.ToolArgs)
 			summary := toolOutputSummary(m.ToolOutput)
 			if m.Expanded {
 				summary = truncate(m.ToolOutput, 2000)
@@ -463,20 +465,21 @@ func (a *appModel) emptyState(c *ui.Context, t *ui.Theme) {
 }
 
 func knownConnectionFailure(text string) (string, bool) {
-	lower := strings.ToLower(text)
-	if strings.Contains(lower, "connection_mismatch") {
+	// runtimeMessage prefixes typed errors as "code: message". Match the code
+	// exactly rather than treating an arbitrary diagnostic containing the word
+	// as a known connection failure.
+	if strings.HasPrefix(strings.TrimSpace(text), "connection_mismatch:") {
 		return "This conversation is bound to a different connection. Review connection settings, or start a new conversation from the profile.", true
 	}
 	return "", false
 }
 
-func (a *appModel) connectionFailureKnown(ct *contact) bool {
+func (a *appModel) connectionSendFailureKnown(ct *contact) bool {
 	if ct == nil {
 		return false
 	}
-	_, loadKnown := knownConnectionFailure(ct.LoadErr)
-	_, sendKnown := knownConnectionFailure(ct.SendError)
-	return loadKnown || sendKnown
+	_, known := knownConnectionFailure(ct.SendError)
+	return known
 }
 
 func (a *appModel) connectionErrorBanner(c *ui.Context, t *ui.Theme, ct *contact) {
@@ -498,8 +501,8 @@ func (a *appModel) connectionErrorBanner(c *ui.Context, t *ui.Theme, ct *contact
 	}
 	expanded := a.connectionDetailsOpen != nil && a.connectionDetailsOpen[ct.ID]
 	ui.Column(c).Padding(8, 16).Gap(3).Background(t.SurfaceHover).Children(func() {
+		ui.Text(c, summary).FontSize(12).LineHeight(1.4).TextColor(t.Warning).MaxLines(3)
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, summary).FontSize(12).LineHeight(1.4).TextColor(t.Warning).Grow(1)
 			ui.Button(c, "Connection settings").FontSize(11).Padding(3, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.Text).OnClick(func() { a.openConfiguration() })
 			label := "Details"
 			if expanded {
@@ -589,7 +592,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 					ui.Text(c, "Runtime disconnected; restart Saki to check the task and history.").FontSize(11).LineHeight(1.4).TextColor(t.Danger)
 				}
 			}
-			if ct.SendError != "" && !a.connectionFailureKnown(ct) {
+			if ct.SendError != "" && !a.connectionSendFailureKnown(ct) {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 					ui.Text(c, ct.SendError).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 					if (ct.SendState == sendUnknown || ct.SendError != "") && a.runtimeStatus == runtimeStateReady && a.rt != nil {
@@ -923,10 +926,6 @@ func valueOr(value, fallback string) string {
 	return value
 }
 
-func toolTitle(m *message) string {
-	return toolTitleFor(m.ToolName, m.ToolArgs)
-}
-
 func toolOutputSummary(output string) string {
 	if strings.TrimSpace(output) == "" {
 		return ""
@@ -969,7 +968,10 @@ func toolOutputSummary(output string) string {
 	if body != "" {
 		return body
 	}
-	return truncate(output, 300)
+	// Structured tool results such as write/edit receipts have no readable
+	// assistant body. Keep the exact record in Details/Copy, but do not present
+	// raw JSON as a result preview.
+	return "Structured output received; open Details for the exact record."
 }
 
 func truncate(text string, max int) string {

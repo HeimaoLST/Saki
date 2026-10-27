@@ -686,7 +686,11 @@ func TestTaskContextIssueSentSnapshotPageCopyBeforeAndAfterRestart(t *testing.T)
 	var pageTexts []string
 	var copied string
 	h.pump.do(func() {
-		tr := ui.NewTester(h.app.view, 1040, 720)
+		tr := ui.NewTester(h.app.view, 1040, 1600)
+		tr.Frame()
+		if clickErr = tr.Click("More issue actions"); clickErr != nil {
+			return
+		}
 		tr.Frame()
 		if clickErr = tr.Click("Sent task context · 1"); clickErr != nil {
 			return
@@ -725,7 +729,11 @@ func TestTaskContextIssueSentSnapshotPageCopyBeforeAndAfterRestart(t *testing.T)
 	var restartTexts []string
 	var restartCopied string
 	h2.pump.do(func() {
-		tr2 := ui.NewTester(h2.app.view, 1040, 720)
+		tr2 := ui.NewTester(h2.app.view, 1040, 1600)
+		tr2.Frame()
+		if restartClickErr = tr2.Click("More issue actions"); restartClickErr != nil {
+			return
+		}
 		tr2.Frame()
 		if restartClickErr = tr2.Click("Sent task context · 1"); restartClickErr != nil {
 			return
@@ -1000,7 +1008,7 @@ func TestTaskContextGUIEnvelopeLikeBodyStaysLiteralWithRealContext(t *testing.T)
 	var clickErr error
 	var copied string
 	h.pump.do(func() {
-		tr := ui.NewTester(h.app.view, 1040, 720)
+		tr := ui.NewTester(h.app.view, 1040, 1600)
 		tr.Frame()
 		if clickErr = tr.Click("Copy message"); clickErr != nil {
 			return

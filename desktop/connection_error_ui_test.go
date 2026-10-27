@@ -48,3 +48,21 @@ func TestUnknownContactLoadErrorIsNotSwallowed(t *testing.T) {
 		t.Fatalf("unknown contact load error was swallowed: %v", tr.Texts())
 	}
 }
+
+func TestMixedConnectionDiagnosticsStayIndependent(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.LoadErr = "connection_mismatch: session is bound elsewhere"
+	ct.SendError = "send pipeline unavailable; inspect the task record"
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if !tr.HasText("This conversation is bound to a different connection") || !tr.HasText(ct.SendError) {
+		t.Fatalf("mixed known/unknown diagnostics were not both visible: %v", tr.Texts())
+	}
+	if tr.HasText(ct.LoadErr) {
+		t.Fatal("known load diagnostic leaked before Details")
+	}
+	if _, known := knownConnectionFailure("wrapped: connection_mismatch: still unknown"); known {
+		t.Fatal("unknown diagnostic containing the code was treated as known")
+	}
+}
