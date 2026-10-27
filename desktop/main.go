@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -22,6 +23,13 @@ var avatarPNG []byte
 var avatarBMP *ui.Bitmap
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--issue-tool-helper" {
+		if err := runIssueToolHelperCLI(os.Stdin, os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, "issue tool helper:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	a, err := newRuntimeApp()
 	if err != nil {
 		a = newUnavailableApp(err)

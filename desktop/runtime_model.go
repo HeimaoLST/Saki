@@ -81,6 +81,24 @@ func newRuntimeApp() (*appModel, error) {
 	}
 	a.bindTaskContexts()
 	a.normalizeRestoredSupplementBatches()
+	if a.issueToolLedger == nil {
+		a.issueToolLedger = &IssueToolOperationLedger{}
+	}
+	if a.issueToolScopes == nil {
+		a.issueToolScopes = map[string]IssueToolScope{}
+	}
+	if a.issueToolWaiters == nil {
+		a.issueToolWaiters = map[string]chan IssueToolReceipt{}
+	}
+	if a.issueToolShutdown == nil {
+		a.issueToolShutdown = make(chan struct{})
+	}
+	if a.issueToolRefresh == nil {
+		a.issueToolRefresh = map[string]issueToolRefreshMark{}
+	}
+	if err := a.startIssueToolService(); err != nil {
+		a.issueToolErr = err.Error()
+	}
 	formConfig := startup.Config
 	if formConfig == nil {
 		formConfig = startup.FormConfig
@@ -261,7 +279,7 @@ func (a *appModel) startRuntime() {
 	var rt *runtimeClient
 	var err error
 	if a.connectionEffective != nil {
-		launch, prepareErr := prepareConnectionLaunch(*a.connectionEffective, os.Environ(), a.sessionDir, os.TempDir())
+		launch, prepareErr := prepareConnectionLaunchWithTools(*a.connectionEffective, os.Environ(), a.sessionDir, os.TempDir(), a.issueToolLaunchSource())
 		if prepareErr != nil {
 			a.runtimeStatus = runtimeStateFailed
 			a.runtimeStage = "Connection configuration"
@@ -445,6 +463,9 @@ func (a *appModel) beginShutdown() {
 		return
 	}
 	a.shutdownStarted = true
+	if a.issueToolShutdown != nil {
+		close(a.issueToolShutdown)
+	}
 	a.persist()
 	if a.connectionTestCancel != nil {
 		a.connectionTestCancel()
@@ -580,6 +601,7 @@ func (a *appModel) restoreIssueWorks(rt *runtimeClient, generation int) {
 			}
 			contactID, issueID, sessionID := ct.ID, issue.ID, issue.WorkSessionID
 			issue.Work.Loaded = false
+			a.historyAsyncStarted()
 			go a.restoreIssueWork(rt, generation, contactID, issueID, sessionID)
 		}
 	}
@@ -592,6 +614,7 @@ func (a *appModel) restoreContacts(rt *runtimeClient, generation int) {
 		}
 		contactID, sessionID := ct.ID, ct.SessionID
 		ct.Loaded = false
+		a.historyAsyncStarted()
 		go a.restoreSession(rt, generation, contactID, sessionID)
 	}
 }
@@ -604,6 +627,7 @@ func (a *appModel) restoreSession(rt *runtimeClient, generation int, contactID, 
 	}
 	pages, status, err := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
+		defer a.historyAsyncFinished()
 		if generation != a.connectionGeneration || a.rt != rt {
 			return
 		}
@@ -654,6 +678,7 @@ func (a *appModel) restoreContactReadOnly(rt *runtimeClient, generation int, con
 	pages, status, historyErr := a.historyAllFor(rt, sessionID)
 	config, configErr := rt.connectionConfig(sessionID)
 	a.updateUI(func() {
+		defer a.historyAsyncFinished()
 		if generation != a.connectionGeneration || a.rt != rt {
 			return
 		}
@@ -691,6 +716,7 @@ func (a *appModel) restoreIssueWork(rt *runtimeClient, generation int, contactID
 	}
 	pages, status, err := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
+		defer a.historyAsyncFinished()
 		if generation != a.connectionGeneration || a.rt != rt {
 			return
 		}
@@ -738,6 +764,7 @@ func (a *appModel) restoreIssueWork(rt *runtimeClient, generation int, contactID
 func (a *appModel) restoreIssueReadOnly(rt *runtimeClient, generation int, contactID, issueID, sessionID string, loadErr error) {
 	pages, status, historyErr := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
+		defer a.historyAsyncFinished()
 		if generation != a.connectionGeneration || a.rt != rt {
 			return
 		}
@@ -778,6 +805,7 @@ func (a *appModel) reloadIssueWorkByID(contactID, issueID string) {
 	gen := issue.Work.historyGen
 	sessionID := issue.WorkSessionID
 	rt, runtimeGeneration := a.rt, a.connectionGeneration
+	a.historyAsyncStarted()
 	go a.reloadIssueWork(rt, runtimeGeneration, contactID, issueID, sessionID, gen)
 }
 
@@ -789,6 +817,7 @@ func (a *appModel) reloadIssueWork(rt *runtimeClient, runtimeGeneration int, con
 	}
 	pages, status, err := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
+		defer a.historyAsyncFinished()
 		if runtimeGeneration != a.connectionGeneration || a.rt != rt {
 			return
 		}
@@ -846,6 +875,7 @@ func (a *appModel) reloadContactByID(contactID string, explicit bool) {
 	gen := ct.historyGen
 	sessionID := ct.SessionID
 	rt, runtimeGeneration := a.rt, a.connectionGeneration
+	a.historyAsyncStarted()
 	go a.reloadSession(rt, runtimeGeneration, contactID, sessionID, gen, explicit)
 }
 
@@ -857,6 +887,7 @@ func (a *appModel) reloadSession(rt *runtimeClient, runtimeGeneration int, conta
 	}
 	pages, status, err := a.historyAllFor(rt, sessionID)
 	a.updateUI(func() {
+		defer a.historyAsyncFinished()
 		if runtimeGeneration != a.connectionGeneration || a.rt != rt {
 			return
 		}
@@ -979,6 +1010,10 @@ type historyProjection struct {
 }
 
 func parseHistory(sessionID string, records []historyRecord, stopRequested map[string]bool) historyProjection {
+	return parseHistoryWithContextFilter(sessionID, records, stopRequested, nil)
+}
+
+func parseHistoryWithContextFilter(sessionID string, records []historyRecord, stopRequested map[string]bool, filter func(string, []taskContextItem) []taskContextItem) historyProjection {
 	projection := historyProjection{}
 	byTask := map[string]*workItem{}
 	taskID, messageID := "", ""
@@ -1044,6 +1079,9 @@ func parseHistory(sessionID string, records []historyRecord, stopRequested map[s
 					text, contexts := inputText(item.Content), []taskContextItem(nil)
 					if item.Role == "user" {
 						text, contexts = taskContextUserContent(item.Content)
+					}
+					if filter != nil && len(contexts) > 0 {
+						contexts = filter(sessionID, contexts)
 					}
 					if text == "" && len(contexts) == 0 {
 						continue
@@ -1138,7 +1176,7 @@ func mergeWorks(ct *contact, existing, incoming []*workItem, targetSession strin
 }
 
 func (a *appModel) applyHistory(ct *contact, records []historyRecord, status string) {
-	projection := parseHistory(ct.SessionID, records, ct.StopRequestedTasks)
+	projection := parseHistoryWithIssueToolScopeFilter(ct.SessionID, records, ct.StopRequestedTasks, a.issueToolScopeIndexSnapshot())
 	ct.Messages = projection.messages
 	ct.History = projection.entries
 	ct.UnlinkedTools = projection.unlinked
@@ -1183,7 +1221,7 @@ func (a *appModel) applyHistory(ct *contact, records []historyRecord, status str
 
 func (a *appModel) applyIssueWorkHistory(ct *contact, issue *productIssue, records []historyRecord, status string) {
 	sessionID := issue.WorkSessionID
-	projection := parseHistory(sessionID, records, issue.Work.StopRequestedTasks)
+	projection := parseHistoryWithIssueToolScopeFilter(sessionID, records, issue.Work.StopRequestedTasks, a.issueToolScopeIndexSnapshot())
 	issue.Work.Messages = projection.messages
 	issue.Work.UnlinkedTools = projection.unlinked
 	ct.Works = mergeWorks(ct, ct.Works, projection.works, sessionID)
@@ -1202,6 +1240,10 @@ func (a *appModel) applyIssueWorkHistory(ct *contact, issue *productIssue, recor
 	}
 	issue.Work.Loaded = true
 	issue.Work.SessionState = status
+	if issue.Work.ReleasePending && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+		issue.Work.pendingExecutionID == "" && len(issue.Work.pendingEvents) == 0 && !issue.Work.Releasing {
+		a.releaseIssueWorkSession(ct, issue)
+	}
 	issue.Work.HistoryDirty = false
 	a.applyIssueRecoveredLifecycle(issue)
 }
@@ -1459,6 +1501,9 @@ func (a *appModel) applyIssueEvent(ct *contact, issue *productIssue, event runti
 			execution.Detail = detail
 		}
 		a.applyIssueTerminalLifecycle(issue, event.TaskID, payload.Status)
+		if a.issueToolEnabled() {
+			issue.Work.ReleasePending = true
+		}
 		_ = a.persist()
 		a.reloadIssueWorkByID(ct.ID, issue.ID)
 		a.maybeAutoContinueAllIssues()
@@ -1719,7 +1764,10 @@ func (a *appModel) canStartIssue(ct *contact, issue *productIssue) string {
 	if sessionBusy(issue.Work.SendState, issue.Work.ActiveTaskID) {
 		return "This issue already has an active execution."
 	}
-	if issue.WorkSessionID != "" && !issue.Work.Loaded {
+	if issue.Work.Releasing || issue.Work.ReleasePending {
+		return "This issue's work session is still being released; retry after it completes."
+	}
+	if issue.WorkSessionID != "" && !issue.Work.Loaded && !issue.Work.Released {
 		return "This issue's work history is still loading."
 	}
 	if a.activeTaskCount() >= a.maxActiveTasks() {
@@ -1758,17 +1806,27 @@ func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *i
 	// Capture immutable session inputs on the UI thread. The worker must not
 	// look up the contact/issue or read mutable profile/session fields later.
 	workspace := a.effectiveContactWorkspace(ct)
-	system := profileSystemPrompt(ct)
+	system := a.issueToolWorkSystemPrompt(ct)
 	sessionID := issue.WorkSessionID
 	context := cloneTaskContextItems(execution.Context)
 	rt, configured := a.rt, a.connectionManaged
-	go a.submitIssueTask(rt, configured, ct.ID, issue.ID, execution.ID, sessionID, workspace, system, prompt, context)
+	released := issue.Work.Released
+	go a.submitIssueTask(rt, configured, ct.ID, issue.ID, execution.ID, sessionID, workspace, system, prompt, context, released)
 	return true
 }
 
-func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID, issueID, executionID, sessionID, workspace, system, prompt string, context []taskContextItem) {
+func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID, issueID, executionID, sessionID, workspace, system, prompt string, context []taskContextItem, released bool) {
+	workTools := a.issueToolEnabled() && a.connectionManaged
+	createdSession := false
 	if sessionID == "" {
-		session, err := a.configuredCreate(rt, configured, workspace, system)
+		var session runtimeSession
+		var err error
+		if workTools {
+			session, err = a.configuredWorkCreate(rt, configured, workspace, system)
+			createdSession = err == nil
+		} else {
+			session, err = a.configuredCreate(rt, configured, workspace, system)
+		}
 		if err != nil {
 			a.failIssueSubmit(contactID, issueID, err, false)
 			return
@@ -1803,8 +1861,70 @@ func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID
 			return
 		}
 	}
-	result, err := rt.sendTask(sessionID, prompt, taskContextInputs(context)...)
+	if sessionID != "" && released {
+		if _, err := rt.loadSession(sessionID); err != nil {
+			a.failIssueSubmit(contactID, issueID, fmt.Errorf("reload released work session: %w", err), false)
+			return
+		}
+		a.runOnUI(func() {
+			if issue := a.contactByID(contactID).issueByID(issueID); issue != nil {
+				issue.Work.Released = false
+				issue.Work.Loaded = true
+				_ = a.persist()
+			}
+		})
+	}
+	wireContext := taskContextInputs(context)
+	if workTools {
+		configuredTools, err := a.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, createdSession)
+		if err != nil {
+			a.failIssueSubmit(contactID, issueID, err, false)
+			return
+		}
+		if configuredTools {
+			var scope *IssueToolScope
+			var scopeErr error
+			a.runOnUI(func() {
+				if a.shutdownStarted {
+					scopeErr = errors.New("app is shutting down")
+					return
+				}
+				scope, scopeErr = a.issueToolNewWorkScope(contactID, issueID, executionID, sessionID)
+				if scopeErr != nil {
+					return
+				}
+				ct := a.contactByID(contactID)
+				if ct == nil {
+					scopeErr = errors.New("contact disappeared before work scope")
+					return
+				}
+				_, execution := ct.executionByID(executionID)
+				if execution == nil {
+					scopeErr = errors.New("execution disappeared before work scope")
+					return
+				}
+				execution.ToolScopeRef = scope.Ref
+				execution.ToolScopeInput = issueToolScopeToken(scope)
+				if err := a.persist(); err != nil {
+					scopeErr = err
+				}
+			})
+			if scopeErr != nil {
+				a.failIssueSubmit(contactID, issueID, scopeErr, false)
+				return
+			}
+			if input, ok := issueToolScopeInput(scope); ok {
+				wireContext = append(wireContext, input)
+			}
+		}
+	}
+	if err := validateRuntimeContextInputs(wireContext); err != nil {
+		a.failIssueSubmit(contactID, issueID, fmt.Errorf("issue work caller context: %w", err), false)
+		return
+	}
+	result, err := rt.sendTask(sessionID, prompt, wireContext...)
 	if err != nil {
+		a.noteIssueToolTaskError(rt, sessionID, err)
 		a.failIssueSubmit(contactID, issueID, err, true)
 		return
 	}
@@ -1840,6 +1960,9 @@ func (a *appModel) acceptIssueTask(ct *contact, issue *productIssue, execution *
 		execution.MessageID = result.MessageID
 		execution.Status = issueExecutionAccepted
 		execution.Detail = ""
+		if execution.ToolScopeRef != "" {
+			a.issueToolBindTask(execution.ToolScopeRef, result.TaskID)
+		}
 	}
 	issue.Work.pendingExecutionID = ""
 	if w := a.ensureWork(ct, result.TaskID, result.MessageID); w != nil {
@@ -1917,6 +2040,21 @@ func (a *appModel) acceptIssueTask(ct *contact, issue *productIssue, execution *
 			issue.Work.SendError = "The accepted task could not be cancelled; do not retry it automatically."
 		}
 	}
+	if execution != nil && execution.ToolOperationID != "" {
+		detail := ""
+		if !acceptedSaved {
+			detail = issue.Work.SendError
+			if detail == "" {
+				detail = "Runtime accepted the task, but its local receipt could not be saved."
+			}
+		}
+		a.issueToolCompleteExecution(execution, acceptedSaved, detail)
+	}
+	if execution != nil && execution.WaitRequested && issue.openQuestion() != nil &&
+		a.requestIssueWaitStop(ct, issue, execution.ID, execution.SessionID, execution.TaskID) {
+		// The actual Runtime task is now known; cancellation was intentionally
+		// deferred until this accept callback.
+	}
 }
 
 func executionIDOf(execution *issueExecution) string {
@@ -1939,6 +2077,15 @@ func (a *appModel) failIssueSubmit(contactID, issueID string, err error, submitt
 		issue.Work.pendingEvents = nil
 		_, execution := ct.executionByID(issue.Work.pendingExecutionID)
 		issue.Work.pendingExecutionID = ""
+		if execution != nil && execution.ToolOperationID != "" {
+			defer func() {
+				detail := execution.Detail
+				if detail == "" {
+					detail = issue.Work.SendError
+				}
+				a.issueToolCompleteExecution(execution, false, detail)
+			}()
+		}
 		batch := issueSupplementBatchForExecution(issue, executionIDOf(execution))
 		detail := a.connectionRuntimeMessage(err)
 		switch {
@@ -2039,7 +2186,7 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 	contactID := ct.ID
 	sessionID := ct.SessionID
 	workspace := a.effectiveContactWorkspace(ct)
-	system := profileSystemPrompt(ct)
+	system := a.issueToolConversationSystemPrompt(ct)
 	submittedContext := ct.Context.snapshot()
 	ct.historyGen++ // invalidate any in-flight reload
 	ct.SubmittedDraft = text
@@ -2055,18 +2202,21 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 		return false
 	}
 	rt, configured := a.rt, a.connectionManaged
-	go a.submitTask(rt, configured, contactID, sessionID, text, workspace, system, submittedContext)
+	issueTools := a.issueToolEnabled() && a.connectionManaged
+	go a.submitTask(rt, configured, contactID, sessionID, text, workspace, system, submittedContext, newIssueToolTurnID(), issueTools)
 	return true
 }
 
-func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, sessionID, text, workspace, system string, context []taskContextItem) {
+func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, sessionID, text, workspace, system string, context []taskContextItem, turnID string, issueTools bool) {
+	createdSession := false
 	if sessionID == "" {
-		session, err := a.configuredCreate(rt, configured, workspace, system)
+		session, err := a.configuredConversationCreate(rt, configured, workspace, system)
 		if err != nil {
 			a.failSubmit(contactID, err, false)
 			return
 		}
 		sessionID = session.SessionID
+		createdSession = true
 		// The mapping must be durably saved before task.send; Window.Update is
 		// asynchronous, so wait for the UI callback's save result.
 		saved := make(chan error, 1)
@@ -2094,8 +2244,49 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 			return
 		}
 	}
-	result, err := rt.sendTask(sessionID, text, taskContextInputs(context)...)
+	wireContext := taskContextInputs(context)
+	if issueTools {
+		configuredTools, err := a.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, createdSession)
+		if err != nil {
+			a.failSubmit(contactID, err, false)
+			return
+		}
+		issueTools = configuredTools
+	}
+	if issueTools {
+		var scope *IssueToolScope
+		var scopeErr error
+		a.runOnUI(func() {
+			if a.shutdownStarted {
+				scopeErr = errors.New("app is shutting down")
+				return
+			}
+			scope, scopeErr = a.issueToolNewScope(contactID, sessionID, turnID)
+		})
+		if scopeErr != nil {
+			a.failSubmit(contactID, fmt.Errorf("prepare issue tool scope: %w", scopeErr), false)
+			return
+		}
+		a.runOnUI(func() {
+			if err := a.issueToolAttachPendingScope(contactID, scope.Ref); err != nil {
+				scopeErr = fmt.Errorf("attach issue tool scope: %w", err)
+			}
+		})
+		if scopeErr != nil {
+			a.failSubmit(contactID, scopeErr, false)
+			return
+		}
+		if input, ok := issueToolScopeInput(scope); ok {
+			wireContext = append(wireContext, input)
+		}
+	}
+	if err := validateRuntimeContextInputs(wireContext); err != nil {
+		a.failSubmit(contactID, fmt.Errorf("caller context plus issue tool scope: %w", err), false)
+		return
+	}
+	result, err := rt.sendTask(sessionID, text, wireContext...)
 	if err != nil {
+		a.noteIssueToolTaskError(rt, sessionID, err)
 		a.failSubmit(contactID, err, true)
 		return
 	}
@@ -2113,20 +2304,26 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 
 func (a *appModel) acceptTask(ct *contact, text string, result runtimeSendResult) {
 	var submittedContext []taskContextItem
+	scopeRef := ""
 	if ct.pendingSend != nil {
 		submittedContext = cloneTaskContextItems(ct.pendingSend.Context)
+		scopeRef = ct.pendingSend.ToolScopeRef
 	}
 	ct.historyGen++
 	ct.ActiveTaskID = result.TaskID
 	ct.LastTaskID = result.TaskID
 	ct.SendState = sendAccepted
 	ct.SendError = ""
+	a.issueToolBindTask(scopeRef, result.TaskID)
 	issueSend := ct.pendingIssueExecution != ""
 	if w := a.ensureWork(ct, result.TaskID, result.MessageID); w != nil {
 		w.State = workAccepted
 		w.Prompt = text
 	}
 	_, execution := ct.executionByID(ct.pendingIssueExecution)
+	if execution != nil && execution.ToolScopeRef != "" {
+		a.issueToolBindTask(execution.ToolScopeRef, result.TaskID)
+	}
 	if execution != nil {
 		execution.SessionID = ct.SessionID
 		execution.TaskID = result.TaskID
@@ -2423,6 +2620,7 @@ func (a *appModel) persist() error {
 	if a.store == nil {
 		return nil
 	}
+	a.store.setIssueToolState(a.issueToolLedger, a.issueToolScopes)
 	if err := a.store.save(a.contacts, a.selectedID()); err != nil {
 		a.runtimeErr = "Could not save contacts: " + err.Error()
 		return err

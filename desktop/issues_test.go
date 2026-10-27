@@ -69,6 +69,9 @@ func TestIssueStoreRoundTripAndV1Compatibility(t *testing.T) {
 	if reloaded.state.Contacts[0].Draft != "preserved draft" || reloaded.state.Contacts[0].SessionID != "session-old" {
 		t.Fatalf("v1 fields changed after issue save: %+v", reloaded.state.Contacts[0])
 	}
+	if reloaded.state.Contacts[0].SelectedIssueID != stored.ID {
+		t.Fatalf("reloaded selected issue = %q, want %q", reloaded.state.Contacts[0].SelectedIssueID, stored.ID)
+	}
 }
 
 func TestCreateIssueRequiresGoalAndPersistsBeforeAnyRun(t *testing.T) {

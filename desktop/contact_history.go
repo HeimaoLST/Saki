@@ -29,7 +29,7 @@ const contactHistoryMatchLimit = 100
 // Session IDs are an explicit contact-owned scope. Search never discovers
 // unrelated sessions or loads them for execution; EntryID locates the full
 // message through the same history projection used by the conversation view.
-func (a *appModel) searchContactHistory(rt *runtimeClient, sessionIDs []string, query string) contactHistoryResult {
+func (a *appModel) searchContactHistory(rt *runtimeClient, sessionIDs []string, query string, scopeIndex map[string]issueToolScopeIdentity) contactHistoryResult {
 	query = strings.ToLower(strings.TrimSpace(query))
 	result := contactHistoryResult{}
 	seen := make(map[string]bool, len(sessionIDs))
@@ -43,7 +43,7 @@ func (a *appModel) searchContactHistory(rt *runtimeClient, sessionIDs []string, 
 			result.Failures = append(result.Failures, contactHistoryFailure{SessionID: sessionID, Err: err})
 			continue
 		}
-		entries := parseHistory(sessionID, records, nil).entries
+		entries := parseHistoryWithIssueToolScopeFilter(sessionID, records, nil, scopeIndex).entries
 		for i := len(entries) - 1; i >= 0; i-- {
 			entry := entries[i]
 			if !strings.Contains(strings.ToLower(entry.Text), query) {

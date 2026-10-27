@@ -30,6 +30,10 @@ type pendingSend struct {
 	Draft   string            `json:"draft,omitempty"`
 	Context []taskContextItem `json:"context,omitempty"`
 	State   string            `json:"state,omitempty"`
+	// ToolScopeRef binds the app-issued issue-tool scope to the one pending
+	// conversation turn. It is not a user-visible field and is cleared with the
+	// pending send after acceptance.
+	ToolScopeRef string `json:"tool_scope_ref,omitempty"`
 }
 
 type sendState int
@@ -230,6 +234,20 @@ type appModel struct {
 	issueResultInspect func(issueResultFile) issueResultFileInspection
 	issueResultOpen    func(string) error
 	issueResultReveal  func(string) error
+
+	// #154 conversation issue tools. The scope/operation records live in the
+	// same contact store, not in a second database or queue.
+	issueToolLedger          *IssueToolOperationLedger
+	issueToolScopes          map[string]IssueToolScope
+	issueToolServer          *issueToolIPCServer
+	issueToolEndpoint        string
+	issueToolHelper          string
+	issueToolErr             string
+	issueToolWaiters         map[string]chan IssueToolReceipt
+	issueToolShutdown        chan struct{}
+	issueToolMu              sync.Mutex
+	issueToolRefresh         map[string]issueToolRefreshMark
+	issueToolReleaseInFlight int
 
 	modelForm         *modelSelection
 	modelOpenToken    int

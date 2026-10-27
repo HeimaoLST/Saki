@@ -12,7 +12,7 @@ func clonePendingSend(send *pendingSend) *pendingSend {
 	if send == nil {
 		return nil
 	}
-	return &pendingSend{Draft: send.Draft, Context: cloneTaskContextItems(send.Context), State: send.State}
+	return &pendingSend{Draft: send.Draft, Context: cloneTaskContextItems(send.Context), State: send.State, ToolScopeRef: send.ToolScopeRef}
 }
 
 func (a *appModel) loadStoredTaskContexts(store *contactStore) {

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -20,8 +21,10 @@ import (
 // persisted truth. v5 added owned task-context snapshots and pending-send
 // intent. v6 added the issue supplement ledger. v7 adds contact archive state
 // and explicit references to conversations replaced by Save and start new.
-// v1-v6 remain readable here. Older apps reject v7 instead of dropping fields.
-const contactStoreVersion = 7
+// v8 adds the conversation issue-tool scope/operation ledger. v9 adds
+// persistent missing-information questions and their answer associations.
+// v1-v8 remain readable here. Older apps reject v9 instead of dropping fields.
+const contactStoreVersion = 9
 
 type storedContact struct {
 	ID               string            `json:"id"`
@@ -37,6 +40,7 @@ type storedContact struct {
 	ArchivedAt       int64             `json:"archived_at,omitempty"`
 	PreviousSessions []string          `json:"previous_sessions,omitempty"`
 	PendingSend      *pendingSend      `json:"pending_send,omitempty"`
+	SelectedIssueID  string            `json:"selected_issue_id,omitempty"`
 	UpdatedAt        int64             `json:"updated_at,omitempty"`
 }
 
@@ -51,6 +55,10 @@ type storedIssueExecution struct {
 	RequirementsRevision int               `json:"requirements_revision,omitempty"`
 	Context              []taskContextItem `json:"context,omitempty"`
 	SupplementBatchID    string            `json:"supplement_batch_id,omitempty"`
+	ToolOperationID      string            `json:"tool_operation_id,omitempty"`
+	ToolScopeRef         string            `json:"tool_scope_ref,omitempty"`
+	ToolScopeInput       string            `json:"tool_scope_input,omitempty"`
+	WaitRequested        bool              `json:"wait_requested,omitempty"`
 }
 
 type storedRequirement struct {
@@ -76,19 +84,24 @@ type storedIssue struct {
 	WorkSessionID        string                 `json:"work_session_id,omitempty"`
 	TaskContext          []taskContextItem      `json:"task_context,omitempty"`
 	Supplements          *issueSupplementLedger `json:"supplements,omitempty"`
+	Questions            []*issueQuestion       `json:"questions,omitempty"`
 	Executions           []storedIssueExecution `json:"executions,omitempty"`
 }
 
 type storedState struct {
-	Version  int             `json:"version"`
-	Selected string          `json:"selected,omitempty"`
-	Contacts []storedContact `json:"contacts"`
-	Issues   []storedIssue   `json:"issues,omitempty"`
+	Version             int                       `json:"version"`
+	Selected            string                    `json:"selected,omitempty"`
+	Contacts            []storedContact           `json:"contacts"`
+	Issues              []storedIssue             `json:"issues,omitempty"`
+	IssueToolOperations *IssueToolOperationLedger `json:"issue_tool_operations,omitempty"`
+	IssueToolScopes     []IssueToolScope          `json:"issue_tool_scopes,omitempty"`
 }
 
 type contactStore struct {
-	path  string
-	state storedState
+	path            string
+	state           storedState
+	issueToolLedger *IssueToolOperationLedger
+	issueToolScopes map[string]IssueToolScope
 }
 
 func newContactID() string {
@@ -138,6 +151,7 @@ func openContactStore(path, defaultWorkspace string) (*contactStore, error) {
 		if !seen[store.state.Selected] {
 			store.state.Selected = store.state.Contacts[0].ID
 		}
+		store.restoreIssueToolState()
 		return store, nil
 	case errors.Is(err, os.ErrNotExist):
 		store.state = storedState{
@@ -151,6 +165,7 @@ func openContactStore(path, defaultWorkspace string) (*contactStore, error) {
 			}},
 		}
 		store.state.Selected = store.state.Contacts[0].ID
+		store.restoreIssueToolState()
 		if err := store.saveState(); err != nil {
 			return nil, err
 		}
@@ -160,7 +175,37 @@ func openContactStore(path, defaultWorkspace string) (*contactStore, error) {
 	}
 }
 
+func (s *contactStore) restoreIssueToolState() {
+	if s.issueToolLedger == nil {
+		s.issueToolLedger = s.state.IssueToolOperations
+	}
+	if s.issueToolLedger == nil {
+		s.issueToolLedger = &IssueToolOperationLedger{}
+	}
+	if s.issueToolScopes == nil {
+		s.issueToolScopes = map[string]IssueToolScope{}
+	}
+	for _, scope := range s.state.IssueToolScopes {
+		if scope.Validate() == nil {
+			s.issueToolScopes[scope.Ref] = scope
+		}
+	}
+}
+
+func (s *contactStore) setIssueToolState(ledger *IssueToolOperationLedger, scopes map[string]IssueToolScope) {
+	if ledger == nil {
+		ledger = &IssueToolOperationLedger{}
+	}
+	s.issueToolLedger = ledger
+	s.issueToolScopes = make(map[string]IssueToolScope, len(scopes))
+	for ref, scope := range scopes {
+		s.issueToolScopes[ref] = scope
+	}
+}
+
 func (s *contactStore) saveState() error {
+	s.state.IssueToolOperations = s.issueToolLedger
+	s.state.IssueToolScopes = s.issueToolScopesList()
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create contact store directory: %w", err)
@@ -198,9 +243,11 @@ func (s *contactStore) saveState() error {
 // event (drafts) and from explicit product edits; it does not rewrite messages.
 func (s *contactStore) save(contacts []*contact, selected string) error {
 	s.state = storedState{
-		Version:  contactStoreVersion,
-		Selected: selected,
-		Contacts: make([]storedContact, 0, len(contacts)),
+		Version:             contactStoreVersion,
+		Selected:            selected,
+		Contacts:            make([]storedContact, 0, len(contacts)),
+		IssueToolOperations: s.issueToolLedger,
+		IssueToolScopes:     s.issueToolScopesList(),
 	}
 	for _, c := range contacts {
 		storedContact := storedContact{
@@ -217,6 +264,7 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 			ArchivedAt:       c.ArchivedAt,
 			PreviousSessions: append([]string(nil), c.PreviousSessions...),
 			PendingSend:      clonePendingSend(c.pendingSend),
+			SelectedIssueID:  c.SelectedIssueID,
 			UpdatedAt:        nowMillis(),
 		}
 		s.state.Contacts = append(s.state.Contacts, storedContact)
@@ -227,6 +275,7 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 				Evidence: issue.Evidence, CreatedAt: issue.CreatedAt, UpdatedAt: issue.UpdatedAt,
 				WorkSessionID: issue.WorkSessionID, RequirementsRevision: issue.RequirementsRevision,
 				TaskContext: issue.Context.snapshot(), Supplements: issue.Supplements,
+				Questions: issue.Questions,
 			}
 			for _, requirement := range issue.Requirements {
 				if requirement == nil || strings.TrimSpace(requirement.Text) == "" {
@@ -245,6 +294,10 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 					RequirementsRevision: execution.RequirementsRevision,
 					Context:              cloneTaskContextItems(execution.Context),
 					SupplementBatchID:    execution.SupplementBatchID,
+					ToolOperationID:      execution.ToolOperationID,
+					ToolScopeRef:         execution.ToolScopeRef,
+					ToolScopeInput:       execution.ToolScopeInput,
+					WaitRequested:        execution.WaitRequested,
 				})
 			}
 			s.state.Issues = append(s.state.Issues, stored)
@@ -254,6 +307,18 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 		s.state.Selected = contacts[0].ID
 	}
 	return s.saveState()
+}
+
+func (s *contactStore) issueToolScopesList() []IssueToolScope {
+	if len(s.issueToolScopes) == 0 {
+		return nil
+	}
+	out := make([]IssueToolScope, 0, len(s.issueToolScopes))
+	for _, scope := range s.issueToolScopes {
+		out = append(out, scope)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt < out[j].CreatedAt })
+	return out
 }
 
 func (s *contactStore) hasContact(id string) bool {

@@ -314,7 +314,7 @@ func TestContactManagementVersionSixUpgradePreservesOwnedExecutionData(t *testin
 		t.Fatal(err)
 	}
 	got := reloaded.state
-	if got.Version != 7 || got.Selected != legacy.Selected || len(got.Contacts) != 1 || len(got.Issues) != 1 {
+	if got.Version != contactStoreVersion || got.Selected != legacy.Selected || len(got.Contacts) != 1 || len(got.Issues) != 1 {
 		t.Fatalf("v6 upgrade lost ownership: %+v", got)
 	}
 	ct := got.Contacts[0]

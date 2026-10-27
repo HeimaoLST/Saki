@@ -33,6 +33,13 @@ func issueSupplementTargetFor(ct *contact, issue *productIssue) issueSupplementT
 }
 
 func (a *appModel) addIssueSupplement(ct *contact, issueID, text string) error {
+	return a.addIssueSupplementBefore(ct, issueID, text, nil)
+}
+
+// addIssueSupplementBefore is the one application supplement path. The optional
+// callback runs after the ledger item exists but before the same store save, so
+// a question answer can be linked atomically without a second queue.
+func (a *appModel) addIssueSupplementBefore(ct *contact, issueID, text string, before func(*issueSupplement)) error {
 	issue := issueForContact(ct, issueID)
 	if issue == nil {
 		return errors.New("issue not found for this contact")
@@ -42,7 +49,7 @@ func (a *appModel) addIssueSupplement(ct *contact, issueID, text string) error {
 	}
 	ledger := issueSupplementLedgerFor(issue)
 	target := issueSupplementTargetFor(ct, issue)
-	if _, err := ledger.Add(target, text, a.persist); err != nil {
+	if _, err := ledger.AddWith(target, text, before, a.persist); err != nil {
 		return err
 	}
 	a.issueActionError = ""
@@ -131,6 +138,10 @@ func (a *appModel) autoContinueIssue(ct *contact, issue *productIssue) bool {
 // revision, all eligible pending supplements, and task context before the one
 // save that records the execution and dispatching batch.
 func (a *appModel) startIssueRun(ct *contact, issue *productIssue) bool {
+	return a.startIssueRunWithOperation(ct, issue, "")
+}
+
+func (a *appModel) startIssueRunWithOperation(ct *contact, issue *productIssue, operationID string) bool {
 	prompt := issuePrompt(issue)
 	if strings.TrimSpace(prompt) == "" {
 		a.issueFormError = "This issue has no goal to run."
@@ -149,7 +160,7 @@ func (a *appModel) startIssueRun(ct *contact, issue *productIssue) bool {
 	execution := &issueExecution{
 		ID: newIssueExecutionID(), SessionID: issue.WorkSessionID, Prompt: prompt,
 		Status: issueExecutionPending, RequirementsRevision: issue.RequirementsRevision,
-		Context: issue.Context.snapshot(),
+		Context: issue.Context.snapshot(), ToolOperationID: operationID,
 	}
 	previousExecutions := issue.Executions
 	previousSend, previousPending := issue.Work.SendState, issue.Work.pendingExecutionID
@@ -306,19 +317,26 @@ func supplementHistoryMatches(execution *issueExecution, records []historyRecord
 	if execution == nil || execution.Prompt == "" || execution.TaskID == "" || execution.MessageID == "" {
 		return false
 	}
+	expected := cloneTaskContextItems(execution.Context)
+	if execution.ToolScopeRef != "" && execution.ToolScopeInput != "" {
+		expected = append(expected, taskContextItem{
+			Name: issueToolScopeContextName, Text: execution.ToolScopeInput,
+		})
+	}
 	// Runtime JournalRecord::Messages has no task/message IDs; parseHistory
 	// carries the ownership from TaskStarted through Messages to TaskFinished.
 	projection := parseHistory(execution.SessionID, records, nil)
 	for index := len(projection.messages) - 1; index >= 0; index-- {
 		message := projection.messages[index]
 		if message.Kind != msgUser || message.TaskID != execution.TaskID || message.MessageID != execution.MessageID ||
-			message.Text != execution.Prompt || len(message.Context) != len(execution.Context) {
+			message.Text != execution.Prompt || len(message.Context) != len(expected) {
 			continue
 		}
 		matched := true
-		for i := range message.Context {
-			current := execution.Context[i]
-			if message.Context[i].Name != current.inputName() || message.Context[i].Text != current.Text {
+		for i := range expected {
+			current := expected[i]
+			if message.Context[i].Name != current.inputName() && message.Context[i].Name != current.Name ||
+				message.Context[i].Text != current.Text {
 				matched = false
 				break
 			}
