@@ -4,6 +4,8 @@
 
 [previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。当前主题事实见 `desktop/theme.go` 的 `resolveWorkbenchTheme`（Paper/Moss；light/dark 语义角色）；#92 的 Moon/Dawn 和 #90 的 11px/12px 数值只保留为历史设计/实现记录，不再作为当前规范。此前将这些能力或颜色列为后续独立任务的说明已失效，不再作为当前实现或未来承诺；具体状态以对应任务段、PR 和 `dev` 为准。
 
+<a id="gui-design-constraints"></a>
+
 ## GUI 设计约束（当前规范）
 
 更新日期：2026-10-27。本节是 GUI 可读性、操作可发现性与布局验收的唯一规范入口；`AGENTS.md` §10 和 PR 模板只链接本节，不重复具体数值。本节替代早期 #90 的 11px 状态/12px 按钮规则；旧记录只作为历史证据保留。

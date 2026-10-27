@@ -24,7 +24,7 @@ Closes #  <!-- 目标为默认分支 dev 且完成该任务时填写；hotfix、
 - [ ] 工具链与复现：Rust 1.99.0、Go 由 `desktop/go.mod` 决定；命令与 `.github/workflows/ci.yml` 一致：
 - [ ] 离线确定性测试（禁止 sleep）：
 - [ ] 真实模型验证（如适用，注明模型 ID 与摘要）：
-- [ ] GUI 设计核对（条件性；适用时按 [GUI 设计约束（当前规范）](../docs/design/desktop.md#gui-设计约束当前规范)）：
+- [ ] GUI 设计核对（条件性；适用时按 [GUI 设计约束（当前规范）](https://github.com/HeimaoLST/Saki/blob/dev/docs/design/desktop.md#gui-design-constraints)）：
   - 受影响流程/视图 + 同 SHA 两色/尺寸截图：
   - 关键按钮点击、键盘焦点、正常滚动验证：
   - headless / native 边界及未验项：

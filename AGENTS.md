@@ -519,7 +519,7 @@ BLOCKED-BY: #77            # 有真实 issue 依赖时写；权限／环境／�
 | runtime／client／session 行为 | 确定性离线测试（mock／受控协调，**禁止 sleep 碰运气**）；依赖真实模型时附真实运行摘要 | 测试覆盖真实行为与非平凡不变量；基线数字以最近一次全量运行／CI 结果为准，不写死在协议里 |
 | 内置工具（runtime 线） | 离线工具测试 + 边界（大输出、超时、错误）；涉及真实模型调用的闭环验证 | 大输出落盘回读也要验证 |
 | TUI／console | 单元与渲染测试 + 真实 PTY／tmux 运行记录；交互变化附前后对比 | 项目已有 PTY 验收实践 |
-| GUI（desktop） | `cd desktop && go test ./...`；视觉/交互变化按 [GUI 设计约束（当前规范）](docs/design/desktop.md#gui-设计约束当前规范) 的验收项执行 | 独立 Go module；截图、交互记录与 headless/native 边界按规范标注 |
+| GUI（desktop） | `cd desktop && go test ./...`；视觉/交互变化按 [GUI 设计约束（当前规范）](docs/design/desktop.md#gui-design-constraints) 的验收项执行 | 独立 Go module；截图、交互记录与 headless/native 边界按规范标注 |
 | docs | 与代码或来源一致；延续「实现事实／作者报告／设计推论／待验证」的标注约定 | 见 `docs/README.md`；文档改动不强制跑模型／PTY，按适用性记录 N/A |
 | 用户可见行为变化 | 同步更新相关 `docs/design/` 文档，或开 follow-up issue 并链接 | 不允许只改代码不更新文档且不说明 |
 
