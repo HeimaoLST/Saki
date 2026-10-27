@@ -400,6 +400,12 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 		if a.issueActionError != "" {
 			ui.Text(c, a.issueActionError).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 		}
+		if question := issue.openQuestion(); question != nil {
+			ui.Column(c).Padding(8).Radius(8).Background(t.Surface).Gap(3).Children(func() {
+				ui.Text(c, fmt.Sprintf("Waiting for your answer · requirement revision %d", question.RequirementsRevision)).FontSize(11).FontWeight(500).TextColor(t.Warning)
+				ui.Text(c, question.Text).FontSize(11).LineHeight(1.4).TextColor(t.Text)
+			})
+		}
 		if editable {
 			ui.Button(c, "Edit issue").FontSize(11).Padding(3, 0).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openEditIssueForm(issue) })
 		}
@@ -588,6 +594,9 @@ func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *
 			}
 		}
 		waitButton := func() {
+			if issue.openQuestion() != nil {
+				return
+			}
 			if issue.Status == issueStatusWaitingUser || issue.Status == issueStatusNeedsAttention {
 				ui.Button(c, "Resume").FontSize(11).Padding(2, 7).OnClick(func() {
 					if !a.resumeIssue(issue.ID) {

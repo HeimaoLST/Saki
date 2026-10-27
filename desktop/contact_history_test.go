@@ -45,7 +45,7 @@ func TestContactHistoryProcessScopesLocatesAndReportsMissingContext(t *testing.T
 	}
 	live = startModelTestRuntime(t, binary, launch.Dir, launch.Env)
 	a := &appModel{}
-	result := a.searchContactHistory(live.client, []string{ids[1], "missing-session", ids[0], ids[0]}, "budget")
+	result := a.searchContactHistory(live.client, []string{ids[1], "missing-session", ids[0], ids[0]}, "budget", nil)
 	if result.Limited || len(result.Failures) != 1 || result.Failures[0].SessionID != "missing-session" || len(result.Matches) != 1 {
 		t.Fatalf("saved-conversation search did not retain partial results and explicit scope: %+v", result)
 	}

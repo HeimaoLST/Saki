@@ -50,11 +50,10 @@ func startRoutingHarnessWithHandler(t *testing.T, binary string, handler http.Ha
 			app.runtimeMaxActiveTasks == maxTasks
 	})
 	t.Cleanup(func() {
-		server.Close()
-		if h.closed {
-			return
+		if !h.closed {
+			h.shutdown(t)
 		}
-		h.shutdown(t)
+		server.Close()
 	})
 	return h
 }
@@ -389,37 +388,48 @@ func TestStoppingIssueWorkDoesNotStopConversation(t *testing.T) {
 	defer provider.release("gate-B")
 	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 2)
 	var issueID string
+	var setupErr string
 	h.pump.do(func() {
 		if !h.app.createIssue("gate-A issue", "Stop only A.") {
-			t.Fatalf("createIssue: %s", h.app.issueFormError)
+			setupErr = fmt.Sprintf("createIssue: %s", h.app.issueFormError)
+			return
 		}
 		issueID = h.app.selectedContact().SelectedIssueID
 		if !h.app.runIssue(issueID) {
-			t.Fatalf("runIssue: %s", h.app.issueFormError)
+			setupErr = fmt.Sprintf("runIssue: %s", h.app.issueFormError)
 		}
 	})
+	if setupErr != "" {
+		t.Fatal(setupErr)
+	}
 	select {
 	case <-provider.arrived["gate-A"]:
 	case <-time.After(15 * time.Second):
-		t.Fatal("provider did not receive A")
+		t.Fatal("stage wait A arrival: provider did not receive A")
 	}
+	t.Logf("stage: A provider arrived; waiting for active issue task")
 	h.pump.wait(func() bool {
 		ct := h.app.selectedContact()
 		issue := ct.issueByID(issueID)
 		return issue != nil && issue.Work.ActiveTaskID != ""
 	})
+	var sendBErr string
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
 		ct.Draft = "gate-B conversation"
 		if !h.app.sendCurrent() {
-			t.Fatalf("conversation B rejected: %s", ct.SendError)
+			sendBErr = ct.SendError
 		}
 	})
+	if sendBErr != "" {
+		t.Fatalf("conversation B rejected: %s", sendBErr)
+	}
 	select {
 	case <-provider.arrived["gate-B"]:
 	case <-time.After(15 * time.Second):
-		t.Fatal("provider did not receive B while A was active")
+		t.Fatal("stage wait B arrival: provider did not receive B while A was active")
 	}
+	t.Logf("stage: B provider arrived while A active; waiting for both active tasks")
 	h.pump.wait(func() bool {
 		ct := h.app.selectedContact()
 		issue := ct.issueByID(issueID)
@@ -430,40 +440,74 @@ func TestStoppingIssueWorkDoesNotStopConversation(t *testing.T) {
 	if status, err := h.app.rt.cancelTask(workSession, "wrong-task-id"); err != nil || status != "not_running" {
 		t.Fatalf("wrong task cancel = %q / %v", status, err)
 	}
+	var cancelErr, cancelTaskID string
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
 		issue := ct.issueByID(issueID)
-		if issue.Work.ActiveTaskID == "" {
-			t.Fatal("issue A was not active before stop")
+		if issue == nil || issue.Work.ActiveTaskID == "" {
+			cancelErr = "issue A was not active before stop"
+			return
 		}
+		cancelTaskID = issue.Work.ActiveTaskID
 		if !h.app.cancelIssue(issueID) {
-			t.Fatal("cancelIssue did not accept the active issue")
+			cancelErr = "cancelIssue did not accept the active issue"
+			return
 		}
+		if !issue.Work.StopRequestedTasks[cancelTaskID] {
+			cancelErr = "stop intent was not recorded in the same UI callback"
+			return
+		}
+		if work := workFor(ct, cancelTaskID); work == nil || !work.StopRequested {
+			cancelErr = "stop intent was not projected onto the work item in the same UI callback"
+			return
+		}
+		// The transient "Cancellation requested"/"Cancelling" wording may be
+		// replaced by the async reply before any later waiter is registered.
+		// The durable intent above is what the callback boundary guarantees.
 	})
-	h.pump.wait(func() bool {
-		issue := h.app.selectedContact().issueByID(issueID)
-		return issue != nil && issue.Work.SendError == "Cancellation requested"
-	})
-	provider.release("gate-A")
+	if cancelErr != "" {
+		t.Fatal(cancelErr)
+	}
+	t.Logf("stage: stop intent recorded in the cancel UI callback; gate-A remains held")
+	// Do not release A until Runtime has reported the real interrupted terminal.
 	h.pump.wait(func() bool {
 		ct := h.app.selectedContact()
 		issue := ct.issueByID(issueID)
 		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
 			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted
 	})
-	ct := h.app.selectedContact()
-	if ct.ActiveTaskID == "" || containsText(contactMessageTextsForWork(ct.issueByID(issueID)), "gate-B") {
-		t.Fatalf("stopping A stopped/leaked B: active=%q work=%+v", ct.ActiveTaskID, ct.issueByID(issueID).Work)
+	provider.release("gate-A")
+	t.Logf("stage: A reached interrupted before gate-A release; B must remain active")
+	var bActive string
+	var aLeak bool
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		bActive = ct.ActiveTaskID
+		aLeak = containsText(contactMessageTextsForWork(ct.issueByID(issueID)), "gate-B")
+	})
+	if bActive == "" || aLeak {
+		t.Fatalf("stopping A stopped/leaked B: active=%q leak=%v", bActive, aLeak)
 	}
 	provider.release("gate-B")
+	t.Logf("stage: gate-B released; waiting for B final and history reload")
 	h.pump.wait(func() bool {
 		ct := h.app.selectedContact()
 		return ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty &&
 			containsText(contactMessageTexts(ct), "gate-B result")
 	})
-	issue := ct.issueByID(issueID)
-	if issue.Status != issueStatusInProgress || containsText(contactMessageTextsForWork(issue), "gate-B result") {
-		t.Fatalf("B result leaked into A or A closed: %+v", issue)
+	var finalStatus string
+	var bResultLeak bool
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		if issue == nil {
+			finalStatus = ""
+			return
+		}
+		finalStatus = issue.Status
+		bResultLeak = containsText(contactMessageTextsForWork(issue), "gate-B result")
+	})
+	if finalStatus != issueStatusInProgress || bResultLeak {
+		t.Fatalf("B result leaked into A or A closed: status=%q leak=%v", finalStatus, bResultLeak)
 	}
 	if provider.count() != 2 {
 		t.Fatalf("provider requests = %d, want 2", provider.count())

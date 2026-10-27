@@ -302,3 +302,28 @@ func TestIssueSupplementUnknownActionIsExposedWithoutFakeRecovery(t *testing.T) 
 		t.Fatalf("unknown action = error %q batch %q", a.issueActionError, batch.State)
 	}
 }
+
+func TestIssueSupplementHistoryMatchesPersistedScopeWire(t *testing.T) {
+	user := taskContextItem{ID: "ctx", Name: "user-note", Text: "user material", Revision: 1}
+	scopeJSON := `{"ref":"scope-test","contact_id":"c1","conversation_session_id":"s1","turn_id":"t1","allow_create":true,"created_at":1}`
+	scopeItem := taskContextItem{Name: issueToolScopeContextName, Text: scopeJSON}
+	execution := &issueExecution{
+		SessionID: "s1", TaskID: "task-1", MessageID: "message-1", Prompt: "body",
+		Context: []taskContextItem{user}, ToolScopeRef: "scope-test", ToolScopeInput: scopeJSON,
+	}
+	records := supplementRawHistoryRecords(t, execution.TaskID, execution.MessageID, execution.Prompt, []taskContextItem{user, scopeItem}, true)
+	if !supplementHistoryMatches(execution, records) {
+		t.Fatal("persisted scope wire did not match exact history")
+	}
+	withoutScope := *execution
+	withoutScope.ToolScopeRef, withoutScope.ToolScopeInput = "", ""
+	if supplementHistoryMatches(&withoutScope, records) {
+		t.Fatal("missing persisted scope was ignored")
+	}
+	tokenExecution := *execution
+	tokenExecution.ToolScopeInput = "scope-test"
+	tokenRecords := supplementRawHistoryRecords(t, execution.TaskID, execution.MessageID, execution.Prompt, []taskContextItem{user, taskContextItem{Name: issueToolScopeContextName, Text: "scope-test"}}, true)
+	if !supplementHistoryMatches(&tokenExecution, tokenRecords) {
+		t.Fatal("opaque token scope wire did not match exact history")
+	}
+}

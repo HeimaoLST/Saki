@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -31,11 +32,68 @@ type productIssue struct {
 	// issue. It is persisted with the issue; it is not a Runtime history copy.
 	Supplements *issueSupplementLedger
 
+	// Questions are persistent missing-information prompts. An answer is linked
+	// to the same supplement ledger, not to an invented assistant message.
+	Questions []*issueQuestion
+
 	// WorkSessionID is the issue-owned execution context. It is intentionally
 	// separate from contact.SessionID (the ongoing conversation). Old
 	// executions keep their actual SessionID and are never migrated in place.
 	WorkSessionID string
 	Work          issueWorkSession
+}
+
+const (
+	issueQuestionOpen       = "open"
+	issueQuestionAnswered   = "answered"
+	issueQuestionSuperseded = "superseded"
+)
+
+type issueQuestion struct {
+	Ref                  string `json:"ref"`
+	Text                 string `json:"text"`
+	RequirementsRevision int    `json:"requirements_revision"`
+	SourceTaskID         string `json:"source_task_id,omitempty"`
+	SourceScopeRef       string `json:"source_scope_ref,omitempty"`
+	SourceTurnID         string `json:"source_turn_id,omitempty"`
+	State                string `json:"state"`
+	CreatedAt            int64  `json:"created_at,omitempty"`
+	AnsweredAt           int64  `json:"answered_at,omitempty"`
+	AnswerSupplementID   string `json:"answer_supplement_id,omitempty"`
+	AnswerText           string `json:"answer_text,omitempty"`
+}
+
+func newIssueQuestionRef() string {
+	var bytes [8]byte
+	if _, err := rand.Read(bytes[:]); err == nil {
+		return "question-" + hex.EncodeToString(bytes[:])
+	}
+	return fmt.Sprintf("question-%d", time.Now().UnixNano())
+}
+
+func (issue *productIssue) openQuestion() *issueQuestion {
+	if issue == nil {
+		return nil
+	}
+	for index := len(issue.Questions) - 1; index >= 0; index-- {
+		question := issue.Questions[index]
+		if question != nil && question.State == issueQuestionOpen {
+			return question
+		}
+	}
+	return nil
+}
+
+func (issue *productIssue) questionByRef(ref string) *issueQuestion {
+	if issue == nil {
+		return nil
+	}
+	for _, question := range issue.Questions {
+		if question != nil && question.Ref == ref {
+			return question
+		}
+	}
+	return nil
 }
 
 // issueWorkSession is the in-memory runtime projection for one issue's
@@ -57,6 +115,9 @@ type issueWorkSession struct {
 	cancelAfterAccept  bool
 	historyGen         int
 	HistoryDirty       bool
+	Released           bool
+	Releasing          bool
+	ReleasePending     bool
 }
 
 // issueRequirement is the single live truth for a product requirement. The
@@ -84,6 +145,10 @@ type issueExecution struct {
 	Context              []taskContextItem
 	ContextExpanded      bool
 	SupplementBatchID    string
+	ToolOperationID      string
+	ToolScopeRef         string
+	ToolScopeInput       string
+	WaitRequested        bool
 }
 
 const (
@@ -240,6 +305,18 @@ func (ct *contact) selectedIssue() *productIssue {
 	return nil
 }
 
+func executionForTask(issue *productIssue, taskID string) *issueExecution {
+	if issue == nil || taskID == "" {
+		return nil
+	}
+	for _, execution := range issue.Executions {
+		if execution != nil && execution.TaskID == taskID {
+			return execution
+		}
+	}
+	return nil
+}
+
 func (ct *contact) executionByTask(taskID string) *issueExecution {
 	if taskID == "" {
 		return nil
@@ -301,13 +378,46 @@ func issuePrompt(issue *productIssue) string {
 // createIssue persists an explicit product item and its original requirements.
 // It does not dispatch any Runtime work; dispatch is a separate Run action.
 func (a *appModel) createIssue(goal, requirements string) bool {
+	ct := a.selectedContact()
+	previousSelected := ct.SelectedIssueID
+	_, err := a.createIssueForWithSave(ct, goal, requirements, func(item *productIssue) error {
+		ct.SelectedIssueID = item.ID
+		if err := a.persist(); err != nil {
+			ct.SelectedIssueID = previousSelected
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		a.issueFormError = err.Error()
+		// Keep the user's goal/requirements and form visible so they can retry.
+		a.issueFormOpen = true
+		return false
+	}
+	a.issueFormOpen = false
+	a.issueFormError = ""
+	a.issueGoal = ""
+	a.issueRequirements = ""
+	a.focusIssueNew = true
+	return true
+}
+
+// createIssueFor is the captured-owner creation path. It never changes the
+// selected contact, the issue form or another contact's draft. The UI wrapper
+// above only applies the visible form/selection after this save succeeds.
+func (a *appModel) createIssueFor(ct *contact, goal, requirements string) (*productIssue, error) {
+	return a.createIssueForWithSave(ct, goal, requirements, nil)
+}
+
+func (a *appModel) createIssueForWithSave(ct *contact, goal, requirements string, save func(*productIssue) error) (*productIssue, error) {
 	goal = strings.TrimSpace(goal)
 	requirements = strings.TrimSpace(requirements)
 	if goal == "" {
-		a.issueFormError = "Enter an issue goal."
-		return false
+		return nil, errors.New("Enter an issue goal.")
 	}
-	ct := a.selectedContact()
+	if ct == nil {
+		return nil, errors.New("Contact not found.")
+	}
 	now := nowMillis()
 	item := &productIssue{
 		ID: newIssueID(), ContactID: ct.ID, Goal: goal,
@@ -318,23 +428,16 @@ func (a *appModel) createIssue(goal, requirements string) bool {
 	if item.Supplements == nil {
 		item.Supplements = newIssueSupplementLedger()
 	}
-	previousSelected := ct.SelectedIssueID
-	ct.Issues = append(ct.Issues, item)
-	ct.SelectedIssueID = item.ID
-	if err := a.persist(); err != nil {
-		ct.Issues = ct.Issues[:len(ct.Issues)-1]
-		ct.SelectedIssueID = previousSelected
-		// Keep the user's goal/requirements and form visible so they can retry.
-		a.issueFormOpen = true
-		a.issueFormError = "Could not save this issue: " + err.Error()
-		return false
+	previous := ct.Issues
+	ct.Issues = append(previous, item)
+	if save == nil {
+		save = func(*productIssue) error { return a.persist() }
 	}
-	a.issueFormOpen = false
-	a.issueFormError = ""
-	a.issueGoal = ""
-	a.issueRequirements = ""
-	a.focusIssueNew = true
-	return true
+	if err := save(item); err != nil {
+		ct.Issues = previous
+		return nil, fmt.Errorf("Could not save this issue: %w", err)
+	}
+	return item, nil
 }
 
 // issueEvidenceText is a factual summary only. It does not turn a completed
@@ -383,6 +486,13 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 			Context:       taskContext{items: cloneTaskContextItems(stored.TaskContext)},
 			Supplements:   cloneIssueSupplementLedger(stored.Supplements),
 		}
+		for _, question := range stored.Questions {
+			if question == nil || strings.TrimSpace(question.Ref) == "" {
+				continue
+			}
+			copy := *question
+			issue.Questions = append(issue.Questions, &copy)
+		}
 		if len(stored.RequirementItems) > 0 {
 			for _, item := range stored.RequirementItems {
 				if strings.TrimSpace(item.Text) == "" {
@@ -425,6 +535,8 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 				MessageID: execution.MessageID, Prompt: execution.Prompt,
 				Status: status, Detail: detail, RequirementsRevision: execution.RequirementsRevision,
 				Context: cloneTaskContextItems(execution.Context), SupplementBatchID: execution.SupplementBatchID,
+				ToolOperationID: execution.ToolOperationID, ToolScopeRef: execution.ToolScopeRef,
+				ToolScopeInput: execution.ToolScopeInput, WaitRequested: execution.WaitRequested,
 			})
 		}
 		issue.Status = normalizeIssueStatus(stored.Status, issue.Executions)
@@ -461,6 +573,10 @@ func (a *appModel) runIssueFor(ct *contact, issueID string) bool {
 // automatic continuation path uses this directly so it never depends on, or
 // steals, the UI's selected issue.
 func (a *appModel) issueRunCaptured(ct *contact, issue *productIssue) bool {
+	return a.issueRunCapturedWithOperation(ct, issue, "")
+}
+
+func (a *appModel) issueRunCapturedWithOperation(ct *contact, issue *productIssue, operationID string) bool {
 	if ct == nil || issue == nil {
 		a.issueFormError = "Issue not found for this contact."
 		return false
@@ -482,7 +598,7 @@ func (a *appModel) issueRunCaptured(ct *contact, issue *productIssue) bool {
 		a.issueFormError = "This issue has no goal to run."
 		return false
 	}
-	return a.startIssueRun(ct, issue)
+	return a.startIssueRunWithOperation(ct, issue, operationID)
 }
 
 func (a *appModel) selectIssue(issueID string) {

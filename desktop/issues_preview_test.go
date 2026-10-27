@@ -141,6 +141,14 @@ func issuePreviewApp(scene string) *appModel {
 			panic(err)
 		}
 		issue.Supplements = ledger
+	case "issue-question":
+		issue := ct.Issues[0]
+		issue.Status = issueStatusWaitingUser
+		issue.Questions = []*issueQuestion{{
+			Ref: "question-preview", Text: "Which verification method should I use before continuing this implementation?",
+			RequirementsRevision: issue.RequirementsRevision, SourceTaskID: "task-preview", SourceScopeRef: "scope-preview", SourceTurnID: "turn-preview",
+			State: issueQuestionOpen, CreatedAt: 1,
+		}}
 	case "issue-unknown":
 		ct.Issues[1].Executions[0] = &issueExecution{ID: "exec-3", SessionID: "issue-preview-work-2", Prompt: "Verify restart continuation", Status: issueExecutionUnknown, Detail: "No trusted Runtime task history was found for this execution; manually inspect or confirm not dispatched."}
 		ct.SelectedIssueID = "issue-2"
@@ -178,6 +186,8 @@ func TestPreviewIssueStates(t *testing.T) {
 		write("issue-results", 320, 640, dark)
 		write("issue-results", 320, 900, dark)
 		write("issue-results", 360, 800, dark)
+		write("issue-question", 1040, 720, dark)
+		write("issue-question", 320, 900, dark)
 		write("issue-form", 960, 640, dark)
 		write("issue-working", 1040, 720, dark)
 		write("issue-dual", 960, 640, dark)
