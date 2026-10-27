@@ -343,15 +343,23 @@ func TestIssueListLongGoalFitsAt320(t *testing.T) {
 	long := &productIssue{ID: "i-long", ContactID: ct.ID, Goal: "这是一个非常长的中文事项目标，需要换行显示但不能横向裁切或缩小字号", Status: issueStatusInProgress, RequirementsRevision: 1}
 	ct.Issues = []*productIssue{short, long}
 	ct.SelectedIssueID = short.ID
-	a.windowWidth = 320
-	tr := ui.NewTester(a.view, 320, 900)
+	const width, height = 320, 360
+	theme := resolveWorkbenchTheme(false).Theme
+	tr := ui.NewTester(func(c *ui.Context) {
+		c.SetTheme(theme)
+		ui.Scroll(c).Fill().Background(theme.Surface).Children(func() {
+			ui.Column(c).Padding(12).Gap(8).Children(func() {
+				a.issueList(c, theme, ct)
+			})
+		})
+	}, width, height)
 	tr.Frame()
 	label := long.Goal
 	var last ui.Rect
 	for attempt := 0; attempt < 12; attempt++ {
 		if r, ok := tr.Find(label); ok {
 			last = r
-			if r.W > 0 && r.H > 0 && r.X >= 0 && r.X+r.W <= 320 && r.Y >= 0 && r.Y+r.H <= 900 {
+			if r.W > 0 && r.H > 0 && r.X >= 0 && r.X+r.W <= width && r.Y >= 0 && r.Y+r.H <= height {
 				if err := tr.Click(label); err != nil {
 					t.Fatal(err)
 				}
@@ -362,8 +370,8 @@ func TestIssueListLongGoalFitsAt320(t *testing.T) {
 				return
 			}
 		}
-		tr.Scroll(160, 500, 0, 400)
+		tr.Scroll(160, height/2, 0, 200)
 		tr.Frame()
 	}
-	t.Fatalf("long issue-list entry %q was not contained at 320: rect=%+v selected=%q texts=%v", label, last, ct.SelectedIssueID, tr.Texts())
+	t.Fatalf("long issue-list entry %q was not contained at %dx%d: rect=%+v selected=%q texts=%v", label, width, height, last, ct.SelectedIssueID, tr.Texts())
 }
