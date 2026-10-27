@@ -839,15 +839,17 @@ func (a *appModel) toolCalls(c *ui.Context, t *ui.Theme, tools []*workTool) {
 			})
 			if call.Output != "" {
 				summary := toolOutputSummary(call.Output)
+				if summary != "" {
+					// Keep long output (including unbroken JSON/paths) in its
+					// own full-width line so it cannot push the actions out of
+					// the card.
+					ui.Text(c, "Preview · "+summary).FontSize(11).LineHeight(1.4).MaxLines(4).TextColor(t.TextMuted)
+				}
 				label := "Details"
 				if call.Expanded {
 					label = "Hide"
 				}
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-					if summary != "" {
-						summary = "Preview · " + summary
-					}
-					ui.Text(c, summary).FontSize(11).LineHeight(1.4).MaxLines(4).TextColor(t.TextMuted).Grow(1)
 					if !call.Expanded {
 						ui.Button(c, "Copy received output").FontSize(12).Padding(3, 8).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
 							if err := writeClipboardText(call.Output, c.Services().WriteClipboard, c.Services().ReadClipboard); err != nil {

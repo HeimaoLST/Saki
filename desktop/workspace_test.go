@@ -534,3 +534,46 @@ func TestWorkPanelRendersToolDetailsWithoutInference(t *testing.T) {
 		t.Fatalf("copy did not preserve raw tool output: %q", tr.Clipboard())
 	}
 }
+
+func TestWorkspaceToolCardActionsStayVisibleAtAllWidths(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.ActiveTaskID = "t1"
+	ct.LastTaskID = "t1"
+	w := a.ensureWork(ct, "t1", "m1")
+	w.State = workRunning
+	w.Prompt = "long work"
+	output := `{"content":"` + strings.Repeat("x", 240) + `"}`
+	w.Tools = []*workTool{{CallID: "c1", Name: "read", Finished: true, Output: output}}
+
+	for _, size := range []struct{ width, height int }{{1040, 720}, {960, 640}, {720, 640}, {1380, 900}} {
+		a.windowWidth = size.width
+		w.Tools[0].Expanded = false
+		tr := ui.NewTester(a.view, size.width, size.height)
+		tr.Frame()
+		panel, ok := tr.Find("Activity")
+		if !ok || panel.W <= 0 {
+			t.Fatalf("%dx%d activity panel = %+v ok=%v", size.width, size.height, panel, ok)
+		}
+		for _, label := range []string{"Copy received output", "Details"} {
+			r, ok := tr.Find(label)
+			if !ok || r.W <= 0 || r.H <= 0 || r.X < panel.X || r.X+r.W > panel.X+panel.W ||
+				r.X < 0 || r.X+r.W > float32(size.width) || r.Y+r.H > float32(size.height) {
+				t.Fatalf("%dx%d %q bounds = %+v panel=%+v ok=%v", size.width, size.height, label, r, panel, ok)
+			}
+		}
+		tr.SetClipboard("sentinel")
+		if err := tr.Click("Copy received output"); err != nil {
+			t.Fatalf("%dx%d copy click: %v", size.width, size.height, err)
+		}
+		if got := tr.Clipboard(); got != output {
+			t.Fatalf("%dx%d copied %q", size.width, size.height, got)
+		}
+		if err := tr.Click("Details"); err != nil {
+			t.Fatalf("%dx%d details click: %v", size.width, size.height, err)
+		}
+		tr.Frame()
+		if !w.Tools[0].Expanded || !tr.HasText("Hide") {
+			t.Fatalf("%dx%d details did not expand", size.width, size.height)
+		}
+	}
+}
