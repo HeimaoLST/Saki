@@ -702,3 +702,13 @@ type resolvedTheme struct {
 - **连接恢复呈现**：`connection_mismatch` 只在既有 `runtimeMessage` 的精确 code 前缀上识别；摘要为“Connection unavailable or changed”，提供既有 Connection settings 入口和 Details/Copy error details。未知 Load/Send 诊断独立保留，不被另一个 known 错误隐藏，也不自动重绑、重发或改变未知状态。
 - **清理**：调用方直接使用既有 `toolTitleFor`，删除 `toolTitle` wrapper；移除纯转发连接 helper；`issueWork` 去掉未使用的第二返回值；测试仅使用 `issueStatusNotStarted`，保留 `normalize` 对旧 `open` 的迁移；冗余状态映射分支合并但保留状态语义。对应独立 cleanup commit 与行为测试保留。
 - **验证**：历史 `7f37afc` 候选已完成完整 race 204.713s、exit 0，checker 18 MUST PASS，来源前后 clean/包 hash 不变；该计数不转给本增量。当前增量完成定向 UI/race 回归（含 1040×720 bounded scroll、latest pending/rejected/failed/unknown/tool-only、View/Back、completion evidence、known/unknown connection、rail/nav 320/960/1040 bounds、长中文 issue list、720px reader copy）；Go 全包最终由父在新 SHA 重跑。真实 Rust 离线链使用 `SAKI_TEST_RUNTIME_BIN=dfdc5358...`，未设置 `SAKI_TEST_ONLINE`，没有模型请求。headless 预览覆盖 light/dark、1040×720、960×640、720×640 drawer、320×900、360×800 和 1380×900；本增量另以 bounds/点击测试验证 320px 联系人栏、事项列表与滚动后的行内操作，并保留 720px Markdown exact-source copy 断言。最后原生图和最终包由父/PM 在冻结 SHA 重做，旧图不作为最终证据。原生窗口、IME、原生包仍由 PM／父验证，本单不新造打包流程。
+
+## #184 可调三栏与全局布局偏好（实现事实，2026-10-27）
+
+代码来源：`agent/gui/184-adjustable-layout`，从 `549ac98` 开出；本片源 `6b2f67ae8808f4430b1035b02caf3fa6a6d17f23`。本节只记录本片接线的布局与持久化事实，不代表原生拖动或最终包验收。
+
+- **全局偏好与默认**：`storedState` v9 增加可选 `layout`（`left_width`、`right_width`、`workspace_open`），仍读旧 v1-v9；缺失时右栏关闭、左 200/右 340，不迁移消息、草稿、execution 或 issue-tool ledger，也不把布局放进 contact 或 Runtime。`newApp`、`newRuntimeApp`、`newUnavailableApp` 都从关闭状态开始；已有偏好由 `applyStoreSelection` 读回。
+- **分栏与约束**：复用 MyGo `ui.Split` 的 first-width、1 DIP 分隔和键盘焦点；外层 rail/main、内层 main/work，均用 `OnChange` 在 bound width 更新后立即 clamp。左 180–280、右 280–440、三栏中心至少 480 且宽于两侧；1040 默认 200/498/340，1380 将剩余空间给中心。960/720 在默认偏好下自动使用既有右侧抽屉，Close/Escape/焦点恢复保留；左栏仍可收起。右侧没有使用 RTL Direction，main/work 子树保持正常文字方向。
+- **交互与事件**：开/关右栏和显式 `View execution` 通过同一条设置入口；切换联系人、收消息、task start/finish 不改开合。右栏关闭时 Work 入口保留，并用既有 active work/issue notice/contact status 显示 `Work running` 或 `Work needs attention`，不生成聊天消息或伪完成。
+- **保存边界**：显式开/关、正常 `beginShutdown` 和既有 `persist` 保存当前偏好；拖动只改内存，不在每次 mousemove 落盘。窄窗口的 overlay/有效宽度不覆盖保存的偏好宽度；宽度在读取时 clamp。
+- **验证**：`layout_test.go` 用真实 `ui.Tester` Press→Move（仍 held）→Release 验证两条分隔边、中心最小值和应用宽度上限，另测键盘物理方向、OnChange clamp、960/720 Close/Escape/focus、旧/新 store、显式开合重启、事件不强开、右栏关闭提示；`layout_preview_test.go` 生成明暗 1040/1380/960/720 的 closed/open/dragged 24 张 headless 图，位于 `/private/tmp/saki-gui-184/previews-final/`。当前 `go test ./...` 4.557s PASS，定向 race 2.631s PASS；原生拖动、原生窗口和最终包仍未验，headless 图不替代 native。
