@@ -470,7 +470,7 @@ func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, is
 		return
 	}
 	ui.Text(c, "Latest execution").FontSize(12).FontWeight(500).TextColor(t.TextMuted)
-	ui.Text(c, issueExecutionLabel(execution)).FontSize(12).TextColor(a.issueStatusColor(t, issue))
+	ui.Text(c, issueExecutionLabel(execution)).FontSize(12).TextColor(t.TextMuted)
 	text := strings.TrimSpace(ct.resultTextForExecution(execution))
 	work := workFor(ct, execution.TaskID)
 	switch {
@@ -502,9 +502,11 @@ func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, is
 			case issueExecutionNotDispatched:
 				reason = "No task was dispatched."
 			case issueExecutionRejected:
-				reason = "The Runtime rejected this execution."
+				reason = "The execution was rejected."
 			case issueExecutionFailed:
 				reason = "Execution failed; inspect the execution details for the recorded reason."
+			case issueExecutionInterrupted:
+				reason = "Execution interrupted; inspect the execution details for the recorded terminal state."
 			default:
 				reason = "The terminal state is unknown; inspect the execution details before continuing."
 			}

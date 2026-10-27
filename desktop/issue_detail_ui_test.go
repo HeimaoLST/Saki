@@ -272,6 +272,7 @@ func TestIssueLatestExecutionShowsNonSuccessStatesAndToolOnly(t *testing.T) {
 		{issueExecutionRejected, "Rejected", "Runtime rejected the task"},
 		{issueExecutionFailed, "Execution failed", "provider failed after dispatch"},
 		{issueExecutionUnknown, "Result unknown", "no trusted terminal state"},
+		{issueExecutionInterrupted, "Execution interrupted", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.status, func(t *testing.T) {
@@ -300,6 +301,10 @@ func TestIssueLatestExecutionShowsNonSuccessStatesAndToolOnly(t *testing.T) {
 			}
 			if tc.status == issueExecutionPending && !tr.HasText("Prepared but not dispatched yet.") {
 				t.Fatalf("pending execution lacks actionable short state: %v", tr.Texts())
+			}
+			if tc.status == issueExecutionInterrupted && (!tr.HasText("Execution interrupted; inspect the execution details for the recorded terminal state.") ||
+				tr.HasText("terminal state is unknown")) {
+				t.Fatalf("interrupted execution was described as unknown: %v", tr.Texts())
 			}
 			tr.Click("More issue actions")
 			tr.Frame()
