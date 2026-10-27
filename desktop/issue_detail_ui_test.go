@@ -192,3 +192,72 @@ func TestActiveIssueWorkKeepsStopReachableBeforeRequirements(t *testing.T) {
 		t.Fatalf("active Stop is not reachable before requirements: stop=%+v ok=%v requirements=%+v ok=%v", stop, ok, requirements, reqOK)
 	}
 }
+
+func clickAfterBoundedScroll(t *testing.T, tr *ui.Tester, label string, width, height int) {
+	t.Helper()
+	for attempt := 0; attempt < 12; attempt++ {
+		if r, ok := tr.Find(label); ok && r.W > 0 && r.H > 0 && r.X >= 0 && r.X+r.W <= float32(width) && r.Y >= 0 && r.Y+r.H <= float32(height) {
+			if err := tr.Click(label); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		tr.Scroll(850, 500, 0, 300)
+		tr.Frame()
+	}
+	t.Fatalf("could not reach %q within the bounded scroll area", label)
+}
+
+func TestIssueSupplementAt720ScrollsToSaveAndKeepsOwnerDraft(t *testing.T) {
+	a, ct := taskContextApp(t)
+	if !a.createIssue("720 supplement goal", "720 supplement requirement") {
+		t.Fatal(a.issueFormError)
+	}
+	issue := ct.selectedIssue()
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("More issue actions"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if err := tr.Click("Add supplement"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	*a.issueSupplementDraft(issue.ID) = "720 visible supplement"
+	clickAfterBoundedScroll(t, tr, "Save supplement", 1040, 720)
+	tr.Frame()
+	if issue.ContactID != ct.ID || a.selectedContact() != ct || issue.Supplements.pendingCount() != 1 ||
+		a.issueSupplementFormID != "" || *a.issueSupplementDraft(issue.ID) != "" {
+		t.Fatalf("720 supplement save = owner=%q selected=%q pending=%d form=%q draft=%q",
+			issue.ContactID, a.selectedContact().ID, issue.Supplements.pendingCount(), a.issueSupplementFormID, *a.issueSupplementDraft(issue.ID))
+	}
+}
+
+func TestIssueExecutionContextExpandsAndCopiesAt720(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
+	issue := &productIssue{ID: "i-ctx", ContactID: ct.ID, Goal: "context at 720", Status: issueStatusInProgress,
+		RequirementsRevision: 1, WorkSessionID: "work-ctx", Work: issueWorkSession{Loaded: true},
+		Executions: []*issueExecution{{ID: "e-ctx", SessionID: "work-ctx", TaskID: "task-ctx", Status: issueExecutionCompleted,
+			Context: []taskContextItem{{ID: "ctx", Name: "fixture", Text: "exact context text", Revision: 1}}}},
+	}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("More issue actions"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	clickAfterBoundedScroll(t, tr, "Sent task context · 1", 1040, 720)
+	tr.Frame()
+	if !tr.HasText("exact context text") {
+		t.Fatalf("folded snapshot context did not expand: %v", tr.Texts())
+	}
+	tr.SetClipboard("")
+	clickAfterBoundedScroll(t, tr, "Copy context text", 1040, 720)
+	if got := tr.Clipboard(); got != "exact context text" {
+		t.Fatalf("720 context copy = %q", got)
+	}
+}
