@@ -339,23 +339,31 @@ func TestIssueLatestExecutionShowsNonSuccessStatesAndToolOnly(t *testing.T) {
 
 func TestIssueListLongGoalFitsAt320(t *testing.T) {
 	a, ct := workspaceTestApp(t)
-	issue := &productIssue{ID: "i-long", ContactID: ct.ID, Goal: "这是一个非常长的中文事项目标，需要换行显示但不能横向裁切或缩小字号", Status: issueStatusInProgress, RequirementsRevision: 1}
-	ct.Issues = []*productIssue{issue}
-	ct.SelectedIssueID = issue.ID
+	short := &productIssue{ID: "i-short", ContactID: ct.ID, Goal: "短目标", Status: issueStatusInProgress, RequirementsRevision: 1}
+	long := &productIssue{ID: "i-long", ContactID: ct.ID, Goal: "这是一个非常长的中文事项目标，需要换行显示但不能横向裁切或缩小字号", Status: issueStatusInProgress, RequirementsRevision: 1}
+	ct.Issues = []*productIssue{short, long}
+	ct.SelectedIssueID = short.ID
 	a.windowWidth = 320
 	tr := ui.NewTester(a.view, 320, 900)
 	tr.Frame()
-	label := issue.Goal
+	label := long.Goal
 	var last ui.Rect
 	for attempt := 0; attempt < 12; attempt++ {
 		if r, ok := tr.Find(label); ok {
 			last = r
 			if r.W > 0 && r.H > 0 && r.X >= 0 && r.X+r.W <= 320 && r.Y >= 0 && r.Y+r.H <= 900 {
+				if err := tr.Click(label); err != nil {
+					t.Fatal(err)
+				}
+				tr.Frame()
+				if ct.SelectedIssueID != long.ID {
+					t.Fatalf("clicking long issue-list entry selected %q, want %q", ct.SelectedIssueID, long.ID)
+				}
 				return
 			}
 		}
 		tr.Scroll(160, 500, 0, 400)
 		tr.Frame()
 	}
-	t.Fatalf("long issue-list entry %q was not contained at 320: rect=%+v texts=%v", label, last, tr.Texts())
+	t.Fatalf("long issue-list entry %q was not contained at 320: rect=%+v selected=%q texts=%v", label, last, ct.SelectedIssueID, tr.Texts())
 }
