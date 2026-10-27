@@ -924,22 +924,7 @@ func valueOr(value, fallback string) string {
 }
 
 func toolTitle(m *message) string {
-	name := m.ToolName
-	if name == "" {
-		name = "Tool"
-	}
-	if m.ToolArgs == "" {
-		return name
-	}
-	var args map[string]any
-	if json.Unmarshal([]byte(m.ToolArgs), &args) == nil {
-		for _, key := range []string{"path", "command"} {
-			if value, ok := args[key].(string); ok && strings.TrimSpace(value) != "" {
-				return name + " · " + truncate(value, 70)
-			}
-		}
-	}
-	return name + " · " + truncate(m.ToolArgs, 70)
+	return toolTitleFor(m.ToolName, m.ToolArgs)
 }
 
 func toolOutputSummary(output string) string {

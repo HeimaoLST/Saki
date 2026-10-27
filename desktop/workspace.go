@@ -152,8 +152,6 @@ func (a *appModel) workStateColor(state workState) ui.Color {
 	switch state {
 	case workStopping, workFailed, workInterrupted, workUnknown:
 		return a.workTheme.WorkAttention
-	case workCompleted:
-		return a.workTheme.WorkText
 	default:
 		return a.workTheme.WorkText
 	}
