@@ -64,7 +64,7 @@ func newRuntimeApp() (*appModel, error) {
 		sessionDir:          sessionDir,
 		workDir:             workDir,
 		runtimeStatus:       runtimeStateStarting,
-		workspaceOpen:       true,
+		workspaceOpen:       false,
 		scrollTo:            -1,
 		connectionPath:      startup.Path,
 		connectionSaved:     startup.Config,
@@ -150,7 +150,7 @@ func newUnavailableApp(err error) *appModel {
 		storePath:     storePath,
 		sessionDir:    guiSessionDir(storePath),
 		workDir:       workDir,
-		workspaceOpen: true,
+		workspaceOpen: false,
 		scrollTo:      -1,
 		contacts: []*contact{{
 			ID:        newContactID(),
@@ -2621,6 +2621,11 @@ func (a *appModel) persist() error {
 		return nil
 	}
 	a.store.setIssueToolState(a.issueToolLedger, a.issueToolScopes)
+	a.store.state.Layout = &storedLayout{
+		LeftWidth:     a.railWidth(),
+		RightWidth:    a.workWidth(),
+		WorkspaceOpen: a.workspaceOpen,
+	}
 	if err := a.store.save(a.contacts, a.selectedID()); err != nil {
 		a.runtimeErr = "Could not save contacts: " + err.Error()
 		return err

@@ -64,14 +64,17 @@ func TestThreePaneBreakpointsAndToggles(t *testing.T) {
 	a.windowWidth = 960
 	tr960 := ui.NewTester(a.view, 960, 640)
 	tr960.Frame()
-	if r, ok := tr960.Find("No current work"); !ok || r.X < 580 {
-		t.Fatalf("960 compact work panel x = %v, want >= 580", r.X)
+	if !a.workOverlay() || !tr960.HasText("Close work") {
+		t.Fatal("960 should use the work overlay when the default columns do not fit")
 	}
-	a.windowWidth = 1200
-	trWide := ui.NewTester(a.view, 1200, 800)
+	a.windowWidth = 1380
+	trWide := ui.NewTester(a.view, 1380, 900)
 	trWide.Frame()
-	if r, ok := trWide.Find("No current work"); !ok || r.X < 780 {
-		t.Fatalf("wide work panel x = %v, want >= 780", r.X)
+	if a.workOverlay() {
+		t.Fatal("1380 should keep the work panel as a third column")
+	}
+	if r, ok := trWide.Find("No current work"); !ok || r.X < 1000 {
+		t.Fatalf("wide work panel x = %v, want >= 1000", r.X)
 	}
 
 	a.windowWidth = 900

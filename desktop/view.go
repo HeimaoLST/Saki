@@ -14,13 +14,7 @@ func (a *appModel) view(c *ui.Context) {
 	c.SetTheme(t)
 	ui.Box(c).Fill().Children(func() {
 		ui.Row(c).Fill().Children(func() {
-			if !a.railCollapsed {
-				a.rail(c, t)
-			}
-			a.main(c, t)
-			if a.workspaceOpen && !a.workOverlay() && a.aux != "settings" {
-				a.workspaceFrame(c, t, a.workWidth())
-			}
+			a.layoutBody(c, t)
 		})
 		if a.workspaceOpen && a.workOverlay() && a.aux == "" {
 			a.workspaceModal(c, t)
@@ -36,8 +30,7 @@ func (a *appModel) view(c *ui.Context) {
 // ---------- rail ----------
 
 func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
-	width := a.railWidth()
-	ui.Column(c).Width(width).FillHeight().Padding(10, 10).Gap(10).Background(a.workTheme.Rail).Children(func() {
+	ui.Column(c).FillWidth().FillHeight().Padding(10, 10).Gap(10).Background(a.workTheme.Rail).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 			ui.Text(c, "Saki").FontSize(14).FontWeight(600).TextColor(t.Text)
 			ui.Spacer(c)
@@ -201,6 +194,40 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 	})
 }
 
+func (a *appModel) workEntryStatus(ct *contact) (string, bool) {
+	if ct == nil {
+		return "", false
+	}
+	if notice := a.issueWorkNotice(ct); notice.Text != "" {
+		if notice.Attention {
+			return "Work needs attention", true
+		}
+		return "Work running", false
+	}
+	if ct.activeWork() != nil || ct.Status == statusWorking {
+		return "Work running", false
+	}
+	if ct.Status == statusAttention {
+		return "Work needs attention", true
+	}
+	return "", false
+}
+
+func (a *appModel) workEntryHint(c *ui.Context, t *ui.Theme, ct *contact) {
+	if a.workspaceOpen {
+		return
+	}
+	label, attention := a.workEntryStatus(ct)
+	if label == "" {
+		return
+	}
+	color := t.Success
+	if attention {
+		color = t.Warning
+	}
+	ui.Text(c, label).FontSize(12).TextColor(color)
+}
+
 func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Row(c).Justify(ui.Center).Children(func() {
@@ -229,6 +256,7 @@ func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 						nav("Contacts", false, &a.focusRail, func() { a.toggleRail() })
 					}
 					nav("Work", a.workspaceOpen, &a.focusWorkspace, func() { a.toggleWorkspace() })
+					a.workEntryHint(c, t, ct)
 					nav("History", a.screen == viewHistory, &a.focusHistory, func() { a.openHistory() })
 				})
 				ui.Row(c).Gap(6).Children(func() {
@@ -244,6 +272,7 @@ func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 					nav("Contacts", false, &a.focusRail, func() { a.toggleRail() })
 				}
 				nav("Work", a.workspaceOpen, &a.focusWorkspace, func() { a.toggleWorkspace() })
+				a.workEntryHint(c, t, ct)
 				nav("History", a.screen == viewHistory, &a.focusHistory, func() { a.openHistory() })
 				nav("Conversation model", a.aux == "model", nil, func() { a.openSessionModel(ct.SessionID, "conversation", ct.Name) })
 				nav("Settings", a.aux == "settings", &a.focusSettings, func() { a.openSettings() })

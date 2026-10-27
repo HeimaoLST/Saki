@@ -616,7 +616,7 @@ func (a *appModel) showIssueWork(issueID, taskID string) {
 	}
 	ct.SelectedIssueID = issueID
 	ct.SelectedWorkTaskID = taskID
-	a.workspaceOpen = true
+	a.setWorkspaceOpen(true)
 }
 
 func (a *appModel) updatePendingIssueExecution(ct *contact, status, message string) {

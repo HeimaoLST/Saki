@@ -30,7 +30,7 @@ func TestViewRendersBothThemes(t *testing.T) {
 }
 
 // TestMinimumWindowRenders checks the 960x640 window minimum with the
-// sidebar, chat header, composer, and both panels.
+// sidebar, chat header, and composer. The right workspace starts closed.
 func TestMinimumWindowRenders(t *testing.T) {
 	a := testApp(t)
 	tr := ui.NewTester(a.view, 960, 640)
@@ -707,9 +707,13 @@ func TestContactRailControlsStayVisibleAtNarrowWidths(t *testing.T) {
 		a.windowWidth = width
 		tr := ui.NewTester(a.view, width, 720)
 		tr.Frame()
+		limit := a.railWidth()
+		if limit != defaultLeftPaneWidth {
+			t.Fatalf("%d rail width = %v", width, limit)
+		}
 		for _, label := range []string{"Add contact", "Active", "Archived", "All"} {
 			r, ok := tr.Find(label)
-			if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 160 || r.Y < 0 || r.Y+r.H > 720 {
+			if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > limit || r.Y < 0 || r.Y+r.H > 720 {
 				t.Fatalf("%dx720 contact rail %q out of rail: ok=%v rect=%+v", width, label, ok, r)
 			}
 		}

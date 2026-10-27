@@ -118,6 +118,15 @@ func applyStoreSelection(a *appModel, store *contactStore) {
 	if a.selectedContact().Archived {
 		a.contactScope = "archived"
 	}
+	if layout := store.state.Layout; layout != nil {
+		a.leftPaneWidth = clampPaneWidth(layout.LeftWidth, defaultLeftPaneWidth, minLeftPaneWidth, maxLeftPaneWidth)
+		a.rightPaneWidth = clampPaneWidth(layout.RightWidth, defaultRightPaneWidth, minRightPaneWidth, maxRightPaneWidth)
+		a.workspaceOpen = layout.WorkspaceOpen
+	} else {
+		a.leftPaneWidth = 0
+		a.rightPaneWidth = 0
+		a.workspaceOpen = false
+	}
 }
 
 func connectionSummary(config *connectionConfig) string {

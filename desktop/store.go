@@ -88,6 +88,14 @@ type storedIssue struct {
 	Executions           []storedIssueExecution `json:"executions,omitempty"`
 }
 
+// storedLayout is the GUI-wide workbench preference. It is optional so
+// stores written before #184 keep loading with the right work panel closed.
+type storedLayout struct {
+	LeftWidth     float32 `json:"left_width,omitempty"`
+	RightWidth    float32 `json:"right_width,omitempty"`
+	WorkspaceOpen bool    `json:"workspace_open"`
+}
+
 type storedState struct {
 	Version             int                       `json:"version"`
 	Selected            string                    `json:"selected,omitempty"`
@@ -95,6 +103,7 @@ type storedState struct {
 	Issues              []storedIssue             `json:"issues,omitempty"`
 	IssueToolOperations *IssueToolOperationLedger `json:"issue_tool_operations,omitempty"`
 	IssueToolScopes     []IssueToolScope          `json:"issue_tool_scopes,omitempty"`
+	Layout              *storedLayout             `json:"layout,omitempty"`
 }
 
 type contactStore struct {
@@ -248,6 +257,7 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 		Contacts:            make([]storedContact, 0, len(contacts)),
 		IssueToolOperations: s.issueToolLedger,
 		IssueToolScopes:     s.issueToolScopesList(),
+		Layout:              s.state.Layout,
 	}
 	for _, c := range contacts {
 		storedContact := storedContact{

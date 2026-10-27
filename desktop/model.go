@@ -259,10 +259,13 @@ type appModel struct {
 	modelOpSessionID  string
 	modelRecovery     map[string]modelRecoveryState
 
-	// Layout is native runtime state, not product configuration. Width is
-	// updated from the window so the same view can choose three-pane,
-	// compact, or overlay presentation.
+	// Layout is a GUI-wide preference, not a contact or runtime fact. Widths
+	// are persisted in the contact store; windowWidth is only the current
+	// native viewport and never overwrites a preferred width when it shrinks.
 	windowWidth        int
+	leftPaneWidth      float32
+	rightPaneWidth     float32
+	centerPaneWidth    float32
 	workspaceOpen      bool
 	railCollapsed      bool
 	focusWorkspace     bool
@@ -368,7 +371,7 @@ func seededApp() *appModel {
 		},
 		selected:      0,
 		screen:        viewChat,
-		workspaceOpen: true,
+		workspaceOpen: false,
 		seq:           100,
 		scrollTo:      -1,
 	}

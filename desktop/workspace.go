@@ -42,6 +42,30 @@ type workItem struct {
 	StopRequested bool
 }
 
+const (
+	defaultLeftPaneWidth  float32 = 200
+	minLeftPaneWidth      float32 = 180
+	maxLeftPaneWidth      float32 = 280
+	defaultRightPaneWidth float32 = 340
+	minRightPaneWidth     float32 = 280
+	maxRightPaneWidth     float32 = 440
+	minCenterPaneWidth    float32 = 480
+	paneSeparatorWidth    float32 = 1
+)
+
+func clampPaneWidth(value, fallback, minValue, maxValue float32) float32 {
+	if value <= 0 {
+		value = fallback
+	}
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
+}
+
 func (a *appModel) layoutWidth() int {
 	if a.windowWidth > 0 {
 		return a.windowWidth
@@ -49,23 +73,52 @@ func (a *appModel) layoutWidth() int {
 	return 1040
 }
 
-func (a *appModel) wideLayout() bool { return a.layoutWidth() >= 1120 }
-
 func (a *appModel) railWidth() float32 {
-	if a.wideLayout() {
-		return 200
-	}
-	return 160
+	return clampPaneWidth(a.leftPaneWidth, defaultLeftPaneWidth, minLeftPaneWidth, maxLeftPaneWidth)
 }
 
 func (a *appModel) workWidth() float32 {
-	if a.wideLayout() {
-		return 360
-	}
-	return 320
+	return clampPaneWidth(a.rightPaneWidth, defaultRightPaneWidth, minRightPaneWidth, maxRightPaneWidth)
 }
 
-func (a *appModel) workOverlay() bool { return a.layoutWidth() < 960 }
+func (a *appModel) workOverlay() bool {
+	return a.workOverlayFor(a.railWidth(), a.workWidth())
+}
+
+func (a *appModel) workOverlayFor(leftWidth, rightWidth float32) bool {
+	total := float32(a.layoutWidth())
+	left := float32(0)
+	if !a.railCollapsed {
+		left = leftWidth + paneSeparatorWidth
+	}
+	center := total - left - paneSeparatorWidth - rightWidth
+	if center < minCenterPaneWidth || center <= rightWidth {
+		return true
+	}
+	return !a.railCollapsed && center <= leftWidth
+}
+
+func (a *appModel) clampLeftForDrag(value float32, threePaneAtStart bool) float32 {
+	limit := maxLeftPaneWidth
+	if a.workspaceOpen && threePaneAtStart {
+		byCenter := float32(a.layoutWidth()) - 2*paneSeparatorWidth - a.workWidth() - minCenterPaneWidth
+		if byCenter < limit {
+			limit = byCenter
+		}
+	}
+	return clampPaneWidth(value, defaultLeftPaneWidth, minLeftPaneWidth, limit)
+}
+
+func (a *appModel) clampRightForDrag(value, left float32, threePaneAtStart bool) float32 {
+	limit := maxRightPaneWidth
+	if a.workspaceOpen && threePaneAtStart {
+		byCenter := float32(a.layoutWidth()) - left - 2*paneSeparatorWidth - minCenterPaneWidth
+		if byCenter < limit {
+			limit = byCenter
+		}
+	}
+	return clampPaneWidth(value, defaultRightPaneWidth, minRightPaneWidth, limit)
+}
 
 func workFor(ct *contact, taskID string) *workItem {
 	if ct == nil || taskID == "" {
@@ -155,28 +208,75 @@ func (a *appModel) workStateColor(state workState) ui.Color {
 	}
 }
 
-func (a *appModel) toggleWorkspace() {
-	a.workspaceOpen = !a.workspaceOpen
-	if a.workspaceOpen {
+func (a *appModel) setWorkspaceOpen(open bool) {
+	if a.workspaceOpen == open {
+		if open {
+			a.focusWorkspaceOpen = true
+		} else {
+			a.focusWorkspace = true
+		}
+		return
+	}
+	a.workspaceOpen = open
+	if open {
 		a.focusWorkspaceOpen = true
 	} else {
 		a.focusWorkspace = true
 	}
+	a.persist()
 }
 
-func (a *appModel) closeWorkspace() {
-	a.workspaceOpen = false
-	a.focusWorkspace = true
-}
+func (a *appModel) toggleWorkspace() { a.setWorkspaceOpen(!a.workspaceOpen) }
+
+func (a *appModel) closeWorkspace() { a.setWorkspaceOpen(false) }
 
 func (a *appModel) toggleRail() {
 	a.railCollapsed = !a.railCollapsed
 	a.focusRail = true
 }
 
+// layoutBody draws the contact rail and the main conversation. A visible
+// work panel nests a second Split so either edge can be resized independently.
+func (a *appModel) layoutBody(c *ui.Context, t *ui.Theme) {
+	if a.railCollapsed {
+		a.layoutMainArea(c, t, 0)
+		return
+	}
+	threePaneAtStart := a.workspaceOpen && !a.workOverlay()
+	a.leftPaneWidth = a.railWidth()
+	ui.Split(c, &a.leftPaneWidth, func() { a.rail(c, t) }, func() {
+		a.layoutMainArea(c, t, a.leftPaneWidth)
+	}).OnChange(func() {
+		// Split updates its bound width inside the handle's afterInput, before
+		// OnChange and the rebuild. Clamp here, not after a stale build.
+		a.leftPaneWidth = a.clampLeftForDrag(a.leftPaneWidth, threePaneAtStart)
+	}).Fill()
+}
+
+func (a *appModel) layoutMainArea(c *ui.Context, t *ui.Theme, left float32) {
+	if !a.workspaceOpen || a.aux == "settings" || a.workOverlay() {
+		a.main(c, t)
+		return
+	}
+	area := float32(a.layoutWidth()) - left
+	if !a.railCollapsed {
+		area -= paneSeparatorWidth
+	}
+	threePaneAtStart := !a.workOverlay()
+	a.centerPaneWidth = area - paneSeparatorWidth - a.workWidth()
+	ui.Split(c, &a.centerPaneWidth, func() {
+		a.main(c, t)
+	}, func() {
+		a.workspaceFrame(c, t)
+	}).OnChange(func() {
+		candidate := area - paneSeparatorWidth - a.centerPaneWidth
+		a.rightPaneWidth = a.clampRightForDrag(candidate, left, threePaneAtStart)
+	}).Fill()
+}
+
 // workspaceFrame draws the current/recent task view in its own column.
-func (a *appModel) workspaceFrame(c *ui.Context, t *ui.Theme, width float32) {
-	ui.Column(c).Width(width).FillHeight().Background(t.Surface).BorderWidth(0, 0, 0, 1).BorderColor(t.Border).Children(func() {
+func (a *appModel) workspaceFrame(c *ui.Context, t *ui.Theme) {
+	ui.Column(c).FillWidth().FillHeight().Background(t.Surface).BorderWidth(0, 0, 0, 1).BorderColor(t.Border).Children(func() {
 		a.workspaceContent(c, t)
 	})
 }
@@ -185,7 +285,7 @@ func (a *appModel) workspaceModal(c *ui.Context, t *ui.Theme) {
 	open := a.workspaceOpen
 	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
-		width := float32(360)
+		width := a.workWidth()
 		if layout := float32(a.layoutWidth()); layout < width {
 			width = layout
 		}
@@ -193,8 +293,8 @@ func (a *appModel) workspaceModal(c *ui.Context, t *ui.Theme) {
 			a.workspaceContent(c, t)
 		})
 	})
-	if a.workspaceOpen {
-		a.workspaceOpen = open
+	if a.workspaceOpen != open {
+		a.setWorkspaceOpen(open)
 	}
 	if !a.workspaceOpen {
 		a.focusWorkspace = true

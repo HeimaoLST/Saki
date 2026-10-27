@@ -192,6 +192,7 @@ func TestStoredPendingExecutionIsUnknownAfterRestart(t *testing.T) {
 
 func TestIssueFormCreatesExplicitItemWithoutTouchingComposer(t *testing.T) {
 	a := testApp(t)
+	a.workspaceOpen = true
 	ct := a.selectedContact()
 	ct.Draft = "ordinary composer draft"
 	tr := ui.NewTester(a.view, 1040, 720)
@@ -376,6 +377,7 @@ func TestIssueNotDispatchedIsPersistedAndRerunnable(t *testing.T) {
 
 func TestIssueFormCancelReturnsFocusToNewIssue(t *testing.T) {
 	a := testApp(t)
+	a.workspaceOpen = true
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
 	if err := tr.Click("New issue"); err != nil {
