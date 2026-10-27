@@ -184,9 +184,10 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 			case a.runtimeStatus == runtimeStateStarting:
 				ui.Text(c, "Connecting to runtime…").FontSize(12).Padding(8, 16).TextColor(t.TextMuted)
 			}
-			if ct.LoadErr != "" {
-				ui.Text(c, "Contact load: "+ct.LoadErr).FontSize(12).Padding(8, 16).TextColor(t.Warning)
-			}
+		}
+		a.connectionErrorBanner(c, t, ct)
+		if ct.LoadErr != "" && !a.connectionFailureKnown(ct) {
+			ui.Text(c, ct.LoadErr).FontSize(12).Padding(8, 16).TextColor(t.Warning)
 		}
 		if ct.Archived {
 			ui.Row(c).AlignItems(ui.Center).Gap(8).Padding(6, 16).Background(t.SurfaceHover).Children(func() {
@@ -453,11 +454,68 @@ func (a *appModel) emptyState(c *ui.Context, t *ui.Theme) {
 		if a.demo {
 			ui.Text(c, "Start typing below to talk with "+ct.Name+"; you can personalize name, purpose, instructions and workspace any time in Settings.").FontSize(12).LineHeight(1.45).TextColor(t.TextMuted)
 		} else {
-			ui.Text(c, "Start typing below to talk with "+ct.Name+". Set purpose, instructions and workspace before the first message; after that only the display name can change.").FontSize(12).LineHeight(1.45).TextColor(t.TextMuted)
+			ui.Text(c, "Start typing below to talk with "+ct.Name+". You can update the profile in Settings; a new conversation uses the updated profile, while this conversation keeps its existing session.").FontSize(12).LineHeight(1.45).TextColor(t.TextMuted)
 		}
 		ui.Row(c).Children(func() {
 			ui.Button(c, "Settings").FontSize(12).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() { a.openSettings() })
 		})
+	})
+}
+
+func knownConnectionFailure(text string) (string, bool) {
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "connection_mismatch") {
+		return "This conversation is bound to a different connection. Review connection settings, or start a new conversation from the profile.", true
+	}
+	return "", false
+}
+
+func (a *appModel) connectionFailureKnown(ct *contact) bool {
+	if ct == nil {
+		return false
+	}
+	_, loadKnown := knownConnectionFailure(ct.LoadErr)
+	_, sendKnown := knownConnectionFailure(ct.SendError)
+	return loadKnown || sendKnown
+}
+
+func (a *appModel) connectionErrorBanner(c *ui.Context, t *ui.Theme, ct *contact) {
+	if ct == nil {
+		return
+	}
+	summary, known := knownConnectionFailure(ct.LoadErr)
+	if !known {
+		summary, known = knownConnectionFailure(ct.SendError)
+	}
+	if !known {
+		return
+	}
+	details := strings.TrimSpace(ct.LoadErr)
+	if details == "" || details == ct.SendError {
+		details = strings.TrimSpace(ct.SendError)
+	} else if ct.SendError != "" {
+		details = details + "\n\n" + strings.TrimSpace(ct.SendError)
+	}
+	expanded := a.connectionDetailsOpen != nil && a.connectionDetailsOpen[ct.ID]
+	ui.Column(c).Padding(8, 16).Gap(3).Background(t.SurfaceHover).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+			ui.Text(c, summary).FontSize(12).LineHeight(1.4).TextColor(t.Warning).Grow(1)
+			ui.Button(c, "Connection settings").FontSize(11).Padding(3, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.Text).OnClick(func() { a.openConfiguration() })
+			label := "Details"
+			if expanded {
+				label = "Hide details"
+			}
+			ui.Button(c, label).FontSize(11).Padding(3, 7).Background(ui.Transparent).BorderWidth(0).TextColor(t.TextMuted).OnClick(func() {
+				if a.connectionDetailsOpen == nil {
+					a.connectionDetailsOpen = map[string]bool{}
+				}
+				a.connectionDetailsOpen[ct.ID] = !a.connectionDetailsOpen[ct.ID]
+			})
+		})
+		if expanded && details != "" {
+			markdownReader(c, details, markdownReaderOptions{PlainText: true, CopyLabel: "Copy error details"}).
+				FontSize(11).LineHeight(1.4).TextColor(t.TextMuted)
+		}
 	})
 }
 
@@ -531,7 +589,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 					ui.Text(c, "Runtime disconnected; restart Saki to check the task and history.").FontSize(11).LineHeight(1.4).TextColor(t.Danger)
 				}
 			}
-			if ct.SendError != "" {
+			if ct.SendError != "" && !a.connectionFailureKnown(ct) {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 					ui.Text(c, ct.SendError).FontSize(11).LineHeight(1.4).TextColor(t.Warning)
 					if (ct.SendState == sendUnknown || ct.SendError != "") && a.runtimeStatus == runtimeStateReady && a.rt != nil {
