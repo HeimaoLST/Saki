@@ -14,7 +14,7 @@ func TestKnownConnectionFailureIsConciseAndKeepsOriginalDetails(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	if !tr.HasText("This conversation is bound to a different connection") ||
+	if !tr.HasText("Connection unavailable or changed") ||
 		!tr.HasText("Connection settings") || !tr.HasText("Details") {
 		t.Fatalf("known connection failure summary missing: %v", tr.Texts())
 	}
@@ -56,7 +56,7 @@ func TestMixedConnectionDiagnosticsStayIndependent(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	if !tr.HasText("This conversation is bound to a different connection") || !tr.HasText(ct.SendError) {
+	if !tr.HasText("Connection unavailable or changed") || !tr.HasText(ct.SendError) {
 		t.Fatalf("mixed known/unknown diagnostics were not both visible: %v", tr.Texts())
 	}
 	if tr.HasText(ct.LoadErr) {

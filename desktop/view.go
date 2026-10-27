@@ -469,7 +469,7 @@ func knownConnectionFailure(text string) (string, bool) {
 	// exactly rather than treating an arbitrary diagnostic containing the word
 	// as a known connection failure.
 	if strings.HasPrefix(strings.TrimSpace(text), "connection_mismatch:") {
-		return "This conversation is bound to a different connection. Review connection settings, or start a new conversation from the profile.", true
+		return "Connection unavailable or changed. Review connection settings, or start a new conversation from the profile.", true
 	}
 	return "", false
 }
