@@ -629,7 +629,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				label = fmt.Sprintf("Task context · %d", count)
 			}
 			secondaryButton(c, label).OnClick(func() { a.openConversationTaskContext() })
-			send := ui.PrimaryButton(c, "Send").FontSize(13).Padding(3, 10).Disabled(sendDisabled)
+			send := ui.PrimaryButton(c, "Send").FontSize(13).MinHeight(32).Padding(3, 10).Disabled(sendDisabled)
 			if send.Clicked() {
 				a.sendCurrent()
 			}
