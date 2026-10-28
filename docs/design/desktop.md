@@ -746,3 +746,14 @@ type resolvedTheme struct {
 - **终态与完成依据**：Runtime execution completed 仍只是 execution fact；事项未完成且仍有 unverified/unmet requirement 时显示“This execution ended; the issue remains open.”。显式 Mark complete 仍保留既有运行/unknown 限制，显示 `Marked by user · <evidence>`，不把未核实 requirement 改成 satisfied。pending/unknown 的 Check execution/Confirm not dispatched/Reload 继续复用现有路径。
 - **分层退出**：#187 reader 仍独立；当前 shared workspace 不改 reader files。aux Escape 先关闭 aux 并保留 detail/work；宽屏和窄窗 overlay 中 Escape 先从 execution 回 detail、再从 detail 回 overview，最后才关闭 work 抽屉；窄窗点击抽屉外 backdrop 仍是显式关闭，不触发 Back，保留 detail/filter/draft。Header `Close work` 仍是显式整体关闭，不改成返回。切换到其他 contact 时各自保留 detail/filter/scroll，主聊天阅读位置不被重置。
 - **验证边界**：`issue_navigation_test.go` 覆盖默认概览、三种筛选、概览/详情/返回的 row+scroll+focus、contact 隔离、accepted task 不抢详情、Escape 分层、窄 work 面板动作行不溢出、completed execution 与手动完成差异；既有 issue/detail/recovery/Stop/archive/complete 回归保留。`issues_preview_test.go` 的既有 preview 入口生成 `issue-overview`/`issue-detail`/`issue-back` 等 headless 图，当前 review 图在 `/private/tmp/saki-gui-186/previews-key/`。headless 不是原生窗口或 IME 验收。
+
+
+## #187 成果文件阅读与原上下文返回（候选实现，2026-10-28）
+
+代码来源：`agent/gui/187-result-reader` 的独立 reader `28c24a4`，普通消费 #96/#186 固定 `205fa65`，接线 `9776d3e`；同时纳入 #186 的 tests-only `b512b64`。最终可运行候选、门禁与原生状态以 [PR #188](https://github.com/HeimaoLST/Saki/pull/188) 和 [#187](https://github.com/HeimaoLST/Saki/issues/187) 的精确 SHA 记录为准；此节不表示已集成 dev 或完整 MVP 通过。
+
+- **入口与层级**：事项详情中最近一次结果使用单一 `Read latest result →` 行；执行记录仍可选择特定 run。结果页中的 reported-file 行本身是 `Read file →` 入口，不再并列重复 `View file` 按钮。文件行仍仅来自 #155 规定的真实成功 write/edit 记录，未从正文猜路径或建立第二份文件索引。没有已报告文件时保留真实结果与空态，不伪造文件、图表或成果。
+- **文件阅读**：`.md` / `.markdown`（扩展名大小写不敏感）的 UTF-8 当前文件复用 #113 的 Markdown reader，支持中文段落、列表、代码及已有的换行基础表格；其他 UTF-8 文件按普通文本显示。表格沿用明确标识的 plain-text 单元格，不宣称实现未支持的嵌套富文本或图表。读取上限仍为 256 KiB；空文件可复制空字符串，过大内容不静默截断，非普通文件、非 UTF-8、失效路径和读取失败均保留说明与可用下一步，不自动搜索替代文件或重新生成。
+- **阅读面与动作**：使用既有 `DialogBase` 提供局部较宽文件阅读面，最大宽度 760 逻辑 px；文件名为标题，报告路径只显示一处。详细工作目录和执行来源位于已有 `Source & raw record` 中。原文、单个代码块、Copy path / current file / tool record 的精确复制与成功/失败反馈，Check again、Open file、Show in Finder 均保留。读取的是当前磁盘内容，可能与执行结束时不同，不声称保存了执行时文件快照；系统请求接受与实际窗口打开成功仍分开验收。
+- **上下文返回**：文件阅读 Escape / Close reading 只退到原文件行；结果页 Escape / Close results 回到打开它的最近结果行或特定 run 入口。关闭结果的两个宿主路径统一经过 `closeIssueResult`，仅记录局部入口类别与待返回焦点，身份复用既有 reader page，不另建导航快照或通用弹层栈。#186 的 DetailID、筛选、DetailScroll、持久 SelectedIssueID、选中的执行、聊天草稿和 workspaceOpen 保持；窄窗返回重新显示同一工作抽屉。强制关闭、联系人或连接切换沿原取消/代次路径处理，不把旧阅读结果或返回焦点投到新联系人。
+- **证据边界**：确定性 headless 控件与真实 Runtime 离线 fixture 覆盖 Markdown/普通文本、精确复制、错误、过期读回、跨执行恢复，以及 1040×720 / 720×720 下实际事项行、文件行、分层 Escape 和 run 入口返回。返回测试实际滚到非零详情位置，并核对原行可见/焦点、滚动、非空执行身份及草稿，而非只切模型宽度或检查文字存在。两色 720/1040/1280 截图是 headless 证据；最小 720×640、原生剪贴板、文件动作、焦点与新共同包仍由 PM 协调隔离窗口实际验收，不把旧 #156 原生图、旧主题或单元测试转记为新候选通过。原测试入口失败与修正后的运行记录保留，不通过恢复旧生产默认、跳过测试或删除精确内容断言获得通过。
