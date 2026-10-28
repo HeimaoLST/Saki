@@ -1,6 +1,6 @@
 # CI governance（Runtime／TUI／GUI）
 
-更新日期：2026-10-28。状态：**实现事实（macOS-only CI 配置与本地静态验证）**；实际 GitHub Actions run evidence 以 PR 记录，当前平台**仅 macOS**。旧 Ubuntu/Linux run 结果只作历史，不再代表当前门禁平台。本轮产品冻结输入为 `e65c194d…`，CI 工程从 exact `4ae606c` 开出。
+更新日期：2026-10-28。状态：**实现事实（macOS-only CI 配置与本地静态验证）**；实际 GitHub Actions run evidence 以 PR 记录，当前平台**仅 macOS**。本轮候选由完整冻结 GUI 输入 `e65c194d…` 与 `agent/qa/191-macos-ci` 的 macOS-only CI 适配组成；旧 Ubuntu/Linux/4ae run 结果只作历史，不再代表当前门禁平台。工程构建通过不等于 Nagi MVP 验收。
 
 ## 目的与范围
 
@@ -31,10 +31,11 @@
 | Runtime + TUI | `rust` | `cargo test --locked --all-targets` | 单元、集成与 example target；测试数量以对应 SHA 的实际 run 为准 |
 | TUI（真实 PTY） | `rust` | `cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1` | 真实 PTY 上进入／退出终端并验证 panic 后 cooked mode 恢复 |
 | Runtime stdio（真实子进程） | `rust` | `cargo build --locked --bin Saki`；`python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki` | 两个真实 OS 进程、临时 read、task/message/journal 关联、恢复/history 零重放、继续前文与 stdout 断连 drain；driver 自带本地 fixture，无外部 provider/key |
-| GUI→Runtime（完整离线 desktop 包） | `rust` | `go test -json ./...` + `scripts/check-gui-runtime-results.py`（见下方权威命令） | 真实 Saki `--stdio` 双进程、首用 Save/Apply/Test/重启、活动配置变更/失败重载保留 helper、工作/对话并发、定向停止、容量与恢复；18 个必须场景逐项 PASS；8 项 allowlist 不变；设置 preview 目录后 6 个 preview 实际运行，正常 3 个 online/reader Skip；线上 smoke 不接入 |
+| GUI→Runtime（完整离线 desktop 包） | `rust` | `python3 ../scripts/gui-go.py test -json ./...` + `scripts/check-gui-runtime-results.py`（见下方权威命令） | 真实 Saki `--stdio` 双进程、首用 Save/Apply/Test/重启、活动配置变更/失败重载保留 helper、工作/对话并发、定向停止、容量与恢复；18 个必须场景逐项 PASS；8 项 allowlist 不变；设置 preview 目录后 6 个 preview 实际运行，正常 3 个 online/reader Skip；线上 smoke 不接入 |
 | macOS arm64 工程候选 | `macos-app` | `bash scripts/build-macos-app.sh /absolute/out`（输出在 checkout 外） | Go GUI + Rust `Saki-runtime` helper、`Saki.app/Contents/MacOS/{Saki,Saki-runtime}`、Info.plist `dev.saki.desktop`、arm64 Mach-O、ad-hoc 签名；manifest/zip/SHA256SUMS；工程候选，不是 Nagi MVP |
-| GUI（独立 Go module） | `gui` | `gofmt -l .`（必须为空）、`CGO_ENABLED=0 go vet ./...`、`go test ./... -count=1`、`go build` | 格式、vet、测试、构建 |
-| GUI（可复现图像） | `gui` | `SAKI_PREVIEW_DIR=... go test -run TestPreviewImages -count=1 .` | headless `ui.Tester` 生成 light/dark add／settings 等场景 PNG，作为 artifact 保留 14 天 |
+| GUI（独立 Go module） | `gui` | `gofmt -l .`（必须为空）、`CGO_ENABLED=0 python3 ../scripts/gui-go.py vet ./...`、`CGO_ENABLED=0 python3 ../scripts/gui-go.py test ./... -count=1`、`CGO_ENABLED=0 python3 ../scripts/gui-go.py build` | 格式、vet、测试、构建（经固定 MyGo Split 临时 patch） |
+| GUI（MyGo Split 回归） | `gui` | `CGO_ENABLED=0 python3 ../scripts/gui-go.py test github.com/egoist/mygo/ui -run '^TestSplitReleaseBeforeFrame$' -count=1 -v` | 验证 GUI 依赖的实际 Split release-before-frame patch |
+| GUI（可复现图像） | `gui` | `CGO_ENABLED=0 python3 ../scripts/gui-go.py test -run TestPreviewImages -count=1 .`（`SAKI_PREVIEW_DIR`） | headless `ui.Tester` 生成 light/dark add／settings 等场景 PNG，作为 artifact 保留 14 天 |
 | 协作检查 | `python` | `python3 scripts/test_collaboration_check.py`；断言运行测试数非零 | 既有协作检查回归；pipefail 保留失败，空套件不能静默通过 |
 
 聚合检查：`ci-required`（`if: always()`，依赖 `rust`、`gui`、`python` 与 `macos-app`）只在四者结果都为 `success` 时通过。`cancelled`／`failed`／`skipped` 都不算成功。若未来新增 job，必须同时更新 `ci-required` 的 `needs` 与判定。
@@ -75,12 +76,12 @@ mkdir -p "$SAKI_PREVIEW_DIR"
 cd desktop
 SAKI_TEST_RUNTIME_BIN="$GITHUB_WORKSPACE/target/debug/Saki" \
 SAKI_TEST_ONLINE=0 CGO_ENABLED=0 \
-  go test -json ./... -count=1 | tee "$RUNNER_TEMP/desktop-go-test.json"
+  python3 ../scripts/gui-go.py test -json ./... -count=1 | tee "$RUNNER_TEMP/desktop-go-test.json"
 python3 "$GITHUB_WORKSPACE/scripts/check-gui-runtime-results.py" \
   "$RUNNER_TEMP/desktop-go-test.json"
 ```
 
-`go test` 的 stdout JSON 用仅 stdout 的 `tee` 同时保留完整逐项日志，stderr 直接进入 CI 日志；不使用会混入 stderr 的 `2>&1`。显式 `set -o pipefail` 与 bash `-e` 保证 Go 非零不会被 tee 吞掉，checker 错误也有原始 JSON/日志可查。step 在 Go 命令前设置并创建临时 `SAKI_PREVIEW_DIR`，让 desktop 包已有的 headless preview 测试实际运行（包括新增 model-selection preview）；8 项 allowlist 名称保持不变，当前路径使 6 个 preview 实际 PASS，正常仅剩 3 个已知 online/reader opt-in Skip。`SAKI_TEST_RUNTIME_BIN` 必须指向本次构建的绝对 binary，`SAKI_TEST_ONLINE=0` 显式关闭线上入口，`-count=1` 禁止缓存替代新 binary。Go test 非零直接失败；checker 再验证 package PASS 与场景合同，任一不符都失败。
+`gui-go.py test` 的 stdout JSON 用仅 stdout 的 `tee` 同时保留完整逐项日志，stderr 直接进入 CI 日志；不使用会混入 stderr 的 `2>&1`。显式 `set -o pipefail` 与 bash `-e` 保证 Go 非零不会被 tee 吞掉，checker 错误也有原始 JSON/日志可查。step 在 Go 命令前设置并创建临时 `SAKI_PREVIEW_DIR`，让 desktop 包已有的 headless preview 测试实际运行（包括新增 model-selection preview）；8 项 allowlist 名称保持不变，当前路径使 6 个 preview 实际 PASS，正常仅剩 3 个已知 online/reader opt-in Skip。`SAKI_TEST_RUNTIME_BIN` 必须指向本次构建的绝对 binary，`SAKI_TEST_ONLINE=0` 显式关闭线上入口，`-count=1` 禁止缓存替代新 binary。Go test 非零直接失败；checker 再验证 package PASS 与场景合同，任一不符都失败。
 
 checker（`scripts/check-gui-runtime-results.py`）的**必须 PASS** 清单（原 #87 五项 + 当前 Nagi 场景）：
 
@@ -127,14 +128,14 @@ TestPreviewStartupDiagnostics
 ```sh
 cargo build --locked --release --bin Saki
 # desktop/:
-CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -mod=readonly -buildvcs=true -o <app>/Contents/MacOS/Saki .
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 python3 "$ROOT/scripts/gui-go.py" build -trimpath -mod=readonly -buildvcs=true -o <app>/Contents/MacOS/Saki .
 ```
 
 产物为 `Saki.app`，其中 `Contents/MacOS/Saki` 为 GUI、`Saki-runtime` 为 Rust helper；Info.plist 使用既有 `dev.saki.desktop` / `Saki` / `0.1.0` / build `1` / minimum 11.0 契约。脚本校验 `uname -m`、`go env GOOS/GOARCH`、`rustc` host、`file`/`lipo` 为 arm64，`plutil` 字段，先签 helper 再签 app，分别 `codesign --verify --strict`，app 再 `--deep --strict`；对已签名 bundle 内 helper 调用现有 `examples/runtime_stdio.py --self-test`。`ditto` 生成保留权限/签名的 `Saki.app.zip`；`manifest.json`、`SHA256SUMS`、`codesign.log`、`validation.log`、`helper-smoke.log` 与 `build.log` 一并上传，artifact 名含实际 source SHA，保留 14 天，`if-no-files-found: error`。
 
 - artifact 只含 `Saki.app.zip`、`manifest.json`、`SHA256SUMS` 与日志；下载后先在**新目录**执行 `ditto -x -k Saki.app.zip .` 解包，再 `shasum -a 256 -c SHA256SUMS`（此时 app/helper/plist/zip/manifest 的相对路径均存在）。manifest 记录 actual checkout/source SHA、CI event SHA、run URL、`uname`/macOS/runner image、Go/Rust/cargo/Xcode/SDK、app/helper/Info.plist/zip SHA256、签名与文件清单；build log 在脚本结束后由 CI 完整保存，不作为“写入中”的 hash 对象。
 - ad-hoc only；不做证书/公证/Gatekeeper 承诺；minimumOS 字段不表示已在旧 OS 或真实 Finder/IME 实测。
-- 当前 dev 未含 #141/PR126/PR132 产品切片，因此该 artifact 只能称 **CI 工程候选**，不是 Nagi MVP 完成；真实窗口/IME、外部 provider、用户试用由对应 owner/PM 负责。
+- 该 artifact 是固定源码与工具链的工程构建产物，工程构建通过不等于 Nagi MVP 验收；真实窗口/IME、外部 provider、用户试用由对应 owner/PM 负责。
 - 本地构建与下载核验命令（macOS arm64）：
 
 ```sh
@@ -251,7 +252,7 @@ python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki
   mkdir -p "$SAKI_PREVIEW_DIR"
   cd desktop
   SAKI_TEST_RUNTIME_BIN="$PWD/../target/debug/Saki" SAKI_TEST_ONLINE=0 CGO_ENABLED=0 \
-    go test -json ./... -count=1 | tee /tmp/desktop-go-test.json
+    python3 ../scripts/gui-go.py test -json ./... -count=1 | tee /tmp/desktop-go-test.json
   python3 ../scripts/check-gui-runtime-results.py /tmp/desktop-go-test.json
 )
 
@@ -261,10 +262,11 @@ bash scripts/build-macos-app.sh /private/tmp/saki-macos-candidate
 # GUI
 cd desktop
 gofmt -l .
-CGO_ENABLED=0 go vet ./...
-CGO_ENABLED=0 go test ./... -count=1
-CGO_ENABLED=0 go build -o /tmp/saki-desktop .
-SAKI_PREVIEW_DIR=/tmp/saki-desktop-previews go test -run TestPreviewImages -count=1 .
+CGO_ENABLED=0 python3 ../scripts/gui-go.py vet ./...
+CGO_ENABLED=0 python3 ../scripts/gui-go.py test ./... -count=1
+CGO_ENABLED=0 python3 ../scripts/gui-go.py test github.com/egoist/mygo/ui -run '^TestSplitReleaseBeforeFrame$' -count=1 -v
+CGO_ENABLED=0 python3 ../scripts/gui-go.py build -o /tmp/saki-desktop .
+SAKI_PREVIEW_DIR=/tmp/saki-desktop-previews CGO_ENABLED=0 python3 ../scripts/gui-go.py test -run TestPreviewImages -count=1 .
 ```
 
 ## 一手来源（2026-10 核对）
