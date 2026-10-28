@@ -89,7 +89,7 @@ Headless 证据（fixture，不等于线上模型或原生窗口）：
 
 ```sh
 cd desktop
-CGO_ENABLED=0 go build -o /private/tmp/saki-gui/o .
+python3 ../scripts/gui-go.py build -o /private/tmp/saki-gui/o .
 SAKI_RUNTIME_BIN=/abs/path/to/Saki \
 SAKI_GUI_STORE=/private/tmp/saki-gui/contacts.json \
 SAKI_SESSION_DIR=/private/tmp/saki-gui/sessions \
@@ -706,7 +706,7 @@ type resolvedTheme struct {
 
 <a id="adjustable-layout-values"></a>
 
-## #184 可调三栏与全局布局偏好（实现事实，2026-10-27）
+## #184 可调三栏与全局布局偏好（实现事实，2026-10-28）
 
 代码来源：`agent/gui/184-adjustable-layout`，从 `549ac98` 开出；本片源 `6b2f67ae8808f4430b1035b02caf3fa6a6d17f23`。本节只记录本片接线的布局与持久化事实，不代表原生拖动或最终包验收。
 
@@ -714,4 +714,8 @@ type resolvedTheme struct {
 - **分栏与约束**：复用 MyGo `ui.Split` 的 first-width、1 DIP 分隔和键盘焦点；外层 rail/main、内层 main/work，均用 `OnChange` 在 bound width 更新后立即 clamp。左 180–280、右 280–440、三栏中心至少 480 且宽于两侧；1040 默认 200/498/340，1380 将剩余空间给中心。960/720 在默认偏好下自动使用既有右侧抽屉，Close/Escape/焦点恢复保留；左栏仍可收起。右侧没有使用 RTL Direction，main/work 子树保持正常文字方向。
 - **交互与事件**：开/关右栏和显式 `View execution` 通过同一条设置入口；切换联系人、收消息、task start/finish 不改开合。右栏关闭时 Work 入口保留，并用既有 active work/issue notice/contact status 显示 `Work running` 或 `Work needs attention`，不生成聊天消息或伪完成。
 - **保存边界**：显式开/关、正常 `beginShutdown` 和既有 `persist` 保存当前偏好；拖动只改内存，不在每次 mousemove 落盘。窄窗口的 overlay/有效宽度不覆盖保存的偏好宽度；宽度在读取时 clamp。
-- **验证**：`layout_test.go` 用真实 `ui.Tester` Press→Move（仍 held）→Release 验证两条分隔边、中心最小值和应用宽度上限，另测键盘物理方向、OnChange clamp、960/720 Close/Escape/focus、旧/新 store、显式开合重启、事件不强开、右栏关闭提示。`layout_preview_test.go` 生成明暗 1040/1380/960/720 的 closed/open/dragged 24 张 headless 图，位于 `/private/tmp/saki-gui-184/previews-final/`；其中 `dragged` 是直接赋宽度偏好的静态场景，不是实际拖动证据；真实 Press/Move/Release 和方向键只在 `layout_test.go`，native 鼠标拖动仍未验。早期 `go test ./...` 4.565s PASS、定向 race 2.631s PASS 保留为阶段记录。包源固定 `f5b154b`：GUI `477dd2d51514618ee407609f565c96b74313f9bd3bc8c7aa6b84bc248599a17e`、helper `d7a8755c3b7b245bf8b5228ed4c4e5995bb9102523cf22c1201c58c120a23ef5`；`f5b154b..ab390b0` 只增加三项测试修复与 docs，生产 Go 无差异。固定 `ab390b0` 的父级完整 race 为 **512 named PASS / 0 FAIL / 1 明确 `TestGUIOnlineSmoke` onlineSkip + 1 package PASS（220.722s）**；vet/checker exit 0，18 MUST 全 PASS；原 f5 三条 FAIL 日志保留，测试显式 Work 修复不变。固定源 review 见 [PR #185 comment 6441501965](https://github.com/HeimaoLST/Saki/pull/185#issuecomment-6441501965)。PM 有限原生见 [issue #184 comment 6441160463](https://github.com/HeimaoLST/Saki/issues/184#issuecomment-6441160463)：默认关闭、开合、两侧 Divider 键盘 210/330、757 overlay/Esc/1040 恢复、草稿/切换、退出重启 PASS；原生鼠标 drag 被 CUA 定位拦截仍未验，不称 FAIL/PASS。该局部原生不外推全 native/IME/Open file/MVP；native 截图只来自 CUA 工具记录，不在本地造 PNG。
+- **阶段记录（旧 f5/ab，非当前结论）**：`layout_test.go` 用真实 `ui.Tester` Press→Move（仍 held）→Release 验证两条分隔边、中心最小值和应用宽度上限，另测键盘物理方向、OnChange clamp、960/720 Close/Escape/focus、旧/新 store、显式开合重启、事件不强开、右栏关闭提示。`layout_preview_test.go` 生成明暗 1040/1380/960/720 的 closed/open/dragged 24 张 headless 图，位于 `/private/tmp/saki-gui-184/previews-final/`；其中 `dragged` 是直接赋宽度偏好的静态场景，不是实际拖动证据；真实 Press/Move/Release 和方向键只在 `layout_test.go`。早期 `go test ./...` 4.565s PASS、定向 race 2.631s PASS 保留为阶段记录。包源固定 `f5b154b`：GUI `477dd2d51514618ee407609f565c96b74313f9bd3bc8c7aa6b84bc248599a17e`、helper `d7a8755c3b7b245bf8b5228ed4c4e5995bb9102523cf22c1201c58c120a23ef5`；`f5b154b..ab390b0` 只增加三项测试修复与 docs，生产 Go 无差异。固定 `ab390b0` 的父级完整 race 为 **512 named PASS / 0 FAIL / 1 明确 `TestGUIOnlineSmoke` onlineSkip + 1 package PASS（220.722s）**；vet/checker exit 0，18 MUST 全 PASS；原 f5 三条 FAIL 日志保留，测试显式 Work 修复不变。固定源 review 见 [PR #185 comment 6441501965](https://github.com/HeimaoLST/Saki/pull/185#issuecomment-6441501965)。以上是旧阶段事实，不代表当前正式新源已完成最终无 trace 包。
+- **原生 trace 与候选（2026-10-28）**：native trace 左 seq159–166、右 195–202 显示 PointerDown/Move/Up 全部发生在下一 frame 前且无位移，和 release-before-frame 批次结果一致。PM [comment 6459688039](https://github.com/HeimaoLST/Saki/issues/184#issuecomment-6459688039) 的候选左右同批/反向 native PASS 且保存 190/316；[comment 6459745772](https://github.com/HeimaoLST/Saki/issues/184#issuecomment-6459745772) 的重启 190/316、758 overlay/Esc/放大恢复、键盘 +10/−10 保存均 PASS，PID 正常退出。composer/editor 仍保持原行为；这些原生结论固定于 ef6 候选，正式构建的按 SHA 证据见 #184/PR185，不外推 composer 或完整 MVP。
+- **受控依赖接入（Split only）**：`scripts/gui-go.py` 是当前 CI、macOS 打包脚本和本地 GUI Go 命令的唯一入口，仅允许 `test`/`vet`/`build`/`run`。它通过 `go list -m -json` 核实际 selected MyGo：`Version` 必须为固定 `fea932a7a2a9` 且不得有 `Replace`；通过 `go mod download -json` 返回的 `Dir` 复制到唯一临时目录，校验 `ui/split.go` 原 SHA，应用 `desktop/patches/split-release.patch`（Split 末位移 hunk + `ui/split_release_before_frame_test.go`），校验 patched SHA，再用 `go mod edit -modfile` 写入临时 replace 并在真实 `desktop` cwd 执行 Go，随后清理临时目录。它支持含空格 TMPDIR；prepare/patch 输出只进 stderr，`go test -json` 的 stdout 只透传 Go JSON；不重写 `desktop/go.mod`、module cache 或 VCS；patch 不匹配、patch 失败、post-SHA 不符或版本/Replace 不符均明确非零退出，不回退。
+- **普通命令边界**：直接运行 `go test ./...` 或 `go build` 不会携带 Split patch；当前只通过上面的统一入口执行带 patch 的 GUI Go。CI 的 GUI vet/test/build/preview、Rust job 的真实 GUI 全包和 `scripts/build-macos-app.sh` 已统一走该入口；显式回归是 `python3 scripts/gui-go.py test github.com/egoist/mygo/ui -run '^TestSplitReleaseBeforeFrame$' -count=1`，没有新增 check 名。`desktop/patches/split-release.patch` 是 `.patch`，不会被 desktop 的普通 Go 测试编译。
+- **范围与退出条件**：该 patch 只修 Split release-before-frame；不含 editor/composer、trace、第二布局或 vendoring。官方 release/main 同批问题记录仍保留；上游发布同批回归绿后应移除 `gui-go.py`/patch，恢复普通 Go 入口。普通 `gofmt` 仍直接使用。

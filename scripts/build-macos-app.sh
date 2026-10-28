@@ -82,7 +82,7 @@ chmod +x "$APP/Contents/MacOS/Saki-runtime"
 
 echo "== build GUI =="
 cd "$ROOT/desktop"
-CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 python3 "$ROOT/scripts/gui-go.py" build \
   -trimpath -mod=readonly -buildvcs=true \
   -o "$APP/Contents/MacOS/Saki" .
 cd "$ROOT"
