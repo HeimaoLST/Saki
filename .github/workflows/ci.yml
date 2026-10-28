@@ -19,7 +19,7 @@ env:
 jobs:
   rust:
     name: rust
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -80,6 +80,19 @@ jobs:
           cache: true
           cache-dependency-path: desktop/go.sum
 
+      - name: Runner and toolchain evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          sw_vers
+          echo "rustc_host=$(rustc -vV | sed -n 's/^host: //p')"
+          rustc --version
+          cargo --version
+          go version
+          echo "go_env=$(CGO_ENABLED=0 go env GOOS GOARCH CGO_ENABLED | tr '\n' ' ')"
+          python3 --version
+
       - name: GUI runtime full offline Go package (real Rust binary)
         shell: bash
         timeout-minutes: 10
@@ -113,7 +126,7 @@ jobs:
 
   gui:
     name: gui
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -124,6 +137,16 @@ jobs:
           go-version-file: desktop/go.mod
           cache: true
           cache-dependency-path: desktop/go.sum
+
+      - name: Runner and toolchain evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          sw_vers
+          go version
+          echo "go_env=$(CGO_ENABLED=0 go env GOOS GOARCH CGO_ENABLED | tr '\n' ' ')"
+          python3 --version
 
       - name: GUI formatting
         working-directory: desktop
@@ -184,7 +207,7 @@ jobs:
 
   python:
     name: python
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -193,6 +216,14 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+
+      - name: Runner and toolchain evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          sw_vers
+          python3 --version
 
       - name: Collaboration-check regression tests
         shell: bash
@@ -249,6 +280,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Runner and toolchain evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          sw_vers
+          echo "rustc_host=$(rustc -vV | sed -n 's/^host: //p')"
+          go version
+          python3 --version
+          xcodebuild -version
+
       - name: Build, sign and verify macOS candidate
         shell: bash
         env:
@@ -291,7 +333,7 @@ jobs:
     name: ci-required
     if: always()
     needs: [rust, gui, python, macos-app]
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 5
     steps:
       - name: Require rust, gui, python and macos-app success

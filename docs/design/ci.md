@@ -1,6 +1,6 @@
 # CI governance（Runtime／TUI／GUI）
 
-更新日期：2026-10-26。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。当前 CI 事实基线：`dev@fd58ec2` + 本 PR 候选 `8f2cf422`（stacked 到 `agent/pm/156-mvp-candidate`；含 GUI/Runtime 固定输入）。本文职责调整本身不修改 workflow 或分支保护。
+更新日期：2026-10-28。状态：**实现事实（macOS-only CI 配置与本地静态验证）**；实际 GitHub Actions run evidence 以 PR 记录，当前平台**仅 macOS**。旧 Ubuntu/Linux run 结果只作历史，不再代表当前门禁平台。本轮产品冻结输入为 `e65c194d…`，CI 工程从 exact `4ae606c` 开出。
 
 ## 目的与范围
 
@@ -40,6 +40,16 @@
 聚合检查：`ci-required`（`if: always()`，依赖 `rust`、`gui`、`python` 与 `macos-app`）只在四者结果都为 `success` 时通过。`cancelled`／`failed`／`skipped` 都不算成功。若未来新增 job，必须同时更新 `ci-required` 的 `needs` 与判定。
 
 稳定检查名：`rust`、`gui`、`python`、`macos-app`、`ci-required`。分支保护只需要引用聚合检查 `ci-required`，避免逐个维护子 job 名称。
+
+全部五个 job 固定 `runs-on: macos-15`（arm64），当前平台只声明 macOS；旧 Ubuntu job 结果仅作历史。检查名、全部检查步骤、18 个 MUST、8 项 allowlist、真实 helper/PTY/stdio/GUI/preview/Python/macOS package 门禁和 `ci-required` 严格聚合均保持不变。
+
+## macOS-only runner adaptation（2026-10-28）
+
+- 五个 job 全部改为 `macos-15`；没有新增矩阵、平台开关或框架，也没有删除任何检查步骤。旧 `ubuntu-24.04` run 结果只保留为历史，不作为本次组合候选的通过证据。
+- `rust`/`gui`/`python`/`macos-app` 增加只读的 runner 与工具链证据；日志可读 `uname -a`、`sw_vers`、Rust host、Go `GOOS/GOARCH/CGO_ENABLED`、Python 和 Xcode（按 job 需要）。`macos-app` 的 `validation.log` 和 artifact manifest 继续记录 runner/arch/toolchain。
+- `scripts/gui-go.py` **未改**：所有 Go 调用继承 `CGO_ENABLED=0`，仍使用 `go list`/`go mod download`、临时 `-modfile` 和固定 MyGo Split patch；不重写 `desktop/go.mod`，不设置 `GOOS/GOARCH` 平台开关。macOS 本地对 `CGO_ENABLED=0` 的编译/launcher 验证记录在任务证据中。
+- 只适配实际 macOS 所需的 runner 选择、shell 可用的 `uname`/`sw_vers`/`tee`/`patch`/`ditto` 路径和既有 CGO=0 设置；产品源码、测试断言、checker 合同、skip allowlist 与超时均未改变。
+- 旧 Linux 的 GUI 返回滚动失败、旧 4ae CI 失败以及历史负向 probe 均保留为历史，不能用本轮 macOS 结果或旧本地 548 PASS 替代。真实 macOS 运行结果必须在 exact combined SHA 上重新读取。
 
 Python 门禁的真实失败传播：临时探针 `9480847` 的 [run 39381934207](https://github.com/HeimaoLST/Saki/actions/runs/39381934207) 中 Python 与聚合均失败，Rust／Go 成功；恢复探针并同步后的最终候选 `96ad987` 的 [run 39384000031](https://github.com/HeimaoLST/Saki/actions/runs/39384000031) 四个 job 均成功。探针已用追加提交撤回，不在最终树中。
 
@@ -108,7 +118,7 @@ TestPreviewRuntimeStates
 TestPreviewStartupDiagnostics
 ```
 
-`SAKI_PREVIEW_DIR` 的预览测试在本 step 使用临时目录实际运行；另两个 reader 专用目录和线上 smoke 仍为显式 opt-in，未获得目录/凭据时 Skip，属于既有 8 项 allowlist。完整 package 让未来新增离线测试自然执行；若新增合法 opt-in，必须同步检查脚本 allowlist，不能静默放开未知 Skip。step 超时 10 分钟；Linux/headless，不覆盖真实窗口/IME。失败留在既有 `rust` job，沿 `rust` → `ci-required` 传播；无 if-file-exists/continue-on-error/skip。
+`SAKI_PREVIEW_DIR` 的预览测试在本 step 使用临时目录实际运行；另两个 reader 专用目录和线上 smoke 仍为显式 opt-in，未获得目录/凭据时 Skip，属于既有 8 项 allowlist。完整 package 让未来新增离线测试自然执行；若新增合法 opt-in，必须同步检查脚本 allowlist，不能静默放开未知 Skip。step 超时 10 分钟；macOS arm64/headless，不覆盖真实窗口/IME。失败留在既有 `rust` job，沿 `rust` → `ci-required` 传播；无 if-file-exists/continue-on-error/skip。
 
 ## macOS arm64 工程候选（2026-10-24）
 
@@ -146,7 +156,7 @@ codesign --verify --deep --strict Saki.app
 - 触发：所有 `pull_request`；`push` 到 `dev`／`master`；`workflow_dispatch`。发布 PR（`dev` → `master`）、hotfix PR（→ `master`）与回流 PR（`master` → `dev`）因此都跑全量检查。
 - 并发：同一 workflow + ref 分组；`pull_request` 的新推送取消旧运行，`dev`／`master` 的 push 不取消，保留最终集成证据。
 - 权限：workflow 顶层 `permissions: contents: read`；不使用任何 secret、模型密钥、新付费服务。
-- 运行平台：`ubuntu-24.04`（GitHub 官方 `ubuntu-latest` 当前指向的镜像；显式固定避免标签漂移）。
+- 运行平台：全部五个 job 固定 `macos-15`（arm64）；当前平台只声明 macOS。旧 Ubuntu/Linux run 结果仅历史，不作为当前门禁证据。
 - 工具链：Rust 固定 `1.99.0`（rustfmt + clippy，官方 rustup 安装，已验证该版本可从 static.rust-lang.org 下载）；Go 由 `desktop/go.mod`（当前 `1.27.1`）通过 `actions/setup-go` 的 `go-version-file` 决定，不使用本机未来版本随意钉死不可下载版本。
 - 缓存：Cargo registry／git／`target` 以 `runner.os + Rust 版本 + Cargo.lock` 为 key；Go 使用 `actions/setup-go` 内置缓存（`desktop/go.sum`）。缓存只加速，不改变 `--locked` 校验。
 - Python：`actions/setup-python@v7` 显式提供 3.12；协作检查 job 运行现有 stdlib unittest，rust job 的 stdio self-test 使用同一版本，不依赖 runner 偶然环境。
@@ -262,7 +272,7 @@ SAKI_PREVIEW_DIR=/tmp/saki-desktop-previews go test -run TestPreviewImages -coun
 - GitHub Actions workflow 语法、并发与权限：<https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax>
 - 必需状态检查（rulesets）：<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#require-status-checks-to-pass-before-merging>
 - 分支保护 REST API：<https://docs.github.com/en/rest/branches/branch-protection>
-- Runner 镜像与 `ubuntu-latest` 对应版本：<https://github.com/actions/runner-images>
+- Runner 镜像与 `macos-15` 对应版本：<https://github.com/actions/runner-images>
 - Rust 工具链安装：<https://rust-lang.github.io/rustup/concepts/toolchains.html>；版本清单：<https://static.rust-lang.org/dist/channel-rust-stable.toml>
 - Go 官方下载与版本：<https://go.dev/dl/>
 - `actions/checkout`、`actions/cache`、`actions/upload-artifact`、`actions/setup-go` 官方仓库与 releases：<https://github.com/actions>
