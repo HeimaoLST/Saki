@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -317,6 +318,7 @@ func (p *uiPump) wait(cond func() bool) {
 }
 
 func (p *uiPump) waitTimeout(cond func() bool, timeout time.Duration) {
+	p.t.Helper()
 	waiter := &uiWaiter{cond: cond, ch: make(chan struct{})}
 	p.mu.Lock()
 	p.waiters = append(p.waiters, waiter)
@@ -325,7 +327,9 @@ func (p *uiPump) waitTimeout(cond func() bool, timeout time.Duration) {
 	select {
 	case <-waiter.ch:
 	case <-time.After(timeout):
-		p.t.Fatal("timed out waiting for GUI runtime state")
+		var dump strings.Builder
+		_ = pprof.Lookup("goroutine").WriteTo(&dump, 2)
+		p.t.Fatalf("timed out waiting for GUI runtime state\n%s", dump.String())
 	}
 }
 
@@ -406,7 +410,31 @@ func (h *guiHarness) shutdown(t *testing.T) {
 	if h.closed {
 		return
 	}
-	h.pump.do(func() { h.app.beginShutdown() })
+	var afterBegin string
+	h.pump.do(func() {
+		h.app.beginShutdown()
+		rt := h.app.rt
+		clientDone, pending, issued, closed := false, 0, 0, false
+		if rt != nil {
+			rt.stateMu.Lock()
+			pending, issued, closed = len(rt.pending), len(rt.issued), rt.closed
+			rt.stateMu.Unlock()
+			select {
+			case <-rt.done:
+				clientDone = true
+			default:
+			}
+		}
+		afterBegin = fmt.Sprintf("app{quitReady:%t started:%t drain:%t status:%q savedErr:%q runtimeErr:%q "+
+			"history:%d result:%d release:%d connectionSave:%t apply:%t test:%t modelOp:%t store:%q} "+
+			"client{done:%t pending:%d issued:%d closed:%t}",
+			h.app.quitReady, h.app.shutdownStarted, h.app.shutdownDrainStarted, h.app.runtimeStatus,
+			h.app.localSaveErr, h.app.runtimeErr, h.app.contactHistoryInFlight, h.app.resultInFlight,
+			h.app.issueToolReleaseInFlight, h.app.connectionSaveInFlight, h.app.connectionApplying,
+			h.app.connectionTesting, h.app.modelOpActive, h.app.storePath,
+			clientDone, pending, issued, closed)
+	})
+	t.Logf("shutdown after beginShutdown: %s", afterBegin)
 	h.pump.waitTimeout(func() bool {
 		if !h.app.quitReady {
 			return false
@@ -939,21 +967,30 @@ func TestGUIAppIssueSaveFailureStopsBeforeDispatch(t *testing.T) {
 	if err := os.WriteFile(badParent, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h.app.store.path = filepath.Join(badParent, "contacts.json")
 	h.pump.do(func() {
-		if h.app.runIssue(issueID) {
-			t.Fatal("runIssue unexpectedly dispatched with failing store")
-		}
+		h.app.store.path = filepath.Join(badParent, "contacts.json")
 	})
-	ct := h.app.selectedContact()
-	if len(ct.Issues[0].Executions) != 0 || ct.Issues[0].Status != issueStatusNotStarted {
-		t.Fatalf("failed pre-save issue state = %+v", ct.Issues[0])
+	var dispatched bool
+	h.pump.do(func() { dispatched = h.app.runIssue(issueID) })
+	var executions int
+	var issueStatus, draft, issueError string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		executions = len(ct.Issues[0].Executions)
+		issueStatus, draft = ct.Issues[0].Status, ct.Draft
+		issueError = h.app.issueFormError
+	})
+	if dispatched {
+		t.Fatal("runIssue unexpectedly dispatched with failing store")
 	}
-	if ct.Draft != "ordinary draft" || provider.count() != 0 {
-		t.Fatalf("pre-save failure draft/requests = %q/%d", ct.Draft, provider.count())
+	if executions != 0 || issueStatus != issueStatusNotStarted {
+		t.Fatalf("failed pre-save issue state = executions:%d status:%q", executions, issueStatus)
 	}
-	if !strings.Contains(h.app.issueFormError, "save") {
-		t.Fatalf("issue save error = %q", h.app.issueFormError)
+	if draft != "ordinary draft" || provider.count() != 0 {
+		t.Fatalf("pre-save failure draft/requests = %q/%d", draft, provider.count())
+	}
+	if !strings.Contains(issueError, "save") {
+		t.Fatalf("issue save error = %q", issueError)
 	}
 }
 
