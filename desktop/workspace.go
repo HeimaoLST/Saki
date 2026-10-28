@@ -773,7 +773,6 @@ func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, is
 	})
 	if a.issueResultShouldFocus(issue.ID, execution.ID, true) {
 		read.Focus()
-		read.ScrollIntoView()
 		a.consumeIssueResultReturnFocus()
 	}
 	if work != nil {
@@ -935,7 +934,6 @@ func (a *appModel) issueExecutions(c *ui.Context, t *ui.Theme, ct *contact, issu
 				resultButton := secondaryButton(c, fmt.Sprintf("Open result · run %d", index+1)).OnClick(func() { a.openIssueResult(issue.ID, execution.ID) })
 				if a.issueResultShouldFocus(issue.ID, execution.ID, false) {
 					resultButton.Focus()
-					resultButton.ScrollIntoView()
 					a.consumeIssueResultReturnFocus()
 				}
 				if w != nil {
