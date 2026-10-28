@@ -1,16 +1,10 @@
 --- a/ui/split.go
 +++ b/ui/split.go
-@@ -105,6 +105,10 @@
- 			}
- 			// A press there focuses the line, as a press on it would.
- 			dx, dy, held := handle.Dragged()
+@@ -107,0 +108,4 @@
 +			if !held && handle.st.released && (handle.st.dragX != 0 || handle.st.dragY != 0) {
 +				// Consume moves whose release arrived before the next frame.
 +				dx, dy, held = handle.st.dragX, handle.st.dragY, true
 +			}
- 			handle.afterInput(func() {
- 				if held {
- 					div.Focus()
 --- /dev/null
 +++ b/ui/split_release_before_frame_test.go
 @@ -0,0 +1,107 @@
