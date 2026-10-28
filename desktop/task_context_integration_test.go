@@ -648,6 +648,21 @@ func TestTaskContextGUIAppUnknownSendRestartKeepsWarningWithoutReplay(t *testing
 	h2.shutdown(t)
 }
 
+// clickAfterBoundedScrollInPump is the pump-safe form of the existing
+// clickAfterBoundedScroll helper: it returns an error instead of calling
+// t.Fatal on the UI goroutine.
+func clickAfterBoundedScrollInPump(tr *ui.Tester, label string, width, height int) error {
+	for attempt := 0; attempt < 12; attempt++ {
+		if r, ok := tr.Find(label); ok && r.W > 0 && r.H > 0 &&
+			r.X >= 0 && r.X+r.W <= float32(width) && r.Y >= 0 && r.Y+r.H <= float32(height) {
+			return tr.Click(label)
+		}
+		tr.Scroll(850, 500, 0, 300)
+		tr.Frame()
+	}
+	return fmt.Errorf("could not reach %q within the bounded scroll area", label)
+}
+
 func TestTaskContextIssueSentSnapshotPageCopyBeforeAndAfterRestart(t *testing.T) {
 	binary := requireRuntimeBinary(t)
 	provider := &providerFixture{}
@@ -686,18 +701,18 @@ func TestTaskContextIssueSentSnapshotPageCopyBeforeAndAfterRestart(t *testing.T)
 	var pageTexts []string
 	var copied string
 	h.pump.do(func() {
-		tr := ui.NewTester(h.app.view, 1040, 1600)
+		tr := ui.NewTester(h.app.view, 1040, 720)
 		tr.Frame()
-		if clickErr = tr.Click("More issue actions"); clickErr != nil {
+		if clickErr = clickAfterBoundedScrollInPump(tr, "More issue actions", 1040, 720); clickErr != nil {
 			return
 		}
 		tr.Frame()
-		if clickErr = tr.Click("Sent task context · 1"); clickErr != nil {
+		if clickErr = clickAfterBoundedScrollInPump(tr, "Sent task context · 1", 1040, 720); clickErr != nil {
 			return
 		}
 		tr.Frame()
 		pageTexts = tr.Texts()
-		if clickErr = tr.Click("Copy context text"); clickErr != nil {
+		if clickErr = clickAfterBoundedScrollInPump(tr, "Copy context text", 1040, 720); clickErr != nil {
 			return
 		}
 		copied = tr.Clipboard()
@@ -729,18 +744,24 @@ func TestTaskContextIssueSentSnapshotPageCopyBeforeAndAfterRestart(t *testing.T)
 	var restartTexts []string
 	var restartCopied string
 	h2.pump.do(func() {
-		tr2 := ui.NewTester(h2.app.view, 1040, 1600)
+		tr2 := ui.NewTester(h2.app.view, 1040, 720)
 		tr2.Frame()
-		if restartClickErr = tr2.Click("More issue actions"); restartClickErr != nil {
+		// Restart restores persistent SelectedIssueID but the UI starts at the
+		// overview by design; enter the detail through the real issue row.
+		if restartClickErr = tr2.Click("Issue Show sent context"); restartClickErr != nil {
 			return
 		}
 		tr2.Frame()
-		if restartClickErr = tr2.Click("Sent task context · 1"); restartClickErr != nil {
+		if restartClickErr = clickAfterBoundedScrollInPump(tr2, "More issue actions", 1040, 720); restartClickErr != nil {
+			return
+		}
+		tr2.Frame()
+		if restartClickErr = clickAfterBoundedScrollInPump(tr2, "Sent task context · 1", 1040, 720); restartClickErr != nil {
 			return
 		}
 		tr2.Frame()
 		restartTexts = tr2.Texts()
-		if restartClickErr = tr2.Click("Copy context text"); restartClickErr != nil {
+		if restartClickErr = clickAfterBoundedScrollInPump(tr2, "Copy context text", 1040, 720); restartClickErr != nil {
 			return
 		}
 		restartCopied = tr2.Clipboard()
