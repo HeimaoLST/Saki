@@ -566,7 +566,7 @@ type resolvedTheme struct {
 
 - **数据**：contact store 升到 v3，`issue.work_session_id` 持久化事项工作会话；v1/v2 可读，旧程序对 v3 的版本检查会拒绝而不是静默覆盖。`contact.SessionID` 继续是持续对话；每个事项只保存一个 `WorkSessionID`，运行时代码不再另存 `Work.SessionID`。每个 `issueExecution.SessionID` 保留该次执行的真实 session；旧混合 session 的执行不迁移。
 - **路由**：事件按 `session_id` 先区分对话/事项工作，再按 task/message 归属；issue work 不写 `contact.ActiveTaskID`，不进入 contact.Messages，不增加聊天 unread。工作消息和工具结果进入 `issue.Work.Messages`/`ct.Works` 投影；重启分别恢复 contact 与 issue work 会话，历史投影互不覆盖。
-- **容量**：启动后读取 `runtime.capabilities.max_active_tasks`，能力未加载/失败与真实 1 分开暴露（UI 显示未加载提示和 Retry capacity）；保守用 1，但不会宣称真实容量。工作准入最多占用 `n-1` 个槽，`max=1` 允许串行工作、`max=2` 保留一对话槽，`max=3` 已实测两事项并发；实际 Runtime busy 仍由 Runtime 拒绝，reason 保留在 DTO。
+- **容量**（#196 候选更新，2026-10-28）：启动后读取 `runtime.capabilities.max_active_tasks`。仅在 Runtime 连接存在且 ready、容量未知或加载失败时，composer 显示容量提示和 `Retry capacity`；未配置、尚未就绪或已断开时不显示该提示及无效重试，仍保留真实启动错误和 `Configuration details`。已加载的真实单槽不显示容量错误。未知容量继续保守用 1，不改容量值、准入规则或公共协议。工作准入最多占用 `n-1` 个槽，`max=1` 允许串行工作、`max=2` 保留一对话槽，`max=3` 已实测两事项并发；实际 Runtime busy 仍由 Runtime 拒绝，reason 保留在 DTO。#196 的本地 headless/Go 证据见对应交付记录，真实窗口复验由 PM 执行。
 - **发送/停止**：issue work 发送使用独立 work session，派发前保存；accepted 不恢复为草稿、不自动重发。右工作卡 `Stop issue task` 只取消当前事项的真实 task；composer `Stop conversation` 只取消对话 task，两者状态/标签分开。对话在另一事项工作时可发送（容量允许时）。
 - **恢复/核对**：`task.status` 核对、重启 history 核对、缺 TaskID 的显式“确认未派发”动作均可用；核对旧 execution 只更新该 execution 行，不清除/覆盖另一个 active task。错 issue 的 execution 不会被核对动作修改；不凭 prompt 猜测 ID、不自动重试。
 - **可见性**：`issueWorkNotice` 提供 rail/隐藏工作区的派生摘要和工作数；失败/未知即使没有聊天消息也能显示 `Work attention`，不增加聊天 unread。事项结果优先读取 `issue.Work.Messages`，旧 execution 按实际 SessionID/历史兜底。
