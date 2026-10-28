@@ -377,7 +377,7 @@ func issuePrompt(issue *productIssue) string {
 func (a *appModel) createIssue(goal, requirements string) bool {
 	ct := a.selectedContact()
 	previousSelected := ct.SelectedIssueID
-	_, err := a.createIssueForWithSave(ct, goal, requirements, func(item *productIssue) error {
+	item, err := a.createIssueForWithSave(ct, goal, requirements, func(item *productIssue) error {
 		ct.SelectedIssueID = item.ID
 		if err := a.persist(); err != nil {
 			ct.SelectedIssueID = previousSelected
@@ -396,6 +396,11 @@ func (a *appModel) createIssue(goal, requirements string) bool {
 	a.issueGoal = ""
 	a.issueRequirements = ""
 	a.focusIssueNew = true
+	nav := ct.issueNavigation()
+	nav.DetailID = item.ID
+	nav.DetailScroll.Y = 0
+	nav.ShowConversationWork = false
+	nav.FocusBack = true
 	return true
 }
 
@@ -435,6 +440,18 @@ func (a *appModel) createIssueForWithSave(ct *contact, goal, requirements string
 		return nil, fmt.Errorf("Could not save this issue: %w", err)
 	}
 	return item, nil
+}
+
+func issueHasRemainingRequirements(issue *productIssue) bool {
+	if issue == nil {
+		return false
+	}
+	for _, requirement := range issue.Requirements {
+		if requirement != nil && requirement.State != requirementSatisfied {
+			return true
+		}
+	}
+	return false
 }
 
 // issueEvidenceText is a factual summary only. It does not turn a completed
@@ -563,6 +580,9 @@ func (a *appModel) runIssueFor(ct *contact, issueID string) bool {
 	}
 	ct.SelectedIssueID = issue.ID
 	ct.SelectedWorkTaskID = ""
+	nav := ct.issueNavigation()
+	nav.DetailID = issue.ID
+	nav.ShowConversationWork = false
 	return true
 }
 
@@ -603,6 +623,13 @@ func (a *appModel) selectIssue(issueID string) {
 	if ct.issueByID(issueID) == nil {
 		return
 	}
+	nav := ct.issueNavigation()
+	if nav.DetailID != issueID {
+		nav.DetailScroll.Y = 0
+	}
+	nav.DetailID = issueID
+	nav.ShowConversationWork = false
+	nav.FocusBack = false
 	ct.SelectedIssueID = issueID
 	ct.SelectedWorkTaskID = ""
 	a.issueActionError = ""
@@ -614,6 +641,9 @@ func (a *appModel) showIssueWork(issueID, taskID string) {
 	if issue == nil || workFor(ct, taskID) == nil || !issueHasTask(issue, taskID) {
 		return
 	}
+	nav := ct.issueNavigation()
+	nav.DetailID = issueID
+	nav.ShowConversationWork = false
 	ct.SelectedIssueID = issueID
 	ct.SelectedWorkTaskID = taskID
 	a.setWorkspaceOpen(true)

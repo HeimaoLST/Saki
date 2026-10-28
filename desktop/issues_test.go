@@ -226,8 +226,8 @@ func TestIssueFormCreatesExplicitItemWithoutTouchingComposer(t *testing.T) {
 	if ct.Draft != "ordinary composer draft" {
 		t.Fatalf("issue form changed composer draft: %q", ct.Draft)
 	}
-	if !tr.Focused("New issue") {
-		t.Fatal("saving the issue did not return focus to New issue")
+	if !tr.Focused("Back to issues") {
+		t.Fatal("saving the issue did not open detail with Back focus")
 	}
 	for _, want := range []string{"Implement login", "Must use SMS.", "Requirements", "Unverified", "Start issue"} {
 		if !tr.HasText(want) {
@@ -316,7 +316,7 @@ func TestIssueResultAttributionFollowsSelectedIssue(t *testing.T) {
 		{ID: "i1", ContactID: "saki", Goal: "First issue", Status: issueStatusInProgress, Executions: []*issueExecution{{ID: "e1", TaskID: "t1", Status: issueExecutionCompleted}}},
 		{ID: "i2", ContactID: "saki", Goal: "Second issue", Status: issueStatusInProgress, Executions: []*issueExecution{{ID: "e2", TaskID: "t2", Status: issueExecutionRunning}}},
 	}
-	ct.SelectedIssueID = "i1"
+	openIssueDetailForTest(a, ct, "i1")
 	ct.ActiveTaskID = "t2"
 	ct.LastTaskID = "t2"
 	ct.Works = []*workItem{
@@ -339,6 +339,10 @@ func TestIssueResultAttributionFollowsSelectedIssue(t *testing.T) {
 	if tr.HasText("No current work") {
 		t.Fatal("selected issue fell back to unrelated empty work")
 	}
+	if err := tr.Click("Back to issues"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
 	if err := tr.Click("Second issue"); err != nil {
 		t.Fatal(err)
 	}

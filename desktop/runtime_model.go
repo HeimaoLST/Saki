@@ -2336,7 +2336,6 @@ func (a *appModel) acceptTask(ct *contact, text string, result runtimeSendResult
 		execution.MessageID = result.MessageID
 		execution.Status = issueExecutionAccepted
 		execution.Detail = ""
-		ct.SelectedWorkTaskID = result.TaskID
 		ct.pendingIssueExecution = ""
 	}
 	if !issueSend && ct.draftRev == ct.SubmittedRev && strings.TrimSpace(ct.Draft) == strings.TrimSpace(text) {

@@ -21,11 +21,11 @@ func TestThreePaneBreakpointsAndToggles(t *testing.T) {
 	a, _ := workspaceTestApp(t)
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	if !tr.HasText("No current work") {
-		t.Fatal("new work panel should show a real empty state")
+	if !tr.HasText("No issues in Unfinished.") || !tr.HasText("Conversation work") {
+		t.Fatal("new work panel should show the issue overview and local work entry")
 	}
-	if r, ok := tr.Find("No current work"); !ok || r.X < 620 {
-		t.Fatalf("compact work panel x = %v, want >= 620", r.X)
+	if r, ok := tr.Find("No issues in Unfinished."); !ok || r.X < 620 {
+		t.Fatalf("compact work overview x = %v, want >= 620", r.X)
 	}
 
 	if err := tr.Click("Hide"); err != nil {
@@ -50,14 +50,14 @@ func TestThreePaneBreakpointsAndToggles(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if tr.HasText("No current work") || !tr.Focused("Work") {
+	if tr.HasText("No issues in Unfinished.") || !tr.Focused("Work") {
 		t.Fatal("closing work should hide it and return focus to Work")
 	}
 	if err := tr.Click("Work"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if !tr.HasText("No current work") || !tr.Focused("Close work") {
+	if !tr.HasText("No issues in Unfinished.") || !tr.Focused("Close work") {
 		t.Fatal("opening work should show it and focus Close work")
 	}
 
@@ -73,8 +73,8 @@ func TestThreePaneBreakpointsAndToggles(t *testing.T) {
 	if a.workOverlay() {
 		t.Fatal("1380 should keep the work panel as a third column")
 	}
-	if r, ok := trWide.Find("No current work"); !ok || r.X < 1000 {
-		t.Fatalf("wide work panel x = %v, want >= 1000", r.X)
+	if r, ok := trWide.Find("No issues in Unfinished."); !ok || r.X < 1000 {
+		t.Fatalf("wide work overview x = %v, want >= 1000", r.X)
 	}
 
 	a.windowWidth = 900
@@ -287,7 +287,7 @@ func TestHistoryModalPreservesWorkAndReturnsFocus(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.screen != viewChat || !tr.Focused("History") || !tr.HasText("Current work") {
+	if a.screen != viewChat || !tr.Focused("History") || !tr.HasText("Issues") {
 		t.Fatal("closing history did not return to three-pane chat/work")
 	}
 	if ct.ActiveTaskID != "t1" || w.State != workRunning || ct.Draft != "later draft" {
@@ -363,7 +363,7 @@ func TestSettingsModalEscapeReturnsToThreePane(t *testing.T) {
 	if a.aux != "" || !tr.Focused("Settings") {
 		t.Fatal("Escape did not close settings and return focus")
 	}
-	if !tr.HasText("No current work") {
+	if !tr.HasText("Issues") {
 		t.Fatal("closing settings did not return to the three-pane work view")
 	}
 }
@@ -394,6 +394,7 @@ func TestUnloadedSessionDoesNotClaimEmptyHistory(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	openConversationWorkPanel(t, tr)
 	if tr.HasText("No messages yet") || tr.HasText("No current work") {
 		t.Fatalf("unloaded session was presented as truly empty: %v", tr.Texts())
 	}
@@ -482,6 +483,7 @@ func TestUnlinkedHistoryToolsRemainReadable(t *testing.T) {
 	}
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	openConversationWorkPanel(t, tr)
 	if !tr.HasText("Earlier activity") || !tr.HasText("old marker") {
 		t.Fatalf("unlinked tool history not readable: %v", tr.Texts())
 	}
@@ -500,6 +502,7 @@ func TestWorkPanelRendersToolDetailsWithoutInference(t *testing.T) {
 	ct.LastTaskID = "t1"
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	openConversationWorkPanel(t, tr)
 	for _, want := range []string{"Current work", "read", "first heading", "No tool activity yet."} {
 		if want == "No tool activity yet." {
 			if tr.HasText(want) {
@@ -554,6 +557,7 @@ func TestWorkspaceToolCardActionsStayVisibleAtAllWidths(t *testing.T) {
 		w.Tools[0].Expanded = false
 		tr := ui.NewTester(a.view, size.width, size.height)
 		tr.Frame()
+		openConversationWorkPanel(t, tr)
 		panel, ok := tr.Find("Activity")
 		if !ok || panel.W <= 0 {
 			t.Fatalf("%dx%d activity panel = %+v ok=%v", size.width, size.height, panel, ok)
@@ -593,6 +597,7 @@ func TestWorkspaceStructuredToolOutputDoesNotLeakRawJSON(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	openConversationWorkPanel(t, tr)
 	if tr.HasText(`"bytes_written"`) || tr.HasText(`{"path"`) {
 		t.Fatalf("raw structured result leaked into preview: %v", tr.Texts())
 	}

@@ -107,6 +107,7 @@ type contact struct {
 	SelectedIssueID       string
 	SelectedWorkTaskID    string
 	UnlinkedTools         []*workTool
+	issueView             issueViewState
 	StopRequestedTasks    map[string]bool
 	pendingIssueExecution string
 
@@ -186,13 +187,13 @@ type appModel struct {
 	issueFormOpen                 bool
 	issueDetailOpen               map[string]bool
 	issueFormEditingID            string
+	issueFilterChoice             string
 	issueGoal                     string
 	issueRequirements             string
 	issueFormError                string
 	taskContextIssueID            string
 	focusIssueGoal                bool
 	focusIssueNew                 bool
-	issueFilter                   string
 	issueActionError              string
 	issueRequirementDrafts        map[string]*string
 	issueCompletionDrafts         map[string]*string

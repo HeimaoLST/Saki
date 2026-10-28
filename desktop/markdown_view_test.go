@@ -217,6 +217,7 @@ func TestAppToolDetailsShowAndCopyCompleteReceivedOutput(t *testing.T) {
 	ct.ActiveTaskID, ct.LastTaskID = "t1", "t1"
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	openConversationWorkPanel(t, tr)
 	if !tr.HasText("Preview ·") {
 		t.Fatalf("collapsed tool summary is not labeled as a preview: %q", tr.Texts())
 	}
@@ -240,13 +241,13 @@ func TestAppToolDetailsShowAndCopyCompleteReceivedOutput(t *testing.T) {
 		tr.Scroll(860, 400, 0, 2000)
 		tr.Frame()
 	}
-	tr.Press(760, 690)
-	tr.Move(1000, 690)
-	tr.Release(1000, 690)
-	tr.SetClipboard("")
+	// Put the caret in the scrolled full-output text, then select/copy the
+	// complete source; the exact output and tail marker must remain reachable.
+	tr.ClickAt(860, 400)
+	tr.Command("selectAll")
 	tr.Command("copy")
-	if got := tr.Clipboard(); !strings.Contains(got, "tail marker") {
-		t.Fatalf("scrolled tool Details did not expose the received tail: %q", got)
+	if got := tr.Clipboard(); got != output {
+		t.Fatalf("scrolled tool Details copy = %d bytes, want %d exact bytes", len(got), len(output))
 	}
 	for i := 0; i < 8; i++ {
 		tr.Scroll(860, 400, 0, -2000)
@@ -453,7 +454,7 @@ func TestAppWorkspaceResultSummaryIsPreview(t *testing.T) {
 	a, ct := workspaceTestApp(t)
 	longResult := strings.Repeat("result-line ", 40) + "tail-marker"
 	ct.Issues = []*productIssue{{ID: "i1", ContactID: "saki", Goal: "First issue", Status: issueStatusNotStarted, Executions: []*issueExecution{{ID: "e1", TaskID: "t1", Status: issueExecutionCompleted}}}}
-	ct.SelectedIssueID = "i1"
+	openIssueDetailForTest(a, ct, "i1")
 	ct.Works = []*workItem{{TaskID: "t1", MessageID: "m1", State: workCompleted, Prompt: "prompt"}}
 	ct.Messages = []*message{{ID: 1, Kind: msgContact, TaskID: "t1", MessageID: "m1", Text: longResult}}
 	tr := ui.NewTester(a.view, 1040, 720)

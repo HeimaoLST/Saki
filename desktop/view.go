@@ -24,6 +24,9 @@ func (a *appModel) view(c *ui.Context) {
 	a.workTheme = resolveWorkbenchTheme(resolveAppearanceDark(a.appearanceMode, a.systemDark))
 	t := a.workTheme.Theme
 	c.SetTheme(t)
+	if a.aux == "" && a.screen == viewChat && a.workspaceOpen && !a.workOverlay() {
+		c.OnShortcut(0, ui.KeyEscape, func() { a.escapeWorkspaceLayer() })
+	}
 	ui.Box(c).Fill().Children(func() {
 		ui.Row(c).Fill().Children(func() {
 			a.layoutBody(c, t)
@@ -629,7 +632,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				label = fmt.Sprintf("Task context · %d", count)
 			}
 			secondaryButton(c, label).OnClick(func() { a.openConversationTaskContext() })
-			send := ui.PrimaryButton(c, "Send").FontSize(13).Padding(3, 10).Disabled(sendDisabled)
+			send := ui.PrimaryButton(c, "Send").FontSize(13).MinHeight(32).Padding(3, 10).Disabled(sendDisabled)
 			if send.Clicked() {
 				a.sendCurrent()
 			}

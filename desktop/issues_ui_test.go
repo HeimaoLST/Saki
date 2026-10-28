@@ -15,7 +15,7 @@ func TestIssueWorkCardAndComposerStopLabelsAreSeparate(t *testing.T) {
 	issue.Work.SendState = sendAccepted
 	issue.Executions = []*issueExecution{{ID: "e1", SessionID: "work-session", TaskID: "task-A", Status: issueExecutionRunning}}
 	ct.Issues = []*productIssue{issue}
-	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	ct.ActiveTaskID = "task-B"
 	ct.SendState = sendAccepted
 	ct.Works = []*workItem{
@@ -28,8 +28,8 @@ func TestIssueWorkCardAndComposerStopLabelsAreSeparate(t *testing.T) {
 	if !tr.HasText("Stop issue task") || !tr.HasText("Stop conversation") {
 		t.Fatalf("separate stop labels missing: %v", tr.Texts())
 	}
-	if !tr.HasText("Current issue run") {
-		t.Fatal("issue work was not presented as current issue work")
+	if !tr.HasText("Working") {
+		t.Fatal("issue work state was not visible in detail")
 	}
 }
 
@@ -40,7 +40,7 @@ func TestIssueResultUsesIssueWorkMessages(t *testing.T) {
 	issue.Executions = []*issueExecution{{ID: "e1", SessionID: "work-session", TaskID: "task-A", Status: issueExecutionCompleted}}
 	issue.Work.Messages = []*message{{Key: "work-live", Kind: msgContact, TaskID: "task-A", Text: "issue-owned result"}}
 	ct.Issues = []*productIssue{issue}
-	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	ct.Works = []*workItem{{TaskID: "task-A", State: workCompleted}}
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
@@ -73,7 +73,7 @@ func TestIssueRecoveryControlsRenderForUnknownExecution(t *testing.T) {
 	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "recover me", Status: issueStatusNotStarted}
 	issue.Executions = []*issueExecution{{ID: "e1", SessionID: "work-session", Status: issueExecutionUnknown, Detail: "unknown"}}
 	ct.Issues = []*productIssue{issue}
-	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
@@ -129,7 +129,7 @@ func TestIssueConfirmNotDispatchedTargetsSelectedExecution(t *testing.T) {
 	other := &issueExecution{ID: "e2", SessionID: "other-session", TaskID: "task-other", Status: issueExecutionCompleted, Prompt: "other"}
 	issue.Executions = []*issueExecution{target, other}
 	ct.Issues = []*productIssue{issue}
-	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()

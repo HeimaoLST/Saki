@@ -732,3 +732,17 @@ type resolvedTheme struct {
 - **失败与恢复**：模式切换先立即生效；保存失败显示“Applied but not saved”并提供明确的 `Retry save`，不把页面回退到旧模式。重试与后续任何成功的 `persist`（包括联系人保存）走同一保存路径并清除该未保存提示；持久化错误只清除自己写入的 contact-save 错误，不覆盖无关的 Runtime 诊断。没有 Runtime 重建、任务取消/重发、草稿清空、选择或焦点迁移。
 - **范围边界**：#184 的默认右侧关闭、拖动/键盘调宽、中心最宽、覆盖抽屉与持久宽度保持不变；本单不改 reader 文件（#187 独占）、事项概览/筛选（#186）、Runtime 协议、执行生命周期或 store 现有执行契约。
 - **验证边界**：首轮 review set 在 `/private/tmp/saki-gui-96/previews-key/`（Paper/Night 1040 主面、Appearance、720 composer 共 6 张）；完整 16 张 headless 状态在 `/private/tmp/saki-gui-96/previews-first/`（Paper/Night × 1040/1380/960/720 normal，加 1040 working/attention/error/empty）。新增图片由既有 `TestPreviewImages` 入口生成，未增加独立 opt-in 测试。两者均为 `ui.Tester`，属 headless only；exact candidate tests/CI/native evidence 见 #96/PR；native/IME 尚未声称。
+
+<a id="issue-navigation"></a>
+
+## #186 事项概览、单事项详情与筛选（实现事实，2026-10-28）
+
+代码来源：`agent/gui/186-issue-navigation`，从 `6101820` 开出。本节记录事项导航切片；#184 布局、#96 外观/Runtime 契约和 #187 reader 文件不在本切片的改写范围。
+
+- **短生命周期状态**：每个 contact 持有自己的 `issueViewState`：`Filter`、`DetailID`、overview/detail 的 `ui.ScrollState`、返回行焦点和 conversation-work 局部视图。它不写入 store，不替代持久的 `contact.SelectedIssueID`；返回概览不清空 selected issue，也不改草稿、pending send 或 issue execution。
+- **概览与筛选**：Work 打开默认是事项概览，只显示连续事项行（goal、真实近况、管理状态和进入箭头），不铺详情或六颗状态按钮。近况优先显示开放的等待问题；否则只取最新 execution。terminal/uncertain/pending 必须显示其 execution 标签，只有当前 accepted/running 的匹配 work 才可附工具摘要；旧 completed 执行不能遮住更新的 pending/unknown。单一 `ui.Select` 的映射为：Unfinished = 未归档且不是 completed/canceled（包含 waiting/attention）；Completed = 未归档 completed；All = 包含 canceled 与 archived。只改展示投影，不新增持久状态枚举；每 contact 保留筛选。
+- **详情与返回**：点击行或显式 create/select/View execution 进入详情；`Back to issues` 只清短生命周期 `DetailID`，保留 `SelectedIssueID`、原筛选、overview scroll 和行焦点。行用真实 `ScrollState.TrackScroll`；返回时对仍属于当前筛选的行使用局部 `ScrollIntoView`/焦点；焦点目标取自当时显示的 `DetailID`，不取可能被后台/captured work 更新的 `SelectedIssueID`。筛选外的事项不会被自动改筛选或滚动去寻找。详情使用独立 scroll。
+- **详情顺序与动作**：返回/当前 issue Stop/管理状态在目标标题之前；正在 stopping 时沿用 `Stopping issue…` 且按钮 disabled，不显示可再次 Stop；目标 20px/1.5；之后是真实问题、latest result、requirements/evidence、折叠的 More 与 execution history。Start/Continue 使用既有 lifecycle 条件和 dispatched snapshot；Edit、Issue model、Task context、Cancel、Archive/Restore、Reopen 和 Mark complete 仍在 More。Conversation work 有独立的局部入口，不成为事项，也不隐藏既有 conversation Stop/tools。
+- **终态与完成依据**：Runtime execution completed 仍只是 execution fact；事项未完成且仍有 unverified/unmet requirement 时显示“This execution ended; the issue remains open.”。显式 Mark complete 仍保留既有运行/unknown 限制，显示 `Marked by user · <evidence>`，不把未核实 requirement 改成 satisfied。pending/unknown 的 Check execution/Confirm not dispatched/Reload 继续复用现有路径。
+- **分层退出**：#187 reader 仍独立；当前 shared workspace 不改 reader files。aux Escape 先关闭 aux 并保留 detail/work；宽屏和窄窗 overlay 中 Escape 先从 execution 回 detail、再从 detail 回 overview，最后才关闭 work 抽屉；窄窗点击抽屉外 backdrop 仍是显式关闭，不触发 Back，保留 detail/filter/draft。Header `Close work` 仍是显式整体关闭，不改成返回。切换到其他 contact 时各自保留 detail/filter/scroll，主聊天阅读位置不被重置。
+- **验证边界**：`issue_navigation_test.go` 覆盖默认概览、三种筛选、概览/详情/返回的 row+scroll+focus、contact 隔离、accepted task 不抢详情、Escape 分层、窄 work 面板动作行不溢出、completed execution 与手动完成差异；既有 issue/detail/recovery/Stop/archive/complete 回归保留。`issues_preview_test.go` 的既有 preview 入口生成 `issue-overview`/`issue-detail`/`issue-back` 等 headless 图，当前 review 图在 `/private/tmp/saki-gui-186/previews-key/`。headless 不是原生窗口或 IME 验收。

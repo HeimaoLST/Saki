@@ -167,6 +167,7 @@ func TestIssueUITargetsLifecycleActions(t *testing.T) {
 		Executions:   []*issueExecution{{ID: "e1", SessionID: "chat", TaskID: "t1", Status: issueExecutionCompleted}}}
 	ct.Issues = []*productIssue{issue}
 	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	a.rt = &runtimeClient{}
 	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
 	a.windowWidth = 1040
@@ -201,6 +202,7 @@ func TestIssueUIFilterArchiveAndRestore(t *testing.T) {
 	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "archive me", Status: issueStatusInProgress, RequirementsRevision: 1}
 	ct.Issues = []*productIssue{issue}
 	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
@@ -209,15 +211,15 @@ func TestIssueUIFilterArchiveAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if !issue.Archived || a.issueFilter != "archived" || !tr.HasText("Restore issue") || !tr.HasText("Archived") {
-		t.Fatalf("archive UI = archived=%v filter=%q texts=%v", issue.Archived, a.issueFilter, tr.Texts())
+	if !issue.Archived || ct.issueNavigation().Filter != issueFilterUnfinished || !tr.HasText("Restore issue") || !tr.HasText("Archived") {
+		t.Fatalf("archive UI = archived=%v filter=%q texts=%v", issue.Archived, ct.issueNavigation().Filter, tr.Texts())
 	}
 	if err := tr.Click("Restore issue"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if issue.Archived || a.issueFilter != "active" {
-		t.Fatalf("restore UI did not return active: archived=%v filter=%q", issue.Archived, a.issueFilter)
+	if issue.Archived || ct.issueNavigation().Filter != issueFilterUnfinished {
+		t.Fatalf("restore UI changed the current filter: archived=%v filter=%q", issue.Archived, ct.issueNavigation().Filter)
 	}
 }
 
@@ -228,6 +230,7 @@ func TestIssueUIEditPrefillsRequirementsAndSavesRevision(t *testing.T) {
 		Requirements: parseIssueRequirements("old requirement")}
 	ct.Issues = []*productIssue{issue}
 	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
@@ -441,6 +444,7 @@ func TestIssueUICompleteAndReopenActions(t *testing.T) {
 	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "finish me", Status: issueStatusInProgress, RequirementsRevision: 1}
 	ct.Issues = []*productIssue{issue}
 	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
@@ -476,6 +480,7 @@ func TestIssueUIRequirementEvidenceActionPersists(t *testing.T) {
 		Requirements: parseIssueRequirements("one checked requirement")}
 	ct.Issues = []*productIssue{issue}
 	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
@@ -497,16 +502,24 @@ func TestIssueUIStatusFilterSelection(t *testing.T) {
 	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
 	issue := &productIssue{ID: "i1", ContactID: ct.ID, Goal: "filtered issue", Status: issueStatusCompleted, RequirementsRevision: 1}
 	ct.Issues = []*productIssue{issue}
-	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	if err := tr.Click("Done"); err != nil {
+	if err := tr.Click("Back to issues"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.issueFilter != "completed" {
-		t.Fatalf("status filter = %q", a.issueFilter)
+	if err := tr.Click("Unfinished"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if err := tr.Click("Completed"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if ct.issueNavigation().Filter != issueFilterCompleted {
+		t.Fatalf("status filter = %q", ct.issueNavigation().Filter)
 	}
 	if !tr.HasText("filtered issue") || !tr.HasText("Completed") {
 		t.Fatalf("completed filter did not list issue: %v", tr.Texts())

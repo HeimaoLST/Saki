@@ -474,6 +474,7 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 	}
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	openConversationWorkPanel(t, tr)
 	if !tr.HasText("Accepted; waiting for the runtime to start.") {
 		t.Fatal("accepted task should show the pre-start waiting state")
 	}
@@ -689,6 +690,7 @@ func TestToolFailureIsVisibleBeforeDetails(t *testing.T) {
 			a := &appModel{demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1, workspaceOpen: true, windowWidth: 1040, contacts: []*contact{ct}}
 			tr := ui.NewTester(a.view, 1040, 720)
 			tr.Frame()
+			openConversationWorkPanel(t, tr)
 			if !tr.HasText(tc.want) || !tr.HasText("normal text") && !tr.HasText("still working") {
 				t.Fatalf("failure summary not visible: %v", tr.Texts())
 			}

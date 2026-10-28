@@ -94,7 +94,7 @@ func issuePreviewApp(scene string) *appModel {
 		ct.Issues[0].Status = issueStatusCompleted
 		ct.Issues[0].Archived = true
 		ct.Issues[0].Evidence = "User reviewed the result and archived the item."
-		a.issueFilter = "archived"
+		ct.issueNavigation().Filter = issueFilterAll
 	case "issue-edit":
 		a.issueFormOpen = true
 		a.issueFormEditingID = ct.Issues[0].ID
@@ -111,7 +111,7 @@ func issuePreviewApp(scene string) *appModel {
 		ct.Issues[0].Requirements[0].Evidence = "User confirmed the original goal and execution result."
 		ct.Issues[0].Requirements[1].State = requirementUnmet
 		ct.Issues[0].Requirements[1].Evidence = "Second requirement is documented but not verified."
-		a.issueFilter = "completed"
+		ct.issueNavigation().Filter = issueFilterCompleted
 	case "supplement":
 		issue := ct.Issues[0]
 		ledger := newIssueSupplementLedger()
@@ -154,6 +154,14 @@ func issuePreviewApp(scene string) *appModel {
 		ct.SelectedIssueID = "issue-2"
 		ct.Works = ct.Works[:1]
 	}
+	nav := ct.issueNavigation()
+	if scene != "issue-overview" && scene != "issue-form" {
+		nav.DetailID = ct.SelectedIssueID
+	}
+	if scene == "issue-back" {
+		nav.DetailID = ct.SelectedIssueID
+		a.backToIssueOverview()
+	}
 	return a
 }
 
@@ -179,6 +187,10 @@ func TestPreviewIssueStates(t *testing.T) {
 			fmt.Sprintf("headless-%s-%s-%dx%d.png", theme, scene, width, height)), tr.Image())
 	}
 	for _, dark := range []bool{false, true} {
+		write("issue-overview", 1040, 720, dark)
+		write("issue-detail", 1040, 720, dark)
+		write("issue-detail", 720, 640, dark)
+		write("issue-back", 720, 640, dark)
 		write("issue-results", 960, 640, dark)
 		write("issue-results", 1040, 720, dark)
 		write("issue-results", 1380, 900, dark)
