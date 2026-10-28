@@ -91,6 +91,19 @@ Cumora 观察：
 
 技能库检索的 progressive disclosure 结果实际是 Web 标题换行，未采纳。系统级搜索输出混入 landing page / conversion / GSAP 方案，也不适合此桌面工作台；只使用技能 quick-reference 中可核验的可读性、焦点、内容优先和按职责区分控件的一般检查项。核心方向来自用户反馈与上述一手界面。
 
+### 扩展作品比较（同日补充）
+
+本轮进一步读取下列公开来源，并打开实际官方图片。以下属于源码／公开界面事实，不是本机第三方应用交互验收，也不能仅凭关注度解释用户留存。
+
+| 来源 | 核对内容与设计观察 |
+| --- | --- |
+| Magpie e9dd8e83 | [app.css](https://github.com/yetone/magpie/blob/e9dd8e83ace4e07b605e39b0d3fb50b5150bdeb0/internal/gui/assets/app.css) 与 [模型选择截图](https://github.com/yetone/magpie/blob/e9dd8e83ace4e07b605e39b0d3fb50b5150bdeb0/site/public/img/picker-light.png)：当前值、下箭头、搜索、分组和选中标记组成直接选择；CSS 区分控件文字与说明文字，并补偿部分实心图标的视觉重量。源码含局部品牌动画与减少动态效果规则，未实测帧率／流畅度 |
+| Cumora e160a0a1 | [CardLink](https://github.com/yetone/cumora/blob/e160a0a17304be305cd8cfd41bec7c0103cda273/src/components/CardLink.tsx)、[BoardPeekPane](https://github.com/yetone/cumora/blob/e160a0a17304be305cd8cfd41bec7c0103cda273/src/desktop/BoardPeekPane.tsx)、[主题](https://github.com/yetone/cumora/blob/e160a0a17304be305cd8cfd41bec7c0103cda273/src/styles/globals.css) 和 [移动截图](https://github.com/yetone/cumora/blob/e160a0a17304be305cd8cfd41bec7c0103cda273/website/assets/mobile-screenshot.png)：聊天链接可在旁侧预览并进入完整工作区；身份、近况和未读形成不同层级。浅蓝／珊瑚／紫分别承担不同角色，不是统一中性灰 |
+| NextAI Translator a306fc8e | [README](https://github.com/nextai-translator/nextai-translator/blob/a306fc8e5554f5dd6692e9e6bf5d080edd44f382/README.md) 和其中 [桌面截图](https://user-images.githubusercontent.com/1206493/223899374-ff386436-63b8-4618-afdd-fed2e6b48d56.png)：输入、处理方式、结果、复制／朗读构成短路径。README 已改名，截图仍显示旧 OpenAI Translator，不能视为当前版本全貌 |
+| avante.nvim 0b53c4e0 | [README](https://github.com/avante-corp/avante.nvim/blob/0b53c4e0cd61d92fa70c8a2721aa2276c1c31562/README.md)、[配置说明](https://github.com/avante-corp/avante.nvim/blob/0b53c4e0cd61d92fa70c8a2721aa2276c1c31562/lua/avante/config.lua) 与 README 的 Zen 截图：AI 建议、工具结果和可检查修改靠近编辑工作；保留宿主的键盘／选择器习惯。终端的主题外观不能全部归于插件设计 |
+
+**设计推论**：这组作品值得学习的共同点是围绕熟悉对象组织、连续排版、可发现的直接操作、上下文连续、局部身份表达和细节一致。Nagi 的采用标准与行为验收只维护在下方唯一设计规范中。用户已要求据这些方向安排实际改进；这不授权照搬品牌，也不意味着要增加参考产品的多人团队、云平台或全部设置能力。
+
 ## 对 Nagi 的采用与取舍
 
 当前设计只有一个入口：[Nagi 工作台设计规范](../../design/desktop-workbench.md)，[可交互 HTML](../../design/previews/desktop-workbench.html)。研究记录只保存来源、观察及推论，不维护另一份尺寸或配色规范。v07 替代 v06 的视觉约束；产品定义和现有能力不能被旧原型阶段限制覆盖。
