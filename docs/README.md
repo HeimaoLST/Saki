@@ -41,7 +41,7 @@ src/
 
 `app.rs` 组装各模块；`frontend` 通过带会话 ID 的请求和事件连接 SessionManager，不拥有模型／工具循环。`agent` 使用客户端、公共协议和工具，不依赖前端；`client` 依赖公共协议，不引用 Conversation 或工具执行模块；`model` 管理目录数据。测试继续按行为聚合在 `tests/`，实验入口位于 `examples/`。接口、转换边界和日志版本见[模型调用分层](design/model-runtime.md)。
 
-`desktop/` 是独立的 Go module，用 MyGo 原生 UI 通过 stdio 消费真实 Agent Runtime；联系人、草稿和映射由 GUI 管理，执行与权威历史由 Runtime 提供。实现事实见 [Desktop](design/desktop.md#已确认需求与交付边界)，当前三栏气泡与工作区设计见 [Desktop workbench](design/desktop-workbench.md)。
+`desktop/` 是独立的 Go module，用 MyGo 原生 UI 通过 stdio 消费真实 Agent Runtime；联系人、草稿和映射由 GUI 管理，执行与权威历史由 Runtime 提供。实现事实见 [Desktop](design/desktop.md#已确认需求与交付边界)，当前联系人、气泡与可选工作区设计见 [Desktop workbench](design/desktop-workbench.md)。
 
 ## 阅读路径
 
@@ -65,7 +65,7 @@ src/
 | `design/` | [Multimodal input](design/multimodal-input.md) | 图片附件、剪贴板／路径输入、消息契约及图片压缩 |
 | `design/` | [Session management](design/session-management.md) | 持久会话、JSONL 恢复、会话选择器、中断语义与核心边界 |
 | `design/` | [Desktop contacts](design/desktop.md) | 原生 GUI 的实现事实、当前主题接线与后续自定义边界 |
-| `design/` | [Desktop workbench](design/desktop-workbench.md) | 当前纸白/夜林视觉与三栏气泡设计；#130 初版范围、交互原型及后续探索边界 |
+| `design/` | [Desktop workbench](design/desktop-workbench.md) | v07 视觉与信息层次提案；可选工作区、事项概览/详情及开发验收 |
 | `design/` | [CI governance](design/ci.md) | Runtime／TUI／GUI 的 GitHub Actions 门禁、责任矩阵、工具链与失败修复约定 |
 | `requirements/` | [Agent runtime requirements](requirements/agent-runtime.md) | 多 session 重叠执行、可观察执行事实、contact 边界与历史检索的 runtime 需求交接（未实施） |
 | `requirements/` | [MVP requirements](requirements/mvp.md) | 两端 MVP（TUI + GUI）的长期产品目标、行为边界，以及工程候选／首批真实试用／稳定发布的证据矩阵 |

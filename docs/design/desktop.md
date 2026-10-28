@@ -1,8 +1,8 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-23。状态：**实现事实基线为 dev@47d01ee（#63、#90）；主题与新工作台为待实施设计**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
+更新日期：2026-10-28。状态：**实现事实基线为 dev@47d01ee（#63、#90）；主题与新工作台为待实施设计**。原生 MyGo 应用已用 `Saki --stdio` 消费真实 runtime，并已在真实 macOS 窗口完成发送/切换/设置/退出/重启实测；contact store、任务事件与解析后的历史由 GUI 自身维护，GUI 不读取 Rust journal。最终合并以 dev 为准。
 
-现行产品要求以用户与 PM 最新讨论及 [Desktop workbench](desktop-workbench.md) 为准；#130 实施原生初版，#96 实施外观。旧浏览器预览与被替代的布局/配色要求已移除，历史可查 Git。本文保留明确标注的原生实现事实和主题接线契约；代码仍使用 Main/Dawn 派生色是基线事实，不是后续开发目标。当前视觉基准为纸白/夜林，不能把设计更新写成生产已换色。
+现行产品要求以用户与 PM 最新讨论及 [Desktop workbench](desktop-workbench.md) 为准；#130 实施原生初版，#96 实施外观。旧浏览器预览与被替代的布局/配色要求已移除，历史可查 Git。本文保留明确标注的原生实现事实和主题接线契约；代码仍使用 Main/Dawn 派生色是基线事实，不是后续开发目标。当前 v07 视觉与层次提案见工作台规范；不把原型更新写成生产已换色。
 
 ## 已确认需求与交付边界
 
@@ -161,11 +161,11 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 
 ## 主题系统
 
-状态：**当前设计，待 #96 实施**。用户于 2026-10-23 明确要求旧设计及时移除，当前原生视觉基准为 [纸与苔 / Paper & Moss](desktop-workbench.md#第-06-版纸与苔--paper--moss)。内置浅色 ID `paper`（纸白）、深色 ID `night`（夜林）。旧 Moon/Dawn 目标和原始 palette 表已移除，不同时作为实施要求。更多方案与用户自定义保留在 #97。
+状态：**主题消费契约；视觉值以 v07 提案为准，原生接纳状态由 GUI 主责另行记录**。用户于 2026-10-23 明确要求旧设计及时移除，当前设计入口为 [当前视觉 token](desktop-workbench.md#配色与语义-token)。内置浅色 ID `paper`（纸白）、深色 ID `night`（夜林）。旧 Moon/Dawn 目标和原始 palette 表已移除，不同时作为实施要求。更多方案与用户自定义保留在 #97。
 
 ### 语义映射
 
-完整颜色数值、层级、文字对比度检查范围与视觉状态只在 [工作台视觉规范](desktop-workbench.md#第-06-版纸与苔--paper--moss) 和其 HTML 原型维护。以下规定原生消费方式，不再复制另一份 hex 表。
+完整颜色数值、层级、文字对比度检查范围与视觉状态只在 [工作台视觉规范](desktop-workbench.md#配色与语义-token) 和其 HTML 原型维护。以下规定原生消费方式，不再复制另一份 hex 表。
 
 | 原生角色 | 原型语义变量 | 用途 |
 | --- | --- | --- |
@@ -238,7 +238,7 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 
 ## 头像（Saki mascot）
 
-沿用现有 [mascot 资产](previews/assets/saki-avatar-default.png)，不新增上传、picker 或身份/成长机制。基线 #90 原生 rail 32px、header 28px 是旧代码事实；目标尺寸与圆形气泡头像只按 [当前视觉规则](desktop-workbench.md#美学规则) 实施。名称与选中态保持可辨，不依靠 mascot 颜色表达状态。可选头像集合留后续，不绑定已移除的旧 palette。
+沿用现有 [mascot 资产](previews/assets/saki-avatar-default.png)，不新增上传、picker 或身份/成长机制。基线 #90 原生 rail 32px、header 28px 是旧代码事实；目标尺寸与头像样式只按 [当前视觉规则](desktop-workbench.md#美学规则) 实施。名称与选中态保持可辨，不依靠 mascot 颜色表达状态。可选头像集合留后续，不绑定已移除的旧 palette。
 
 ## 关键流程（当前原生应用）
 
