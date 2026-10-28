@@ -537,7 +537,8 @@ func (a *appModel) closeAux() {
 	case "appearance":
 		a.focusAppearance = true
 	case "issue-result":
-		a.cancelIssueResultView()
+		a.closeIssueResult()
+		return
 	}
 	a.aux = ""
 }

@@ -120,6 +120,38 @@ func clickIssueResultAction(tr *ui.Tester, label string) error {
 	return fmt.Errorf("issue result action %q was not reachable: %v", label, tr.Texts())
 }
 
+func scrollIssueResultActionIntoView(tr *ui.Tester, label string, width, height int) error {
+	for _, direction := range []float32{120, -120} {
+		for attempt := 0; attempt < 12; attempt++ {
+			if rect, ok := tr.Find(label); ok && rect.W > 0 && rect.H > 0 && rect.Y >= 0 && rect.Y+rect.H <= float32(height) {
+				return nil
+			}
+			tr.Scroll(float32(width)*0.82, float32(height)/2, 0, direction)
+			tr.Frame()
+		}
+	}
+	return fmt.Errorf("issue result action %q was not reachable in %dx%d: %v", label, width, height, tr.Texts())
+}
+
+func issueResultTesterRunAt(h *guiHarness, width, height int, fn func(*ui.Tester) error) error {
+	var err error
+	h.pump.do(func() {
+		tr := ui.NewTester(h.app.view, width, height)
+		tr.Frame()
+		err = fn(tr)
+	})
+	return err
+}
+
+func issueResultClickAt(h *guiHarness, width, height int, label string) error {
+	return issueResultTesterRunAt(h, width, height, func(tr *ui.Tester) error {
+		if err := scrollIssueResultActionIntoView(tr, label, width, height); err != nil {
+			return err
+		}
+		return tr.Click(label)
+	})
+}
+
 func issueResultTesterRun(h *guiHarness, fn func(*ui.Tester) error) error {
 	var err error
 	h.pump.do(func() {
@@ -785,8 +817,8 @@ func TestIssueResultPageFromActualIssueRunsAndRestart(t *testing.T) {
 	if !workOpen {
 		t.Fatal("clicking Work did not open the work panel")
 	}
-	issueResultRequireTexts(t, h, "Open result")
-	if err := issueResultClick(h, "Open result"); err != nil {
+	issueResultRequireTexts(t, h, "Read latest result")
+	if err := issueResultClick(h, "Read latest result"); err != nil {
 		t.Fatal(err)
 	}
 	h.pump.wait(func() bool {
@@ -923,6 +955,205 @@ func TestIssueResultPageFromActualIssueRunsAndRestart(t *testing.T) {
 	}
 }
 
+func TestIssueResultNavigationEntryAndReturnWideNarrow(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &issueResultPageProvider{}
+	h := startRoutingHarnessWithHandler(t, binary, provider.handler(t), 1)
+	var issueID string
+	h.pump.do(func() {
+		if !h.app.createIssue("Navigation result", "Create a readable result.") {
+			t.Fatalf("createIssue: %s", h.app.issueFormError)
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue: %s", h.app.issueFormError)
+		}
+	})
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
+	})
+	if provider.count() != 2 {
+		t.Fatalf("provider requests = %d, want write/final", provider.count())
+	}
+	// Enter through the visible Work button and issue row, then exercise both a
+	// wide and the narrow work-drawer layout. Each iteration starts from overview.
+	if err := issueResultClick(h, "Work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := issueResultClick(h, "Back to issues"); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "keep this draft"
+		ct.SelectedWorkTaskID = ""
+		ct.issueNavigation().Filter = issueFilterUnfinished
+	})
+	for _, width := range []int{1040, 720} {
+		h.pump.do(func() { h.app.windowWidth = width })
+		if err := issueResultClickAt(h, width, 720, "Issue Navigation result"); err != nil {
+			t.Fatalf("width %d enter issue detail: %v", width, err)
+		}
+		var actionsOpen bool
+		h.pump.do(func() { actionsOpen = h.app.issueDetailOpen[issueID] })
+		if !actionsOpen {
+			if err := issueResultClickAt(h, width, 720, "More issue actions"); err != nil {
+				t.Fatalf("width %d expand run records: %v", width, err)
+			}
+		}
+		if err := issueResultClickAt(h, width, 720, "View execution · run 1"); err != nil {
+			t.Fatalf("width %d select run for observable work identity: %v", width, err)
+		}
+		if err := issueResultTesterRunAt(h, width, 720, func(tr *ui.Tester) error {
+			return scrollIssueResultActionIntoView(tr, "Read latest result", width, 720)
+		}); err != nil {
+			t.Fatalf("width %d prepare latest row: %v", width, err)
+		}
+		var before struct {
+			detailID, filter, selectedIssue, selectedTask, draft string
+			detailScrollY                                        float32
+			workspaceOpen                                        bool
+		}
+		h.pump.do(func() {
+			ct := h.app.selectedContact()
+			nav := ct.issueNavigation()
+			before.detailID, before.filter = nav.DetailID, nav.Filter
+			before.selectedIssue, before.selectedTask = ct.SelectedIssueID, ct.SelectedWorkTaskID
+			before.draft, before.detailScrollY, before.workspaceOpen = ct.Draft, nav.DetailScroll.Y, h.app.workspaceOpen
+		})
+		if before.detailID != issueID || !before.workspaceOpen || before.selectedTask == "" {
+			t.Fatalf("width %d did not enter issue detail with a selected work identity: %+v", width, before)
+		}
+
+		// Latest result: actual row entry, then actual file row entry.
+		if err := issueResultClickAt(h, width, 720, "Read latest result"); err != nil {
+			t.Fatalf("width %d latest entry: %v", width, err)
+		}
+		h.pump.wait(func() bool {
+			page := h.app.issueResult
+			return page.Open && !page.Loading && (page.LoadError != "" || len(page.Panel.Files) > 0)
+		})
+		if err := issueResultClickAt(h, width, 720, "Read file 1: result.txt"); err != nil {
+			t.Fatalf("width %d file entry: %v", width, err)
+		}
+		h.pump.wait(func() bool {
+			return !h.app.issueResult.Panel.Checking && h.app.issueResult.Panel.Inspection != nil
+		})
+		var readerClosed, resultStillOpen bool
+		if err := issueResultTesterRunAt(h, width, 720, func(tr *ui.Tester) error {
+			tr.Key(0, ui.KeyEscape)
+			tr.Frame()
+			readerClosed = !tr.HasText("File reading")
+			resultStillOpen = tr.HasText("Run results")
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var aux string
+		var pageOpen bool
+		h.pump.do(func() { aux, pageOpen = h.app.aux, h.app.issueResult.Open })
+		if !readerClosed || !resultStillOpen || aux != "issue-result" || !pageOpen {
+			t.Fatalf("width %d Escape closed more than reader: readerClosed=%v resultStillOpen=%v aux=%q pageOpen=%v", width, readerClosed, resultStillOpen, aux, pageOpen)
+		}
+		var latestClosed, latestFocused bool
+		if err := issueResultTesterRunAt(h, width, 720, func(tr *ui.Tester) error {
+			tr.Key(0, ui.KeyEscape)
+			tr.Frame()
+			latestClosed = !tr.HasText("Run results")
+			latestFocused = tr.Focused("Read latest result")
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var after struct {
+			detailID, filter, selectedIssue, selectedTask, draft, aux string
+			detailScrollY                                             float32
+			workspaceOpen                                             bool
+			pageOpen                                                  bool
+		}
+		h.pump.do(func() {
+			ct := h.app.selectedContact()
+			nav := ct.issueNavigation()
+			after.detailID, after.filter = nav.DetailID, nav.Filter
+			after.selectedIssue, after.selectedTask = ct.SelectedIssueID, ct.SelectedWorkTaskID
+			after.draft, after.detailScrollY = ct.Draft, nav.DetailScroll.Y
+			after.workspaceOpen, after.pageOpen, after.aux = h.app.workspaceOpen, h.app.issueResult.Open, h.app.aux
+		})
+		if !latestClosed || !latestFocused || after.pageOpen || after.aux != "" {
+			t.Fatalf("width %d latest result return: closed=%v focused=%v pageOpen=%v aux=%q", width, latestClosed, latestFocused, after.pageOpen, after.aux)
+		}
+		t.Logf("width=%d viewport=%dx720 latest_focus=%v", width, width, latestFocused)
+		if after.detailID != before.detailID || after.filter != before.filter ||
+			after.selectedIssue != before.selectedIssue || after.selectedTask != before.selectedTask ||
+			after.draft != before.draft || after.detailScrollY != before.detailScrollY || !after.workspaceOpen {
+			t.Fatalf("width %d latest return changed detail context: before=%+v after=%+v", width, before, after)
+		}
+
+		// Specific run entry at a real nonzero detail scroll. The run record is
+		// below the explicit work section, so this exercises actual scrolling and
+		// then returns to that exact row without closing the work drawer.
+		if err := issueResultTesterRunAt(h, width, 720, func(tr *ui.Tester) error {
+			return scrollIssueResultActionIntoView(tr, "Open result · run 1", width, 720)
+		}); err != nil {
+			t.Fatalf("width %d prepare run row: %v", width, err)
+		}
+		var runVisible bool
+		var runRect ui.Rect
+		if err := issueResultTesterRunAt(h, width, 720, func(tr *ui.Tester) error {
+			runRect, runVisible = tr.Find("Open result · run 1")
+			runVisible = runVisible && runRect.W > 0 && runRect.H > 0 && runRect.Y >= 0 && runRect.Y+runRect.H <= 720
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var runBeforeScrollY float32
+		h.pump.do(func() { runBeforeScrollY = h.app.selectedContact().issueNavigation().DetailScroll.Y })
+		if !runVisible || runBeforeScrollY <= 0 {
+			t.Fatalf("width %d run entry not reached with nonzero detail scroll: visible=%v rect=%+v scrollY=%v", width, runVisible, runRect, runBeforeScrollY)
+		}
+		if err := issueResultClickAt(h, width, 720, "Open result · run 1"); err != nil {
+			t.Fatalf("width %d run entry: %v", width, err)
+		}
+		h.pump.wait(func() bool {
+			page := h.app.issueResult
+			return page.Open && !page.Loading
+		})
+		var runClosed, runFocused bool
+		if err := issueResultTesterRunAt(h, width, 720, func(tr *ui.Tester) error {
+			tr.Key(0, ui.KeyEscape)
+			tr.Frame()
+			runClosed = !tr.HasText("Run results")
+			runFocused = tr.Focused("Open result · run 1")
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var runAfter struct {
+			scrollY                 float32
+			selectedTask, draft     string
+			workspaceOpen, pageOpen bool
+		}
+		h.pump.do(func() {
+			ct := h.app.selectedContact()
+			runAfter.scrollY = ct.issueNavigation().DetailScroll.Y
+			runAfter.selectedTask, runAfter.draft = ct.SelectedWorkTaskID, ct.Draft
+			runAfter.workspaceOpen, runAfter.pageOpen = h.app.workspaceOpen, h.app.issueResult.Open
+		})
+		if !runClosed || !runFocused || runAfter.pageOpen ||
+			runAfter.scrollY != runBeforeScrollY || runAfter.scrollY <= 0 ||
+			runAfter.selectedTask != before.selectedTask || runAfter.selectedTask == "" ||
+			runAfter.draft != before.draft || !runAfter.workspaceOpen {
+			t.Fatalf("width %d run return changed origin: closed=%v focused=%v beforeScroll=%v after=%+v before=%+v", width, runClosed, runFocused, runBeforeScrollY, runAfter, before)
+		}
+		t.Logf("width=%d viewport=%dx720 run_rect=%+v detail_scroll_before=%.1f detail_scroll_after=%.1f run_focus=%v selected_work_task=%q", width, width, runRect, runBeforeScrollY, runAfter.scrollY, runFocused, runAfter.selectedTask)
+		if err := issueResultClickAt(h, width, 720, "Back to issues"); err != nil {
+			t.Fatalf("width %d back to issues: %v", width, err)
+		}
+	}
+}
+
 func TestIssueResultPageReloadErrorKeepsReadableBody(t *testing.T) {
 	a, ct := workspaceTestApp(t)
 	file := issueResultPanelFixtureFile("reload", "/tmp/reload-body.txt", `{"path":"/tmp/reload-body.txt","bytes_written":1}`)
@@ -972,6 +1203,11 @@ func issueResultAppPreview(scene string, width int) *appModel {
 		page.Panel.ReaderKey = key
 	}
 	switch scene {
+	case "navigation":
+		a.aux = ""
+		ct.issueNavigation().DetailID = ct.SelectedIssueID
+		ct.issueNavigation().Filter = issueFilterUnfinished
+		a.issueDetailOpen = map[string]bool{ct.SelectedIssueID: true}
 	case "loading":
 		page.Loading = true
 		page.Panel.Response = ""
@@ -1044,7 +1280,7 @@ func TestIssueResultAppPreviewsAlwaysWriteHeadlessPNGs(t *testing.T) {
 	}
 	var cases []sceneCase
 	for _, scene := range []string{"markdown", "plain", "missing", "readerror", "source", "long"} {
-		for _, width := range []int{720, 1280} {
+		for _, width := range []int{720, 1040, 1280} {
 			for _, dark := range []bool{false, true} {
 				cases = append(cases, sceneCase{scene, width, dark})
 			}
@@ -1057,6 +1293,7 @@ func TestIssueResultAppPreviewsAlwaysWriteHeadlessPNGs(t *testing.T) {
 		{"empty", 720, true},
 		{"multiple", 1280, true},
 	} {
+		cases = append(cases, sceneCase{"navigation", 720, false}, sceneCase{"navigation", 720, true}, sceneCase{"navigation", 1040, false}, sceneCase{"navigation", 1040, true}, sceneCase{"navigation", 1280, false}, sceneCase{"navigation", 1280, true})
 		cases = append(cases, scene)
 	}
 	for _, scene := range cases {
@@ -1065,12 +1302,13 @@ func TestIssueResultAppPreviewsAlwaysWriteHeadlessPNGs(t *testing.T) {
 		tr.SetDark(scene.dark)
 		tr.Frame()
 		readerWant := map[string][]string{
-			"markdown":  {"File reading", "Markdown", "中文结果", "名称", "完成"},
-			"plain":     {"File reading", "Plain text", "# 这不是标题", "| 不是 | 表格 |"},
-			"missing":   {"File reading", "No file exists at the reported path"},
-			"readerror": {"File reading", "permission denied"},
-			"source":    {"File reading", "Source & raw record"},
-			"long":      {"File reading", "Markdown", "很长的中文结果文件名"},
+			"markdown":   {"File reading", "Markdown", "中文结果", "名称", "完成"},
+			"plain":      {"File reading", "Plain text", "# 这不是标题", "| 不是 | 表格 |"},
+			"missing":    {"File reading", "No file exists at the reported path"},
+			"readerror":  {"File reading", "permission denied"},
+			"source":     {"File reading", "Source & raw record"},
+			"long":       {"File reading", "Markdown", "很长的中文结果文件名"},
+			"navigation": {"Issue", "Read latest result", "Open result · run 1"},
 		}
 		for _, want := range readerWant[scene.name] {
 			if !tr.HasText(want) {

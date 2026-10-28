@@ -762,12 +762,25 @@ func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, is
 		}
 		ui.Text(c, truncate(reason, 180)).FontSize(14).LineHeight(1.4).TextColor(t.Warning).MaxLines(3)
 	}
-	ui.Row(c).Gap(10).Children(func() {
-		secondaryButton(c, "Open result").OnClick(func() { a.openIssueResult(issue.ID, execution.ID) })
-		if work != nil {
-			secondaryButton(c, "View execution").OnClick(func() { a.showIssueWork(issue.ID, execution.TaskID) })
-		}
+	read := ui.ButtonBase(c).Label("Read latest result").
+		AlignSelf(ui.Stretch).Padding(8).Radius(8).Border(1, t.Border).Background(a.workTheme.Well).Gap(6)
+	read.OnClick(func() { a.openIssueResultFromLatest(issue.ID, execution.ID) })
+	read.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+			ui.Text(c, "Read latest result").FontSize(14).FontWeight(500).TextColor(t.Text).Grow(1)
+			ui.Text(c, "→").FontSize(17).TextColor(t.TextMuted)
+		})
 	})
+	if a.issueResultShouldFocus(issue.ID, execution.ID, true) {
+		read.Focus()
+		read.ScrollIntoView()
+		a.consumeIssueResultReturnFocus()
+	}
+	if work != nil {
+		ui.Row(c).Gap(10).Children(func() {
+			secondaryButton(c, "View execution").OnClick(func() { a.showIssueWork(issue.ID, execution.TaskID) })
+		})
+	}
 }
 
 func (a *appModel) issueRequirementSummary(c *ui.Context, t *ui.Theme, issue *productIssue) {
@@ -919,7 +932,12 @@ func (a *appModel) issueExecutions(c *ui.Context, t *ui.Theme, ct *contact, issu
 				})
 			}
 			ui.Row(c).Gap(8).Children(func() {
-				secondaryButton(c, fmt.Sprintf("Open result · run %d", index+1)).OnClick(func() { a.openIssueResult(issue.ID, execution.ID) })
+				resultButton := secondaryButton(c, fmt.Sprintf("Open result · run %d", index+1)).OnClick(func() { a.openIssueResult(issue.ID, execution.ID) })
+				if a.issueResultShouldFocus(issue.ID, execution.ID, false) {
+					resultButton.Focus()
+					resultButton.ScrollIntoView()
+					a.consumeIssueResultReturnFocus()
+				}
 				if w != nil {
 					secondaryButton(c, fmt.Sprintf("View execution · run %d", index+1)).OnClick(func() { a.showIssueWork(issue.ID, execution.TaskID) })
 				}

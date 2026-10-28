@@ -12,19 +12,21 @@ import (
 )
 
 type issueResultPage struct {
-	Open           bool
-	OwnerContactID string
-	IssueID        string
-	ExecutionID    string
-	SessionID      string
-	TaskID         string
-	MessageID      string
-	Generation     int
-	checkSeq       int
-	Loading        bool
-	LoadError      string
-	Notice         string
-	Panel          issueResultPanelState
+	Open               bool
+	OwnerContactID     string
+	IssueID            string
+	ExecutionID        string
+	SessionID          string
+	TaskID             string
+	MessageID          string
+	Generation         int
+	checkSeq           int
+	Loading            bool
+	LoadError          string
+	Notice             string
+	Panel              issueResultPanelState
+	ReturnLatest       bool
+	ReturnFocusPending bool
 }
 
 func (a *appModel) issueResultAsyncStarted() { a.resultInFlight++ }
@@ -39,6 +41,14 @@ func (a *appModel) issueResultAsyncFinished() {
 }
 
 func (a *appModel) openIssueResult(issueID, executionID string) {
+	a.openIssueResultEntry(issueID, executionID, false)
+}
+
+func (a *appModel) openIssueResultFromLatest(issueID, executionID string) {
+	a.openIssueResultEntry(issueID, executionID, true)
+}
+
+func (a *appModel) openIssueResultEntry(issueID, executionID string, latest bool) {
 	ct := a.selectedContact()
 	issue, execution := ct.executionByID(executionID)
 	if issue == nil || execution == nil || issue.ID != issueID {
@@ -56,7 +66,8 @@ func (a *appModel) openIssueResult(issueID, executionID string) {
 	*page = issueResultPage{
 		Open: true, OwnerContactID: ct.ID, IssueID: issue.ID, ExecutionID: execution.ID,
 		SessionID: execution.SessionID, TaskID: execution.TaskID, MessageID: execution.MessageID,
-		Generation: a.issueResult.Generation,
+		Generation:   a.issueResult.Generation,
+		ReturnLatest: latest,
 		Panel: issueResultPanelState{
 			RunLabel:  fmt.Sprintf("Run %d · %s", runIndex+1, issue.Goal),
 			RunStatus: issueExecutionLabel(execution),
@@ -208,7 +219,15 @@ func (a *appModel) issueResultStillOwned(rt *runtimeClient, runtimeGeneration, g
 }
 
 func (a *appModel) closeIssueResult() {
+	page := &a.issueResult
+	ct := a.contactByID(page.OwnerContactID)
+	focusReturn := false
+	if ct != nil && ct == a.selectedContact() {
+		nav := ct.issueNavigation()
+		focusReturn = nav != nil && nav.DetailID == page.IssueID
+	}
 	a.cancelIssueResultView()
+	page.ReturnFocusPending = focusReturn
 	a.aux = ""
 }
 
@@ -218,7 +237,19 @@ func (a *appModel) cancelIssueResultView() {
 	a.issueResult.Loading = false
 	a.issueResult.LoadError = ""
 	a.issueResult.Notice = ""
+	a.issueResult.ReturnFocusPending = false
 	a.issueResult.Panel = issueResultPanelState{}
+}
+
+func (a *appModel) issueResultShouldFocus(issueID, executionID string, latest bool) bool {
+	page := &a.issueResult
+	ct := a.selectedContact()
+	return page.ReturnFocusPending && ct != nil && ct.ID == page.OwnerContactID &&
+		page.IssueID == issueID && page.ExecutionID == executionID && page.ReturnLatest == latest
+}
+
+func (a *appModel) consumeIssueResultReturnFocus() {
+	a.issueResult.ReturnFocusPending = false
 }
 
 func (a *appModel) issueResultPanelWidth() int {

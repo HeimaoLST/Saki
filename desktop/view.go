@@ -841,7 +841,8 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 			return
 		}
 		if returnAux == "issue-result" {
-			a.cancelIssueResultView()
+			a.closeIssueResult()
+			return
 		}
 		a.aux = ""
 		if returnAux == "task-context" {
