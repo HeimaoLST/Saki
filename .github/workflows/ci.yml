@@ -166,7 +166,7 @@ jobs:
         working-directory: desktop
         run: |
           CGO_ENABLED=0 python3 ../scripts/gui-go.py test ./... -count=1
-          CGO_ENABLED=0 python3 ../scripts/gui-go.py test github.com/egoist/mygo/ui -run '^TestSplitReleaseBeforeFrame$' -count=1 -v
+          CGO_ENABLED=0 python3 ../scripts/gui-go.py test github.com/egoist/mygo/ui -run '^(TestSplitReleaseBeforeFrame|TestEditorSelectionReleaseBeforeFrame)$' -count=1 -v
 
       - name: GUI build
         working-directory: desktop
@@ -198,7 +198,7 @@ jobs:
             echo "- \`gofmt -l .\` (must be empty)"
             echo "- \`python3 ../scripts/gui-go.py vet ./...\`"
             echo "- \`python3 ../scripts/gui-go.py test ./... -count=1\`"
-            echo "- \`python3 ../scripts/gui-go.py test github.com/egoist/mygo/ui -run '^TestSplitReleaseBeforeFrame$' -count=1 -v\`"
+            echo "- \`python3 ../scripts/gui-go.py test github.com/egoist/mygo/ui -run '^(TestSplitReleaseBeforeFrame|TestEditorSelectionReleaseBeforeFrame)$' -count=1 -v\`"
             echo "- \`python3 ../scripts/gui-go.py build ...\`"
             echo "- headless \`ui.Tester\` previews uploaded as artifact"
             echo ""
