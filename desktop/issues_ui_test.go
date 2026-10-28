@@ -134,9 +134,7 @@ func TestIssueConfirmNotDispatchedTargetsSelectedExecution(t *testing.T) {
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
 	expandIssueDetails(t, tr)
-	if err := tr.Click("Confirm not dispatched"); err != nil {
-		t.Fatal(err)
-	}
+	clickAfterBoundedScroll(t, tr, "Confirm not dispatched", 1040, 720)
 	tr.Frame()
 	if target.Status != issueExecutionNotDispatched {
 		t.Fatalf("target execution = %+v", target)

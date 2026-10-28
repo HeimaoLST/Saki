@@ -488,9 +488,7 @@ func TestIssueUIRequirementEvidenceActionPersists(t *testing.T) {
 	requirement := issue.Requirements[0]
 	draft := a.requirementDraft(requirement)
 	*draft = "checked by the user"
-	if err := tr.Click("Satisfied"); err != nil {
-		t.Fatal(err)
-	}
+	clickAfterBoundedScroll(t, tr, "Satisfied", 1040, 720)
 	tr.Frame()
 	if requirement.State != requirementSatisfied || requirement.Evidence != "checked by the user" {
 		t.Fatalf("requirement UI evidence = %+v", requirement)
