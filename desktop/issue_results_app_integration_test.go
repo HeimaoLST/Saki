@@ -267,6 +267,9 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := issueResultClick(h, "Issue Ship visible results"); err != nil {
+		t.Fatal(err)
+	}
 	if err := issueResultClick(h, "More issue actions"); err != nil {
 		t.Fatal(err)
 	}
