@@ -25,9 +25,10 @@ const issueResultPageWriteFinal = "created result\n\n```text\nwrite\n```"
 const issueResultPageEditFinal = "modified result"
 
 type issueResultPageProvider struct {
-	requests atomic.Int32
-	mu       sync.Mutex
-	bodies   []string
+	requests   atomic.Int32
+	mu         sync.Mutex
+	bodies     []string
+	WriteFinal string
 }
 
 func (p *issueResultPageProvider) count() int { return int(p.requests.Load()) }
@@ -60,7 +61,11 @@ func (p *issueResultPageProvider) handler(t *testing.T) http.HandlerFunc {
 				"path": "result.txt", "content": "first\n",
 			})
 		case 2:
-			response = issueResultPageFinal(issueResultPageWriteFinal)
+			final := issueResultPageWriteFinal
+			if p.WriteFinal != "" {
+				final = p.WriteFinal
+			}
+			response = issueResultPageFinal(final)
 		case 3:
 			response = issueResultFunctionCall("edit", "call-edit", map[string]any{
 				"path": "result.txt",
@@ -1151,6 +1156,173 @@ func TestIssueResultNavigationEntryAndReturnWideNarrow(t *testing.T) {
 		if err := issueResultClickAt(h, width, 720, "Back to issues"); err != nil {
 			t.Fatalf("width %d back to issues: %v", width, err)
 		}
+	}
+}
+
+func TestIssueResultReaderFocusReturnInsideOuterDialog(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &issueResultPageProvider{WriteFinal: "# Long result\n\n" + strings.Repeat("Long result paragraph for scroll regression.\n\n", 40)}
+	h := startRoutingHarnessWithHandler(t, binary, provider.handler(t), 1)
+	var issueID, executionID, draft string
+	h.pump.do(func() {
+		if !h.app.createIssue("Focus return", "Keep the reading row focused.") {
+			t.Fatalf("createIssue: %s", h.app.issueFormError)
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		draft = "keep focused draft"
+		h.app.selectedContact().Draft = draft
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue: %s", h.app.issueFormError)
+		}
+	})
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
+	})
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		executionID = issue.Executions[0].ID
+		h.app.openIssueResult(issueID, executionID)
+	})
+	h.pump.wait(func() bool {
+		page := h.app.issueResult
+		return page.Open && !page.Loading && (page.LoadError != "" || len(page.Panel.Files) > 0)
+	})
+
+	var tr *ui.Tester
+	h.pump.do(func() {
+		tr = ui.NewTester(h.app.view, 1040, 720)
+		tr.Frame()
+	})
+	var initialReloadFocus bool
+	var reportedInitial, fileRowInitial ui.Rect
+	var fileRowInitialVisible bool
+	h.pump.do(func() {
+		initialReloadFocus = tr.Focused("Reload result")
+		reportedInitial, _ = tr.Find("Reported files")
+		fileRowInitial, fileRowInitialVisible = tr.Find("Read file 1: result.txt")
+	})
+	if fileRowInitialVisible && fileRowInitial.Y >= 0 && fileRowInitial.Y+fileRowInitial.H <= 720 {
+		t.Fatalf("long result file row unexpectedly visible before bounded scroll: %+v reported=%+v", fileRowInitial, reportedInitial)
+	}
+	var clickErr error
+	var reportedScrolled, fileRowScrolled ui.Rect
+	var reportedScrolledVisible, fileRowScrolledVisible bool
+	h.pump.do(func() {
+		if err := scrollIssueResultActionIntoView(tr, "Read file 1: result.txt", 1040, 720); err != nil {
+			clickErr = err
+			return
+		}
+		reportedScrolled, reportedScrolledVisible = tr.Find("Reported files")
+		fileRowScrolled, fileRowScrolledVisible = tr.Find("Read file 1: result.txt")
+		clickErr = tr.Click("Read file 1: result.txt")
+		tr.Frame()
+	})
+	if clickErr != nil {
+		t.Fatal(clickErr)
+	}
+	if !fileRowScrolledVisible || fileRowScrolled.Y < 0 || fileRowScrolled.Y+fileRowScrolled.H > 720 {
+		t.Fatalf("file row not fully inside actual viewport after bounded scroll: %+v visible=%v", fileRowScrolled, fileRowScrolledVisible)
+	}
+	if reportedScrolled == reportedInitial && fileRowScrolled == fileRowInitial {
+		t.Fatalf("long result did not exercise real scroll geometry: initial reported=%+v row=%+v scrolled reported=%+v row=%+v", reportedInitial, fileRowInitial, reportedScrolled, fileRowScrolled)
+	}
+	h.pump.wait(func() bool {
+		return !h.app.issueResult.Panel.Checking && h.app.issueResult.Panel.Inspection != nil
+	})
+	h.pump.do(func() { tr.Frame() })
+	var readingOpen bool
+	var readingTexts []string
+	h.pump.do(func() {
+		readingOpen = tr.HasText("File reading")
+		readingTexts = append([]string(nil), tr.Texts()...)
+	})
+	if !readingOpen {
+		t.Fatalf("nested file reader did not open: %v", readingTexts)
+	}
+	var closeErr error
+	h.pump.do(func() {
+		closeErr = tr.Click("Close reading")
+		tr.Frame()
+	})
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	var rowFocused, reloadFocused bool
+	var outerOpen bool
+	var gotIssueID, gotExecutionID, gotTaskID, gotDraft string
+	var reportedAfter, fileRowAfter ui.Rect
+	var reportedVisibleAfter, fileRowVisibleAfter bool
+	var texts []string
+	h.pump.do(func() {
+		rowFocused = tr.Focused("Read file 1: result.txt")
+		reloadFocused = tr.Focused("Reload result")
+		outerOpen = h.app.issueResult.Open
+		reportedAfter, reportedVisibleAfter = tr.Find("Reported files")
+		fileRowAfter, fileRowVisibleAfter = tr.Find("Read file 1: result.txt")
+		texts = append([]string(nil), tr.Texts()...)
+		ct := h.app.selectedContact()
+		gotDraft = ct.Draft
+		gotIssueID = ct.SelectedIssueID
+		gotExecutionID = h.app.issueResult.ExecutionID
+		gotTaskID = ct.issueByID(issueID).Executions[0].TaskID
+	})
+	if !rowFocused {
+		t.Fatalf("Close reading did not return focus to file row: row=%v reload=%v initialReload=%v outerOpen=%v texts=%v",
+			rowFocused, reloadFocused, initialReloadFocus, outerOpen, texts)
+	}
+	if !reportedScrolledVisible || !reportedVisibleAfter || !fileRowVisibleAfter || reportedScrolled != reportedAfter || fileRowScrolled != fileRowAfter {
+		t.Fatalf("outer result scroll moved: scrolled reported=%+v row=%+v after reported=%+v visible=%v row=%+v visible=%v", reportedScrolled, fileRowScrolled, reportedAfter, reportedVisibleAfter, fileRowAfter, fileRowVisibleAfter)
+	}
+	if !outerOpen || gotIssueID != issueID || gotExecutionID != executionID || gotTaskID == "" || gotDraft != draft {
+		t.Fatalf("outer context changed: open=%v issue=%q want=%q execution=%q want=%q task=%q draft=%q want=%q",
+			outerOpen, gotIssueID, issueID, gotExecutionID, executionID, gotTaskID, gotDraft, draft)
+	}
+
+	// Repeat the same file with Escape as the close path.
+	h.pump.do(func() {
+		clickErr = tr.Click("Read file 1: result.txt")
+		tr.Frame()
+	})
+	if clickErr != nil {
+		t.Fatal(clickErr)
+	}
+	h.pump.wait(func() bool {
+		return !h.app.issueResult.Panel.Checking && h.app.issueResult.Panel.Inspection != nil
+	})
+	h.pump.do(func() {
+		tr.Key(0, ui.KeyEscape)
+		tr.Frame()
+	})
+	var escapeRowFocused, escapeReloadFocused bool
+	var escapeOuterOpen bool
+	var escapeDraft, escapeIssueID, escapeExecutionID, escapeTaskID string
+	var escapeReported, escapeFileRow ui.Rect
+	var escapeReportedVisible, escapeFileRowVisible bool
+	var escapeTexts []string
+	h.pump.do(func() {
+		escapeRowFocused = tr.Focused("Read file 1: result.txt")
+		escapeReloadFocused = tr.Focused("Reload result")
+		escapeOuterOpen = h.app.issueResult.Open
+		escapeReported, escapeReportedVisible = tr.Find("Reported files")
+		escapeFileRow, escapeFileRowVisible = tr.Find("Read file 1: result.txt")
+		escapeTexts = append([]string(nil), tr.Texts()...)
+		ct := h.app.selectedContact()
+		escapeDraft, escapeIssueID = ct.Draft, ct.SelectedIssueID
+		escapeExecutionID = h.app.issueResult.ExecutionID
+		escapeTaskID = ct.issueByID(issueID).Executions[0].TaskID
+	})
+	if !escapeRowFocused {
+		t.Fatalf("Escape did not return focus to file row: row=%v reload=%v outerOpen=%v texts=%v",
+			escapeRowFocused, escapeReloadFocused, escapeOuterOpen, escapeTexts)
+	}
+	if !escapeReportedVisible || !escapeFileRowVisible || escapeReported != reportedScrolled || escapeFileRow != fileRowScrolled {
+		t.Fatalf("Escape moved outer result scroll: scrolled reported=%+v row=%+v escape reported=%+v row=%+v", reportedScrolled, fileRowScrolled, escapeReported, escapeFileRow)
+	}
+	if !escapeOuterOpen || escapeIssueID != issueID || escapeExecutionID != executionID || escapeTaskID == "" || escapeDraft != draft {
+		t.Fatalf("Escape changed outer context: open=%v issue=%q want=%q execution=%q want=%q task=%q draft=%q want=%q",
+			escapeOuterOpen, escapeIssueID, issueID, escapeExecutionID, executionID, escapeTaskID, escapeDraft, draft)
 	}
 }
 
