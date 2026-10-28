@@ -433,6 +433,8 @@ func TestPreviewImages(t *testing.T) {
 			writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("native-%s-%s.png", theme, scene)), tr.Image())
 		}
 	}
+	writeV07AppearancePreviews(t, dir)
+
 	// Minimum window proof for the two densest panels.
 	for _, scene := range []string{"chat", "settings"} {
 		a := testApp(t)
@@ -711,7 +713,7 @@ func TestContactRailControlsStayVisibleAtNarrowWidths(t *testing.T) {
 		if limit != defaultLeftPaneWidth {
 			t.Fatalf("%d rail width = %v", width, limit)
 		}
-		for _, label := range []string{"Add contact", "Active", "Archived", "All"} {
+		for _, label := range []string{"Add contact", "Contact scope", "Active"} {
 			r, ok := tr.Find(label)
 			if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > limit || r.Y < 0 || r.Y+r.H > 720 {
 				t.Fatalf("%dx720 contact rail %q out of rail: ok=%v rect=%+v", width, label, ok, r)

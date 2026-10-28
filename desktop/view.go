@@ -6,10 +6,22 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/markdown"
 )
 
+// Message typography is supplied at the view call site so the reader's
+// parser, clipboard and file behavior stay untouched (#187 owns those files).
+var messageMarkdownTheme = &markdown.Theme{FontSize: 15, LineHeight: 1.8}
+
+func messageReaderOptions(plain bool) markdownReaderOptions {
+	return markdownReaderOptions{PlainText: plain, CopyLabel: "Copy message", Theme: messageMarkdownTheme}
+}
+
 func (a *appModel) view(c *ui.Context) {
-	a.workTheme = resolveWorkbenchTheme(c.Theme().Dark)
+	// Context.begin resets this to the system theme on every pass, so this is
+	// the live system appearance even while an explicit mode is shown.
+	a.systemDark = c.Theme().Dark
+	a.workTheme = resolveWorkbenchTheme(resolveAppearanceDark(a.appearanceMode, a.systemDark))
 	t := a.workTheme.Theme
 	c.SetTheme(t)
 	ui.Box(c).Fill().Children(func() {
@@ -32,7 +44,7 @@ func (a *appModel) view(c *ui.Context) {
 func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
 	ui.Column(c).FillWidth().FillHeight().Padding(10, 10).Gap(10).Background(a.workTheme.Rail).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-			ui.Text(c, "Saki").FontSize(14).FontWeight(600).TextColor(t.Text)
+			ui.Text(c, "Saki").FontSize(16).FontWeight(600).TextColor(t.Text)
 			ui.Spacer(c)
 			hide := secondaryButton(c, "Hide").OnClick(func() { a.toggleRail() })
 			if a.focusRail {
@@ -40,37 +52,59 @@ func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
 				a.focusRail = false
 			}
 		})
-		ui.Text(c, "Contacts").FontSize(14).TextColor(t.TextMuted)
+		ui.Text(c, "Contacts").FontSize(12).FontWeight(500).TextColor(t.TextMuted)
 		secondaryButton(c, "Add contact").FillWidth().Radius(999).OnClick(func() { a.addDefaultContact() })
-		ui.TextInput(c, &a.contactSearch).Label("Search contacts").FontSize(14).Placeholder("Name or purpose")
-		ui.Column(c).Gap(3).Children(func() {
-			a.contactScopeButton(c, t, "active", "Active")
-			a.contactScopeButton(c, t, "archived", "Archived")
-			a.contactScopeButton(c, t, "all", "All")
-		})
+		ui.TextInput(c, &a.contactSearch).Label("Search contacts").FontSize(13).Placeholder("Name or purpose")
+		ui.Text(c, "Contact scope").FontSize(12).TextColor(t.TextMuted)
+		a.contactScopeSelect(c)
 		visible := a.visibleContactIndices()
 		if len(visible) == 0 {
-			ui.Text(c, "No contacts match this scope and search.").FontSize(14).LineHeight(1.35).TextColor(t.TextMuted)
-			return
+			ui.Text(c, "No contacts match this scope and search.").FontSize(13).LineHeight(1.35).TextColor(t.TextMuted)
+			ui.Spacer(c).Grow(1)
+		} else {
+			ui.Scroll(c).Grow(1).Children(func() {
+				for _, i := range visible {
+					a.railRow(c, t, i)
+				}
+			})
 		}
-		ui.Scroll(c).Grow(1).Children(func() {
-			for _, i := range visible {
-				a.railRow(c, t, i)
-			}
-		})
+		appearance := secondaryButton(c, "Appearance").FillWidth().OnClick(func() { a.openAppearance() })
+		if a.focusAppearance {
+			appearance.Focus()
+			a.focusAppearance = false
+		}
 	})
 }
 
-func (a *appModel) contactScopeButton(c *ui.Context, t *ui.Theme, scope, label string) {
-	current := a.contactScope
-	if current == "" {
-		current = "active"
+func contactScopeChoiceLabel(scope string) string {
+	switch scope {
+	case "archived":
+		return "Archived"
+	case "all":
+		return "All"
+	default:
+		return "Active"
 	}
-	button := secondaryButton(c, label).FillWidth().Radius(7)
-	if current == scope {
-		button.BorderWidth(2).BorderColor(t.Accent)
+}
+
+func contactScopeFromChoice(label string) string {
+	switch label {
+	case "Archived":
+		return "archived"
+	case "All":
+		return "all"
+	default:
+		return "active"
 	}
-	button.OnClick(func() { a.setContactScope(scope) })
+}
+
+func (a *appModel) contactScopeSelect(c *ui.Context) {
+	a.contactScopeChoice = contactScopeChoiceLabel(a.contactScope)
+	choice := ui.Select(c, &a.contactScopeChoice, []string{"Active", "Archived", "All"}).
+		Label("Contact scope").FontSize(13).FillWidth()
+	if choice.Changed() {
+		a.setContactScope(contactScopeFromChoice(a.contactScopeChoice))
+	}
 }
 
 func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
@@ -81,7 +115,7 @@ func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
 	}
 	row.OnClick(func() { a.selectContact(i) })
 	row.Children(func() {
-		a.avatarTile(c, t, 32)
+		a.avatarTile(c, t, 34)
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
 				ui.Text(c, ct.Name).FontSize(14).FontWeight(500).TextColor(t.Text)
@@ -121,7 +155,7 @@ func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
 				}
 				color = a.statusColor(t, ct.Status)
 			}
-			ui.Text(c, line).FontSize(14).LineHeight(1.35).MaxLines(1).TextColor(color)
+			ui.Text(c, line).FontSize(13).LineHeight(1.35).MaxLines(1).TextColor(color)
 		})
 	})
 }
@@ -150,7 +184,7 @@ func (a *appModel) statusColor(t *ui.Theme, s contactStatus) ui.Color {
 
 func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
-	ui.Column(c).Grow(1).FillHeight().Background(t.Surface).Children(func() {
+	ui.Column(c).Grow(1).FillHeight().Background(a.workTheme.Reading).Children(func() {
 		if !a.demo {
 			switch {
 			case a.runtimeStatus == runtimeStateDraining:
@@ -232,17 +266,20 @@ func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Row(c).Justify(ui.Center).Children(func() {
 		ui.Column(c).WidthPercent(86).MaxWidth(760).Padding(8, 0).Gap(6).Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-				a.avatarTile(c, t, 28)
+			ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
+				a.avatarTile(c, t, 35)
 				ui.Column(c).Gap(1).Children(func() {
-					ui.Text(c, ct.Name).FontSize(15).FontWeight(500).TextColor(t.Text)
-					ui.Text(c, a.statusLabel(ct)+" · "+ct.Role).FontSize(14).LineHeight(1.35).MaxLines(2).TextColor(a.statusColor(t, ct.Status))
+					ui.Text(c, ct.Name).FontSize(17).FontWeight(600).TextColor(t.Text)
+					ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+						ui.Text(c, a.statusLabel(ct)).FontSize(12).LineHeight(1.35).TextColor(a.statusColor(t, ct.Status))
+						ui.Text(c, "· "+ct.Role).FontSize(12).LineHeight(1.35).MaxLines(1).TextColor(t.TextMuted)
+					})
 				})
 			})
 			nav := func(label string, active bool, focus *bool, onClick func()) {
 				button := secondaryButton(c, label)
 				if active {
-					button.BorderWidth(2).BorderColor(t.Accent)
+					button.BorderWidth(1).BorderColor(t.Accent)
 				}
 				button.OnClick(onClick)
 				if focus != nil && *focus {
@@ -260,9 +297,6 @@ func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 					nav("History", a.screen == viewHistory, &a.focusHistory, func() { a.openHistory() })
 				})
 				ui.Row(c).Gap(6).Children(func() {
-					nav("Conversation model", a.aux == "model", nil, func() { a.openSessionModel(ct.SessionID, "conversation", ct.Name) })
-				})
-				ui.Row(c).Gap(6).Children(func() {
 					nav("Settings", a.aux == "settings", &a.focusSettings, func() { a.openSettings() })
 				})
 				return
@@ -274,7 +308,6 @@ func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 				nav("Work", a.workspaceOpen, &a.focusWorkspace, func() { a.toggleWorkspace() })
 				a.workEntryHint(c, t, ct)
 				nav("History", a.screen == viewHistory, &a.focusHistory, func() { a.openHistory() })
-				nav("Conversation model", a.aux == "model", nil, func() { a.openSessionModel(ct.SessionID, "conversation", ct.Name) })
 				nav("Settings", a.aux == "settings", &a.focusSettings, func() { a.openSettings() })
 			})
 		})
@@ -349,7 +382,7 @@ func (a *appModel) chat(c *ui.Context, t *ui.Theme) {
 }
 
 func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, highlight bool) {
-	bg := t.Surface
+	bg := a.workTheme.BubbleContact
 	if e.From == "me" {
 		bg = a.workTheme.BubbleUser
 	} else if highlight {
@@ -359,8 +392,8 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 		ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
 			ui.Column(c).MaxWidth(460).MinWidth(0).Gap(4).Children(func() {
 				if e.Text != "" {
-					markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy message"}).
-						FontSize(14).LineHeight(1.5).Padding(8, 12).Radius(12).Background(bg).TextColor(t.Text)
+					markdownReader(c, e.Text, messageReaderOptions(true)).
+						FontSize(15).LineHeight(1.8).Padding(8, 12).Radius(12).Background(bg).TextColor(t.Text)
 				}
 				taskContextReadOnlyView(c, a.workTheme, e.Context)
 			})
@@ -371,7 +404,8 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 		a.avatarTile(c, t, 28)
 		ui.Column(c).MaxWidth(680).MinWidth(0).Shrink(1).Padding(10, 14).Radius(14).Background(bg).Gap(4).Children(func() {
 			ui.Text(c, a.selectedContact().Name+"  "+e.Date).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
-			markdownReader(c, e.Text, markdownReaderOptions{CopyLabel: "Copy message"})
+			markdownReader(c, e.Text, messageReaderOptions(false)).
+				FontSize(15).LineHeight(1.8)
 		})
 	})
 }
@@ -436,8 +470,8 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 					ui.Text(c, "Located in history").FontSize(14).TextColor(t.TextMuted)
 				}
 				if m.Text != "" {
-					markdownReader(c, m.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy message"}).
-						FontSize(14).LineHeight(1.55).Padding(10, 14).Radius(14).Background(a.workTheme.BubbleUser).TextColor(t.Text)
+					markdownReader(c, m.Text, messageReaderOptions(true)).
+						FontSize(15).LineHeight(1.8).Padding(10, 14).Radius(14).Background(a.workTheme.BubbleUser).TextColor(t.Text)
 				}
 				taskContextReadOnlyView(c, a.workTheme, m.Context)
 			})
@@ -445,11 +479,12 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 	default:
 		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
 			a.avatarTile(c, t, 28)
-			ui.Column(c).MaxWidthPercent(80).MinWidth(0).Shrink(1).Padding(10, 14).Radius(14).Background(t.SurfaceHover).Gap(4).Children(func() {
+			ui.Column(c).MaxWidthPercent(80).MinWidth(0).Shrink(1).Padding(10, 14).Radius(14).Background(a.workTheme.BubbleContact).Gap(4).Children(func() {
 				if m.Key != "" && m.Key == a.highlight {
 					ui.Text(c, "Located in history").FontSize(14).TextColor(t.TextMuted)
 				}
-				markdownReader(c, m.Text, markdownReaderOptions{Streaming: m.Streaming, CopyLabel: "Copy message"})
+				markdownReader(c, m.Text, markdownReaderOptions{Streaming: m.Streaming, CopyLabel: "Copy message", Theme: messageMarkdownTheme}).
+					FontSize(15).LineHeight(1.8)
 				if m.AlertTitle != "" {
 					a.alert(c, t, m)
 				}
@@ -483,14 +518,14 @@ func (a *appModel) emptyState(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Column(c).Padding(8, 0).Gap(8).Children(func() {
 		if !a.demo && ct.SessionID != "" && !ct.Loaded {
-			ui.Text(c, "Conversation history is not loaded").FontSize(15).FontWeight(500).TextColor(t.Text)
+			ui.Text(c, "Conversation history is not loaded").FontSize(16).FontWeight(600).TextColor(t.Text)
 			ui.Text(c, "This contact already has a session, but its history has not been read yet; it is not shown as empty.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
 			if a.runtimeStatus != runtimeStateReady {
 				ui.Text(c, "Runtime is not ready; history cannot be read yet.").FontSize(14).LineHeight(1.45).TextColor(t.Warning)
 			}
 			return
 		}
-		ui.Text(c, "No messages yet").FontSize(15).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "No messages yet").FontSize(17).FontWeight(600).TextColor(t.Text)
 		if a.demo {
 			ui.Text(c, "Start typing below to talk with "+ct.Name+"; you can personalize name, purpose, instructions and workspace any time in Settings.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
 		} else {
@@ -565,8 +600,8 @@ func (a *appModel) connectionErrorBanner(c *ui.Context, t *ui.Theme, ct *contact
 func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Column(c).Padding(10, 0).Gap(4).Children(func() {
-		ui.Row(c).Gap(6).AlignItems(ui.End).Padding(6, 10).Radius(14).Background(t.SurfaceHover).Children(func() {
-			input := ui.TextArea(c, &ct.Draft).Label("Composer for " + ct.Name).FontSize(14).LineHeight(1.5).Height(44).Background(ui.Transparent).BorderWidth(0).Padding(2).Placeholder("Message " + ct.Name).Grow(1).OnChange(func() {
+		ui.Row(c).Gap(6).AlignItems(ui.End).Padding(6, 10).Radius(14).Background(a.workTheme.Well).Children(func() {
+			input := ui.TextArea(c, &ct.Draft).Label("Composer for " + ct.Name).FontSize(15).LineHeight(1.6).Height(44).Background(ui.Transparent).BorderWidth(0).Padding(2).Placeholder("Message " + ct.Name).Grow(1).OnChange(func() {
 				a.draftChanged(ct)
 			}).OnEnter(func(e ui.Enter) bool {
 				if e.Mods&ui.Shift != 0 {
@@ -598,6 +633,12 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 			if send.Clicked() {
 				a.sendCurrent()
 			}
+		})
+		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+			secondaryButton(c, "Conversation model").OnClick(func() {
+				a.openSessionModel(ct.SessionID, "conversation", ct.Name)
+			})
+			ui.Text(c, a.conversationModelSummary(ct)).FontSize(12).LineHeight(1.35).MaxLines(1).TextColor(t.TextMuted).Grow(1)
 		})
 		if !a.demo && ct.ActiveTaskID != "" {
 			ui.Row(c).Justify(ui.End).Children(func() {
@@ -644,7 +685,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				ui.Text(c, ct.StatusDetail).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
 			}
 		}
-		ui.Text(c, "Enter to send · Shift + Enter for a new line").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Enter to send · Shift + Enter for a new line").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 	})
 }
 
@@ -655,9 +696,9 @@ func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 	open := a.screen == viewHistory
 	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
-		panel.Width(560).FillHeight().Background(t.Surface).Children(func() {
+		panel.Width(560).FillHeight().Background(a.workTheme.Panel).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Padding(12, 12).Children(func() {
-				ui.Text(c, "History · "+ct.Name).FontSize(16).FontWeight(600).TextColor(t.Text)
+				ui.Text(c, "History · "+ct.Name).FontSize(17).FontWeight(600).TextColor(t.Text)
 				ui.Spacer(c)
 				close := secondaryButton(c, "Close history").OnClick(func() {
 					open = false
@@ -710,7 +751,7 @@ func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 							}
 							ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
 								ui.Text(c, "Full saved message · "+from+" · "+full.Date+" · "+full.SessionID).FontSize(14).LineHeight(1.4).TextColor(t.Success)
-								markdownReader(c, full.Text, markdownReaderOptions{CopyLabel: "Copy saved message"}).FontSize(14).LineHeight(1.5).TextColor(t.Text)
+								markdownReader(c, full.Text, markdownReaderOptions{CopyLabel: "Copy saved message", Theme: messageMarkdownTheme}).FontSize(15).LineHeight(1.8).TextColor(t.Text)
 								taskContextReadOnlyView(c, a.workTheme, full.Context)
 								secondaryButton(c, "Close full message").OnClick(func() { a.contactHistoryFull = nil })
 							})
@@ -729,9 +770,9 @@ func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 						ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
 							ui.Text(c, e.Date+" · "+speakerLabel(ct, e)).FontSize(14).LineHeight(1.4).TextColor(t.Success)
 							if e.From == "me" {
-								markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy history message"}).FontSize(14).LineHeight(1.5).TextColor(t.Text)
+								markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy history message", Theme: messageMarkdownTheme}).FontSize(15).LineHeight(1.8).TextColor(t.Text)
 							} else {
-								markdownReader(c, e.Text, markdownReaderOptions{CopyLabel: "Copy history message"})
+								markdownReader(c, e.Text, markdownReaderOptions{CopyLabel: "Copy history message", Theme: messageMarkdownTheme}).FontSize(15).LineHeight(1.8)
 							}
 							taskContextReadOnlyView(c, a.workTheme, e.Context)
 							ui.Row(c).Children(func() {
@@ -769,7 +810,7 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 	open := true
 	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
-		panel.Width(width).FillHeight().Background(t.Surface).Children(func() {
+		panel.Width(width).FillHeight().Background(a.workTheme.Panel).Children(func() {
 			ui.Scroll(c).Grow(1).Padding(12).Children(func() {
 				ui.Column(c).Gap(10).Children(func() {
 					switch returnAux {
@@ -781,6 +822,8 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 						a.modelPanel(c, t)
 					case "task-context":
 						a.taskContextPanel(c, t)
+					case "appearance":
+						a.appearancePanel(c, t)
 					case "issue-result":
 						a.issueResultPanelView(c, t)
 					default:
@@ -806,6 +849,8 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 			a.focusSettings = true
 		case "sources":
 			a.focusHistory = false
+		case "appearance":
+			a.focusAppearance = true
 		}
 	}
 }
@@ -814,7 +859,7 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	entries := a.sourceEntries(a.auxMessage)
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "Sources").FontSize(16).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Sources").FontSize(17).FontWeight(600).TextColor(t.Text)
 		ui.Spacer(c)
 		secondaryButton(c, "Close").OnClick(func() { a.closeAux() })
 	})
@@ -824,9 +869,9 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 		ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
 			ui.Text(c, e.Date+" · "+speakerLabel(ct, e)).FontSize(14).LineHeight(1.4).TextColor(t.Success)
 			if e.From == "me" {
-				markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy source message"}).FontSize(14).LineHeight(1.5).TextColor(t.Text)
+				markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy source message", Theme: messageMarkdownTheme}).FontSize(15).LineHeight(1.8).TextColor(t.Text)
 			} else {
-				markdownReader(c, e.Text, markdownReaderOptions{CopyLabel: "Copy source message"})
+				markdownReader(c, e.Text, markdownReaderOptions{CopyLabel: "Copy source message", Theme: messageMarkdownTheme}).FontSize(15).LineHeight(1.8)
 			}
 			ui.Row(c).Children(func() {
 				secondaryButton(c, "View in conversation").OnClick(func() { a.viewInConversation(e.ID) })
@@ -845,7 +890,7 @@ func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
 	editor.HasConversation = ct.SessionID != ""
 	editor.ActiveWork, editor.UnknownWork = a.contactActivity(ct)
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "Contact settings").FontSize(16).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Contact settings").FontSize(17).FontWeight(600).TextColor(t.Text)
 		ui.Spacer(c)
 		if !a.demo {
 			secondaryButton(c, "Startup status").OnClick(func() { a.openConfiguration() })

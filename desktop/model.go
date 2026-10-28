@@ -162,6 +162,7 @@ type appModel struct {
 	contactProfileID         string
 	contactSearch            string
 	contactScope             string
+	contactScopeChoice       string
 	contactHistory           *contactHistoryResult
 	contactHistoryFull       *contactHistoryFull
 	contactHistoryBusy       bool
@@ -171,6 +172,16 @@ type appModel struct {
 	contactHistoryDetailGen  int
 	contactHistoryInFlight   int
 	resultInFlight           int
+
+	appearanceMode   string
+	appearanceChoice string
+	appearanceStatus string
+	appearanceError  string
+	systemDark       bool
+	focusAppearance  bool
+	storeInitAllowed bool
+	localSaveErr     string
+	localSavePrevErr string
 
 	issueFormOpen                 bool
 	issueDetailOpen               map[string]bool
@@ -369,11 +380,12 @@ func seededApp() *appModel {
 				},
 			},
 		},
-		selected:      0,
-		screen:        viewChat,
-		workspaceOpen: false,
-		seq:           100,
-		scrollTo:      -1,
+		selected:       0,
+		screen:         viewChat,
+		workspaceOpen:  false,
+		appearanceMode: appearanceSystem,
+		seq:            100,
+		scrollTo:       -1,
 	}
 }
 
@@ -521,6 +533,8 @@ func (a *appModel) closeAux() {
 		a.modelForm = nil
 		a.modelPanelMessage = ""
 		a.modelPanelError = ""
+	case "appearance":
+		a.focusAppearance = true
 	case "issue-result":
 		a.cancelIssueResultView()
 	}

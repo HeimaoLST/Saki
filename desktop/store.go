@@ -104,6 +104,7 @@ type storedState struct {
 	IssueToolOperations *IssueToolOperationLedger `json:"issue_tool_operations,omitempty"`
 	IssueToolScopes     []IssueToolScope          `json:"issue_tool_scopes,omitempty"`
 	Layout              *storedLayout             `json:"layout,omitempty"`
+	Appearance          string                    `json:"appearance,omitempty"`
 }
 
 type contactStore struct {
@@ -258,6 +259,7 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 		IssueToolOperations: s.issueToolLedger,
 		IssueToolScopes:     s.issueToolScopesList(),
 		Layout:              s.state.Layout,
+		Appearance:          s.state.Appearance,
 	}
 	for _, c := range contacts {
 		storedContact := storedContact{

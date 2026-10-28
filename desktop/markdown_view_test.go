@@ -18,6 +18,27 @@ func appReadingTestApp(t *testing.T) (*appModel, *contact) {
 	return a, ct
 }
 
+func scrollToVisibleControl(tr *ui.Tester, label string, dy float32) bool {
+	composer, composerOK := tr.Find("Composer for Saki")
+	settings, settingsOK := tr.Find("Settings")
+	if !composerOK || !settingsOK || composer.W <= 0 || composer.H <= 0 {
+		return false
+	}
+	// Scroll over the reading column itself, not a nested code/table widget.
+	x := composer.X + composer.W/2
+	y := settings.Y + settings.H + 20
+	for i := 0; i < 40; i++ {
+		r, ok := tr.Find(label)
+		if ok && r.W > 0 && r.H > 0 &&
+			r.Y >= settings.Y+settings.H && r.Y+r.H <= composer.Y {
+			return true
+		}
+		tr.Scroll(x, y, 0, dy)
+		tr.Frame()
+	}
+	return false
+}
+
 func TestAppAssistantMarkdownStreamsFinalRestoresAndCopies(t *testing.T) {
 	const md = "# 标题\n\n列表：\n\n- 第一项\n- 第二项\n\n> 引用\n\n[链接](https://example.com/docs)\n\n" +
 		"```go\n\tfmt.Println(\"x\")\n```\n\n| 名称 | 值 |\n| --- | --- |\n| 语言 | 中文 |\n"
@@ -52,8 +73,11 @@ func TestAppAssistantMarkdownStreamsFinalRestoresAndCopies(t *testing.T) {
 				t.Fatalf("%dx%d final markdown missing %q: %q", size.width, size.height, want, tr.Texts())
 			}
 		}
-		tr.Scroll(360, 400, 0, -1000)
-		tr.Frame()
+		// The 15px/1.8 reading measure can exceed a short viewport. Scroll the
+		// real reading list until the source control is laid out, then click it.
+		if !scrollToVisibleControl(tr, "Copy message", -160) {
+			t.Fatalf("%dx%d full-source control is not reachable", size.width, size.height)
+		}
 		if err := tr.Click("Copy message"); err != nil {
 			t.Fatal(err)
 		}
@@ -66,7 +90,7 @@ func TestAppAssistantMarkdownStreamsFinalRestoresAndCopies(t *testing.T) {
 			}
 			tr.Frame()
 		}
-		if r, ok := tr.Find("Copy"); !ok || r.W <= 0 || r.H <= 0 {
+		if !scrollToVisibleControl(tr, "Copy", 160) {
 			t.Fatalf("%dx%d code copy control is not visible after returning to latest: %v", size.width, size.height, tr.Texts())
 		}
 		if err := tr.Click("Copy"); err != nil {
@@ -91,8 +115,9 @@ func TestAppAssistantMarkdownStreamsFinalRestoresAndCopies(t *testing.T) {
 		if !tr.HasText("第一项") || !tr.HasText("引用") || !tr.HasText("fmt.Println") {
 			t.Fatalf("%dx%d restored markdown missing: %q", size.width, size.height, tr.Texts())
 		}
-		tr.Scroll(360, 400, 0, -2000)
-		tr.Frame()
+		if !scrollToVisibleControl(tr, "Copy message", -160) {
+			t.Fatalf("%dx%d restored full-source control is not reachable", size.width, size.height)
+		}
 		if err := tr.Click("Copy message"); err != nil {
 			t.Fatal(err)
 		}
@@ -299,18 +324,61 @@ func TestAppChatScrollUpSurvivesStreamAppendAndBackToLatest(t *testing.T) {
 	if ct.list.AtEnd() || !tr.HasText("Back to latest") {
 		t.Fatalf("scrolling up did not pause follow/back control: atEnd=%v", ct.list.AtEnd())
 	}
+	ct.Draft = "draft stays across appearance switch"
 	first, _ := ct.list.Visible()
-	row, ok := tr.Find(fmt.Sprintf("message %02d", first))
-	if !ok {
-		t.Fatalf("first visible row is not readable: %d %q", first, tr.Texts())
+	composer, composerOK := tr.Find("Composer for Saki")
+	settings, settingsOK := tr.Find("Settings")
+	if !composerOK || !settingsOK {
+		t.Fatalf("reading viewport bounds unavailable: composer=%+v/%v settings=%+v/%v", composer, composerOK, settings, settingsOK)
 	}
-	tr.ClickAt(row.X+2, row.Y+row.H/2)
+	// list.Visible may report a partially clipped first row; choose the first
+	// row whose label is fully inside the actual reading viewport and clickable.
+	clicked := -1
+	var row ui.Rect
+	for i := first; i < len(ct.Messages); i++ {
+		candidate, ok := tr.Find(fmt.Sprintf("message %02d", i))
+		if ok && candidate.W > 0 && candidate.H > 0 &&
+			candidate.Y >= settings.Y+settings.H && candidate.Y+candidate.H <= composer.Y {
+			clicked, row = i, candidate
+			break
+		}
+	}
+	if clicked < 0 {
+		t.Fatalf("no fully visible clickable message row from %d: composer=%+v settings=%+v texts=%q",
+			first, composer, settings, tr.Texts())
+	}
+	// Click the visible text itself (not its left edge) and verify the selected
+	// source actually reaches the clipboard.
+	tr.ClickAt(row.X+row.W/2, row.Y+row.H/2)
 	tr.Command("selectAll")
 	tr.Command("copy")
 	selected := tr.Clipboard()
-	if selected == "" {
-		t.Fatal("selection copy is empty")
+	if selected == "" || !strings.Contains(selected, fmt.Sprintf("message %02d", clicked)) {
+		t.Fatalf("selection copy = %q, want text from visible row %02d (row=%+v)", selected, clicked, row)
 	}
+
+	// Reuse the same scrolled/selected view for the appearance regression:
+	// neither the visible anchor, the exact selection, nor the current contact
+	// and draft may change before the existing stream-append check.
+	anchorBeforeAppearance, _ := ct.list.Visible()
+	selectedIDBeforeAppearance := a.selectedContact().ID
+	draftBeforeAppearance := ct.Draft
+	a.setAppearanceMode(appearanceDark)
+	tr.Frame()
+	anchorAfterAppearance, _ := ct.list.Visible()
+	if anchorAfterAppearance != anchorBeforeAppearance {
+		t.Fatalf("appearance switch moved visible anchor: %d -> %d", anchorBeforeAppearance, anchorAfterAppearance)
+	}
+	if a.selectedContact().ID != selectedIDBeforeAppearance {
+		t.Fatalf("appearance switch changed selected contact: %q -> %q", selectedIDBeforeAppearance, a.selectedContact().ID)
+	}
+	if ct.Draft != draftBeforeAppearance {
+		t.Fatalf("appearance switch changed draft: %q -> %q", draftBeforeAppearance, ct.Draft)
+	}
+	if got := tr.Clipboard(); got != selected {
+		t.Fatalf("appearance switch changed copied selection: %q -> %q", selected, got)
+	}
+
 	firstBeforeAppend, _ := ct.list.Visible()
 
 	a.applyEvent(ct, runtimeEventEnvelope{

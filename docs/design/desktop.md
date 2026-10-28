@@ -1,6 +1,6 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-27。本文保留各阶段的实现与验证记录；连接配置见末尾 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118，资料快照与递交见 **#117 资料快照、阅读与递交**，联系人编辑、归档及旧对话访问见 **#152 联系人管理与已保存对话**。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
+更新日期：2026-10-28。本文保留各阶段的实现与验证记录；连接配置见末尾 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118，资料快照与递交见 **#117 资料快照、阅读与递交**，联系人编辑、归档及旧对话访问见 **#152 联系人管理与已保存对话**。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
 
 [previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。当前主题事实见 `desktop/theme.go` 的 `resolveWorkbenchTheme`（Paper/Moss；light/dark 语义角色）；#92 的 Moon/Dawn 和 #90 的 11px/12px 数值只保留为历史设计/实现记录，不再作为当前规范。此前将这些能力或颜色列为后续独立任务的说明已失效，不再作为当前实现或未来承诺；具体状态以对应任务段、PR 和 `dev` 为准。
 
@@ -112,7 +112,7 @@ Finder 启动不继承 shell 环境。空配置时通过 Connection settings 保
 更新于 2026-10-23。当前实现/测试 HEAD `c1b804e`（栈上合并 112 `31d3cff`；产品 formatter merge `4ec3ad5`）；本条只保留当轮 GUI 实现事实。当前布局规范和宽度偏好以顶部 [GUI 设计约束（当前规范）](#gui-design-constraints) 为准；当轮的固定 1120/960 列宽已由 [#184 可调三栏具体值](#adjustable-layout-values) 替代。
 
 - 三栏布局（历史，已由 #184 可调三栏替代）：宽度 ≥1120 时联系人栏 200px、工作区 360px；960–1119 使用 160px／320px 紧凑列；低于 960 时工作区通过带遮罩的模态覆盖打开，Close 始终可见。原生窗口最低宽度调整为 720px（高度仍 640px），使 900px 的覆盖分支可由实际 `ContentSize` 到达；960/1040/宽屏同样由实际内容宽度分类，headless 显式设置对应宽度。联系人栏可收起并由页头 Contacts 重开；工作区可收起并由 Work 重开；收起、覆盖、关闭和 Escape 后恢复入口焦点，侧栏/工作区状态不停止任务。
-- 颜色：按 PM 固定 `2182c1a` 的 root/night 数值，一次解析为小型 `workbenchTheme`（既有 `ui.Theme` + `Rail`/`BubbleUser`/`WorkSurface`/`WorkText`/`WorkMuted`/`WorkAttention`），组件不写 hex、不按品牌分支。用户气泡使用 `BubbleUser`，联系人栏使用 `Rail`，当前工作卡使用深色 `WorkSurface` hero；完整 Appearance 模式与持久化仍归 #96，联系人设置不承载应用外观。
+- 颜色：按 PM 固定 `2182c1a` 的 root/night 数值，一次解析为小型 `workbenchTheme`（既有 `ui.Theme` + `Rail`/`BubbleUser`/`WorkSurface`/`WorkText`/`WorkMuted`/`WorkAttention`），组件不写 hex、不按品牌分支。用户气泡使用 `BubbleUser`，联系人栏使用 `Rail`，当前工作卡使用深色 `WorkSurface` hero（#96 已替换为中性工作面；Appearance 模式与持久化见 #96，联系人设置不承载应用外观）。
 - 消息与工作分开：用户/助手真实文本留在左右气泡，按 task/item 稳定 key 聚合增量、最终和历史，不因工具或完成追加占位回复。工具活动进入按 task/call 归属的 Work 投影，显示状态、摘要、详情和原文 Copy；工具失败只影响工具/工作呈现，不直接把任务判为失败。没有 Task ID 的旧工具记录保留为 “Earlier activity”，不伪造 task 归属。当前工作卡是 `WorkSurface` hero，标题只保留一次 Current/Recent work，任务目的、状态与最新动作分层；工具正文不套用 hero。
 - 执行事实：`task_started`、`tool_started/finished`、`task_finished` 与 cancel 回复驱动 accepted/running/stopping/completed/failed/interrupted/unknown；Stop 针对当前 `ActiveTaskID`，取消结果不直接生成“已停止”，等待 `task_finished`；由 Stop 请求后的 interrupted 显示 `Stopped · interrupted`，保留中断原因。同进程的 `StopRequestedTasks` 本地 map 让自动 history reload 保留同一 task 的停因；该事实不写入 store，重启后没有停因契约时仍诚实显示 Interrupted。未请求停止的历史也显示 Interrupted。旧任务迟到 start/terminal 不会复活或污染新任务。单执行槽下其他联系人明确显示 busy/disabled，草稿不丢、不停止当前任务。
 - 聊天未读只由新 Agent 文本消息增加；工具、普通完成、reload 和 restart 不重复计数；失败/未知仍通过 contact attention 与工作详情持续可见。未加载 session 的聊天/工作/History 显示未加载或不可用，不声称“没有历史”。Store 失败仍走既有本地 store fallback。
@@ -259,7 +259,7 @@ v2 `8a04d63` 的原生修复证据（13..18）：
 
 ## 主题系统（#92 设计）
 
-状态：**设计完成，功能未实现**（[#92](https://github.com/HeimaoLST/Saki/issues/92)）。用户已确认：夜间使用 Rosé Pine Moon，白天使用 Rosé Pine Dawn；未来需要更多配色和用户自定义。本设计只定义 GUI 配色数据、模式、持久化与自定义边界，不把设计关闭写成切换功能已经交付。
+状态：**历史设计记录**（[#92](https://github.com/HeimaoLST/Saki/issues/92)）。用户当时的 Moon/Dawn 方向已由 #96 的 Paper & Moss 当前实现替代；本节的 Moon/Dawn 数值、B 阶段目录与自定义主题提案只保留为历史设计，不表示当前能力或未来承诺。当前实现见末尾 [#96 Paper/Moss 外观、联系人 scope 与 composer 模型入口](#96-paper-moss-外观联系人-scope-与-composer-模型入口实现事实2026-10-28)。
 
 ### 当前实现事实（不是目标）
 
@@ -719,3 +719,16 @@ type resolvedTheme struct {
 - **受控依赖接入（Split only）**：`scripts/gui-go.py` 是当前 CI、macOS 打包脚本和本地 GUI Go 命令的唯一入口，仅允许 `test`/`vet`/`build`/`run`。它通过 `go list -m -json` 核实际 selected MyGo：`Version` 必须为固定 `fea932a7a2a9` 且不得有 `Replace`；通过 `go mod download -json` 返回的 `Dir` 复制到唯一临时目录，校验 `ui/split.go` 原 SHA，应用 `desktop/patches/split-release.patch`（Split 末位移 hunk + `ui/split_release_before_frame_test.go`），校验 patched SHA，再用 `go mod edit -modfile` 写入临时 replace 并在真实 `desktop` cwd 执行 Go，随后清理临时目录。它支持含空格 TMPDIR；prepare/patch 输出只进 stderr，`go test -json` 的 stdout 只透传 Go JSON；不重写 `desktop/go.mod`、module cache 或 VCS；patch 不匹配、patch 失败、post-SHA 不符或版本/Replace 不符均明确非零退出，不回退。
 - **普通命令边界**：直接运行 `go test ./...` 或 `go build` 不会携带 Split patch；当前只通过上面的统一入口执行带 patch 的 GUI Go。CI 的 GUI vet/test/build/preview、Rust job 的真实 GUI 全包和 `scripts/build-macos-app.sh` 已统一走该入口；显式回归是 `python3 scripts/gui-go.py test github.com/egoist/mygo/ui -run '^TestSplitReleaseBeforeFrame$' -count=1`，没有新增 check 名。`desktop/patches/split-release.patch` 是 `.patch`，不会被 desktop 的普通 Go 测试编译。
 - **范围与退出条件**：该 patch 只修 Split release-before-frame；不含 editor/composer、trace、第二布局或 vendoring。官方 release/main 同批问题记录仍保留；上游发布同批回归绿后应移除 `gui-go.py`/patch，恢复普通 Go 入口。普通 `gofmt` 仍直接使用。
+
+## #96 Paper/Moss 外观、联系人 scope 与 composer 模型入口（实现事实，2026-10-28）
+
+代码来源：`agent/gui/96-v07-appearance`，从 `33fc398` 开出；本节记录首个可运行切片，不把 #184 的正式包、原生窗口或 #186/#187 的未完成范围写成本单结果。
+
+- **一套语义 resolver**：`desktop/theme.go` 的 `resolveWorkbenchTheme` 仍返回单一 `workbenchTheme`；Paper 从 `ui.LightTheme()`、Night 从 `ui.DarkTheme()` 起步（`Theme.Dark` 正确），再覆盖 v07 语义 token。保留 `paper`/`night` 身份、mascot、左右气泡；工作卡改为中性 `WorkSurface` 与轻边界，不再使用深绿 hero。普通联系人、事项和状态不复用按钮描边；控件保留 MyGo 默认按钮面，调用方不以 `Background` 覆盖导致 hover/pressed 早退。
+- **排版**：消息正文 15px/1.8，普通操作 13px，辅助信息不低于 12px；标题用 16–19px 分层。消息 Markdown 的 15px/1.8 由 `view` 调用侧的 `markdownReaderOptions.Theme{FontSize:15, LineHeight:1.8}` 与根字号完成，未修改 `markdown.go` 或 reader 接口；中文长段落实际行带中心间距实测为 27px（15×1.8）。工具卡、Connection、Task context 与两个 Stop 入口保留。
+- **联系人范围**：三个纵向 scope 按钮替换为一个 `ui.Select`，保留 `Active`/`Archived`/`All` 的值与筛选行为，以及 Add contact、完整 Contact profile、Save and start new conversation、Archive/Restore。Appearance 从联系人侧栏底部的应用级入口打开，不进入 Contact Settings。
+- **模型入口**：Conversation model 从 header 移到 composer 旁，仍调用 `openSessionModel(ct.SessionID, "conversation", ...)`；首次未绑定明确显示连接已保存的默认模型，不声称立即生效。Issue model 仍在事项管理入口，两个目标不混用。
+- **Appearance 存储**：`storedState` 的 v9 仅增加可选 `appearance` 字符串（`system`/`light`/`dark`），不新增第二个 store、preferences 文件或版本。缺字段的旧 store 解析为 `system`；联系人保存保留该字段。没有 store 的首次启动（未配置连接但当前 placeholder 联系人可保存）通过既有 `persist` 惰性写入同一 `contacts.json`，保留当前 contact ID、名称与草稿，不启动或连接 Runtime；store 不可读时仍走 `newUnavailableApp`，不覆盖损坏文件。
+- **失败与恢复**：模式切换先立即生效；保存失败显示“Applied but not saved”并提供明确的 `Retry save`，不把页面回退到旧模式。重试与后续任何成功的 `persist`（包括联系人保存）走同一保存路径并清除该未保存提示；持久化错误只清除自己写入的 contact-save 错误，不覆盖无关的 Runtime 诊断。没有 Runtime 重建、任务取消/重发、草稿清空、选择或焦点迁移。
+- **范围边界**：#184 的默认右侧关闭、拖动/键盘调宽、中心最宽、覆盖抽屉与持久宽度保持不变；本单不改 reader 文件（#187 独占）、事项概览/筛选（#186）、Runtime 协议、执行生命周期或 store 现有执行契约。
+- **验证边界**：首轮 review set 在 `/private/tmp/saki-gui-96/previews-key/`（Paper/Night 1040 主面、Appearance、720 composer 共 6 张）；完整 16 张 headless 状态在 `/private/tmp/saki-gui-96/previews-first/`（Paper/Night × 1040/1380/960/720 normal，加 1040 working/attention/error/empty）。新增图片由既有 `TestPreviewImages` 入口生成，未增加独立 opt-in 测试。两者均为 `ui.Tester`，属 headless only；exact candidate tests/CI/native evidence 见 #96/PR；native/IME 尚未声称。
