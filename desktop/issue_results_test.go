@@ -366,7 +366,7 @@ func TestIssueResultPanelCopiesExactResultMarkdownAndCode(t *testing.T) {
 	}
 	tr := issueResultPanelTester(state, issueResultPanelActions{SelectFile: func(string) {}}, 600, 900, false)
 	tr.Frame()
-	for _, want := range []string{"Run results", "Run 2 · result · Ship the issue result panel", "Completed", "Result", "Reported files", "report.md", "Reported by write", "View file 1"} {
+	for _, want := range []string{"Run results", "Run 2 · result · Ship the issue result panel", "Completed", "Result", "Reported files", "report.md", "Reported by write", "Read file 1: report.md", "Read file →"} {
 		if !tr.HasText(want) {
 			t.Fatalf("missing %q in %q", want, tr.Texts())
 		}
@@ -426,7 +426,11 @@ func TestIssueResultPanelPreviewReadsCurrentFileAndCopiesExactPath(t *testing.T)
 	state.Inspection, state.InspectFor = &inspection, issueResultFileKey(file)
 	tr := issueResultPanelTester(state, issueResultPanelActions{CheckFile: func(issueResultFile) {}}, 600, 900, false)
 	tr.Frame()
-	for _, want := range []string{"Current file", "alpha-current", "Copy current file", "Copy path", "Check again"} {
+	if err := tr.Click("Read file 1: current.txt"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	for _, want := range []string{"File reading", "Current file", "alpha-current", "Copy current file", "Copy path", "Check again"} {
 		if !tr.HasText(want) {
 			t.Fatalf("missing %q in %q", want, tr.Texts())
 		}
@@ -481,7 +485,11 @@ func TestIssueResultPanelMissingFileKeepsPathAndRecordCopyAndRetries(t *testing.
 	}
 	tr := issueResultPanelTester(state, actions, 600, 900, false)
 	tr.Frame()
-	for _, want := range []string{"Checking the current file…", "Current file", "No file exists at the reported path", "Could not open the current file: no handler", "Copy path", "Check again", "Source & raw record"} {
+	if err := tr.Click("Read file 1: missing.txt"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	for _, want := range []string{"File reading", "Checking the current file…", "Current file", "No file exists at the reported path", "Could not open the current file: no handler", "Copy path", "Check again", "Source & raw record"} {
 		if !tr.HasText(want) {
 			t.Fatalf("missing %q in %q", want, tr.Texts())
 		}
@@ -548,6 +556,10 @@ func TestIssueResultPanelUnsupportedAndOversizeOfferExternalOpen(t *testing.T) {
 				RevealFile: func(issueResultFile) { revealed++ },
 			}, 600, 800, false)
 			tr.Frame()
+			if err := tr.Click("Read file 1: " + filepath.Base(tc.path)); err != nil {
+				t.Fatal(err)
+			}
+			tr.Frame()
 			if !tr.HasText(tc.want) || !tr.HasText("Open file") || !tr.HasText("Show in Finder") {
 				t.Fatalf("unsupported state missing: %q", tr.Texts())
 			}
@@ -585,7 +597,11 @@ func TestIssueResultPanelEmptyFilePreviewAndCopyAreValid(t *testing.T) {
 	}
 	tr := issueResultPanelTester(state, issueResultPanelActions{}, 600, 700, false)
 	tr.Frame()
-	if !tr.HasText("Current file") || !tr.HasText("Copy current file") {
+	if err := tr.Click("Read file 1: empty.txt"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.HasText("File reading") || !tr.HasText("This file is empty (0 bytes).") || !tr.HasText("Copy current file") {
 		t.Fatalf("empty file preview missing: %q", tr.Texts())
 	}
 	tr.SetClipboard("sentinel")
@@ -610,7 +626,7 @@ func TestIssueResultPanelRepeatedPathKeepsCallIdentity(t *testing.T) {
 		ToggleSource: func(key string) { state.SourceFor = key },
 	}, 600, 900, false)
 	tr.Frame()
-	for _, want := range []string{"View file 1", "View file 2", "Reported by write", path} {
+	for _, want := range []string{"Read file 1: shared.txt", "Read file 2: shared.txt", "Reported by write", path} {
 		if !tr.HasText(want) {
 			t.Fatalf("missing %q in %q", want, tr.Texts())
 		}
@@ -618,7 +634,7 @@ func TestIssueResultPanelRepeatedPathKeepsCallIdentity(t *testing.T) {
 	if tr.HasText("call-one") || tr.HasText("call-two") {
 		t.Fatalf("call IDs were visible before source expansion: %q", tr.Texts())
 	}
-	if err := tr.Click("View file 2"); err != nil {
+	if err := tr.Click("Read file 2: shared.txt"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
@@ -652,6 +668,10 @@ func TestIssueResultPanelLongContentWrapsAtNarrowWidth(t *testing.T) {
 		Inspection: &inspection, InspectFor: issueResultFileKey(file), SourceFor: issueResultFileKey(file),
 	}
 	tr := issueResultPanelTester(state, issueResultPanelActions{Close: func() {}, CheckFile: func(issueResultFile) {}, ToggleSource: func(string) {}}, 340, 900, false)
+	tr.Frame()
+	if err := tr.Click("Read file 1: " + filepath.Base(path)); err != nil {
+		t.Fatal(err)
+	}
 	tr.Frame()
 	for _, want := range []string{"Run results", "Close results", state.RunLabel, state.RunStatus, path, "Copy path", "Check again", "Source & raw record", "Hide source & raw record"} {
 		bounds, ok := tr.Find(want)
@@ -720,6 +740,10 @@ func TestIssueResultPanelCopyPathShowsReaderFailureFeedback(t *testing.T) {
 	}}
 	tr := issueResultPanelTester(state, actions, 600, 800, false)
 	tr.Frame()
+	if err := tr.Click("Read file 1: copy-source.txt"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
 	if err := tr.Click("Copy path"); err != nil {
 		t.Fatal(err)
 	}
@@ -732,5 +756,162 @@ func TestIssueResultPanelCopyPathShowsReaderFailureFeedback(t *testing.T) {
 	}
 	if calls != 2 || !tr.HasText("Copied") {
 		t.Fatalf("copy success was not shown after retry: calls=%d texts=%q", calls, tr.Texts())
+	}
+}
+
+func TestIssueResultReaderRendersMarkdownAndCopiesOriginalBytes(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "中文结果.md")
+	source := "# 中文标题\n\n这是中文段落，包含 **重点** 与 `inline`。\n\n- 第一项\n- 第二项\n\n| 名称 | 值 |\n| --- | --- |\n| 语言 | 中文 |\n| 状态 | 完成 |\n\n```go\nfunc main() {\n\tprintln(\"保留缩进\")\n}\n```\n"
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file := issueResultPanelFixtureFile("md", path, fmt.Sprintf(`{"path":%q,"bytes_written":%d}`, path, len(source)))
+	inspection := inspectIssueResultFile(file)
+	state := &issueResultPanelState{
+		RunLabel: "Run 1 · result · Markdown", RunStatus: "Completed", Files: []issueResultFile{file},
+		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
+	}
+	tr := issueResultPanelTester(state, issueResultPanelActions{SelectFile: func(string) {}}, 600, 900, false)
+	tr.Frame()
+	if err := tr.Click("Read file 1: 中文结果.md"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	for _, want := range []string{"File reading", "Markdown", "中文标题", "这是中文段落", "第一项", "名称", "语言", "完成", "func main() {", "保留缩进"} {
+		if !tr.HasText(want) {
+			t.Fatalf("Markdown reader missing %q in %q", want, tr.Texts())
+		}
+	}
+	if err := tr.Click("Copy current file"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.Clipboard(); got != source {
+		t.Fatalf("current file copy = %q, want exact original bytes %q", got, source)
+	}
+}
+
+func TestIssueResultReaderKeepsOrdinaryTextPlain(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "notes.txt")
+	source := "# 这不是标题\n\n`这不是 inline code`\n\n| 不是 | 表格 |\n"
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file := issueResultPanelFixtureFile("txt", path, fmt.Sprintf(`{"path":%q,"bytes_written":%d}`, path, len(source)))
+	inspection := inspectIssueResultFile(file)
+	state := &issueResultPanelState{
+		RunLabel: "Run 1 · result · Plain text", RunStatus: "Completed", Files: []issueResultFile{file},
+		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
+	}
+	tr := issueResultPanelTester(state, issueResultPanelActions{}, 600, 800, false)
+	tr.Frame()
+	if err := tr.Click("Read file 1: notes.txt"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.HasText("Plain text") {
+		t.Fatalf("plain-text reader label missing: %q", tr.Texts())
+	}
+	for _, want := range []string{"# 这不是标题", "`这不是 inline code`", "| 不是 | 表格 |"} {
+		if !tr.HasText(want) {
+			t.Fatalf("ordinary text was parsed as Markdown, missing %q in %q", want, tr.Texts())
+		}
+	}
+	if tr.HasText("Table · plain text") {
+		t.Fatalf("ordinary .txt was rendered as a Markdown table: %q", tr.Texts())
+	}
+}
+
+func TestIssueResultReaderEscapeAndCloseReturnToFileRow(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "return.md")
+	source := "# Return\n\nreader return check\n"
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file := issueResultPanelFixtureFile("return", path, fmt.Sprintf(`{"path":%q,"bytes_written":%d}`, path, len(source)))
+	inspection := inspectIssueResultFile(file)
+	state := &issueResultPanelState{
+		RunLabel: "Run 1 · result · Return", RunStatus: "Completed", Files: []issueResultFile{file},
+		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
+	}
+	tr := issueResultPanelTester(state, issueResultPanelActions{SelectFile: func(string) {}}, 600, 900, false)
+	tr.Frame()
+	rowLabel := "Read file 1: return.md"
+	if err := tr.Click(rowLabel); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.HasText("File reading") {
+		t.Fatalf("reader did not open: %q", tr.Texts())
+	}
+	tr.Key(0, ui.KeyEscape)
+	tr.Frame()
+	if tr.HasText("File reading") || !tr.HasText("Run results") || !tr.HasText(rowLabel) {
+		t.Fatalf("Escape did not close only the reader: %q", tr.Texts())
+	}
+	if !tr.Focused(rowLabel) {
+		t.Fatalf("Escape did not return focus to file row: %q", tr.Texts())
+	}
+	if err := tr.Click(rowLabel); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if err := tr.Click("Close reading"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if tr.HasText("File reading") || !tr.Focused(rowLabel) {
+		t.Fatalf("Close reading did not return to row: %q", tr.Texts())
+	}
+}
+
+func TestIssueResultReaderShowsReadErrorWithCurrentPath(t *testing.T) {
+	path := "/tmp/workspace/read-error.md"
+	file := issueResultPanelFixtureFile("error", path, fmt.Sprintf(`{"path":%q,"bytes_written":1}`, path))
+	inspection := issueResultFileInspection{
+		Path: path, WorkingDirectory: file.WorkingDirectory, Exists: true, Regular: true,
+		ReadError: "Could not read the current file: permission denied",
+	}
+	state := &issueResultPanelState{
+		RunLabel: "Run 1 · result · Read error", RunStatus: "Completed", Files: []issueResultFile{file},
+		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
+	}
+	tr := issueResultPanelTester(state, issueResultPanelActions{CheckFile: func(issueResultFile) {}}, 600, 800, false)
+	tr.Frame()
+	if err := tr.Click("Read file 1: read-error.md"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	for _, want := range []string{"Current file", "Could not read the current file: permission denied", path, "Copy path", "Check again"} {
+		if !tr.HasText(want) {
+			t.Fatalf("read error missing %q in %q", want, tr.Texts())
+		}
+	}
+}
+
+func TestIssueResultReaderLongChineseNameWrapsAtNarrowWidth(t *testing.T) {
+	longName := strings.Repeat("很长的中文结果文件名", 5) + ".md"
+	path := "/tmp/workspace/" + longName
+	file := issueResultPanelFixtureFile("zh", path, fmt.Sprintf(`{"path":%q,"bytes_written":1}`, path))
+	inspection := issueResultFileInspection{
+		Path: path, WorkingDirectory: file.WorkingDirectory, Exists: true, Regular: true, Preview: "# 中文\n",
+	}
+	state := &issueResultPanelState{
+		RunLabel: "Run 1 · result · 中文长名称", RunStatus: "Completed", Files: []issueResultFile{file},
+		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
+	}
+	tr := issueResultPanelTester(state, issueResultPanelActions{}, 340, 900, false)
+	tr.Frame()
+	rowLabel := "Read file 1: " + longName
+	for _, want := range []string{rowLabel, "Read file →"} {
+		bounds, ok := tr.Find(want)
+		if !ok {
+			t.Fatalf("missing %q in %q", want, tr.Texts())
+		}
+		if bounds.X < 0 || bounds.X+bounds.W > 340 {
+			t.Fatalf("%q overflowed 340px: %+v", want, bounds)
+		}
 	}
 }

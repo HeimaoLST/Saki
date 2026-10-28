@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"strings"
 	"syscall"
 	"unicode/utf8"
 
@@ -273,10 +274,10 @@ func requestRevealIssueResultWithSystem(path string) error {
 	return nil
 }
 
-// issueResultPanelState is read-only presentation state owned by the caller.
-// It contains no file I/O, task dispatch or persistence. Inspections and action
-// results arrive through issueResultPanelActions and are rendered on the next
-// frame for the matching stable file key.
+// issueResultPanelState is presentation state for one result page. The caller
+// supplies run/file/inspection/action facts; this component updates only the
+// local reading mode (ReaderKey) and renders matching results on the next
+// frame. It contains no file I/O, task dispatch or persistence.
 type issueResultPanelState struct {
 	RunLabel   string
 	RunStatus  string
@@ -289,6 +290,7 @@ type issueResultPanelState struct {
 	ActionFor  string
 	Action     issueResultFileAction
 	SourceFor  string
+	ReaderKey  string
 }
 
 // issueResultPanelActions are explicit user requests. The component never
@@ -302,6 +304,18 @@ type issueResultPanelActions struct {
 	RevealFile   func(file issueResultFile)
 	ToggleSource func(key string)
 	CopyText     func(text string) error
+}
+
+// issueResultMarkdownFile is the explicit Markdown rendering allowlist. Other
+// UTF-8 files stay plain text so arbitrary code or text is never treated as
+// Markdown.
+func issueResultMarkdownFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".markdown":
+		return true
+	default:
+		return false
+	}
 }
 
 func issueResultFileKey(file issueResultFile) string {
@@ -355,96 +369,152 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 			}
 		})
 	})
+	if state.ReaderKey != "" {
+		if file, ok := issueResultFileByKey(state.Files, state.ReaderKey); ok {
+			issueResultReaderDialog(c, th, state, actions, file)
+		} else {
+			state.ReaderKey = ""
+		}
+	}
 	return root
+}
+
+func issueResultFileByKey(files []issueResultFile, key string) (issueResultFile, bool) {
+	for _, file := range files {
+		if issueResultFileKey(file) == key {
+			return file, true
+		}
+	}
+	return issueResultFile{}, false
 }
 
 func issueResultFileRow(c *ui.Context, th *ui.Theme, state *issueResultPanelState, actions issueResultPanelActions, file issueResultFile, index int) {
 	key := issueResultFileKey(file)
-	selected := key == state.Selected
-	entry := ui.Column(c).AlignSelf(ui.Stretch).MinWidth(0).Padding(10).Radius(8).Border(1, th.Border).Gap(4)
-	if selected {
-		entry.Background(th.SurfaceHover)
+	row := ui.ButtonBase(c).
+		Label(fmt.Sprintf("Read file %d: %s", index+1, filepath.Base(file.Path))).
+		AlignSelf(ui.Stretch).MinWidth(0).Padding(10).Radius(8).Border(1, th.Border).Gap(4)
+	if state.Selected == key {
+		row.Background(th.SurfaceHover)
 	}
-	entry.Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, filepath.Base(file.Path)).FontSize(14).FontWeight(600).TextColor(th.Text).MaxLines(1).Grow(1)
-			if actions.SelectFile != nil {
-				secondaryButton(c, fmt.Sprintf("View file %d", index+1)).
-					OnClick(func() { actions.SelectFile(key) })
-			}
+	row.Children(func() {
+		ui.Row(c).Wrap().AlignItems(ui.Center).Gap(8).Children(func() {
+			ui.Text(c, filepath.Base(file.Path)).FontSize(14).FontWeight(600).TextColor(th.Text).MaxLines(2).Grow(1)
+			ui.Text(c, "Read file →").FontSize(13).FontWeight(500).TextColor(th.TextMuted)
 		})
 		ui.Text(c, file.Path).FontSize(14).TextColor(th.TextMuted).MaxLines(2)
-		ui.Text(c, "Working directory: "+file.WorkingDirectory).FontSize(14).TextColor(th.TextMuted).MaxLines(2)
-		ui.Text(c, "Reported by "+file.ToolName).FontSize(14).TextColor(th.TextMuted).MaxLines(2)
-		if state.ActionFor == key && state.Action.Err != "" {
-			ui.Text(c, state.Action.Err).FontSize(14).LineHeight(1.4).TextColor(th.Danger)
-		} else if state.ActionFor == key && state.Action.Notice != "" {
-			ui.Text(c, state.Action.Notice).FontSize(14).LineHeight(1.4).TextColor(th.Warning)
-		}
-		if selected {
-			issueResultFilePreview(c, th, state, actions, file, key)
-		}
+		ui.Text(c, "Working directory: "+file.WorkingDirectory).FontSize(13).TextColor(th.TextMuted).MaxLines(2)
+		ui.Text(c, "Reported by "+file.ToolName).FontSize(13).TextColor(th.TextMuted).MaxLines(2)
 	})
+	if row.Clicked() {
+		state.ReaderKey = key
+		if actions.SelectFile != nil {
+			actions.SelectFile(key)
+		}
+	}
 }
 
-func issueResultFilePreview(c *ui.Context, th *ui.Theme, state *issueResultPanelState, actions issueResultPanelActions, file issueResultFile, key string) {
+func issueResultReaderDialog(c *ui.Context, th *ui.Theme, state *issueResultPanelState, actions issueResultPanelActions, file issueResultFile) {
+	open := true
+	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
+		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
+		panel.WidthPercent(86).MaxWidth(760).FillHeight().Background(th.Surface).Children(func() {
+			ui.Scroll(c).Grow(1).Padding(16).Children(func() {
+				ui.Column(c).AlignSelf(ui.Stretch).MinWidth(0).Gap(10).Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+						ui.Column(c).MinWidth(0).Shrink(1).Gap(2).Children(func() {
+							ui.Text(c, "File reading").FontSize(12).TextColor(th.TextMuted)
+							ui.Text(c, filepath.Base(file.Path)).FontSize(16).FontWeight(600).TextColor(th.Text).MaxLines(2)
+						})
+						ui.Spacer(c)
+						secondaryButton(c, "Close reading").OnClick(func() { open = false; state.ReaderKey = "" })
+					})
+					markdownReader(c, file.Path, markdownReaderOptions{
+						PlainText: true, CopyLabel: "Copy path", CopyText: actions.CopyText,
+					})
+					issueResultReaderActions(c, th, state, actions, file)
+					ui.Text(c, "Current file · content may differ from this run").FontSize(13).TextColor(th.TextMuted)
+					issueResultReaderPreview(c, th, state, actions, file, issueResultFileKey(file))
+					if state.SourceFor == issueResultFileKey(file) {
+						ui.Divider(c)
+						issueResultSourceView(c, th, actions, file)
+					}
+				})
+			})
+		})
+	})
+	if !open {
+		state.ReaderKey = ""
+	}
+}
+
+func issueResultReaderActions(c *ui.Context, th *ui.Theme, state *issueResultPanelState, actions issueResultPanelActions, file issueResultFile) {
+	key := issueResultFileKey(file)
 	var inspection *issueResultFileInspection
 	if state.InspectFor == key {
 		inspection = state.Inspection
 	}
-	box := ui.Column(c).AlignSelf(ui.Stretch).MinWidth(0).Padding(10).Radius(8).Background(th.Background).Border(1, th.Border).Gap(6)
-	box.Children(func() {
-		ui.Text(c, "Current file").FontSize(14).FontWeight(600).TextColor(th.Text)
-		ui.Text(c, "Current content may have changed since the run. This is the file at the reported path, not an execution-time snapshot.").
-			FontSize(14).LineHeight(1.4).TextColor(th.TextMuted)
-		markdownReader(c, file.Path, markdownReaderOptions{
-			PlainText: true, CopyLabel: "Copy path", CopyText: actions.CopyText,
-		})
-		if state.Checking && state.InspectFor == key {
-			ui.Text(c, "Checking the current file…").FontSize(14).TextColor(th.TextMuted)
+	ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+		if actions.CheckFile != nil {
+			secondaryButton(c, "Check again").OnClick(func() { actions.CheckFile(file) })
 		}
-		if inspection != nil {
-			if inspection.Notice != "" {
-				ui.Text(c, inspection.Notice).FontSize(14).LineHeight(1.4).TextColor(th.Warning)
+		if inspection != nil && inspection.Exists && inspection.Regular {
+			if actions.OpenFile != nil {
+				secondaryButton(c, "Open file").OnClick(func() { actions.OpenFile(file) })
 			}
-			if inspection.ReadError != "" {
-				ui.Text(c, inspection.ReadError).FontSize(14).LineHeight(1.4).TextColor(th.Danger)
+			if actions.RevealFile != nil {
+				secondaryButton(c, "Show in Finder").OnClick(func() { actions.RevealFile(file) })
 			}
-			if inspection.Exists && inspection.Regular && inspection.Notice == "" && inspection.ReadError == "" {
-				ui.Scroll(c).MaxHeight(180).AlignSelf(ui.Stretch).Children(func() {
-					markdownReader(c, inspection.Preview, markdownReaderOptions{
-						PlainText: true, CopyLabel: "Copy current file", CopyText: actions.CopyText,
-					})
-				})
+		}
+		if actions.ToggleSource != nil {
+			label := "Source & raw record"
+			if state.SourceFor == key {
+				label = "Hide source & raw record"
 			}
-		} else if !state.Checking {
+			secondaryButton(c, label).OnClick(func() { actions.ToggleSource(key) })
+		}
+	})
+	if state.ActionFor == key && state.Action.Err != "" {
+		ui.Text(c, state.Action.Err).FontSize(13).LineHeight(1.4).TextColor(th.Danger)
+	} else if state.ActionFor == key && state.Action.Notice != "" {
+		ui.Text(c, state.Action.Notice).FontSize(13).LineHeight(1.4).TextColor(th.Warning)
+	}
+}
+
+func issueResultReaderPreview(c *ui.Context, th *ui.Theme, state *issueResultPanelState, actions issueResultPanelActions, file issueResultFile, key string) {
+	var inspection *issueResultFileInspection
+	if state.InspectFor == key {
+		inspection = state.Inspection
+	}
+	if state.Checking && state.InspectFor == key {
+		ui.Text(c, "Checking the current file…").FontSize(14).TextColor(th.TextMuted)
+	}
+	if inspection == nil {
+		if !state.Checking {
 			ui.Text(c, "Check the current file at this path to preview it.").FontSize(14).TextColor(th.TextMuted)
 		}
-
-		ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
-			if actions.CheckFile != nil {
-				secondaryButton(c, "Check again").OnClick(func() { actions.CheckFile(file) })
-			}
-			if inspection != nil && inspection.Exists && inspection.Regular {
-				if actions.OpenFile != nil {
-					secondaryButton(c, "Open file").OnClick(func() { actions.OpenFile(file) })
-				}
-				if actions.RevealFile != nil {
-					secondaryButton(c, "Show in Finder").OnClick(func() { actions.RevealFile(file) })
-				}
-			}
-			if actions.ToggleSource != nil {
-				label := "Source & raw record"
-				if state.SourceFor == key {
-					label = "Hide source & raw record"
-				}
-				secondaryButton(c, label).OnClick(func() { actions.ToggleSource(key) })
-			}
-		})
-
-		if state.SourceFor == key {
-			issueResultSourceView(c, th, actions, file)
-		}
+		return
+	}
+	if inspection.Notice != "" {
+		ui.Text(c, inspection.Notice).FontSize(14).LineHeight(1.45).TextColor(th.Warning)
+	}
+	if inspection.ReadError != "" {
+		ui.Text(c, inspection.ReadError).FontSize(14).LineHeight(1.45).TextColor(th.Danger)
+	}
+	if !inspection.Exists || !inspection.Regular || inspection.Notice != "" || inspection.ReadError != "" {
+		return
+	}
+	if issueResultMarkdownFile(file.Path) {
+		ui.Text(c, "Markdown").FontSize(13).TextColor(th.TextMuted)
+	} else {
+		ui.Text(c, "Plain text").FontSize(13).TextColor(th.TextMuted)
+	}
+	if inspection.Preview == "" {
+		ui.Text(c, "This file is empty (0 bytes). Copy the current file to verify an empty string.").FontSize(14).LineHeight(1.45).TextColor(th.TextMuted)
+	}
+	markdownReader(c, inspection.Preview, markdownReaderOptions{
+		PlainText: !issueResultMarkdownFile(file.Path),
+		CopyLabel: "Copy current file",
+		CopyText:  actions.CopyText,
 	})
 }
 
@@ -452,10 +522,12 @@ func issueResultSourceView(c *ui.Context, th *ui.Theme, actions issueResultPanel
 	source := ui.Column(c).AlignSelf(ui.Stretch).MinWidth(0).Gap(4)
 	source.Children(func() {
 		ui.Text(c, "Source & raw record").FontSize(14).FontWeight(600).TextColor(th.Text)
-		ui.Text(c, "Session: "+file.SessionID).FontSize(14).TextColor(th.TextMuted).MaxLines(2)
-		ui.Text(c, "Task: "+file.TaskID).FontSize(14).TextColor(th.TextMuted).MaxLines(2)
-		ui.Text(c, "Message: "+file.MessageID).FontSize(14).TextColor(th.TextMuted).MaxLines(2)
-		ui.Text(c, "Call: "+file.CallID).FontSize(14).TextColor(th.TextMuted).MaxLines(2)
+		ui.Text(c, "Working directory: "+file.WorkingDirectory).FontSize(13).TextColor(th.TextMuted).MaxLines(2)
+		ui.Text(c, "The reader shows the current file at the reported path. Its content may have changed since the execution; it is not an execution-time snapshot.").FontSize(13).LineHeight(1.45).TextColor(th.TextMuted)
+		ui.Text(c, "Session: "+file.SessionID).FontSize(13).TextColor(th.TextMuted).MaxLines(2)
+		ui.Text(c, "Task: "+file.TaskID).FontSize(13).TextColor(th.TextMuted).MaxLines(2)
+		ui.Text(c, "Message: "+file.MessageID).FontSize(13).TextColor(th.TextMuted).MaxLines(2)
+		ui.Text(c, "Call: "+file.CallID).FontSize(13).TextColor(th.TextMuted).MaxLines(2)
 		ui.Scroll(c).MaxHeight(160).AlignSelf(ui.Stretch).Children(func() {
 			markdownReader(c, file.RawResult, markdownReaderOptions{
 				PlainText: true, CopyLabel: "Copy tool record", CopyText: actions.CopyText,

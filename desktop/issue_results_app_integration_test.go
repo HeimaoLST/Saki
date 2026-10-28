@@ -296,7 +296,27 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 	} else if got != "write\n" {
 		t.Fatalf("code copy = %q, want write\n", got)
 	}
-	if err := issueResultClick(h, "View file 1"); err != nil {
+	if err := issueResultClick(h, "Read file 1: result.txt"); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.wait(func() bool {
+		return !h.app.issueResult.Panel.Checking && h.app.issueResult.Panel.Inspection != nil
+	})
+	readerClosed := false
+	if err := issueResultTesterRun(h, func(tr *ui.Tester) error {
+		tr.Key(0, ui.KeyEscape)
+		tr.Frame()
+		readerClosed = !tr.HasText("File reading")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.do(func() {
+		if !readerClosed || !h.app.issueResult.Open || h.app.aux != "issue-result" || !h.app.workspaceOpen {
+			t.Errorf("Escape closed more than the reader: closed=%v pageOpen=%v aux=%q workOpen=%v", readerClosed, h.app.issueResult.Open, h.app.aux, h.app.workspaceOpen)
+		}
+	})
+	if err := issueResultClick(h, "Read file 1: result.txt"); err != nil {
 		t.Fatal(err)
 	}
 	h.pump.wait(func() bool {
@@ -423,6 +443,9 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 	} else if !strings.Contains(got, `"bytes_written"`) {
 		t.Fatalf("first run raw record = %q", got)
 	}
+	if err := issueResultClick(h, "Close reading"); err != nil {
+		t.Fatal(err)
+	}
 	if err := issueResultClick(h, "Close results"); err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +472,7 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 		t.Fatalf("second run source = %+v", files[0])
 	}
 	issueResultRequireTexts(t, h, "Run 2 · Ship visible results", "modified result", "Reported by edit")
-	if err := issueResultClick(h, "View file 1"); err != nil {
+	if err := issueResultClick(h, "Read file 1: result.txt"); err != nil {
 		t.Fatal(err)
 	}
 	h.pump.wait(func() bool {
@@ -462,6 +485,9 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 		t.Fatal(err)
 	} else if !strings.Contains(got, `"applied"`) || strings.Contains(got, `"bytes_written"`) {
 		t.Fatalf("second run raw record crossed runs: %q", got)
+	}
+	if err := issueResultClick(h, "Close reading"); err != nil {
+		t.Fatal(err)
 	}
 	if err := issueResultClick(h, "Close results"); err != nil {
 		t.Fatal(err)
@@ -837,13 +863,16 @@ func TestIssueResultPageFromActualIssueRunsAndRestart(t *testing.T) {
 	if provider.count() != beforeReload {
 		t.Fatalf("Reload result issued provider requests: %d -> %d", beforeReload, provider.count())
 	}
-	if err := issueResultClick(h, "View file 1"); err != nil {
+	if err := issueResultClick(h, "Read file 1: app-result.txt"); err != nil {
 		t.Fatal(err)
 	}
 	h.pump.wait(func() bool {
 		return !h.app.issueResult.Panel.Checking && h.app.issueResult.Panel.Inspection != nil
 	})
 	issueResultRequireTexts(t, h, "Current file", "app-second")
+	if err := issueResultClick(h, "Close reading"); err != nil {
+		t.Fatal(err)
+	}
 	if err := issueResultClick(h, "Close results"); err != nil {
 		t.Fatal(err)
 	}
@@ -931,6 +960,14 @@ func issueResultAppPreview(scene string, width int) *appModel {
 			Files:    []issueResultFile{file},
 		},
 	}
+	setReader := func(file issueResultFile, inspection issueResultFileInspection) {
+		key := issueResultFileKey(file)
+		page.Panel.Files = []issueResultFile{file}
+		page.Panel.Selected = key
+		page.Panel.InspectFor = key
+		page.Panel.Inspection = &inspection
+		page.Panel.ReaderKey = key
+	}
 	switch scene {
 	case "loading":
 		page.Loading = true
@@ -939,36 +976,47 @@ func issueResultAppPreview(scene string, width int) *appModel {
 	case "empty":
 		page.Panel.Response = ""
 		page.Panel.Files = nil
+	case "markdown":
+		mdFile := issueResultPanelFixtureFile("markdown", "/Users/you/Workspace/Saki/中文结果.md", `{"path":"/Users/you/Workspace/Saki/中文结果.md","bytes_written":12}`)
+		setReader(mdFile, issueResultFileInspection{
+			Path: mdFile.Path, WorkingDirectory: mdFile.WorkingDirectory, Exists: true, Regular: true,
+			Preview: "# 中文结果\n\n这是中文段落，包含 **重点** 与 `inline`。\n\n- 第一项\n- 第二项\n\n| 名称 | 类型 | 标记 | 状态 |\n| --- | --- | --- | --- |\n| 中文内容 | Markdown | **重点** | 完成 |\n| 长内容 | text | `code` | 可滚动 |\n\n```go\nfunc main() {\n\tprintln(\"保留缩进\")\n}\n```\n",
+		})
+	case "plain":
+		plainFile := issueResultPanelFixtureFile("plain", "/Users/you/Workspace/Saki/notes.txt", `{"path":"/Users/you/Workspace/Saki/notes.txt","bytes_written":12}`)
+		setReader(plainFile, issueResultFileInspection{
+			Path: plainFile.Path, WorkingDirectory: plainFile.WorkingDirectory, Exists: true, Regular: true,
+			Preview: "# 这不是标题\n\n`这不是 inline code`\n\n| 不是 | 表格 |\n",
+		})
 	case "missing":
-		inspection := issueResultFileInspection{
-			Path: file.Path, WorkingDirectory: file.WorkingDirectory,
+		missingFile := issueResultPanelFixtureFile("missing", "/Users/you/Workspace/Saki/missing.md", `{"path":"/Users/you/Workspace/Saki/missing.md","bytes_written":12}`)
+		setReader(missingFile, issueResultFileInspection{
+			Path: missingFile.Path, WorkingDirectory: missingFile.WorkingDirectory,
 			Notice: "No file exists at the reported path; it may have been moved or deleted.",
-		}
-		page.Panel.Selected = issueResultFileKey(file)
-		page.Panel.InspectFor = issueResultFileKey(file)
-		page.Panel.Inspection = &inspection
-		page.Panel.ActionFor = issueResultFileKey(file)
-		page.Panel.Action = issueResultFileAction{Path: file.Path, Err: "Could not open the current file: no handler"}
+		})
+		page.Panel.ActionFor = issueResultFileKey(missingFile)
+		page.Panel.Action = issueResultFileAction{Path: missingFile.Path, Err: "Could not open the current file: no handler"}
+	case "readerror":
+		readErrorFile := issueResultPanelFixtureFile("readerror", "/Users/you/Workspace/Saki/readerror.md", `{"path":"/Users/you/Workspace/Saki/readerror.md","bytes_written":12}`)
+		setReader(readErrorFile, issueResultFileInspection{
+			Path: readErrorFile.Path, WorkingDirectory: readErrorFile.WorkingDirectory, Exists: true, Regular: true,
+			ReadError: "Could not read the current file: permission denied",
+		})
 	case "source":
 		inspection := issueResultFileInspection{
 			Path: file.Path, WorkingDirectory: file.WorkingDirectory, Exists: true, Regular: true,
 			Preview: "current file content\n",
 		}
-		page.Panel.Selected = issueResultFileKey(file)
-		page.Panel.InspectFor = issueResultFileKey(file)
-		page.Panel.Inspection = &inspection
+		setReader(file, inspection)
 		page.Panel.SourceFor = issueResultFileKey(file)
 	case "long":
-		longPath := "/Users/you/Workspace/Saki/" + strings.Repeat("very-long-directory-", 6) + "result.txt"
+		longName := strings.Repeat("很长的中文结果文件名", 4) + ".md"
+		longPath := "/Users/you/Workspace/Saki/" + longName
 		longFile := issueResultPanelFixtureFile("long", longPath, fmt.Sprintf(`{"path":%q,"bytes_written":1}`, longPath))
-		inspection := issueResultFileInspection{
+		setReader(longFile, issueResultFileInspection{
 			Path: longPath, WorkingDirectory: longFile.WorkingDirectory, Exists: true, Regular: true,
-			Preview: strings.Repeat("long current file content ", 10) + "\n",
-		}
-		page.Panel.Files = []issueResultFile{longFile}
-		page.Panel.Selected = issueResultFileKey(longFile)
-		page.Panel.InspectFor = issueResultFileKey(longFile)
-		page.Panel.Inspection = &inspection
+			Preview: "# 长文件名\n\n" + strings.Repeat("窄窗口中的中文长文本需要换行并保持可读。", 8) + "\n",
+		})
 	case "multiple":
 		second := issueResultPanelFixtureFile("preview-two", file.Path, `{"path":"/Users/you/Workspace/Saki/report.txt","applied":1}`)
 		page.Panel.RunLabel = "Run 3 · Ship visible results"
@@ -986,27 +1034,46 @@ func TestIssueResultAppPreviewsAlwaysWriteHeadlessPNGs(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, scene := range []struct {
+	type sceneCase struct {
 		name  string
 		width int
 		dark  bool
-	}{
+	}
+	var cases []sceneCase
+	for _, scene := range []string{"markdown", "plain", "missing", "readerror", "source", "long"} {
+		for _, width := range []int{720, 1280} {
+			for _, dark := range []bool{false, true} {
+				cases = append(cases, sceneCase{scene, width, dark})
+			}
+		}
+	}
+	for _, scene := range []sceneCase{
 		{"loading", 720, false},
 		{"loading", 1040, true},
 		{"empty", 1040, false},
 		{"empty", 720, true},
-		{"missing", 1040, false},
-		{"missing", 1040, true},
-		{"source", 720, false},
-		{"source", 1280, true},
-		{"long", 720, false},
-		{"long", 1040, true},
 		{"multiple", 1280, true},
 	} {
+		cases = append(cases, scene)
+	}
+	for _, scene := range cases {
 		app := issueResultAppPreview(scene.name, scene.width)
 		tr := ui.NewTester(app.view, scene.width, 900)
 		tr.SetDark(scene.dark)
 		tr.Frame()
+		readerWant := map[string][]string{
+			"markdown":  {"File reading", "Markdown", "中文结果", "名称", "完成"},
+			"plain":     {"File reading", "Plain text", "# 这不是标题", "| 不是 | 表格 |"},
+			"missing":   {"File reading", "No file exists at the reported path"},
+			"readerror": {"File reading", "permission denied"},
+			"source":    {"File reading", "Source & raw record"},
+			"long":      {"File reading", "Markdown", "很长的中文结果文件名"},
+		}
+		for _, want := range readerWant[scene.name] {
+			if !tr.HasText(want) {
+				t.Fatalf("preview scene %s missing %q: %v", scene.name, want, tr.Texts())
+			}
+		}
 		theme := "light"
 		if scene.dark {
 			theme = "dark"
