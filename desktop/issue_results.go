@@ -279,18 +279,19 @@ func requestRevealIssueResultWithSystem(path string) error {
 // local reading mode (ReaderKey) and renders matching results on the next
 // frame. It contains no file I/O, task dispatch or persistence.
 type issueResultPanelState struct {
-	RunLabel   string
-	RunStatus  string
-	Response   string
-	Files      []issueResultFile
-	Selected   string
-	Inspection *issueResultFileInspection
-	InspectFor string
-	Checking   bool
-	ActionFor  string
-	Action     issueResultFileAction
-	SourceFor  string
-	ReaderKey  string
+	RunLabel        string
+	RunStatus       string
+	Response        string
+	Files           []issueResultFile
+	Selected        string
+	Inspection      *issueResultFileInspection
+	InspectFor      string
+	Checking        bool
+	ActionFor       string
+	Action          issueResultFileAction
+	SourceFor       string
+	ReaderKey       string
+	ReaderReturnKey string
 }
 
 // issueResultPanelActions are explicit user requests. The component never
@@ -369,6 +370,11 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 			}
 		})
 	})
+	if state.ReaderReturnKey != "" {
+		if _, ok := issueResultFileByKey(state.Files, state.ReaderReturnKey); !ok {
+			state.ReaderReturnKey = ""
+		}
+	}
 	if state.ReaderKey != "" {
 		if file, ok := issueResultFileByKey(state.Files, state.ReaderKey); ok {
 			issueResultReaderDialog(c, th, state, actions, file)
@@ -405,7 +411,12 @@ func issueResultFileRow(c *ui.Context, th *ui.Theme, state *issueResultPanelStat
 		ui.Text(c, "Working directory: "+file.WorkingDirectory).FontSize(13).TextColor(th.TextMuted).MaxLines(2)
 		ui.Text(c, "Reported by "+file.ToolName).FontSize(13).TextColor(th.TextMuted).MaxLines(2)
 	})
+	if state.ReaderReturnKey == key {
+		row.Focus()
+		state.ReaderReturnKey = ""
+	}
 	if row.Clicked() {
+		state.ReaderReturnKey = ""
 		state.ReaderKey = key
 		if actions.SelectFile != nil {
 			actions.SelectFile(key)
@@ -415,6 +426,12 @@ func issueResultFileRow(c *ui.Context, th *ui.Theme, state *issueResultPanelStat
 
 func issueResultReaderDialog(c *ui.Context, th *ui.Theme, state *issueResultPanelState, actions issueResultPanelActions, file issueResultFile) {
 	open := true
+	closeReader := func() {
+		if state.ReaderKey != "" {
+			state.ReaderReturnKey = state.ReaderKey
+		}
+		state.ReaderKey = ""
+	}
 	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
 		panel.WidthPercent(86).MaxWidth(760).FillHeight().Background(th.Surface).Children(func() {
@@ -426,7 +443,7 @@ func issueResultReaderDialog(c *ui.Context, th *ui.Theme, state *issueResultPane
 							ui.Text(c, filepath.Base(file.Path)).FontSize(16).FontWeight(600).TextColor(th.Text).MaxLines(2)
 						})
 						ui.Spacer(c)
-						secondaryButton(c, "Close reading").OnClick(func() { open = false; state.ReaderKey = "" })
+						secondaryButton(c, "Close reading").OnClick(closeReader)
 					})
 					markdownReader(c, file.Path, markdownReaderOptions{
 						PlainText: true, CopyLabel: "Copy path", CopyText: actions.CopyText,
@@ -443,7 +460,7 @@ func issueResultReaderDialog(c *ui.Context, th *ui.Theme, state *issueResultPane
 		})
 	})
 	if !open {
-		state.ReaderKey = ""
+		closeReader()
 	}
 }
 
