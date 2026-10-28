@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Go through the temporary pinned Split release-before-frame patch.
+"""Run Go through the temporary pinned editor and Split patches.
 
 Usage: python3 scripts/gui-go.py test|vet|build|run [Go arguments].
 The real desktop/go.mod, module cache, and source tree are not rewritten.
@@ -16,11 +16,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DESKTOP = ROOT / "desktop"
-PATCH = DESKTOP / "patches" / "split-release.patch"
+SPLIT_PATCH = DESKTOP / "patches" / "split-release.patch"
+EDITOR_PATCH = DESKTOP / "patches" / "editor-release.patch"
 MYGO = "github.com/egoist/mygo"
 VERSION = "v0.4.9-0.20261014025635-fea932a7a2a9"
 SPLIT_BEFORE = "7703d313943d0e9a46c405daa2bdbe13b50c7c835d3e4d31c86f826b926ed149"
 SPLIT_AFTER = "f8d10a9f46c2dd10cdfdabc230f960c625b18c45df560c49357de8ff3c4c0de3"
+EDITOR_INPUT_BEFORE = "e13ab0701b013ed68a3374ceedd195bc42f1751621f2a1797f12372a0598ca79"
+EDITOR_INPUT_AFTER = "161403ab07ad7d429041f60a6ca33fab513bcbc56f54a6026c970f2d17a32a36"
 
 
 def fail(message: str, code: int) -> int:
@@ -70,12 +73,12 @@ def main(argv: list[str]) -> int:
         return fail("this launcher only forwards test, vet, build and run", 2)
     if any(arg == "-modfile" or arg.startswith("-modfile=") for arg in argv[1:]):
         return fail("caller may not override the prepared -modfile", 2)
-    if not DESKTOP.is_dir() or not PATCH.is_file():
-        return fail("desktop or split patch is missing", 2)
+    if not DESKTOP.is_dir() or not SPLIT_PATCH.is_file() or not EDITOR_PATCH.is_file():
+        return fail("desktop or a pinned patch is missing", 2)
     selected = selected_module()
     if selected.get("Version") != VERSION or selected.get("Replace") is not None:
         return fail(
-            "selected MyGo is %s with replace=%r; update or remove the Split patch"
+            "selected MyGo is %s with replace=%r; update or remove the pinned patches"
             % (selected.get("Version"), selected.get("Replace")),
             2,
         )
@@ -87,31 +90,44 @@ def main(argv: list[str]) -> int:
         shutil.copytree(src, module)
         make_writable(module)
 
-        before = sha256(module / "ui" / "split.go")
-        if before != SPLIT_BEFORE:
+        split_before = sha256(module / "ui" / "split.go")
+        if split_before != SPLIT_BEFORE:
             return fail(
                 "unexpected MyGo Split source sha256=%s, expected %s; refusing to patch"
-                % (before, SPLIT_BEFORE),
+                % (split_before, SPLIT_BEFORE),
                 2,
             )
-
-        patch_result = subprocess.run(
-            ["patch", "-p1", "--fuzz=0", "--batch"],
-            cwd=module,
-            stdin=PATCH.open("rb"),
-            stdout=sys.stderr,
-            stderr=sys.stderr,
-        )
-        if patch_result.returncode != 0:
-            return fail("Split patch failed; refusing to run unpatched source", 3)
-        after = sha256(module / "ui" / "split.go")
-        if after != SPLIT_AFTER:
+        editor_before = sha256(module / "ui" / "input.go")
+        if editor_before != EDITOR_INPUT_BEFORE:
+            return fail(
+                "unexpected MyGo editor source sha256=%s, expected %s; refusing to patch"
+                % (editor_before, EDITOR_INPUT_BEFORE),
+                2,
+            )
+        for label, patch in (("Split", SPLIT_PATCH), ("Editor", EDITOR_PATCH)):
+            patch_result = subprocess.run(
+                ["patch", "-p1", "--fuzz=0", "--batch"],
+                cwd=module,
+                stdin=patch.open("rb"),
+                stdout=sys.stderr,
+                stderr=sys.stderr,
+            )
+            if patch_result.returncode != 0:
+                return fail("%s patch failed; refusing to run partial source" % label, 3)
+        split_after = sha256(module / "ui" / "split.go")
+        if split_after != SPLIT_AFTER:
             return fail(
                 "unexpected patched Split source sha256=%s, expected %s"
-                % (after, SPLIT_AFTER),
+                % (split_after, SPLIT_AFTER),
                 4,
             )
-
+        editor_after = sha256(module / "ui" / "input.go")
+        if editor_after != EDITOR_INPUT_AFTER:
+            return fail(
+                "unexpected patched editor source sha256=%s, expected %s"
+                % (editor_after, EDITOR_INPUT_AFTER),
+                4,
+            )
         # A module file distinct from the real desktop/go.mod; Go uses the
         # matching app.sum next to it. The source checkout is never edited.
         modfile = tmp / "app.mod"
