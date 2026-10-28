@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -85,6 +87,7 @@ func TestIssueRecoveryControlsRenderForUnknownExecution(t *testing.T) {
 
 func TestCapacityUnknownNoticeIsDistinctFromRealSingleSlot(t *testing.T) {
 	a, ct := workspaceTestApp(t)
+	a.rt = &runtimeClient{}
 	a.runtimeCapabilitiesLoaded = false
 	a.runtimeCapabilitiesErr = ""
 	ct.ActiveTaskID = ""
@@ -100,6 +103,117 @@ func TestCapacityUnknownNoticeIsDistinctFromRealSingleSlot(t *testing.T) {
 	tr.Frame()
 	if tr.HasText("capacity is not loaded") || strings.Contains(strings.Join(tr.Texts(), "\n"), "Retry capacity") {
 		t.Fatalf("real single-slot capacity still shows unknown state: %v", tr.Texts())
+	}
+}
+
+func TestCapacityNoticeHiddenBeforeRuntimeReady(t *testing.T) {
+	root := t.TempDir()
+	isolateConnectionApp(t, root, "")
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", "")
+	a, err := newRuntimeApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.rt != nil {
+		t.Fatal("unconfigured first launch unexpectedly started a runtime")
+	}
+	if a.runtimeStatus == runtimeStateReady {
+		t.Fatal("unconfigured first launch unexpectedly reported a ready runtime")
+	}
+	a.windowWidth = 1040
+	render := func(dark bool) *ui.Tester {
+		tr := ui.NewTester(a.view, 1040, 720)
+		tr.SetDark(dark)
+		tr.Frame()
+		return tr
+	}
+	previewDir := os.Getenv("SAKI_PREVIEW_DIR")
+	if previewDir != "" {
+		if err := os.MkdirAll(previewDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dark := range []bool{false, true} {
+		tr := render(dark)
+		if tr.HasText("capacity is not loaded") || strings.Contains(strings.Join(tr.Texts(), "\n"), "Retry capacity") {
+			t.Fatalf("unconfigured first launch showed a capacity notice: %v", tr.Texts())
+		}
+		if previewDir != "" {
+			theme := "light"
+			if dark {
+				theme = "dark"
+			}
+			writePreviewPNG(t, filepath.Join(previewDir, "capacity-unconfigured-"+theme+"-1040x720.png"), tr.Image())
+		}
+	}
+
+	a.closeAux()
+	startupError := a.runtimeErr
+	if startupError == "" {
+		t.Fatal("unconfigured first launch lost its real startup error")
+	}
+	for _, dark := range []bool{false, true} {
+		tr := render(dark)
+		if tr.HasText("capacity is not loaded") || strings.Contains(strings.Join(tr.Texts(), "\n"), "Retry capacity") {
+			t.Fatalf("unconfigured composer showed a capacity notice: %v", tr.Texts())
+		}
+		if !tr.HasText(startupError) || !tr.HasText("Configuration details") {
+			t.Fatalf("unconfigured composer lost startup recovery controls: %v", tr.Texts())
+		}
+		if previewDir != "" {
+			theme := "light"
+			if dark {
+				theme = "dark"
+			}
+			writePreviewPNG(t, filepath.Join(previewDir, "capacity-unconfigured-composer-"+theme+"-1040x720.png"), tr.Image())
+		}
+	}
+	tr := render(false)
+	if err := tr.Click("Configuration details"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.aux != "configuration" || !tr.HasText("Connection settings") {
+		t.Fatalf("Configuration details did not open the configuration entry: aux=%q texts=%v", a.aux, tr.Texts())
+	}
+	a.closeAux()
+
+	// A nil Runtime must not show an actionable retry even if status is ready.
+	a.runtimeStatus = runtimeStateReady
+	a.rt = nil
+	a.runtimeCapabilitiesLoaded = false
+	a.runtimeCapabilitiesErr = "Runtime capacity is not loaded: fixture failure."
+	tr = render(false)
+	if tr.HasText("capacity is not loaded") || strings.Contains(strings.Join(tr.Texts(), "\n"), "Retry capacity") {
+		t.Fatalf("nil Runtime with ready status showed a dead retry: %v", tr.Texts())
+	}
+
+	// Only a ready Runtime with a retry path may show the notice.
+	a.rt = &runtimeClient{}
+	for _, status := range []string{runtimeStateStarting, runtimeStateFailed, runtimeStateDraining, runtimeStateExited} {
+		a.runtimeStatus = status
+		tr = render(false)
+		if tr.HasText("capacity is not loaded") || strings.Contains(strings.Join(tr.Texts(), "\n"), "Retry capacity") {
+			t.Fatalf("non-ready runtime %q showed an actionable capacity notice: %v", status, tr.Texts())
+		}
+	}
+
+	a.runtimeStatus = runtimeStateReady
+	a.runtimeErr = ""
+	a.runtimeHint = ""
+	a.runtimeStage = ""
+	for _, dark := range []bool{false, true} {
+		tr = render(dark)
+		if !tr.HasText("capacity is not loaded") || !tr.HasText("Retry capacity") {
+			t.Fatalf("ready runtime with failed capacity did not keep the notice and retry: %v", tr.Texts())
+		}
+		if previewDir != "" {
+			theme := "light"
+			if dark {
+				theme = "dark"
+			}
+			writePreviewPNG(t, filepath.Join(previewDir, "capacity-ready-unknown-"+theme+"-1040x720.png"), tr.Image())
+		}
 	}
 }
 

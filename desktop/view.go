@@ -649,7 +649,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 			})
 		}
 		if !a.demo {
-			if !a.capacityKnown() {
+			if a.rt != nil && a.runtimeStatus == runtimeStateReady && !a.capacityKnown() {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 					message := a.runtimeCapabilitiesErr
 					if message == "" {
