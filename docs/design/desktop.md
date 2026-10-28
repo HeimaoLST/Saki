@@ -167,20 +167,19 @@ Finder 启动使用默认 store／session／home workdir，且不继承 shell �
 
 完整颜色数值、层级、文字对比度检查范围与视觉状态只在 [工作台视觉规范](desktop-workbench.md#配色与语义-token) 和其 HTML 原型维护。以下规定原生消费方式，不再复制另一份 hex 表。
 
-| 原生角色 | 原型语义变量 | 用途 |
+| 原生视觉职责 | v07 原型 token | 消费要求 |
 | --- | --- | --- |
-| Background / Surface / SurfaceHover | `bg` / `surface` / `hover` | 页面、容器、悬停 |
-| SurfacePressed / Border | `hover` / `border` | 按压底色与分隔；按压仍需可辨反馈，边框不单独承担控件识别 |
-| Text / TextMuted | `text` / `muted` | 正文和辅助文字 |
-| Accent / AccentHover / AccentText | `accent` / `accent-hover` / `accent-text` | 主要动作；AccentPressed 可复用 AccentHover，配合现有按压反馈 |
-| Danger / Warning / Success / Focus | `danger` / `warning` / `success` / `focus` | 错误、注意、状态与键盘焦点 |
-| Selection / Scrollbar | `hover` / `muted` | 文本选择背景与滚动条，不能冒充用户气泡背景 |
-| Link / Progress / QuoteHighlight | `success` / `success` / `hover` | 链接、执行提示与历史定位；保持各自语义 |
-| BubbleUser / Rail | `user-bubble` / `rail` | 用户气泡与联系人栏 |
-| WorkSurface / WorkText / WorkMuted / WorkAttention | `hero` / `hero-text` / `hero-muted` / `hero-alert` | 当前工作卡的底色、正文、说明与异常 |
-| AttentionText / AttentionSurface | `clay` / `clay-soft` | 需要用户处理的内容 |
+| 主阅读面／轻容器／悬停 | `surface` / `well` / `hover` | 对话主面明亮，控件与列表按职责分层 |
+| 按压／分隔 | `line` | 配合已有 pressed 反馈；边界不能独自承担可点击性 |
+| 正文／辅助文字 | `ink` / `muted` | 不沿用旧 `text` 名称作为第二份权威 token |
+| 主要动作／动作内文字 | `accent` / `on-accent` | hover/pressed 继续有可辨反馈；HTML 使用亮度变化作演示 |
+| 键盘焦点 | `focus` | 独立焦点轮廓 |
+| 选中／用户气泡／助手气泡 | `tint` / `tint` / `bubble` | 视觉值可复用，但文本选择、行选中和消息归属仍是不同语义 |
+| 联系人栏／工作区 | `rail` / `panel` | 不再设置深色重点工作卡 |
+| 待处理文字／底色 | `warning` / `warning-bg` | 同时显示具体缺口和状态文字 |
+| 正常执行／完成标记／链接 | `accent` | 图标和文字区分状态，不单靠绿色 |
 
-框架已有角色使用 `ui.Theme`，应用专属角色放在同一个小型 resolved 值中，按实际组件需要提供；不往第三方结构强塞字段，不按品牌名在组件内分支，不预建组件主题框架。普通文件/工具内容复用 surface 与正文角色，装饰 canvas/书册不要求提前映射为原生公共 API。
+本表描述 v07 的视觉消费职责，不要求重命名现有 `ui.Theme` 字段或存储键。框架已有角色继续复用，应用专属角色沿用同一解析结果；组件不按品牌名分支，不预建主题框架。Danger、Scrollbar、文本 Selection 等未在本 HTML 单独展示的原生角色保留已有实现，按同样的对比度与交互验收核对，不能因为预览删减而丢失错误／选择反馈。v06 的 `hero`、`hero-text`、`hero-muted`、`hero-alert`、`clay` 等已不作为当前视觉要求；历史兼容字段是否可删除由 GUI 核对实际消费方决定。
 
 ### Appearance、模式与解析
 
