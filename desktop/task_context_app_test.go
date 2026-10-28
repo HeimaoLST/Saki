@@ -455,7 +455,7 @@ func TestTaskContextIssueDetailsOpenOwnEditor(t *testing.T) {
 		t.Fatal(err)
 	}
 	ct.Issues = []*productIssue{issue}
-	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	a.workspaceOpen = true
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()

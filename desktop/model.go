@@ -107,6 +107,7 @@ type contact struct {
 	SelectedIssueID       string
 	SelectedWorkTaskID    string
 	UnlinkedTools         []*workTool
+	issueView             issueViewState
 	StopRequestedTasks    map[string]bool
 	pendingIssueExecution string
 
@@ -162,6 +163,7 @@ type appModel struct {
 	contactProfileID         string
 	contactSearch            string
 	contactScope             string
+	contactScopeChoice       string
 	contactHistory           *contactHistoryResult
 	contactHistoryFull       *contactHistoryFull
 	contactHistoryBusy       bool
@@ -172,16 +174,26 @@ type appModel struct {
 	contactHistoryInFlight   int
 	resultInFlight           int
 
+	appearanceMode   string
+	appearanceChoice string
+	appearanceStatus string
+	appearanceError  string
+	systemDark       bool
+	focusAppearance  bool
+	storeInitAllowed bool
+	localSaveErr     string
+	localSavePrevErr string
+
 	issueFormOpen                 bool
 	issueDetailOpen               map[string]bool
 	issueFormEditingID            string
+	issueFilterChoice             string
 	issueGoal                     string
 	issueRequirements             string
 	issueFormError                string
 	taskContextIssueID            string
 	focusIssueGoal                bool
 	focusIssueNew                 bool
-	issueFilter                   string
 	issueActionError              string
 	issueRequirementDrafts        map[string]*string
 	issueCompletionDrafts         map[string]*string
@@ -369,11 +381,12 @@ func seededApp() *appModel {
 				},
 			},
 		},
-		selected:      0,
-		screen:        viewChat,
-		workspaceOpen: false,
-		seq:           100,
-		scrollTo:      -1,
+		selected:       0,
+		screen:         viewChat,
+		workspaceOpen:  false,
+		appearanceMode: appearanceSystem,
+		seq:            100,
+		scrollTo:       -1,
 	}
 }
 
@@ -521,6 +534,8 @@ func (a *appModel) closeAux() {
 		a.modelForm = nil
 		a.modelPanelMessage = ""
 		a.modelPanelError = ""
+	case "appearance":
+		a.focusAppearance = true
 	case "issue-result":
 		a.cancelIssueResultView()
 	}

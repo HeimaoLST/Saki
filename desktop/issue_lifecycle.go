@@ -524,64 +524,24 @@ func (a *appModel) completionDraft(issue *productIssue) *string {
 }
 
 func (ct *contact) issuesForFilter(filter string) []*productIssue {
-	if filter == "" {
-		filter = "active"
-	}
+	filter = normalizeIssueFilter(filter)
 	out := make([]*productIssue, 0)
 	for _, issue := range ct.Issues {
+		if issue == nil {
+			continue
+		}
 		match := false
 		switch filter {
-		case "archived":
-			match = issue.Archived
-		case "completed":
+		case issueFilterAll:
+			match = true
+		case issueFilterCompleted:
 			match = !issue.Archived && issue.Status == issueStatusCompleted
-		case "canceled":
-			match = !issue.Archived && issue.Status == issueStatusCanceled
-		case "waiting":
-			match = !issue.Archived && issue.Status == issueStatusWaitingUser
-		case "attention":
-			match = !issue.Archived && issue.Status == issueStatusNeedsAttention
-		default: // active
-			match = !issue.Archived && issue.Status != issueStatusCompleted && issue.Status != issueStatusCanceled &&
-				issue.Status != issueStatusWaitingUser && issue.Status != issueStatusNeedsAttention
+		default: // unfinished includes waiting/attention
+			match = !issue.Archived && issue.Status != issueStatusCompleted && issue.Status != issueStatusCanceled
 		}
 		if match {
 			out = append(out, issue)
 		}
 	}
 	return out
-}
-
-func issueFilterActionLabel(filter string) string {
-	switch filter {
-	case "waiting":
-		return "Waiting"
-	case "attention":
-		return "Attention"
-	case "completed":
-		return "Done"
-	case "canceled":
-		return "Canceled"
-	case "archived":
-		return "Archived"
-	default:
-		return "Active"
-	}
-}
-
-func issueFilterLabel(filter string) string {
-	switch filter {
-	case "waiting":
-		return "Waiting for you"
-	case "attention":
-		return "Needs attention"
-	case "completed":
-		return "Completed"
-	case "canceled":
-		return "Canceled"
-	case "archived":
-		return "Archived"
-	default:
-		return "Active"
-	}
 }

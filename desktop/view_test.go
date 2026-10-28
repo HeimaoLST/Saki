@@ -433,6 +433,8 @@ func TestPreviewImages(t *testing.T) {
 			writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("native-%s-%s.png", theme, scene)), tr.Image())
 		}
 	}
+	writeV07AppearancePreviews(t, dir)
+
 	// Minimum window proof for the two densest panels.
 	for _, scene := range []string{"chat", "settings"} {
 		a := testApp(t)
@@ -472,6 +474,7 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 	}
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	openConversationWorkPanel(t, tr)
 	if !tr.HasText("Accepted; waiting for the runtime to start.") {
 		t.Fatal("accepted task should show the pre-start waiting state")
 	}
@@ -687,6 +690,7 @@ func TestToolFailureIsVisibleBeforeDetails(t *testing.T) {
 			a := &appModel{demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1, workspaceOpen: true, windowWidth: 1040, contacts: []*contact{ct}}
 			tr := ui.NewTester(a.view, 1040, 720)
 			tr.Frame()
+			openConversationWorkPanel(t, tr)
 			if !tr.HasText(tc.want) || !tr.HasText("normal text") && !tr.HasText("still working") {
 				t.Fatalf("failure summary not visible: %v", tr.Texts())
 			}
@@ -711,7 +715,7 @@ func TestContactRailControlsStayVisibleAtNarrowWidths(t *testing.T) {
 		if limit != defaultLeftPaneWidth {
 			t.Fatalf("%d rail width = %v", width, limit)
 		}
-		for _, label := range []string{"Add contact", "Active", "Archived", "All"} {
+		for _, label := range []string{"Add contact", "Contact scope", "Active"} {
 			r, ok := tr.Find(label)
 			if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > limit || r.Y < 0 || r.Y+r.H > 720 {
 				t.Fatalf("%dx720 contact rail %q out of rail: ok=%v rect=%+v", width, label, ok, r)

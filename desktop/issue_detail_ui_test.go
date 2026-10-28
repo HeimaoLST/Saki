@@ -26,6 +26,7 @@ func TestIssueDetailDefaultsToResultAndKeepsSecondaryDetailsCollapsed(t *testing
 	issue.Work.Messages = []*message{{Key: "result", Kind: msgContact, TaskID: "task-1", Text: "readable result body"}}
 	ct.Issues = []*productIssue{issue}
 	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	if err := a.persist(); err != nil {
 		t.Fatal(err)
 	}
@@ -84,11 +85,13 @@ func TestIssueDetailsOpenStateDoesNotCrossContacts(t *testing.T) {
 		Requirements: parseIssueRequirements("first requirement")}
 	first.Issues = []*productIssue{firstIssue}
 	first.SelectedIssueID = firstIssue.ID
+	first.issueNavigation().DetailID = firstIssue.ID
 	second := &contact{ID: "mio", Name: "Mio", Role: "Assistant", Loaded: true}
 	secondIssue := &productIssue{ID: "i-b", ContactID: second.ID, Goal: "second", Status: issueStatusInProgress, RequirementsRevision: 1,
 		Requirements: parseIssueRequirements("second requirement")}
 	second.Issues = []*productIssue{secondIssue}
 	second.SelectedIssueID = secondIssue.ID
+	second.issueNavigation().DetailID = secondIssue.ID
 	a.contacts = append(a.contacts, second)
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
@@ -125,6 +128,7 @@ func TestIssueViewExecutionOpensAtTopAndBackRestoresCompact(t *testing.T) {
 	}
 	ct.Issues = []*productIssue{issue}
 	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	ct.Works = []*workItem{{TaskID: "task-view", MessageID: "message-view", State: workCompleted, Prompt: "view work", Tools: []*workTool{{CallID: "call-view", Name: "write", Output: `{"content":"tool raw output"}`}}}}
 	issue.Work.Messages = []*message{{Key: "result-view", Kind: msgContact, TaskID: "task-view", Text: "view result"}}
 	if err := a.persist(); err != nil {
@@ -137,7 +141,7 @@ func TestIssueViewExecutionOpensAtTopAndBackRestoresCompact(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	if tr.HasText("Back to issue") || tr.HasText("Execution history") {
+	if _, back := tr.Find("Back to issue"); back || tr.HasText("Execution history") {
 		t.Fatalf("execution detail visible before explicit View execution: %v", tr.Texts())
 	}
 	if err := tr.Click("View execution"); err != nil {
@@ -155,7 +159,7 @@ func TestIssueViewExecutionOpensAtTopAndBackRestoresCompact(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if ct.SelectedWorkTaskID != "" || tr.HasText("Back to issue") || tr.HasText("Execution history") {
+	if ct.SelectedWorkTaskID != "" || func() bool { _, ok := tr.Find("Back to issue"); return ok }() || tr.HasText("Execution history") {
 		t.Fatalf("Back to issue did not restore compact detail: selected=%q texts=%v", ct.SelectedWorkTaskID, tr.Texts())
 	}
 	after, err := os.ReadFile(a.store.path)
@@ -182,6 +186,7 @@ func TestActiveIssueWorkKeepsStopReachableBeforeRequirements(t *testing.T) {
 	}
 	ct.Issues = []*productIssue{issue}
 	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	ct.Works = []*workItem{{TaskID: "task-active", State: workRunning, Prompt: "active prompt"}}
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
@@ -244,6 +249,7 @@ func TestIssueExecutionContextExpandsAndCopiesAt720(t *testing.T) {
 	}
 	ct.Issues = []*productIssue{issue}
 	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
 	if err := tr.Click("More issue actions"); err != nil {
@@ -286,6 +292,7 @@ func TestIssueLatestExecutionShowsNonSuccessStatesAndToolOnly(t *testing.T) {
 			}
 			ct.Issues = []*productIssue{issue}
 			ct.SelectedIssueID = issue.ID
+			openIssueDetailForTest(a, ct, issue.ID)
 			ct.Works = []*workItem{{TaskID: "old-task", State: workCompleted}}
 			issue.Work.Messages = []*message{{Key: "old-success", Kind: msgContact, TaskID: "old-task", Text: "old success"}}
 			tr := ui.NewTester(a.view, 1040, 720)
@@ -326,6 +333,7 @@ func TestIssueLatestExecutionShowsNonSuccessStatesAndToolOnly(t *testing.T) {
 	}
 	ct.Issues = []*productIssue{issue}
 	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
 	ct.Works = []*workItem{{TaskID: "tool-task", State: workCompleted, Tools: []*workTool{{CallID: "tool", Name: "write", Finished: true, Output: `{"bytes_written":1}`}}}}
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()

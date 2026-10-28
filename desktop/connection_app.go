@@ -127,6 +127,7 @@ func applyStoreSelection(a *appModel, store *contactStore) {
 		a.rightPaneWidth = 0
 		a.workspaceOpen = false
 	}
+	a.appearanceMode = normalizeAppearanceMode(store.state.Appearance)
 }
 
 func connectionSummary(config *connectionConfig) string {

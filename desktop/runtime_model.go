@@ -131,6 +131,12 @@ func newRuntimeApp() (*appModel, error) {
 	if startup.LoadErr != nil || (startup.Config == nil && !startup.External) {
 		a.aux = "configuration"
 	}
+	// The first launch can legitimately have no store file yet. Appearance is
+	// the first GUI-global preference, so allow a lazy save through persist;
+	// read/stat failures still use newUnavailableApp and never overwrite data.
+	if a.store == nil && a.storePath != "" {
+		a.storeInitAllowed = true
+	}
 	return a, nil
 }
 
@@ -2330,7 +2336,6 @@ func (a *appModel) acceptTask(ct *contact, text string, result runtimeSendResult
 		execution.MessageID = result.MessageID
 		execution.Status = issueExecutionAccepted
 		execution.Detail = ""
-		ct.SelectedWorkTaskID = result.TaskID
 		ct.pendingIssueExecution = ""
 	}
 	if !issueSend && ct.draftRev == ct.SubmittedRev && strings.TrimSpace(ct.Draft) == strings.TrimSpace(text) {
@@ -2621,14 +2626,31 @@ func (a *appModel) persist() error {
 		return nil
 	}
 	a.store.setIssueToolState(a.issueToolLedger, a.issueToolScopes)
+	a.store.state.Appearance = normalizeAppearanceMode(a.appearanceMode)
 	a.store.state.Layout = &storedLayout{
 		LeftWidth:     a.railWidth(),
 		RightWidth:    a.workWidth(),
 		WorkspaceOpen: a.workspaceOpen,
 	}
 	if err := a.store.save(a.contacts, a.selectedID()); err != nil {
-		a.runtimeErr = "Could not save contacts: " + err.Error()
+		message := "Could not save contacts: " + err.Error()
+		if a.localSaveErr == "" {
+			a.localSavePrevErr = a.runtimeErr
+		}
+		a.localSaveErr = message
+		a.runtimeErr = message
 		return err
+	}
+	if a.localSaveErr != "" {
+		if a.runtimeErr == a.localSaveErr {
+			a.runtimeErr = a.localSavePrevErr
+		}
+		a.localSaveErr = ""
+		a.localSavePrevErr = ""
+	}
+	if a.appearanceError != "" {
+		a.appearanceError = ""
+		a.appearanceStatus = "Applied and saved for the workbench."
 	}
 	return nil
 }
