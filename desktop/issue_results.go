@@ -295,18 +295,31 @@ type issueResultPanelState struct {
 	ReaderScroll       ui.ScrollState
 	FocusClose         bool
 	FocusReader        bool
-	FocusReturn        string
+	FocusReturn        *ui.Handle
+	LinkFocus          *markdownLinkTarget
+	LinkScope          string
+	LinkReturn         *markdownLinkTarget
+	LinkReturnSeen     *bool
 	CloseHandle        ui.Handle
 	ReloadHandle       ui.Handle
 	ReaderCloseHandle  ui.Handle
 	ReaderCheckHandle  ui.Handle
 	ReaderSourceHandle ui.Handle
+	FileHandles        map[string]*ui.Handle
+	CopyResultHandle   ui.Handle
+	CopyPathHandle     ui.Handle
+	CopyCurrentHandle  ui.Handle
+	CopyRawHandle      ui.Handle
+	ReaderOpenHandle   ui.Handle
+	ReaderRevealHandle ui.Handle
+	ResultCodeHandles  map[int]*ui.Handle
+	ReaderCodeHandles  map[int]*ui.Handle
 }
 
 // issueResultPanelActions are explicit user requests. The component never
 // inspects, opens, reveals or starts a task by itself.
 type issueResultPanelActions struct {
-	OpenSettings func()
+	OpenSettings func(c *ui.Context)
 	Close        func()
 	Reload       func()
 	SelectFile   func(key string)
@@ -338,11 +351,14 @@ func issueResultFileKey(file issueResultFile) string {
 // rows; this function does not read history or the filesystem.
 func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issueResultPanelActions) ui.Element {
 	th := c.Theme()
+	if state.ResultCodeHandles == nil {
+		state.ResultCodeHandles = map[int]*ui.Handle{}
+	}
 	root := ui.Column(c).AlignSelf(ui.Stretch).MinWidth(0).Gap(12)
 	if actions.OpenSettings != nil {
 		root.OnShortcut(ui.Cmd, ui.KeyComma, func() {
-			state.FocusReturn = issueResultFocusedName(c, state, false)
-			actions.OpenSettings()
+			state.FocusReturn = issueResultFocusedHandle(c, state, false)
+			actions.OpenSettings(c)
 		})
 	}
 	root.Children(func() {
@@ -374,8 +390,14 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 				return
 			}
 			markdownReader(c, state.Response, markdownReaderOptions{
-				CopyLabel: "Copy result",
-				CopyText:  actions.CopyText,
+				CopyLabel:       "Copy result",
+				CopyText:        actions.CopyText,
+				CopyHandle:      &state.CopyResultHandle,
+				CodeCopyHandles: state.ResultCodeHandles,
+				LinkScope:       state.LinkScope + ":response",
+				LinkFocus:       state.LinkFocus,
+				LinkReturn:      state.LinkReturn,
+				LinkReturnSeen:  state.LinkReturnSeen,
 			})
 		})
 
@@ -390,7 +412,6 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 			}
 		})
 	})
-	focusIssueResultReturn(c, state, false)
 	if state.ReaderReturnKey != "" {
 		if _, ok := issueResultFileByKey(state.Files, state.ReaderReturnKey); !ok {
 			state.ReaderReturnKey = ""
@@ -403,7 +424,21 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 			state.ReaderKey = ""
 		}
 	}
+	if state.FocusReturn != nil {
+		state.FocusReturn.Focus(c)
+		state.FocusReturn = nil
+	}
 	return root
+}
+
+func (state *issueResultPanelState) fileHandle(key string) *ui.Handle {
+	if state.FileHandles == nil {
+		state.FileHandles = map[string]*ui.Handle{}
+	}
+	if state.FileHandles[key] == nil {
+		state.FileHandles[key] = &ui.Handle{}
+	}
+	return state.FileHandles[key]
 }
 
 func issueResultFileByKey(files []issueResultFile, key string) (issueResultFile, bool) {
@@ -417,9 +452,10 @@ func issueResultFileByKey(files []issueResultFile, key string) (issueResultFile,
 
 func issueResultFileRow(c *ui.Context, th *ui.Theme, state *issueResultPanelState, actions issueResultPanelActions, file issueResultFile, index int) {
 	key := issueResultFileKey(file)
+	handle := state.fileHandle(key)
 	row := ui.ButtonBase(c).
 		Label(fmt.Sprintf("Read file %d: %s", index+1, filepath.Base(file.Path))).
-		AlignSelf(ui.Stretch).MinWidth(0).Padding(10).Radius(8).Border(1, th.Border).Gap(4)
+		AlignSelf(ui.Stretch).MinWidth(0).Padding(10).Radius(8).Border(1, th.Border).Gap(4).Bind(handle)
 	if state.Selected == key {
 		row.Background(th.SurfaceHover)
 	}
@@ -446,51 +482,38 @@ func issueResultFileRow(c *ui.Context, th *ui.Theme, state *issueResultPanelStat
 	}
 }
 
-func issueResultFocusedName(c *ui.Context, state *issueResultPanelState, reader bool) string {
+func issueResultFocusedHandle(c *ui.Context, state *issueResultPanelState, reader bool) *ui.Handle {
+	var controls []*ui.Handle
 	if reader {
-		switch {
-		case c.Focused(state.ReaderCheckHandle):
-			return "reader-check"
-		case c.Focused(state.ReaderSourceHandle):
-			return "reader-source"
-		case c.Focused(state.ReaderCloseHandle):
-			return "reader-close"
+		controls = []*ui.Handle{
+			&state.ReaderCloseHandle, &state.ReaderCheckHandle, &state.ReaderSourceHandle,
+			&state.ReaderOpenHandle, &state.ReaderRevealHandle,
+			&state.CopyPathHandle, &state.CopyCurrentHandle, &state.CopyRawHandle,
 		}
-		return "reader-close"
+		for _, handle := range state.ReaderCodeHandles {
+			controls = append(controls, handle)
+		}
+	} else {
+		controls = []*ui.Handle{&state.CloseHandle, &state.ReloadHandle, &state.CopyResultHandle}
+		for _, file := range state.Files {
+			controls = append(controls, state.FileHandles[issueResultFileKey(file)])
+		}
+		for _, handle := range state.ResultCodeHandles {
+			controls = append(controls, handle)
+		}
 	}
-	switch {
-	case c.Focused(state.ReloadHandle):
-		return "reload"
-	case c.Focused(state.CloseHandle):
-		return "close"
+	for _, handle := range controls {
+		if handle != nil && c.Focused(*handle) {
+			return handle
+		}
 	}
-	return "close"
-}
-
-func focusIssueResultReturn(c *ui.Context, state *issueResultPanelState, reader bool) {
-	if state.FocusReturn == "" {
-		return
-	}
-	name := state.FocusReturn
-	if !reader && (name == "reader-check" || name == "reader-source" || name == "reader-close") {
-		return
-	}
-	state.FocusReturn = ""
-	switch name {
-	case "reader-check":
-		state.ReaderCheckHandle.Focus(c)
-	case "reader-source":
-		state.ReaderSourceHandle.Focus(c)
-	case "reader-close":
-		state.ReaderCloseHandle.Focus(c)
-	case "reload":
-		state.ReloadHandle.Focus(c)
-	default:
-		state.CloseHandle.Focus(c)
-	}
+	return controls[0]
 }
 
 func issueResultReaderDialog(c *ui.Context, th *ui.Theme, state *issueResultPanelState, actions issueResultPanelActions, file issueResultFile) {
+	if state.ReaderCodeHandles == nil {
+		state.ReaderCodeHandles = map[int]*ui.Handle{}
+	}
 	open := true
 	closeReader := func() {
 		if state.ReaderKey != "" {
@@ -503,8 +526,8 @@ func issueResultReaderDialog(c *ui.Context, th *ui.Theme, state *issueResultPane
 		panel.WidthPercent(86).MaxWidth(760).FillHeight().Background(th.Surface)
 		if actions.OpenSettings != nil {
 			panel.OnShortcut(ui.Cmd, ui.KeyComma, func() {
-				state.FocusReturn = issueResultFocusedName(c, state, true)
-				actions.OpenSettings()
+				state.FocusReturn = issueResultFocusedHandle(c, state, true)
+				actions.OpenSettings(c)
 			})
 		}
 		panel.Children(func() {
@@ -524,13 +547,14 @@ func issueResultReaderDialog(c *ui.Context, th *ui.Theme, state *issueResultPane
 					})
 					markdownReader(c, file.Path, markdownReaderOptions{
 						PlainText: true, CopyLabel: "Copy path", CopyText: actions.CopyText,
+						CopyHandle: &state.CopyPathHandle,
 					})
 					issueResultReaderActions(c, th, state, actions, file)
 					ui.Text(c, "Current file · content may differ from this run").FontSize(13).TextColor(th.TextMuted)
 					issueResultReaderPreview(c, th, state, actions, file, issueResultFileKey(file))
 					if state.SourceFor == issueResultFileKey(file) {
 						ui.Divider(c)
-						issueResultSourceView(c, th, actions, file)
+						issueResultSourceView(c, th, state, actions, file)
 					}
 				})
 			})
@@ -553,10 +577,10 @@ func issueResultReaderActions(c *ui.Context, th *ui.Theme, state *issueResultPan
 		}
 		if inspection != nil && inspection.Exists && inspection.Regular {
 			if actions.OpenFile != nil {
-				secondaryButton(c, "Open file").OnClick(func() { actions.OpenFile(file) })
+				secondaryButton(c, "Open file").Bind(&state.ReaderOpenHandle).OnClick(func() { actions.OpenFile(file) })
 			}
 			if actions.RevealFile != nil {
-				secondaryButton(c, "Show in Finder").OnClick(func() { actions.RevealFile(file) })
+				secondaryButton(c, "Show in Finder").Bind(&state.ReaderRevealHandle).OnClick(func() { actions.RevealFile(file) })
 			}
 		}
 		if actions.ToggleSource != nil {
@@ -567,7 +591,6 @@ func issueResultReaderActions(c *ui.Context, th *ui.Theme, state *issueResultPan
 			secondaryButton(c, label).Bind(&state.ReaderSourceHandle).OnClick(func() { actions.ToggleSource(key) })
 		}
 	})
-	focusIssueResultReturn(c, state, true)
 	if state.ActionFor == key && state.Action.Err != "" {
 		ui.Text(c, state.Action.Err).FontSize(13).LineHeight(1.4).TextColor(th.Danger)
 	} else if state.ActionFor == key && state.Action.Notice != "" {
@@ -607,13 +630,19 @@ func issueResultReaderPreview(c *ui.Context, th *ui.Theme, state *issueResultPan
 		ui.Text(c, "This file is empty (0 bytes). Copy the current file to verify an empty string.").FontSize(14).LineHeight(1.45).TextColor(th.TextMuted)
 	}
 	markdownReader(c, inspection.Preview, markdownReaderOptions{
-		PlainText: !issueResultMarkdownFile(file.Path),
-		CopyLabel: "Copy current file",
-		CopyText:  actions.CopyText,
+		PlainText:       !issueResultMarkdownFile(file.Path),
+		CopyLabel:       "Copy current file",
+		CopyText:        actions.CopyText,
+		CopyHandle:      &state.CopyCurrentHandle,
+		CodeCopyHandles: state.ReaderCodeHandles,
+		LinkScope:       state.LinkScope + ":file:" + issueResultFileKey(file),
+		LinkFocus:       state.LinkFocus,
+		LinkReturn:      state.LinkReturn,
+		LinkReturnSeen:  state.LinkReturnSeen,
 	})
 }
 
-func issueResultSourceView(c *ui.Context, th *ui.Theme, actions issueResultPanelActions, file issueResultFile) {
+func issueResultSourceView(c *ui.Context, th *ui.Theme, state *issueResultPanelState, actions issueResultPanelActions, file issueResultFile) {
 	source := ui.Column(c).AlignSelf(ui.Stretch).MinWidth(0).Gap(4)
 	source.Children(func() {
 		ui.Text(c, "Source & raw record").FontSize(14).FontWeight(600).TextColor(th.Text)
@@ -626,6 +655,7 @@ func issueResultSourceView(c *ui.Context, th *ui.Theme, actions issueResultPanel
 		ui.Scroll(c).MaxHeight(160).AlignSelf(ui.Stretch).Children(func() {
 			markdownReader(c, file.RawResult, markdownReaderOptions{
 				PlainText: true, CopyLabel: "Copy tool record", CopyText: actions.CopyText,
+				CopyHandle: &state.CopyRawHandle,
 			})
 		})
 	})

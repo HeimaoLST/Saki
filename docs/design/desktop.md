@@ -785,4 +785,14 @@ type resolvedTheme struct {
 - **连接生命周期**：页面复用唯一连接表单与 `saveConnection` / `applyConnection` / `testConnection`，区分输入、已保存和当前生效值。保存不替换正在运行的 helper；Apply 使用已保存配置，活动或状态未知的工作仍阻止重载。每帧根据现有 `connectionReloadBlocked()` 刷新操作原因，工作结束后解除过时禁用。Test 仍需显式点击并使用当前表单值；忙碌与失败保留原有处理，已应用配置重开页面不会重新标为待应用。容量/执行限制可展开，字段校验错误会展开对应区域。
 - **外观与诊断**：Appearance 沿用现有 System/Light/Dark 模式及持久化；预览与选择即时生效，不新增主题 ID。Advanced 使用原启动状态与路径事实；没有配置、尚未检查 helper 时不称缺失，只有实际探测失败才显示 not found。启动错误快捷入口展开诊断。首用没有 Runtime 时继续不显示容量警告与无效 Retry；已有 ready Runtime 的容量恢复入口保留。
 - **返回与键盘**：Back to workbench 恢复原联系人、聊天草稿、工作区开合/宽度、事项与成果上下文；消息与详情阅读位置保留。Cmd+, 支持工作台及既有历史/成果阅读层；Escape 只处理临时控件，不把整页设置关闭。打开设置本身不创建会话、不重建 Runtime、不取消工作、不调用模型。
+- **成果焦点返修**：PM 在 `ae4beb3` 的[原生验收](https://github.com/HeimaoLST/Saki/issues/199#issuecomment-6489027456)发现文件行经 Cmd+, / Back 后错误聚焦 Close results，Return 会关闭成果页；此前仅覆盖 Reload / Check again 的通过结果不覆盖此路径。返修沿用 `ui.Handle`，按 session/task/call 标识绑定动态文件行，并补齐自有复制、打开、定位与代码块复制按钮的焦点恢复；文件阅读层正常 Close/Escape 回原文件行的路径保留。固定 `4c93d37` 的这些自有控件已有 [PM 原生回执](https://github.com/HeimaoLST/Saki/issues/199#issuecomment-6489460712)；内联链接是该版本的剩余缺口，后续实现及验证边界见下节 #203，不能用旧控件通过替代链接验收。
 - **验证边界**：本轮沿统一 `scripts/gui-go.py` 入口使用 headless UI 和本地受控 provider/真实 helper 验证页面、草稿隔离、真实 Save/Apply/Test、滚动与焦点；包含 720×640 / 1040×720 / 1380×900 的浅深色截图与控件边界检查。固定 SHA、最终完整测试、同源签名包及 CI 账户阻塞事实在 #199 交付记录，不把早期 f3 图片或局部检查转记为新包通过。原生窗口、系统输入法及用户试用仍由 PM 协调；#193 偶发退出问题继续独立记录，本功能不声称修复它。
+
+## #203 设置返回原 Markdown 链接（实现事实与待验，2026-10-29）
+
+代码来源：`agent/gui/203-markdown-link-focus`，直接基于 PR #201 的 `4c93d378bdb0fa3ec62b9d4740f7cf912204c532`。该基线的聊天、历史、执行成果和文件阅读中，第二个同址链接经 Cmd+, / Back 会落到设置或关闭按钮，PM 已保存[四处真实原生 RED](https://github.com/HeimaoLST/Saki/issues/203#issuecomment-6490007977)。以下为返修实现及 headless 证据，不表示已集成或原生通过。
+
+- **精确身份**：复用 MyGo `FocusBind` / `FocusedValue`，按联系人、消息或历史阅读来源、事项/执行/文件、AST block/inline 位置及目的地址标识链接；同址链接、同一历史条目的摘要与完整阅读分别绑定。Cmd+, 在实际所属的根视图或 Dialog 捕获当前链接，Back 后 Return 只激活该位置的原 URL，不用 Copy message 或第一个同址链接代替。
+- **一次返回与失效回退**：在工作台实际重建期间确认原目标是否存在，不按渲染次数或延时判断。原链接被删除或地址替换时清除请求；聊天回 composer，历史回 Close history，成果或文件回当前层已有关闭入口。原内容后来重现不再抢焦点。显式点击 Settings 使用原入口返回行为，不复用先前链接请求；普通关闭历史同时清除该阅读面的旧链接焦点。
+- **唯一渲染路径**：沿固定 MyGo `v0.4.9-0.20261014025635-fea932a7a2a9` 的既有临时补丁流程增加可选 `Markdown.Options.LinkElement` 通知，在原 Link 构造、children 和 tooltip 后提供元素与 AST 位置，不替换 renderer 或打开回调。`scripts/gui-go.py` 检查 Markdown 补丁前后 SHA，继续检查 Split / Editor 补丁；真实 go.mod 与共享 module cache 不改。nil hook、OnLink、未允许地址及流式未完成链接的原行为有针对性键盘回归，未新增 anchor/router 的独立自动化证明。
+- **证据边界**：持续存在的实际 app Tester 覆盖四阅读面的第二个同址链接、历史摘要/完整条目隔离、删除/替换后重现、显式 Settings 返回及旧自有控件。结果与文件测试从生产页面初始化接点建立，读取内容使用 fixture；定向 race 另含真实 helper 的嵌套文件返回回归。最终完整 helper / 18 MUST、同源包与原生复验按 [PM 组合安排](https://github.com/HeimaoLST/Saki/issues/203#issuecomment-6490132162)统一在 #200 接纳精确 #203 后进行，实际验证 SHA 与结果写入交付记录；本节不把阶段定向通过写成完整门禁通过。#193 和远端 Actions 账户阻塞保持独立记录。

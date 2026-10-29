@@ -26,9 +26,22 @@ type markdownReaderOptions struct {
 	CopyText func(text string) error
 	// OnCopyResult receives every full-source and code-copy result.
 	OnCopyResult func(err error)
+	// CopyHandle binds the full-source copy control, not code-block copies.
+	CopyHandle *ui.Handle
+	// CodeCopyHandles binds code-block copy controls by block index.
+	CodeCopyHandles map[int]*ui.Handle
 	// Theme overrides the Markdown foreground roles, as the workspace
 	// surface requires.
 	Theme *markdown.Theme
+	// LinkScope is stable identity for this Markdown document; LinkFocus is
+	// the app-owned FocusBind field for its inline links. Both are optional.
+	LinkScope string
+	LinkFocus *markdownLinkTarget
+	// LinkReturn and LinkReturnSeen report whether this document contains the
+	// exact link a Settings return is waiting for; the caller decides once,
+	// after the workbench build, whether to consume or cancel that request.
+	LinkReturn     *markdownLinkTarget
+	LinkReturnSeen *bool
 }
 
 var errClipboardReadback = errors.New("clipboard readback did not match")
@@ -41,9 +54,10 @@ const (
 type markdownReaderState struct {
 	opts markdown.Options
 
-	copyText     func(string) error
-	onCopyResult func(error)
-	streaming    bool
+	copyText        func(string) error
+	onCopyResult    func(error)
+	streaming       bool
+	codeCopyHandles map[int]*ui.Handle
 
 	sourceFeedback readerCopyFeedback
 	codeFeedback   map[int]*readerCopyFeedback
@@ -87,6 +101,7 @@ func markdownReader(c *ui.Context, source string, options markdownReaderOptions)
 	st.copyText = options.CopyText
 	st.onCopyResult = options.OnCopyResult
 	st.streaming = options.Streaming
+	st.codeCopyHandles = options.CodeCopyHandles
 	if !st.ready {
 		st.ready = true
 		st.opts.WrapCode = true
@@ -103,6 +118,20 @@ func markdownReader(c *ui.Context, source string, options markdownReaderOptions)
 		}
 	}
 	st.opts.Theme = options.Theme
+	st.opts.LinkElement = nil
+	if !options.PlainText && options.LinkScope != "" && options.LinkFocus != nil {
+		scope, focus, returnTarget, returnSeen := options.LinkScope, options.LinkFocus, options.LinkReturn, options.LinkReturnSeen
+		st.opts.LinkElement = func(c *ui.Context, block, inline int, dest string, element ui.Element) {
+			value := markdownLinkTarget{Scope: scope, Block: block, Inline: inline, Dest: dest}
+			element.FocusBind(focus, value)
+			if returnTarget != nil && *returnTarget == value {
+				element.Focus()
+				if returnSeen != nil {
+					*returnSeen = true
+				}
+			}
+		}
+	}
 
 	label := options.CopyLabel
 	if label == "" {
@@ -112,7 +141,7 @@ func markdownReader(c *ui.Context, source string, options markdownReaderOptions)
 	root.Children(func() {
 		ui.Row(c).AlignSelf(ui.Stretch).AlignItems(ui.Center).Key("source-copy").Children(func() {
 			ui.Spacer(c)
-			st.copyButton(c, c.Now(), label, label, func() string { return source }, &st.sourceFeedback, markdownReaderTheme(c, options.Theme))
+			st.copyButton(c, c.Now(), label, label, func() string { return source }, &st.sourceFeedback, markdownReaderTheme(c, options.Theme), options.CopyHandle)
 		})
 		switch {
 		case options.PlainText:
@@ -155,7 +184,15 @@ func markdownReaderCodeBlock(c *ui.Context, b *markdown.CodeBlockView, st *markd
 			// b.Code returns the fenced block's content without its fences,
 			// with each line ending in LF as CommonMark normalizes it. The
 			// full-source control still copies the original source bytes.
-			st.copyButton(c, c.Now(), accessible, "Copy", b.Code, st.codeFeedbackFor(b.Index), th)
+			var handle *ui.Handle
+			if st.codeCopyHandles != nil {
+				handle = st.codeCopyHandles[b.Index]
+				if handle == nil {
+					handle = &ui.Handle{}
+					st.codeCopyHandles[b.Index] = handle
+				}
+			}
+			st.copyButton(c, c.Now(), accessible, "Copy", b.Code, st.codeFeedbackFor(b.Index), th, handle)
 		})
 		b.Body(c)
 	})
@@ -234,7 +271,7 @@ func (st *markdownReaderState) codeFeedbackFor(index int) *readerCopyFeedback {
 	return fb
 }
 
-func (st *markdownReaderState) copyButton(c *ui.Context, now time.Time, accessible, idle string, text func() string, fb *readerCopyFeedback, th markdown.Theme) ui.Element {
+func (st *markdownReaderState) copyButton(c *ui.Context, now time.Time, accessible, idle string, text func() string, fb *readerCopyFeedback, th markdown.Theme, handle *ui.Handle) ui.Element {
 	row := ui.Row(c).Shrink(0).Key("copy-button")
 	row.Children(func() {
 		visible := idle
@@ -249,6 +286,9 @@ func (st *markdownReaderState) copyButton(c *ui.Context, now time.Time, accessib
 			}
 		}
 		btn := ui.ButtonBase(c).Label(accessible)
+		if handle != nil {
+			btn.Bind(handle)
+		}
 		theme := c.Theme()
 		btn.Height(32).Padding(6, 10).Radius(6).Border(1, theme.Border).Background(theme.Surface)
 		if btn.Pressed() {

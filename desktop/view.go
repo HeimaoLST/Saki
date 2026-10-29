@@ -18,6 +18,9 @@ func messageReaderOptions(plain bool) markdownReaderOptions {
 }
 
 func (a *appModel) view(c *ui.Context) {
+	if !a.settingsOpen {
+		a.linkReturnSeen = false
+	}
 	// Context.begin resets this to the system theme on every pass, so this is
 	// the live system appearance even while an explicit mode is shown.
 	a.systemDark = c.Theme().Dark
@@ -29,6 +32,8 @@ func (a *appModel) view(c *ui.Context) {
 			source := settingsSourceCommand
 			if c.Focused(a.composerHandle) {
 				source = settingsSourceComposer
+			} else {
+				a.captureLinkSettingsSource(c, &source)
 			}
 			a.openSettingsTab(settingsTabAppearance, source)
 		}
@@ -53,6 +58,81 @@ func (a *appModel) view(c *ui.Context) {
 			a.historyView(c, t)
 		}
 	})
+	a.finishMarkdownLinkReturn()
+}
+
+func (a *appModel) captureLinkSettingsSource(c *ui.Context, source *string) {
+	link := ui.FocusedValue(c, &a.markdownLinkFocus)
+	if link == (markdownLinkTarget{}) {
+		return
+	}
+	a.settingsReturnLink = link
+	*source = settingsSourceLink
+}
+
+func (a *appModel) openSettingsFromContext(c *ui.Context, tab, source string) {
+	a.captureLinkSettingsSource(c, &source)
+	a.openSettingsTab(tab, source)
+}
+
+func (a *appModel) armActiveSurfaceFallback() {
+	switch {
+	case a.aux == "issue-result" && a.issueResult.Open:
+		if a.issueResult.Panel.ReaderKey != "" {
+			a.issueResult.Panel.FocusReader = true
+		} else {
+			a.issueResult.Panel.FocusClose = true
+		}
+	case a.screen == viewHistory:
+		a.focusHistoryOpen = true
+	default:
+		a.focusComposer = true
+	}
+}
+
+func (a *appModel) readerOptions(options markdownReaderOptions, scope string) markdownReaderOptions {
+	if !options.PlainText && scope != "" {
+		options.LinkScope = scope
+		options.LinkFocus = &a.markdownLinkFocus
+		options.LinkReturn = &a.linkReturnTarget
+		options.LinkReturnSeen = &a.linkReturnSeen
+	}
+	return options
+}
+
+func messageLinkScope(contactID string, m *message) string {
+	if m == nil {
+		return ""
+	}
+	var identity string
+	switch {
+	case m.Key != "":
+		identity = m.Key
+	case m.TaskID != "" || m.MessageID != "" || m.ItemID != "":
+		identity = m.TaskID + "/" + m.MessageID + "/" + m.ItemID
+	default:
+		identity = fmt.Sprintf("%d", m.ID)
+	}
+	return "contact:" + contactID + "/message:" + identity
+}
+
+func historyLinkScope(contactID, document, entryID string) string {
+	if entryID == "" {
+		return ""
+	}
+	return "contact:" + contactID + "/history:" + document + "/entry:" + entryID
+}
+
+func (a *appModel) finishMarkdownLinkReturn() {
+	if a.linkReturnTarget == (markdownLinkTarget{}) {
+		return
+	}
+	if a.linkReturnSeen {
+		a.linkReturnTarget = markdownLinkTarget{}
+		return
+	}
+	a.markdownLinkFocus = markdownLinkTarget{}
+	a.linkReturnTarget = markdownLinkTarget{}
 }
 
 // ---------- rail ----------
@@ -425,7 +505,7 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 		a.avatarTile(c, t, 28)
 		ui.Column(c).MaxWidth(680).MinWidth(0).Shrink(1).Padding(10, 14).Radius(14).Background(bg).Gap(4).Children(func() {
 			ui.Text(c, a.selectedContact().Name+"  "+e.Date).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
-			markdownReader(c, e.Text, messageReaderOptions(false)).
+			markdownReader(c, e.Text, a.readerOptions(messageReaderOptions(false), historyLinkScope(a.selectedContact().ID, "conversation", e.ID))).
 				FontSize(15).LineHeight(1.8)
 		})
 	})
@@ -504,7 +584,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 				if m.Key != "" && m.Key == a.highlight {
 					ui.Text(c, "Located in history").FontSize(14).TextColor(t.TextMuted)
 				}
-				markdownReader(c, m.Text, markdownReaderOptions{Streaming: m.Streaming, CopyLabel: "Copy message", Theme: messageMarkdownTheme}).
+				markdownReader(c, m.Text, a.readerOptions(markdownReaderOptions{Streaming: m.Streaming, CopyLabel: "Copy message", Theme: messageMarkdownTheme}, messageLinkScope(ct.ID, m))).
 					FontSize(15).LineHeight(1.8)
 				if m.AlertTitle != "" {
 					a.alert(c, t, m)
@@ -720,7 +800,7 @@ func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
 		panel.Width(560).FillHeight().Background(a.workTheme.Panel).OnShortcut(ui.Cmd, ui.KeyComma, func() {
-			a.openSettingsTab(settingsTabAppearance, settingsSourceHistory)
+			a.openSettingsFromContext(c, settingsTabAppearance, settingsSourceHistory)
 		}).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Padding(12, 12).Children(func() {
 				ui.Text(c, "History · "+ct.Name).FontSize(17).FontWeight(600).TextColor(t.Text)
@@ -776,7 +856,7 @@ func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 							}
 							ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
 								ui.Text(c, "Full saved message · "+from+" · "+full.Date+" · "+full.SessionID).FontSize(14).LineHeight(1.4).TextColor(t.Success)
-								markdownReader(c, full.Text, markdownReaderOptions{CopyLabel: "Copy saved message", Theme: messageMarkdownTheme}).FontSize(15).LineHeight(1.8).TextColor(t.Text)
+								markdownReader(c, full.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy saved message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "full:"+full.SessionID, full.EntryID))).FontSize(15).LineHeight(1.8).TextColor(t.Text)
 								taskContextReadOnlyView(c, a.workTheme, full.Context)
 								secondaryButton(c, "Close full message").OnClick(func() { a.contactHistoryFull = nil })
 							})
@@ -797,7 +877,7 @@ func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 							if e.From == "me" {
 								markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy history message", Theme: messageMarkdownTheme}).FontSize(15).LineHeight(1.8).TextColor(t.Text)
 							} else {
-								markdownReader(c, e.Text, markdownReaderOptions{CopyLabel: "Copy history message", Theme: messageMarkdownTheme}).FontSize(15).LineHeight(1.8)
+								markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy history message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "history", e.ID))).FontSize(15).LineHeight(1.8)
 							}
 							taskContextReadOnlyView(c, a.workTheme, e.Context)
 							ui.Row(c).Children(func() {
@@ -836,7 +916,7 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
 		panel.Width(width).FillHeight().Background(a.workTheme.Panel).OnShortcut(ui.Cmd, ui.KeyComma, func() {
-			a.openSettingsTab(settingsTabAppearance, settingsSourceAux)
+			a.openSettingsFromContext(c, settingsTabAppearance, settingsSourceAux)
 		}).Children(func() {
 			ui.Scroll(c).Grow(1).TrackScroll(a.auxScrollFor(returnAux)).Padding(12).Children(func() {
 				ui.Column(c).Gap(10).Children(func() {
@@ -888,7 +968,7 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 			if e.From == "me" {
 				markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy source message", Theme: messageMarkdownTheme}).FontSize(15).LineHeight(1.8).TextColor(t.Text)
 			} else {
-				markdownReader(c, e.Text, markdownReaderOptions{CopyLabel: "Copy source message", Theme: messageMarkdownTheme}).FontSize(15).LineHeight(1.8)
+				markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy source message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "sources", e.ID))).FontSize(15).LineHeight(1.8)
 			}
 			ui.Row(c).Children(func() {
 				secondaryButton(c, "View in conversation").OnClick(func() { a.viewInConversation(e.ID) })

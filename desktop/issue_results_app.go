@@ -69,8 +69,12 @@ func (a *appModel) openIssueResultEntry(issueID, executionID string, latest bool
 		Generation:   a.issueResult.Generation,
 		ReturnLatest: latest,
 		Panel: issueResultPanelState{
-			RunLabel:  fmt.Sprintf("Run %d · %s", runIndex+1, issue.Goal),
-			RunStatus: issueExecutionLabel(execution),
+			RunLabel:       fmt.Sprintf("Run %d · %s", runIndex+1, issue.Goal),
+			RunStatus:      issueExecutionLabel(execution),
+			LinkScope:      "contact:" + ct.ID + "/issue:" + issue.ID + "/execution:" + execution.ID,
+			LinkFocus:      &a.markdownLinkFocus,
+			LinkReturn:     &a.linkReturnTarget,
+			LinkReturnSeen: &a.linkReturnSeen,
 		},
 	}
 	a.aux = "issue-result"
@@ -305,7 +309,7 @@ func (a *appModel) issueResultPanelView(c *ui.Context, t *ui.Theme) {
 
 func (a *appModel) issueResultPanelActions(generation int) issueResultPanelActions {
 	return issueResultPanelActions{
-		OpenSettings: func() { a.openSettingsTab(settingsTabAppearance, settingsSourceAux) },
+		OpenSettings: func(c *ui.Context) { a.openSettingsFromContext(c, settingsTabAppearance, settingsSourceAux) },
 		Close:        func() { a.closeIssueResult() },
 		Reload:       func() { a.reloadIssueResult(generation) },
 		SelectFile:   func(key string) { a.checkIssueResultFileByKey(generation, key) },
