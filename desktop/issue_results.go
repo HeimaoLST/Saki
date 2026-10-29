@@ -296,6 +296,10 @@ type issueResultPanelState struct {
 	FocusClose         bool
 	FocusReader        bool
 	FocusReturn        *ui.Handle
+	LinkFocus          *markdownLinkTarget
+	LinkScope          string
+	LinkReturn         *markdownLinkTarget
+	LinkReturnSeen     *bool
 	CloseHandle        ui.Handle
 	ReloadHandle       ui.Handle
 	ReaderCloseHandle  ui.Handle
@@ -315,7 +319,7 @@ type issueResultPanelState struct {
 // issueResultPanelActions are explicit user requests. The component never
 // inspects, opens, reveals or starts a task by itself.
 type issueResultPanelActions struct {
-	OpenSettings func()
+	OpenSettings func(c *ui.Context)
 	Close        func()
 	Reload       func()
 	SelectFile   func(key string)
@@ -354,7 +358,7 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 	if actions.OpenSettings != nil {
 		root.OnShortcut(ui.Cmd, ui.KeyComma, func() {
 			state.FocusReturn = issueResultFocusedHandle(c, state, false)
-			actions.OpenSettings()
+			actions.OpenSettings(c)
 		})
 	}
 	root.Children(func() {
@@ -390,6 +394,10 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 				CopyText:        actions.CopyText,
 				CopyHandle:      &state.CopyResultHandle,
 				CodeCopyHandles: state.ResultCodeHandles,
+				LinkScope:       state.LinkScope + ":response",
+				LinkFocus:       state.LinkFocus,
+				LinkReturn:      state.LinkReturn,
+				LinkReturnSeen:  state.LinkReturnSeen,
 			})
 		})
 
@@ -519,7 +527,7 @@ func issueResultReaderDialog(c *ui.Context, th *ui.Theme, state *issueResultPane
 		if actions.OpenSettings != nil {
 			panel.OnShortcut(ui.Cmd, ui.KeyComma, func() {
 				state.FocusReturn = issueResultFocusedHandle(c, state, true)
-				actions.OpenSettings()
+				actions.OpenSettings(c)
 			})
 		}
 		panel.Children(func() {
@@ -627,6 +635,10 @@ func issueResultReaderPreview(c *ui.Context, th *ui.Theme, state *issueResultPan
 		CopyText:        actions.CopyText,
 		CopyHandle:      &state.CopyCurrentHandle,
 		CodeCopyHandles: state.ReaderCodeHandles,
+		LinkScope:       state.LinkScope + ":file:" + issueResultFileKey(file),
+		LinkFocus:       state.LinkFocus,
+		LinkReturn:      state.LinkReturn,
+		LinkReturnSeen:  state.LinkReturnSeen,
 	})
 }
 

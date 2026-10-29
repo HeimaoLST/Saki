@@ -53,6 +53,13 @@ type historyEntry struct {
 	Context []taskContextItem
 }
 
+type markdownLinkTarget struct {
+	Scope  string
+	Block  int
+	Inline int
+	Dest   string
+}
+
 type message struct {
 	ID          int
 	Kind        messageKind
@@ -163,6 +170,10 @@ type appModel struct {
 	settingsOpen         bool
 	settingsTab          string
 	settingsReturnFocus  string
+	settingsReturnLink   markdownLinkTarget
+	markdownLinkFocus    markdownLinkTarget
+	linkReturnTarget     markdownLinkTarget
+	linkReturnSeen       bool
 	settingsContactID    string
 	settingsProfiles     map[string]*contactProfileEditor
 	settingsPickerChoice string
@@ -588,6 +599,9 @@ func (a *appModel) openHistory() {
 }
 
 func (a *appModel) backToChat() {
+	if a.linkReturnTarget == (markdownLinkTarget{}) {
+		a.markdownLinkFocus = markdownLinkTarget{}
+	}
 	a.screen = viewChat
 	a.highlight = ""
 	a.focusHistory = true

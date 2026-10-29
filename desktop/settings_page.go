@@ -21,6 +21,7 @@ const (
 	settingsSourceComposer      = "composer"
 	settingsSourceHistory       = "history"
 	settingsSourceAux           = "aux"
+	settingsSourceLink          = "link"
 )
 
 func (a *appModel) ensureSettingsProfileEditor(contactID string) *contactProfileEditor {
@@ -73,6 +74,12 @@ func (a *appModel) settingsContactEditor() *contactProfileEditor {
 }
 
 func (a *appModel) openSettingsTab(tab, source string) {
+	if source != settingsSourceLink {
+		a.settingsReturnLink = markdownLinkTarget{}
+		a.linkReturnTarget = markdownLinkTarget{}
+		a.linkReturnSeen = false
+		a.markdownLinkFocus = markdownLinkTarget{}
+	}
 	switch tab {
 	case settingsTabAppearance, settingsTabConnection, settingsTabContact, settingsTabAdvanced:
 	default:
@@ -139,6 +146,14 @@ func (a *appModel) closeSettings() {
 		} else {
 			a.focusHistory = true
 		}
+	case settingsSourceLink:
+		if a.settingsReturnLink != (markdownLinkTarget{}) {
+			a.markdownLinkFocus = a.settingsReturnLink
+			a.linkReturnTarget = a.settingsReturnLink
+			a.linkReturnSeen = false
+			a.armActiveSurfaceFallback()
+		}
+		a.settingsReturnLink = markdownLinkTarget{}
 	case settingsSourceAux:
 		if a.issueResult.Open {
 			if a.issueResult.Panel.FocusReturn == nil {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Go through the temporary pinned editor and Split patches.
+"""Run Go through the temporary pinned editor, Split and Markdown link patches.
 
 Usage: python3 scripts/gui-go.py test|vet|build|run [Go arguments].
 The real desktop/go.mod, module cache, and source tree are not rewritten.
@@ -18,12 +18,15 @@ ROOT = Path(__file__).resolve().parent.parent
 DESKTOP = ROOT / "desktop"
 SPLIT_PATCH = DESKTOP / "patches" / "split-release.patch"
 EDITOR_PATCH = DESKTOP / "patches" / "editor-release.patch"
+MARKDOWN_LINK_PATCH = DESKTOP / "patches" / "markdown-link-focus.patch"
 MYGO = "github.com/egoist/mygo"
 VERSION = "v0.4.9-0.20261014025635-fea932a7a2a9"
 SPLIT_BEFORE = "7703d313943d0e9a46c405daa2bdbe13b50c7c835d3e4d31c86f826b926ed149"
 SPLIT_AFTER = "f8d10a9f46c2dd10cdfdabc230f960c625b18c45df560c49357de8ff3c4c0de3"
 EDITOR_INPUT_BEFORE = "e13ab0701b013ed68a3374ceedd195bc42f1751621f2a1797f12372a0598ca79"
 EDITOR_INPUT_AFTER = "161403ab07ad7d429041f60a6ca33fab513bcbc56f54a6026c970f2d17a32a36"
+MARKDOWN_VIEW_BEFORE = "876ab9f9697ac87205db096d5906464a5e252bb382a03b1ed1c0cc2bad36a335"
+MARKDOWN_VIEW_AFTER = "454512895c5eb1e55afa6432d3f688451131d0aa8cf742599b15ea990a7e416c"
 
 
 def fail(message: str, code: int) -> int:
@@ -73,7 +76,7 @@ def main(argv: list[str]) -> int:
         return fail("this launcher only forwards test, vet, build and run", 2)
     if any(arg == "-modfile" or arg.startswith("-modfile=") for arg in argv[1:]):
         return fail("caller may not override the prepared -modfile", 2)
-    if not DESKTOP.is_dir() or not SPLIT_PATCH.is_file() or not EDITOR_PATCH.is_file():
+    if not DESKTOP.is_dir() or not SPLIT_PATCH.is_file() or not EDITOR_PATCH.is_file() or not MARKDOWN_LINK_PATCH.is_file():
         return fail("desktop or a pinned patch is missing", 2)
     selected = selected_module()
     if selected.get("Version") != VERSION or selected.get("Replace") is not None:
@@ -104,7 +107,14 @@ def main(argv: list[str]) -> int:
                 % (editor_before, EDITOR_INPUT_BEFORE),
                 2,
             )
-        for label, patch in (("Split", SPLIT_PATCH), ("Editor", EDITOR_PATCH)):
+        markdown_before = sha256(module / "ui" / "markdown" / "view.go")
+        if markdown_before != MARKDOWN_VIEW_BEFORE:
+            return fail(
+                "unexpected MyGo Markdown source sha256=%s, expected %s; refusing to patch"
+                % (markdown_before, MARKDOWN_VIEW_BEFORE),
+                2,
+            )
+        for label, patch in (("Split", SPLIT_PATCH), ("Editor", EDITOR_PATCH), ("Markdown link", MARKDOWN_LINK_PATCH)):
             patch_result = subprocess.run(
                 ["patch", "-p1", "--fuzz=0", "--batch"],
                 cwd=module,
@@ -126,6 +136,13 @@ def main(argv: list[str]) -> int:
             return fail(
                 "unexpected patched editor source sha256=%s, expected %s"
                 % (editor_after, EDITOR_INPUT_AFTER),
+                4,
+            )
+        markdown_after = sha256(module / "ui" / "markdown" / "view.go")
+        if markdown_after != MARKDOWN_VIEW_AFTER:
+            return fail(
+                "unexpected patched Markdown source sha256=%s, expected %s"
+                % (markdown_after, MARKDOWN_VIEW_AFTER),
                 4,
             )
         # A module file distinct from the real desktop/go.mod; Go uses the

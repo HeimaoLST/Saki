@@ -33,6 +33,15 @@ type markdownReaderOptions struct {
 	// Theme overrides the Markdown foreground roles, as the workspace
 	// surface requires.
 	Theme *markdown.Theme
+	// LinkScope is stable identity for this Markdown document; LinkFocus is
+	// the app-owned FocusBind field for its inline links. Both are optional.
+	LinkScope string
+	LinkFocus *markdownLinkTarget
+	// LinkReturn and LinkReturnSeen report whether this document contains the
+	// exact link a Settings return is waiting for; the caller decides once,
+	// after the workbench build, whether to consume or cancel that request.
+	LinkReturn     *markdownLinkTarget
+	LinkReturnSeen *bool
 }
 
 var errClipboardReadback = errors.New("clipboard readback did not match")
@@ -109,6 +118,20 @@ func markdownReader(c *ui.Context, source string, options markdownReaderOptions)
 		}
 	}
 	st.opts.Theme = options.Theme
+	st.opts.LinkElement = nil
+	if !options.PlainText && options.LinkScope != "" && options.LinkFocus != nil {
+		scope, focus, returnTarget, returnSeen := options.LinkScope, options.LinkFocus, options.LinkReturn, options.LinkReturnSeen
+		st.opts.LinkElement = func(c *ui.Context, block, inline int, dest string, element ui.Element) {
+			value := markdownLinkTarget{Scope: scope, Block: block, Inline: inline, Dest: dest}
+			element.FocusBind(focus, value)
+			if returnTarget != nil && *returnTarget == value {
+				element.Focus()
+				if returnSeen != nil {
+					*returnSeen = true
+				}
+			}
+		}
+	}
 
 	label := options.CopyLabel
 	if label == "" {

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/markdown"
 )
 
 func readerTestView(source *string, streaming *bool, options *markdownReaderOptions, dark *bool) func(*ui.Context) {
@@ -461,5 +462,165 @@ func TestMarkdownReaderScreenshot(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+	}
+}
+
+func TestMarkdownLinkElementNilKeepsTabAndEnterBehavior(t *testing.T) {
+	source := "请阅读[文档](https://example.com/docs)。"
+	tr := ui.NewTester(func(c *ui.Context) {
+		c.SetTheme(resolveWorkbenchTheme(false).Theme)
+		markdown.View(c, source, nil)
+	}, 600, 300)
+	for i := 0; i < 20 && !tr.Focused("文档"); i++ {
+		tr.Key(0, ui.KeyTab)
+		tr.Frame()
+	}
+	if !tr.Focused("文档") {
+		t.Fatalf("Tab never reached the link: %v", tr.Texts())
+	}
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if got := tr.OpenedURLs(); len(got) != 1 || got[0] != "https://example.com/docs" {
+		t.Fatalf("nil hook opened %v, want only the original URL", got)
+	}
+}
+
+type markdownLinkReport struct {
+	block, inline int
+	dest          string
+}
+
+func TestMarkdownLinkElementReportsASTPositionsForRepeatedURLs(t *testing.T) {
+	source := "[链接一](https://example.com/same) 和 [链接二](https://example.com/same)"
+	focus := ""
+	var reports []markdownLinkReport
+	tr := ui.NewTester(func(c *ui.Context) {
+		c.SetTheme(resolveWorkbenchTheme(false).Theme)
+		reports = reports[:0]
+		options := markdown.Options{LinkElement: func(c *ui.Context, block, inline int, dest string, element ui.Element) {
+			reports = append(reports, markdownLinkReport{block: block, inline: inline, dest: dest})
+			element.FocusBind(&focus, fmt.Sprintf("%d:%d:%s", block, inline, dest))
+		}}
+		markdown.View(c, source, &options)
+	}, 600, 300)
+	for i := 0; i < 20 && !tr.Focused("链接一"); i++ {
+		tr.Key(0, ui.KeyTab)
+		tr.Frame()
+	}
+	if !tr.Focused("链接一") {
+		t.Fatalf("Tab never reached the first link: %v", tr.Texts())
+	}
+	firstFocus := focus
+	for i := 0; i < 20 && !tr.Focused("链接二"); i++ {
+		tr.Key(0, ui.KeyTab)
+		tr.Frame()
+	}
+	if !tr.Focused("链接二") {
+		t.Fatalf("Tab never reached the second link: %v", tr.Texts())
+	}
+	if focus == firstFocus {
+		t.Fatalf("repeated URL positions shared focus identity %q", focus)
+	}
+	if len(reports) != 2 || reports[0].dest != "https://example.com/same" || reports[1].dest != reports[0].dest {
+		t.Fatalf("hook reports = %+v, want both links with the same destination", reports)
+	}
+	if reports[0].block != reports[1].block || reports[0].inline == reports[1].inline {
+		t.Fatalf("hook positions = %+v, want distinct inline indices", reports)
+	}
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if got := tr.OpenedURLs(); len(got) != 1 || got[0] != "https://example.com/same" {
+		t.Fatalf("second link opened %v, want only its URL", got)
+	}
+}
+
+func TestMarkdownLinkElementPreservesOnLinkAndIgnoresUnopenableDestinations(t *testing.T) {
+	for _, withHook := range []bool{false, true} {
+		t.Run(fmt.Sprintf("hook=%v", withHook), func(t *testing.T) {
+			const url = "https://example.com/docs"
+			var onLink []string
+			var reports []markdownLinkReport
+			options := markdown.Options{OnLink: func(url string) { onLink = append(onLink, url) }}
+			if withHook {
+				options.LinkElement = func(c *ui.Context, block, inline int, dest string, element ui.Element) {
+					reports = append(reports, markdownLinkReport{block: block, inline: inline, dest: dest})
+				}
+			}
+			source := "请阅读[文档](" + url + ")。"
+			tr := ui.NewTester(func(c *ui.Context) {
+				c.SetTheme(resolveWorkbenchTheme(false).Theme)
+				markdown.View(c, source, &options)
+			}, 600, 300)
+			for i := 0; i < 20 && !tr.Focused("文档"); i++ {
+				tr.Key(0, ui.KeyTab)
+				tr.Frame()
+			}
+			if !tr.Focused("文档") {
+				t.Fatalf("Tab never reached the OnLink link: %v", tr.Texts())
+			}
+			tr.Key(0, ui.KeyEnter)
+			tr.Frame()
+			if len(onLink) != 1 || onLink[0] != url {
+				t.Fatalf("OnLink calls = %v, want the original URL once", onLink)
+			}
+			if got := tr.OpenedURLs(); len(got) != 0 {
+				t.Fatalf("OnLink link also opened natively: %v", got)
+			}
+			if withHook && (len(reports) == 0 || reports[len(reports)-1].dest != url) {
+				t.Fatalf("hook reports = %+v, want the OnLink destination", reports)
+			}
+		})
+	}
+
+	for _, withHook := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disallowed-hook=%v", withHook), func(t *testing.T) {
+			options := markdown.Options{}
+			if withHook {
+				options.LinkElement = func(c *ui.Context, block, inline int, dest string, element ui.Element) {}
+			}
+			source := "危险[链接](javascript:alert(1))。"
+			tr := ui.NewTester(func(c *ui.Context) {
+				c.SetTheme(resolveWorkbenchTheme(false).Theme)
+				markdown.View(c, source, &options)
+			}, 600, 300)
+			for i := 0; i < 20 && !tr.Focused("链接"); i++ {
+				tr.Key(0, ui.KeyTab)
+				tr.Frame()
+			}
+			if !tr.Focused("链接") {
+				t.Fatalf("Tab never reached the disallowed link: %v", tr.Texts())
+			}
+			tr.Key(0, ui.KeyEnter)
+			tr.Frame()
+			if got := tr.OpenedURLs(); len(got) != 0 {
+				t.Fatalf("disallowed destination opened %v", got)
+			}
+		})
+	}
+
+	for _, withHook := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pending-hook=%v", withHook), func(t *testing.T) {
+			options := markdown.Options{}
+			if withHook {
+				options.LinkElement = func(c *ui.Context, block, inline int, dest string, element ui.Element) {}
+			}
+			source := "请阅读[待定](https://example.com"
+			tr := ui.NewTester(func(c *ui.Context) {
+				c.SetTheme(resolveWorkbenchTheme(false).Theme)
+				markdown.Stream(c, source, &options)
+			}, 600, 300)
+			for i := 0; i < 20 && !tr.Focused("待定"); i++ {
+				tr.Key(0, ui.KeyTab)
+				tr.Frame()
+			}
+			if !tr.Focused("待定") {
+				t.Fatalf("Tab never reached the pending link: %v", tr.Texts())
+			}
+			tr.Key(0, ui.KeyEnter)
+			tr.Frame()
+			if got := tr.OpenedURLs(); len(got) != 0 {
+				t.Fatalf("pending destination opened %v", got)
+			}
+		})
 	}
 }

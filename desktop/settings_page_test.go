@@ -868,7 +868,7 @@ func TestSettingsReturnKeepsReaderActions(t *testing.T) {
 	state := &a.issueResult.Panel
 	opened, revealed, copied := 0, 0, ""
 	actions := issueResultPanelActions{
-		OpenSettings: func() { a.openSettingsTab(settingsTabAppearance, settingsSourceAux) },
+		OpenSettings: func(c *ui.Context) { a.openSettingsFromContext(c, settingsTabAppearance, settingsSourceAux) },
 		CheckFile:    func(issueResultFile) {},
 		OpenFile:     func(issueResultFile) { opened++ },
 		RevealFile:   func(issueResultFile) { revealed++ },
@@ -909,5 +909,384 @@ func TestSettingsReturnKeepsReaderActions(t *testing.T) {
 	}
 	if opened != 1 || revealed != 1 || copied != file.RawResult || state.ReaderKey != key {
 		t.Fatalf("Return actions = open:%d reveal:%d copy:%q reader:%q", opened, revealed, copied, state.ReaderKey)
+	}
+}
+
+func TestSettingsCmdCommaFromMarkdownLinkReturnsToSameLink(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.Messages = []*message{{
+		ID: 1, Kind: msgContact, Text: "请阅读[文档](https://example.com/docs)。",
+	}}
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.SetFocused(true)
+	tr.Frame()
+	for i := 0; i < 80 && !tr.Focused("文档"); i++ {
+		tr.Key(0, ui.KeyTab)
+		tr.Frame()
+	}
+	if !tr.Focused("文档") {
+		t.Fatalf("Tab never reached the inline link: %v", tr.Texts())
+	}
+	tr.Key(ui.Cmd, ui.KeyComma)
+	tr.Frame()
+	if !a.settingsOpen || a.settingsTab != settingsTabAppearance {
+		t.Fatalf("Cmd+, from link = open=%v tab=%q", a.settingsOpen, a.settingsTab)
+	}
+	if err := tr.Click("← Back to workbench"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.Focused("文档") {
+		settingsButton := tr.Focused("Settings")
+		reopened := false
+		if settingsButton {
+			tr.Key(0, ui.KeyEnter)
+			tr.Frame()
+			reopened = a.settingsOpen
+		}
+		t.Fatalf("Back did not return focus to the inline link: settingsButton=%v reopened=%v texts=%v",
+			settingsButton, reopened, tr.Texts())
+	}
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if got := tr.OpenedURLs(); len(got) != 1 || got[0] != "https://example.com/docs" {
+		t.Fatalf("Enter on restored link opened %v, want the original URL", got)
+	}
+}
+
+func tabToFocused(t *testing.T, tr *ui.Tester, label string) {
+	t.Helper()
+	for i := 0; i < 120 && !tr.Focused(label); i++ {
+		tr.Key(0, ui.KeyTab)
+		tr.Frame()
+	}
+	if !tr.Focused(label) {
+		t.Fatalf("Tab never reached %q: %v", label, tr.Texts())
+	}
+}
+
+func TestSettingsCmdCommaFromMarkdownLinkReturnsToExactRepeatedURLPosition(t *testing.T) {
+	for _, label := range []string{"第一链接", "第二链接"} {
+		t.Run(label, func(t *testing.T) {
+			a, ct := workspaceTestApp(t)
+			ct.Messages = []*message{{
+				ID: 1, Kind: msgContact,
+				Text: "第一[第一链接](https://example.com/same) 第二[第二链接](https://example.com/same)",
+			}}
+			a.windowWidth = 1040
+			tr := ui.NewTester(a.view, 1040, 720)
+			tr.SetFocused(true)
+			tr.Frame()
+			tabToFocused(t, tr, label)
+			tr.Key(ui.Cmd, ui.KeyComma)
+			tr.Frame()
+			if !a.settingsOpen {
+				t.Fatal("Cmd+, from repeated URL link did not open settings")
+			}
+			if err := tr.Click("← Back to workbench"); err != nil {
+				t.Fatal(err)
+			}
+			tr.Frame()
+			if !tr.Focused(label) {
+				t.Fatalf("Back focused wrong link, want %q: %v", label, tr.Texts())
+			}
+			tr.Key(0, ui.KeyEnter)
+			tr.Frame()
+			if got := tr.OpenedURLs(); len(got) != 1 || got[0] != "https://example.com/same" {
+				t.Fatalf("%s opened %v, want only its own URL", label, got)
+			}
+		})
+	}
+}
+
+func TestSettingsCmdCommaFromRemovedMarkdownLinkFallsBackOnce(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	const original = "请阅读[文档](https://example.com/docs)。"
+	ct.Messages = []*message{{ID: 1, Kind: msgContact, Text: original}}
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.SetFocused(true)
+	tr.Frame()
+	tabToFocused(t, tr, "文档")
+	tr.Key(ui.Cmd, ui.KeyComma)
+	tr.Frame()
+	if !a.settingsOpen {
+		t.Fatal("Cmd+, from link did not open settings")
+	}
+	ct.Messages[0].Text = "链接已移除"
+	if err := tr.Click("← Back to workbench"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.Focused("Composer for Saki") {
+		t.Fatalf("removed link did not fall back to the chat composer: %v", tr.Texts())
+	}
+	if a.markdownLinkFocus != (markdownLinkTarget{}) || a.linkReturnTarget != (markdownLinkTarget{}) {
+		t.Fatalf("removed link left pending focus: focus=%+v target=%+v", a.markdownLinkFocus, a.linkReturnTarget)
+	}
+	ct.Messages[0].Text = original
+	tr.Frame()
+	tr.Frame()
+	if !tr.Focused("Composer for Saki") {
+		t.Fatalf("restored old link stole focus from the composer: %v", tr.Texts())
+	}
+	if got := tr.OpenedURLs(); len(got) != 0 {
+		t.Fatalf("removed or restored link activated a URL: %v", got)
+	}
+}
+
+func TestSettingsCmdCommaFromReplacedMarkdownLinkDoesNotStealFocusWhenOldTargetReturns(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	const original = "请阅读[文档](https://example.com/original)。"
+	ct.Messages = []*message{{ID: 1, Kind: msgContact, Text: original}}
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.SetFocused(true)
+	tr.Frame()
+	tabToFocused(t, tr, "文档")
+	tr.Key(ui.Cmd, ui.KeyComma)
+	tr.Frame()
+	if !a.settingsOpen {
+		t.Fatal("Cmd+, from link did not open settings")
+	}
+	ct.Messages[0].Text = "请阅读[文档](https://example.com/replaced)。"
+	if err := tr.Click("← Back to workbench"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.Focused("Composer for Saki") {
+		t.Fatalf("replaced link did not fall back to the chat composer: %v", tr.Texts())
+	}
+	ct.Messages[0].Text = original
+	tr.Frame()
+	tr.Frame()
+	if !tr.Focused("Composer for Saki") {
+		t.Fatalf("old link later reappeared and stole focus: %v", tr.Texts())
+	}
+	if a.linkReturnTarget != (markdownLinkTarget{}) || a.markdownLinkFocus != (markdownLinkTarget{}) {
+		t.Fatalf("replaced link kept a delayed request: target=%+v focus=%+v", a.linkReturnTarget, a.markdownLinkFocus)
+	}
+	if got := tr.OpenedURLs(); len(got) != 0 {
+		t.Fatalf("replaced or restored link activated a URL: %v", got)
+	}
+}
+
+func TestSettingsCmdCommaFromHistoryMarkdownLinkReturnsToSameLink(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.History = []historyEntry{{
+		ID: "history-link", Date: "Oct 1", From: "contact",
+		Text: "历史[第一历史链接](https://example.com/history) 第二[第二历史链接](https://example.com/history)。",
+	}}
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.SetFocused(true)
+	tr.Frame()
+	a.openHistory()
+	tr.Frame()
+	tabToFocused(t, tr, "第二历史链接")
+	tr.Key(ui.Cmd, ui.KeyComma)
+	tr.Frame()
+	if !a.settingsOpen || a.screen != viewHistory {
+		t.Fatalf("Cmd+, from history link = open=%v screen=%v", a.settingsOpen, a.screen)
+	}
+	if err := tr.Click("← Back to workbench"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.Focused("第二历史链接") {
+		t.Fatalf("history Back did not return to its second repeated inline link: %v", tr.Texts())
+	}
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if got := tr.OpenedURLs(); len(got) != 1 || got[0] != "https://example.com/history" {
+		t.Fatalf("history link opened %v, want only its URL", got)
+	}
+}
+
+func TestSettingsCmdCommaFromIssueResultMarkdownLinkReturnsToSameLink(t *testing.T) {
+	a := issuePreviewApp("issue-detail")
+	issue := a.selectedContact().selectedIssue()
+	execution := issue.Executions[0]
+	a.rt = nil
+	a.openIssueResultEntry(issue.ID, execution.ID, false)
+	a.issueResult.Loading = false
+	a.issueResult.LoadError = ""
+	a.issueResult.Notice = ""
+	a.issueResult.Panel.Response = "结果[第一结果链接](https://example.com/result) 第二[第二结果链接](https://example.com/result)。"
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.SetFocused(true)
+	tr.Frame()
+	tabToFocused(t, tr, "第二结果链接")
+	tr.Key(ui.Cmd, ui.KeyComma)
+	tr.Frame()
+	if !a.settingsOpen {
+		t.Fatal("Cmd+, from result link did not open settings")
+	}
+	if err := tr.Click("← Back to workbench"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !a.issueResult.Open || a.aux != "issue-result" || !tr.Focused("第二结果链接") {
+		t.Fatalf("result Back lost context or second repeated link focus: open=%v aux=%q texts=%v", a.issueResult.Open, a.aux, tr.Texts())
+	}
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if got := tr.OpenedURLs(); len(got) != 1 || got[0] != "https://example.com/result" {
+		t.Fatalf("result second repeated link opened %v, want only its URL", got)
+	}
+}
+
+func TestSettingsCmdCommaFromInnerFileMarkdownLinkReturnsToSameLink(t *testing.T) {
+	a := issuePreviewApp("issue-detail")
+	issue := a.selectedContact().selectedIssue()
+	execution := issue.Executions[0]
+	file := issueResultFile{
+		ExecutionID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID,
+		MessageID: execution.MessageID, CallID: "call-link", ToolName: "write",
+		Path: "/tmp/link.md", WorkingDirectory: "/tmp", RawResult: `{"path":"/tmp/link.md"}`,
+	}
+	key := issueResultFileKey(file)
+	inspection := issueResultFileInspection{Path: file.Path, WorkingDirectory: "/tmp", Exists: true, Regular: true, Preview: "文件[第一内链](https://example.com/file) 第二[第二内链](https://example.com/file)。"}
+	a.rt = nil
+	a.openIssueResultEntry(issue.ID, execution.ID, false)
+	a.issueResult.Loading = false
+	a.issueResult.LoadError = ""
+	a.issueResult.Notice = ""
+	a.issueResult.Panel.Files = []issueResultFile{file}
+	a.issueResult.Panel.ReaderKey = key
+	a.issueResult.Panel.InspectFor = key
+	a.issueResult.Panel.Inspection = &inspection
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.SetFocused(true)
+	tr.Frame()
+	tabToFocused(t, tr, "第二内链")
+	tr.Key(ui.Cmd, ui.KeyComma)
+	tr.Frame()
+	if !a.settingsOpen || !a.issueResult.Open || a.issueResult.Panel.ReaderKey != key {
+		t.Fatalf("Cmd+, from inner file link = settings=%v open=%v reader=%q", a.settingsOpen, a.issueResult.Open, a.issueResult.Panel.ReaderKey)
+	}
+	if err := tr.Click("← Back to workbench"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !a.issueResult.Open || a.issueResult.Panel.ReaderKey != key || !tr.Focused("第二内链") {
+		t.Fatalf("inner file Back lost context or second repeated link focus: open=%v reader=%q texts=%v", a.issueResult.Open, a.issueResult.Panel.ReaderKey, tr.Texts())
+	}
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if got := tr.OpenedURLs(); len(got) != 1 || got[0] != "https://example.com/file" {
+		t.Fatalf("inner file second repeated link opened %v, want only its URL", got)
+	}
+}
+
+func TestSettingsReturnsToExactHistorySummaryAndFullLinkWithSameEntry(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	const url = "https://example.com/same"
+	ct.History = []historyEntry{{
+		ID: "history-same", Date: "Oct 1", From: "contact",
+		Text: "摘要[摘要链接](" + url + ")。",
+	}}
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.SetFocused(true)
+	tr.Frame()
+	a.openHistory()
+	a.contactHistoryFull = &contactHistoryFull{
+		SessionID: "s1", EntryID: "history-same", Date: "Oct 1", From: "contact",
+		Text: "完整[完整链接](" + url + ")。",
+	}
+	tr.Frame()
+	for i, label := range []string{"完整链接", "摘要链接"} {
+		tabToFocused(t, tr, label)
+		tr.Key(ui.Cmd, ui.KeyComma)
+		tr.Frame()
+		if !a.settingsOpen {
+			t.Fatalf("%s Cmd+, did not open settings", label)
+		}
+		if err := tr.Click("← Back to workbench"); err != nil {
+			t.Fatal(err)
+		}
+		tr.Frame()
+		if !tr.Focused(label) {
+			t.Fatalf("Back did not return to %q: %v", label, tr.Texts())
+		}
+		tr.Key(0, ui.KeyEnter)
+		tr.Frame()
+		if got := tr.OpenedURLs(); len(got) != i+1 || got[i] != url {
+			t.Fatalf("%s opened %v, want URL occurrence %d", label, got, i+1)
+		}
+	}
+}
+
+func TestExplicitRailSettingsDoesNotReuseOldMarkdownLinkReturn(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.Messages = []*message{{
+		ID: 1, Kind: msgContact, Text: "请阅读[文档](https://example.com/docs)。",
+	}}
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.SetFocused(true)
+	tr.Frame()
+	tabToFocused(t, tr, "文档")
+	tr.Key(ui.Cmd, ui.KeyComma)
+	tr.Frame()
+	if err := tr.Click("← Back to workbench"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.Focused("文档") {
+		t.Fatalf("first link return did not focus its link: %v", tr.Texts())
+	}
+	if err := tr.Click("Settings"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !a.settingsOpen {
+		t.Fatal("rail Settings did not open settings")
+	}
+	if err := tr.Click("← Back to workbench"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.Focused("Settings") {
+		t.Fatalf("rail Settings return did not focus the rail button: %v", tr.Texts())
+	}
+	if a.markdownLinkFocus != (markdownLinkTarget{}) || a.linkReturnTarget != (markdownLinkTarget{}) {
+		t.Fatalf("rail Settings left the old link request pending: focus=%+v target=%+v", a.markdownLinkFocus, a.linkReturnTarget)
+	}
+}
+
+func TestHistoryCloseReopenKeepsCloseFocusAfterLinkFocus(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	ct.History = []historyEntry{{
+		ID: "history-stale", Date: "Oct 1", From: "contact",
+		Text: "历史[历史链接](https://example.com/history)。",
+	}}
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.SetFocused(true)
+	tr.Frame()
+	a.openHistory()
+	tr.Frame()
+	tabToFocused(t, tr, "历史链接")
+	if err := tr.Click("Close history"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.screen != viewChat {
+		t.Fatalf("Close history did not return to chat: screen=%v", a.screen)
+	}
+	if err := tr.Click("History"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.screen != viewHistory {
+		t.Fatalf("History did not reopen: screen=%v", a.screen)
+	}
+	if !tr.Focused("Close history") {
+		t.Fatalf("reopened history lost its default close focus: %v", tr.Texts())
 	}
 }
