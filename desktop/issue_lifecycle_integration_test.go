@@ -298,9 +298,11 @@ func TestIssueRuntimeStopContinueAndExplicitCompletion(t *testing.T) {
 	// queued task.cancel reaches Runtime. The terminal itself is the proof;
 	// a transient "Cancelling" label is not.
 	h.pump.wait(func() bool {
-		issue := h.app.selectedContact().issueByID(issueID)
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
 		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
-			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted &&
+			h.app.canStartIssue(ct, issue) == ""
 	})
 	provider.release("life-first")
 	var firstStatus, firstIssueStatus string
@@ -549,9 +551,11 @@ func TestIssueContinuationCapturesRequirementsRevisionBeforeDispatch(t *testing.
 		t.Fatal(setupErr)
 	}
 	h.pump.wait(func() bool {
-		issue := h.app.selectedContact().issueByID(issueID)
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
 		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
-			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted &&
+			h.app.canStartIssue(ct, issue) == ""
 	})
 	var first issueExecution
 	h.pump.do(func() {

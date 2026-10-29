@@ -1125,16 +1125,20 @@ func TestLateCompletedExecutionCheckDoesNotClearNewActiveTask(t *testing.T) {
 	defer provider.release("late-old")
 	defer provider.release("late-new")
 	h := startRoutingHarnessWithHandler(t, binary, provider.handler(), 1)
-	var issueID, oldExecutionID string
+	var issueID, oldExecutionID, setupErr, newRunErr, lateStateErr string
 	h.pump.do(func() {
 		if !h.app.createIssue("late-old", "old work") {
-			t.Fatalf("createIssue: %s", h.app.issueFormError)
+			setupErr = fmt.Sprintf("createIssue: %s", h.app.issueFormError)
+			return
 		}
 		issueID = h.app.selectedContact().SelectedIssueID
 		if !h.app.runIssue(issueID) {
-			t.Fatalf("run old: %s", h.app.issueFormError)
+			setupErr = fmt.Sprintf("run old: %s", h.app.issueFormError)
 		}
 	})
+	if setupErr != "" {
+		t.Fatal(setupErr)
+	}
 	select {
 	case <-provider.arrived["late-old"]:
 	case <-time.After(15 * time.Second):
@@ -1142,17 +1146,22 @@ func TestLateCompletedExecutionCheckDoesNotClearNewActiveTask(t *testing.T) {
 	}
 	provider.release("late-old")
 	h.pump.wait(func() bool {
-		issue := h.app.selectedContact().issueByID(issueID)
-		return issue != nil && issue.Work.ActiveTaskID == "" && len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && len(issue.Executions) == 1 &&
+			issue.Executions[0].Status == issueExecutionCompleted && h.app.canStartIssue(ct, issue) == ""
 	})
 	h.pump.do(func() {
 		issue := h.app.selectedContact().issueByID(issueID)
 		oldExecutionID = issue.Executions[0].ID
 		issue.Goal = "late-new"
 		if !h.app.runIssue(issueID) {
-			t.Fatalf("run new: %s", h.app.issueFormError)
+			newRunErr = fmt.Sprintf("run new: %s", h.app.issueFormError)
 		}
 	})
+	if newRunErr != "" {
+		t.Fatal(newRunErr)
+	}
 	select {
 	case <-provider.arrived["late-new"]:
 	case <-time.After(15 * time.Second):
@@ -1162,11 +1171,13 @@ func TestLateCompletedExecutionCheckDoesNotClearNewActiveTask(t *testing.T) {
 		issue := h.app.selectedContact().issueByID(issueID)
 		return issue != nil && issue.Work.ActiveTaskID != "" && len(issue.Executions) == 2
 	})
+	var reconcileOK bool
 	h.pump.do(func() {
-		if !h.app.reconcileIssueExecution(issueID, oldExecutionID) {
-			t.Fatal("old execution could not be verified")
-		}
+		reconcileOK = h.app.reconcileIssueExecution(issueID, oldExecutionID)
 	})
+	if !reconcileOK {
+		t.Fatal("old execution could not be verified")
+	}
 	h.pump.wait(func() bool {
 		issue := h.app.selectedContact().issueByID(issueID)
 		return issue != nil && issue.Executions[0].Status == issueExecutionCompleted
@@ -1174,9 +1185,12 @@ func TestLateCompletedExecutionCheckDoesNotClearNewActiveTask(t *testing.T) {
 	h.pump.do(func() {
 		issue := h.app.selectedContact().issueByID(issueID)
 		if issue.Work.ActiveTaskID == "" || issue.Work.SendState != sendAccepted {
-			t.Fatalf("late old verification cleared new active task: %+v", issue.Work)
+			lateStateErr = fmt.Sprintf("late old verification cleared new active task: %+v", issue.Work)
 		}
 	})
+	if lateStateErr != "" {
+		t.Fatal(lateStateErr)
+	}
 	provider.release("late-new")
 	h.pump.wait(func() bool {
 		issue := h.app.selectedContact().issueByID(issueID)
