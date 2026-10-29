@@ -141,7 +141,7 @@ func (a *appModel) closeSettings() {
 		}
 	case settingsSourceAux:
 		if a.issueResult.Open {
-			if a.issueResult.Panel.FocusReturn == "" {
+			if a.issueResult.Panel.FocusReturn == nil {
 				if a.issueResult.Panel.ReaderKey != "" {
 					a.issueResult.Panel.FocusReader = true
 				} else {

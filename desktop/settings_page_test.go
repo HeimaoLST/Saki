@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -643,5 +645,269 @@ func TestSettingsPageCmdCommaFromResultReturnsToReloadControl(t *testing.T) {
 	tr.Frame()
 	if !tr.Focused("Reload result") {
 		t.Fatalf("result returned focus to the wrong control: %v", tr.Texts())
+	}
+}
+
+func TestSettingsCmdCommaFromDynamicFileRowReturnsToSameRowAndReopens(t *testing.T) {
+	a := issuePreviewApp("issue-detail")
+	issue := a.selectedContact().selectedIssue()
+	execution := issue.Executions[0]
+	files := []issueResultFile{
+		{ExecutionID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID, MessageID: execution.MessageID, CallID: "call-a", ToolName: "write", Path: "/tmp/a.txt", WorkingDirectory: "/tmp", RawResult: `{"path":"/tmp/a.txt"}`},
+		{ExecutionID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID, MessageID: execution.MessageID, CallID: "call-b", ToolName: "write", Path: "/tmp/b.md", WorkingDirectory: "/tmp", RawResult: `{"path":"/tmp/b.md"}`},
+		{ExecutionID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID, MessageID: execution.MessageID, CallID: "call-c", ToolName: "write", Path: "/tmp/c.txt", WorkingDirectory: "/tmp", RawResult: `{"path":"/tmp/c.txt"}`},
+	}
+	target := issueResultFileKey(files[1])
+	inspection := issueResultFileInspection{Path: files[1].Path, WorkingDirectory: "/tmp", Exists: true, Regular: true, Preview: strings.Repeat("Long reader content for the second dynamic file.\n", 60)}
+	a.aux = "issue-result"
+	a.issueResult = issueResultPage{
+		Open: true, OwnerContactID: a.selectedContact().ID, IssueID: issue.ID, ExecutionID: execution.ID,
+		Panel: issueResultPanelState{
+			RunLabel: "Run 1", RunStatus: "Completed",
+			Response: "# Result\n\n" + strings.Repeat("Long result body before reported files.\n\n", 50),
+			Files:    files, Inspection: &inspection, InspectFor: target,
+		},
+	}
+	a.issueResultInspect = func(file issueResultFile) issueResultFileInspection { return inspection }
+	a.selectedContact().Draft = "keep this draft"
+	a.windowWidth = 1040
+	pump := newUIPump(t, a)
+	defer func() {
+		pump.waitTimeout(func() bool { return a.resultInFlight == 0 }, 5*time.Second)
+		pump.close()
+	}()
+	var tr *ui.Tester
+	pump.do(func() {
+		tr = ui.NewTester(a.view, 1040, 720)
+		tr.Frame()
+	})
+	targetLabel := "Read file 2: b.md"
+	for i := 0; i < 12; i++ {
+		var visible bool
+		pump.do(func() {
+			r, ok := tr.Find(targetLabel)
+			visible = ok && r.W > 0 && r.H > 0 && r.Y >= 0 && r.Y+r.H <= 720
+		})
+		if visible {
+			break
+		}
+		pump.do(func() {
+			tr.Scroll(520, 400, 0, 220)
+			tr.Frame()
+		})
+	}
+	var outerScrollBefore float32
+	pump.do(func() { outerScrollBefore = a.issueResultScroll.Y })
+	if outerScrollBefore <= 0 {
+		t.Fatalf("outer result did not scroll to reported files: %v", outerScrollBefore)
+	}
+	var clickErr error
+	pump.do(func() {
+		clickErr = tr.Click(targetLabel)
+		tr.Frame()
+	})
+	if clickErr != nil {
+		t.Fatal(clickErr)
+	}
+	pump.wait(func() bool { return !a.issueResult.Panel.Checking })
+	pump.do(func() { tr.Frame() })
+	var readingOpen bool
+	pump.do(func() { readingOpen = tr.HasText("File reading") })
+	if !readingOpen {
+		t.Fatal("reader did not open")
+	}
+	pump.do(func() {
+		tr.Key(0, ui.KeyEscape)
+		tr.Frame()
+	})
+	var rowFocused bool
+	pump.do(func() { rowFocused = tr.Focused(targetLabel) })
+	if !rowFocused {
+		t.Fatalf("Escape did not return focus to dynamic file row: %v", tr.Texts())
+	}
+	pump.do(func() {
+		tr.Key(ui.Cmd, ui.KeyComma)
+		tr.Frame()
+	})
+	var settingsOpen bool
+	pump.do(func() { settingsOpen = a.settingsOpen })
+	if !settingsOpen {
+		t.Fatal("Cmd+, from dynamic file row did not open settings")
+	}
+	pump.do(func() { clickErr = tr.Click("← Back to workbench"); tr.Frame() })
+	if clickErr != nil {
+		t.Fatal(clickErr)
+	}
+	var returnedFocus bool
+	var scrollAfter float32
+	pump.do(func() {
+		returnedFocus = tr.Focused(targetLabel)
+		scrollAfter = a.issueResultScroll.Y
+	})
+	// Do not stop at the focus mismatch: the actual regression must also prove
+	// whether Return invokes the dynamic file row or closes the result page.
+	pump.do(func() {
+		tr.Key(0, ui.KeyEnter)
+		tr.Frame()
+	})
+	pump.wait(func() bool { return !a.issueResult.Panel.Checking })
+	var readerKey string
+	var readerOpen, resultOpen bool
+	var texts []string
+	pump.do(func() {
+		readerKey = a.issueResult.Panel.ReaderKey
+		readerOpen = tr.HasText("File reading")
+		resultOpen = a.issueResult.Open
+		texts = append([]string(nil), tr.Texts()...)
+	})
+	if !returnedFocus || scrollAfter != outerScrollBefore || !resultOpen || readerKey != target || !readerOpen {
+		t.Fatalf("Back/Return did not restore dynamic file row: focus=%v scroll=%v->%v resultOpen=%v reader=%q target=%q texts=%v",
+			returnedFocus, outerScrollBefore, scrollAfter, resultOpen, readerKey, target, texts)
+	}
+	if a.selectedContact().Draft != "keep this draft" || a.issueResult.IssueID != issue.ID || a.issueResult.ExecutionID != execution.ID {
+		t.Fatal("settings return changed draft or result context")
+	}
+}
+
+func TestSettingsPageCmdCommaReturnsToReaderCopyPath(t *testing.T) {
+	a := issuePreviewApp("issue-detail")
+	issue := a.selectedContact().selectedIssue()
+	execution := issue.Executions[0]
+	file := issueResultFile{ExecutionID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID, MessageID: execution.MessageID, CallID: "copy-path", ToolName: "write", Path: "/tmp/copy-path.md", WorkingDirectory: "/tmp", RawResult: `{"path":"/tmp/copy-path.md"}`}
+	key := issueResultFileKey(file)
+	a.aux = "issue-result"
+	a.issueResult = issueResultPage{Open: true, OwnerContactID: a.selectedContact().ID, IssueID: issue.ID, ExecutionID: execution.ID, Panel: issueResultPanelState{RunLabel: "Run 1", RunStatus: "Completed", Files: []issueResultFile{file}, ReaderKey: key}}
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	a.issueResult.Panel.CopyPathHandle.Focus()
+	tr.Frame()
+	if !tr.Focused("Copy path") {
+		t.Fatalf("Copy path did not receive focus: %v", tr.Texts())
+	}
+	tr.Key(ui.Cmd, ui.KeyComma)
+	tr.Frame()
+	if !a.settingsOpen {
+		t.Fatal("Cmd+, from Copy path did not open settings")
+	}
+	if err := tr.Click("← Back to workbench"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.Focused("Copy path") {
+		t.Fatalf("Back did not return focus to Copy path: %v", tr.Texts())
+	}
+}
+
+func TestSettingsReturnKeepsEachCodeCopyTarget(t *testing.T) {
+	for _, reader := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reader=%v", reader), func(t *testing.T) {
+			a := issuePreviewApp("issue-detail")
+			issue := a.selectedContact().selectedIssue()
+			execution := issue.Executions[0]
+			file := issueResultPanelFixtureFile("code-copies", "/tmp/code-copies.md", "{}")
+			key := issueResultFileKey(file)
+			content := "```go\nfirst-copy-content\n```\n\nbetween\n\n```go\nsecond-copy-content\n```"
+			a.aux = "issue-result"
+			a.issueResult = issueResultPage{Open: true, OwnerContactID: a.selectedContact().ID, IssueID: issue.ID, ExecutionID: execution.ID,
+				Panel: issueResultPanelState{Response: content, Files: []issueResultFile{file}}}
+			state := &a.issueResult.Panel
+			if reader {
+				state.ReaderKey, state.InspectFor = key, key
+				state.Inspection = &issueResultFileInspection{Exists: true, Regular: true, Preview: content}
+			}
+			a.windowWidth = 1040
+			tr := ui.NewTester(a.view, 1040, 900)
+			tr.Frame()
+			handles := state.ResultCodeHandles
+			if reader {
+				handles = state.ReaderCodeHandles
+			}
+			keys := make([]int, 0, len(handles))
+			for key := range handles {
+				keys = append(keys, key)
+			}
+			sort.Ints(keys)
+			if len(keys) != 2 {
+				t.Fatalf("expected two independently focusable code copies, got %d", len(keys))
+			}
+			handles[keys[1]].Focus()
+			tr.Frame()
+			tr.Key(ui.Cmd, ui.KeyComma)
+			tr.Frame()
+			if !a.settingsOpen {
+				t.Fatal("Cmd+, from code copy did not open settings")
+			}
+			if err := tr.Click("← Back to workbench"); err != nil {
+				t.Fatal(err)
+			}
+			tr.Frame()
+			tr.Key(0, ui.KeyEnter)
+			tr.Frame()
+			if got := tr.Clipboard(); got != "second-copy-content\n" {
+				t.Fatalf("Return after settings copied %q instead of the second block", got)
+			}
+			if !a.issueResult.Open || (reader && state.ReaderKey != key) {
+				t.Fatal("Return closed the result or reading layer")
+			}
+		})
+	}
+}
+
+func TestSettingsReturnKeepsReaderActions(t *testing.T) {
+	file := issueResultPanelFixtureFile("handles", "/tmp/handles.txt", `{"path":"/tmp/handles.txt"}`)
+	key := issueResultFileKey(file)
+	a := testApp(t)
+	a.aux = "issue-result"
+	a.issueResult.Open = true
+	a.issueResult.Panel = issueResultPanelState{
+		RunLabel: "Run 1", RunStatus: "Completed", Files: []issueResultFile{file},
+		Inspection: &issueResultFileInspection{Path: file.Path, Exists: true, Regular: true, Preview: "preview"},
+		InspectFor: key, ReaderKey: key, SourceFor: key,
+	}
+	state := &a.issueResult.Panel
+	opened, revealed, copied := 0, 0, ""
+	actions := issueResultPanelActions{
+		OpenSettings: func() { a.openSettingsTab(settingsTabAppearance, settingsSourceAux) },
+		CheckFile:    func(issueResultFile) {},
+		OpenFile:     func(issueResultFile) { opened++ },
+		RevealFile:   func(issueResultFile) { revealed++ },
+		CopyText:     func(text string) error { copied = text; return nil },
+	}
+	tr := ui.NewTester(func(c *ui.Context) {
+		if a.settingsOpen {
+			a.settingsPage(c, c.Theme())
+			return
+		}
+		issueResultPanel(c, state, actions)
+	}, 1040, 900)
+	tr.Frame()
+	for _, control := range []struct {
+		label  string
+		handle *ui.Handle
+	}{
+		{"Open file", &state.ReaderOpenHandle},
+		{"Show in Finder", &state.ReaderRevealHandle},
+		{"Copy tool record", &state.CopyRawHandle},
+	} {
+		control.handle.Focus()
+		tr.Frame()
+		tr.Key(ui.Cmd, ui.KeyComma)
+		tr.Frame()
+		if !a.settingsOpen {
+			t.Fatalf("Cmd+, from %s did not open settings", control.label)
+		}
+		if err := tr.Click("← Back to workbench"); err != nil {
+			t.Fatal(err)
+		}
+		tr.Frame()
+		if !tr.Focused(control.label) {
+			t.Fatalf("Back did not restore %s", control.label)
+		}
+		tr.Key(0, ui.KeyEnter)
+		tr.Frame()
+	}
+	if opened != 1 || revealed != 1 || copied != file.RawResult || state.ReaderKey != key {
+		t.Fatalf("Return actions = open:%d reveal:%d copy:%q reader:%q", opened, revealed, copied, state.ReaderKey)
 	}
 }
