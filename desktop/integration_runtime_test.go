@@ -806,23 +806,40 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 	provider := &providerFixture{ToolFirst: false}
 	h := startGUIHarness(t, binary, provider, "saki-issue-141")
 	issueID := ""
+	var createOK bool
+	var createErr, initialErr string
 	h.pump.do(func() {
-		if !h.app.createIssue("Implement login", "Must support SMS verification.") {
-			t.Fatalf("createIssue failed: %s", h.app.issueFormError)
+		createOK = h.app.createIssue("Implement login", "Must support SMS verification.")
+		createErr = h.app.issueFormError
+		if !createOK {
+			return
 		}
 		ct := h.app.selectedContact()
 		issueID = ct.SelectedIssueID
 		if issueID == "" || len(ct.Issues) != 1 || ct.Issues[0].Goal != "Implement login" {
-			t.Fatalf("issue not created/selected: %+v", ct)
+			initialErr = fmt.Sprintf("issue not created/selected: %+v", ct)
+			return
 		}
 		ct.Draft = "ordinary composer draft"
 	})
+	if !createOK {
+		t.Fatalf("createIssue failed: %s", createErr)
+	}
+	if initialErr != "" {
+		t.Fatal(initialErr)
+	}
 	run := func() {
+		var runOK bool
+		var runErr string
 		h.pump.do(func() {
-			if !h.app.runIssue(issueID) {
-				t.Fatalf("runIssue failed: %s", h.app.issueFormError)
+			runOK = h.app.runIssue(issueID)
+			if !runOK {
+				runErr = h.app.issueFormError
 			}
 		})
+		if !runOK {
+			t.Fatalf("runIssue failed: %s", runErr)
+		}
 		h.pump.wait(func() bool {
 			ct := h.app.selectedContact()
 			if len(ct.Issues) != 1 {
@@ -832,7 +849,8 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 			exec := issue.Executions
 			return issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
 				issue.Work.Loaded && ct.ActiveTaskID == "" && ct.SendState == sendIdle &&
-				len(exec) > 0 && exec[len(exec)-1].Status == issueExecutionCompleted
+				len(exec) > 0 && exec[len(exec)-1].Status == issueExecutionCompleted &&
+				h.app.canStartIssue(ct, issue) == ""
 		})
 	}
 	run()
