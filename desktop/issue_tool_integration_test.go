@@ -1617,3 +1617,504 @@ func TestIssueToolScopeTokenRealChain(t *testing.T) {
 		t.Fatalf("token-wire execution context = %+v", execution.Context)
 	}
 }
+
+// issueToolConversationStopProvider is a deterministic local provider for the
+// conversation -> issue_action stop path. It holds only the first A issue-work
+// request; B and the second A run complete immediately. Each conversation turn
+// first requests issue_action, then repeats the same operation once through the
+// same-binary helper and Unix IPC before finishing.
+type issueToolConversationStopProvider struct {
+	mu            sync.Mutex
+	bodies        []string
+	counts        map[string]int
+	aID           string
+	gate          chan struct{}
+	gateOnce      sync.Once
+	arrived       chan struct{}
+	arriveOnce    sync.Once
+	firstDone     chan struct{}
+	firstDoneOnce sync.Once
+}
+
+func newIssueToolConversationStopProvider() *issueToolConversationStopProvider {
+	return &issueToolConversationStopProvider{
+		counts: map[string]int{}, gate: make(chan struct{}),
+		arrived: make(chan struct{}), firstDone: make(chan struct{}),
+	}
+}
+
+func (p *issueToolConversationStopProvider) setAID(issueID string) {
+	p.mu.Lock()
+	p.aID = issueID
+	p.mu.Unlock()
+}
+
+func (p *issueToolConversationStopProvider) releaseA() {
+	p.gateOnce.Do(func() { close(p.gate) })
+}
+
+func (p *issueToolConversationStopProvider) count(group string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.counts[group]
+}
+
+func (p *issueToolConversationStopProvider) groupBody(group string) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for index := len(p.bodies) - 1; index >= 0; index-- {
+		// Bodies are grouped by the same marker classification as handler.
+		body := p.bodies[index]
+		if issueToolConversationStopGroup(body) == group {
+			return body
+		}
+	}
+	return ""
+}
+
+// issueToolCurrentUserText reads the latest user message from the same
+// Responses input array the Runtime sends. Classifying the whole body would
+// mistake a second conversation turn for the previous turn because its tool
+// history still contains the old user text.
+func issueToolCurrentUserText(body string) string {
+	var request struct {
+		Input []struct {
+			Type    string          `json:"type"`
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"input"`
+	}
+	if json.Unmarshal([]byte(body), &request) != nil {
+		return ""
+	}
+	for index := len(request.Input) - 1; index >= 0; index-- {
+		item := request.Input[index]
+		if item.Type != "message" || item.Role != "user" {
+			continue
+		}
+		var text string
+		if json.Unmarshal(item.Content, &text) == nil {
+			return text
+		}
+		var parts []struct {
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(item.Content, &parts) == nil {
+			for _, part := range parts {
+				if part.Text != "" {
+					return part.Text
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func issueToolConversationStopGroup(body string) string {
+	current := issueToolCurrentUserText(body)
+	switch {
+	case strings.Contains(current, "STOP-CONV-"):
+		return "stop-conversation"
+	case strings.Contains(current, "RUN-CONV-"):
+		return "run-conversation"
+	case strings.Contains(current, "A-GOAL-200"):
+		return "a-work"
+	case strings.Contains(current, "B-GOAL-200"):
+		return "b-work"
+	default:
+		return "other"
+	}
+}
+
+func (p *issueToolConversationStopProvider) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		group := issueToolConversationStopGroup(string(body))
+		p.mu.Lock()
+		p.bodies = append(p.bodies, string(body))
+		p.counts[group]++
+		step := p.counts[group]
+		aID := p.aID
+		p.mu.Unlock()
+
+		var response any
+		switch group {
+		case "b-work":
+			response = issueResultPageFinal("B-COMPLETED-200")
+		case "a-work":
+			if step == 1 {
+				p.arriveOnce.Do(func() { close(p.arrived) })
+				<-p.gate
+				response = issueResultPageFinal("A-INTERRUPTED-200")
+			} else {
+				response = issueResultPageFinal("A-SECOND-COMPLETED-200")
+			}
+		case "stop-conversation":
+			switch {
+			case issueToolTestOutput(string(body), "stop-call") == "":
+				response = issueResultFunctionCall("issue_action", "stop-call", map[string]any{
+					"scope": issueToolTestScope(string(body)), "action": issueToolActionStop, "issue_id": aID,
+				})
+			case issueToolTestOutput(string(body), "stop-duplicate") == "":
+				response = issueResultFunctionCall("issue_action", "stop-duplicate", map[string]any{
+					"scope": issueToolTestScope(string(body)), "action": issueToolActionStop, "issue_id": aID,
+				})
+			default:
+				response = issueResultPageFinal("STOP-CONVERSATION-FINAL-200")
+			}
+		case "run-conversation":
+			switch {
+			case issueToolTestOutput(string(body), "run-call") == "":
+				response = issueResultFunctionCall("issue_action", "run-call", map[string]any{
+					"scope": issueToolTestScope(string(body)), "action": issueToolActionRun, "issue_id": aID,
+				})
+			case issueToolTestOutput(string(body), "run-duplicate") == "":
+				response = issueResultFunctionCall("issue_action", "run-duplicate", map[string]any{
+					"scope": issueToolTestScope(string(body)), "action": issueToolActionRun, "issue_id": aID,
+				})
+			default:
+				response = issueResultPageFinal("RUN-CONVERSATION-FINAL-200")
+			}
+		default:
+			response = issueResultPageFinal("OTHER-FINAL-200")
+		}
+		data, _ := json.Marshal(response)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+		if group == "a-work" && step == 1 {
+			p.firstDoneOnce.Do(func() { close(p.firstDone) })
+		}
+	}
+}
+
+type issueToolJournalTaskSnapshot map[string]string
+
+func issueToolJournalTasks(t *testing.T, h *guiHarness, sessionID string) issueToolJournalTaskSnapshot {
+	t.Helper()
+	var rt *runtimeClient
+	h.pump.do(func() { rt = h.app.rt })
+	records, _, err := h.app.historyAllFor(rt, sessionID)
+	if err != nil {
+		t.Fatalf("read Runtime journal for %s: %v", sessionID, err)
+	}
+	tasks := issueToolJournalTaskSnapshot{}
+	for _, record := range records {
+		switch record.Record.Type {
+		case "task_started":
+			if record.Record.TaskID != "" {
+				if _, ok := tasks[record.Record.TaskID]; !ok {
+					tasks[record.Record.TaskID] = ""
+				}
+			}
+		case "task_finished":
+			if record.Record.TaskID != "" {
+				tasks[record.Record.TaskID] = record.Record.Status
+			}
+		}
+	}
+	return tasks
+}
+
+func TestIssueToolConversationStopAndRunKeepsBAndJournal(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	provider := newIssueToolConversationStopProvider()
+	h := startIssueToolTestHarness(t, binary, provider.handler())
+	t.Cleanup(provider.releaseA)
+
+	var aID, bID string
+	var bGoal string
+	var bRequirements []string
+	var bRevision int
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if !h.app.createIssue("A-GOAL-200", "A-REQ-200") {
+			t.Fatalf("create A: %s", h.app.issueFormError)
+		}
+		aID = ct.SelectedIssueID
+		if !h.app.createIssue("B-GOAL-200", "B-REQ-200") {
+			t.Fatalf("create B: %s", h.app.issueFormError)
+		}
+		bID = ct.SelectedIssueID
+		b := ct.issueByID(bID)
+		bGoal, bRevision = b.Goal, b.RequirementsRevision
+		for _, requirement := range b.Requirements {
+			bRequirements = append(bRequirements, requirement.Text)
+		}
+		if !h.app.runIssue(bID) {
+			t.Fatalf("run B: %s", h.app.issueFormError)
+		}
+	})
+	t.Logf("stage: waiting for B completed")
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		b := ct.issueByID(bID)
+		return ct.SendState == sendIdle && ct.ActiveTaskID == "" && b != nil &&
+			b.Work.ActiveTaskID == "" && b.Work.SendState == sendIdle &&
+			len(b.Executions) == 1 && b.Executions[0].Status == issueExecutionCompleted &&
+			b.WorkSessionID != "" && b.Executions[0].TaskID != ""
+	})
+	var bExecution issueExecution
+	h.pump.do(func() {
+		b := h.app.selectedContact().issueByID(bID)
+		bExecution = *b.Executions[0]
+	})
+	provider.setAID(aID)
+
+	h.pump.do(func() {
+		if !h.app.runIssue(aID) {
+			t.Fatalf("run A: %s", h.app.issueFormError)
+		}
+		h.app.selectIssue(bID)
+	})
+	select {
+	case <-provider.arrived:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider did not receive held A issue work")
+	}
+	t.Logf("stage: waiting for A accepted")
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		a := ct.issueByID(aID)
+		return a != nil && a.Work.ActiveTaskID != "" &&
+			len(a.Executions) == 1 &&
+			(a.Executions[0].Status == issueExecutionAccepted || a.Executions[0].Status == issueExecutionRunning)
+	})
+	var aOldExecution, aOldRequirements, aOldSession, aOldTask string
+	var aOldPrompt string
+	var aOldRevision int
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		a := ct.issueByID(aID)
+		aOldExecution = a.Executions[0].ID
+		aOldPrompt = a.Executions[0].Prompt
+		aOldSession, aOldTask = a.Executions[0].SessionID, a.Executions[0].TaskID
+		aOldRevision = a.RequirementsRevision
+		for _, requirement := range a.Requirements {
+			aOldRequirements += requirement.Text + "\n"
+		}
+	})
+	if aOldSession == "" || aOldTask == "" || aOldSession == bExecution.SessionID {
+		t.Fatalf("A/B work sessions not distinct and non-empty: A=%q B=%q", aOldSession, bExecution.SessionID)
+	}
+
+	var sendErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "STOP-CONV-200"
+		if !h.app.sendCurrent() {
+			sendErr = ct.SendError
+		}
+	})
+	if sendErr != "" {
+		t.Fatalf("send stop conversation: %s", sendErr)
+	}
+	t.Logf("stage: waiting for A interrupt and conversation final")
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		a := ct.issueByID(aID)
+		return a != nil && a.Work.ActiveTaskID == "" && a.Work.SendState == sendIdle &&
+			len(a.Executions) == 1 && a.Executions[0].ID == aOldExecution &&
+			a.Executions[0].Status == issueExecutionInterrupted &&
+			a.Executions[0].TaskID == aOldTask && a.Executions[0].SessionID == aOldSession &&
+			ct.SendState == sendIdle && ct.ActiveTaskID == "" && !ct.HistoryDirty
+	})
+	stopBody := provider.groupBody("stop-conversation")
+	if stopBody == "" {
+		t.Fatal("stop conversation body was not recorded")
+	}
+	stopReceiptText := issueToolTestOutput(stopBody, "stop-call")
+	if stopReceiptText == "" {
+		t.Fatal("stop helper receipt was not returned to the conversation")
+	}
+	var stopReceipt IssueToolReceipt
+	if err := json.Unmarshal([]byte(stopReceiptText), &stopReceipt); err != nil {
+		t.Fatalf("decode stop receipt %q: %v", stopReceiptText, err)
+	}
+	if stopReceipt.State != issueToolReceiptStopRequested || stopReceipt.IssueID != aID ||
+		stopReceipt.ExecutionID != aOldExecution || stopReceipt.SessionID != aOldSession ||
+		stopReceipt.TaskID != aOldTask {
+		t.Fatalf("stop receipt identity = %+v, want A exec/session/task", stopReceipt)
+	}
+	// 本用例 Stop 后事项仍 in_progress；resume 用于 waiting/needs_attention，
+	// 不能替代这里创建下一执行的 run。
+	var aStatusAfterStop string
+	h.pump.do(func() { aStatusAfterStop = h.app.selectedContact().issueByID(aID).Status })
+	if aStatusAfterStop != issueStatusInProgress {
+		t.Fatalf("A status after stop = %q, want in_progress before an explicit run", aStatusAfterStop)
+	}
+	stopDuplicateText := issueToolTestOutput(stopBody, "stop-duplicate")
+	if stopDuplicateText == "" {
+		t.Fatal("duplicate stop receipt was not returned in the same conversation turn")
+	}
+	var stopDuplicate IssueToolReceipt
+	if err := json.Unmarshal([]byte(stopDuplicateText), &stopDuplicate); err != nil {
+		t.Fatalf("decode duplicate stop receipt %q: %v", stopDuplicateText, err)
+	}
+	if stopDuplicate.State != stopReceipt.State || stopDuplicate.IssueID != stopReceipt.IssueID ||
+		stopDuplicate.ExecutionID != stopReceipt.ExecutionID || stopDuplicate.SessionID != stopReceipt.SessionID ||
+		stopDuplicate.TaskID != stopReceipt.TaskID {
+		t.Fatalf("duplicate stop receipt changed: got=%+v want=%+v", stopDuplicate, stopReceipt)
+	}
+
+	var conversationSession string
+	h.pump.do(func() { conversationSession = h.app.selectedContact().SessionID })
+	if conversationSession == "" || conversationSession == aOldSession || conversationSession == bExecution.SessionID {
+		t.Fatalf("conversation session is not independent: %q A=%q B=%q", conversationSession, aOldSession, bExecution.SessionID)
+	}
+
+	provider.releaseA()
+	select {
+	case <-provider.firstDone:
+	case <-time.After(15 * time.Second):
+		t.Fatal("held A provider request did not finish after release")
+	}
+	t.Logf("stage: waiting for conversation stop to drain")
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		return ct.SendState == sendIdle && ct.ActiveTaskID == "" && !ct.HistoryDirty
+	})
+
+	var runSendErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "RUN-CONV-200"
+		if !h.app.sendCurrent() {
+			runSendErr = ct.SendError
+		}
+	})
+	if runSendErr != "" {
+		t.Fatalf("send run conversation: %s", runSendErr)
+	}
+	t.Logf("stage: waiting for second A execution completed")
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		a := ct.issueByID(aID)
+		return ct.SendState == sendIdle && ct.ActiveTaskID == "" && !ct.HistoryDirty &&
+			a != nil && a.Work.ActiveTaskID == "" && a.Work.SendState == sendIdle &&
+			len(a.Executions) == 2 && a.Executions[0].ID == aOldExecution &&
+			a.Executions[0].Status == issueExecutionInterrupted &&
+			a.Executions[1].Status == issueExecutionCompleted &&
+			a.Executions[1].TaskID != aOldTask
+	})
+	var newExecution issueExecution
+	var runReceipt IssueToolReceipt
+	var runBody string
+	h.pump.do(func() {
+		a := h.app.selectedContact().issueByID(aID)
+		newExecution = *a.Executions[1]
+		runBody = provider.groupBody("run-conversation")
+	})
+	if runBody == "" {
+		t.Fatal("run conversation body was not recorded")
+	}
+	runReceiptText := issueToolTestOutput(runBody, "run-call")
+	if runReceiptText == "" {
+		t.Fatal("run helper receipt was not returned to the conversation")
+	}
+	if err := json.Unmarshal([]byte(runReceiptText), &runReceipt); err != nil {
+		t.Fatalf("decode run receipt %q: %v", runReceiptText, err)
+	}
+	if runReceipt.State != issueToolReceiptAccepted || runReceipt.IssueID != aID ||
+		runReceipt.ExecutionID != newExecution.ID || runReceipt.SessionID != newExecution.SessionID ||
+		runReceipt.TaskID != newExecution.TaskID || runReceipt.MessageID == "" {
+		t.Fatalf("run receipt identity = %+v, want new A execution/task", runReceipt)
+	}
+	runDuplicateText := issueToolTestOutput(runBody, "run-duplicate")
+	if runDuplicateText == "" {
+		t.Fatal("duplicate run receipt was not returned in the same conversation turn")
+	}
+	var runDuplicate IssueToolReceipt
+	if err := json.Unmarshal([]byte(runDuplicateText), &runDuplicate); err != nil {
+		t.Fatalf("decode duplicate run receipt %q: %v", runDuplicateText, err)
+	}
+	if runDuplicate.State != runReceipt.State || runDuplicate.IssueID != runReceipt.IssueID ||
+		runDuplicate.ExecutionID != runReceipt.ExecutionID || runDuplicate.SessionID != runReceipt.SessionID ||
+		runDuplicate.TaskID != runReceipt.TaskID || runDuplicate.MessageID != runReceipt.MessageID {
+		t.Fatalf("duplicate run receipt changed: got=%+v want=%+v", runDuplicate, runReceipt)
+	}
+	if newExecution.ID == aOldExecution || newExecution.TaskID == aOldTask ||
+		newExecution.SessionID != aOldSession || newExecution.RequirementsRevision != aOldRevision {
+		t.Fatalf("new/old execution identity = new=%+v old=%s/%s/%d", newExecution, aOldExecution, aOldTask, aOldRevision)
+	}
+	var oldPromptPreserved bool
+	h.pump.do(func() {
+		oldPromptPreserved = h.app.selectedContact().issueByID(aID).Executions[0].Prompt == aOldPrompt
+	})
+	if !oldPromptPreserved {
+		t.Fatal("old A execution prompt snapshot was not preserved")
+	}
+	var aRequirementsText []string
+	h.pump.do(func() {
+		for _, requirement := range h.app.selectedContact().issueByID(aID).Requirements {
+			aRequirementsText = append(aRequirementsText, requirement.Text)
+		}
+	})
+	if strings.Join(aRequirementsText, "\n") != strings.TrimSuffix(aOldRequirements, "\n") {
+		t.Fatalf("A requirements snapshot changed: %q -> %v", aOldRequirements, aRequirementsText)
+	}
+	aRecords := issueToolJournalTasks(t, h, aOldSession)
+	if len(aRecords) != 2 || aRecords[aOldTask] != string(issueExecutionInterrupted) ||
+		aRecords[newExecution.TaskID] != string(issueExecutionCompleted) {
+		t.Fatalf("A journal tasks = %v, want exactly old interrupted/new completed", aRecords)
+	}
+	conversationRecords := issueToolJournalTasks(t, h, conversationSession)
+	if len(conversationRecords) != 2 {
+		t.Fatalf("conversation journal tasks = %v, want stop+run turns", conversationRecords)
+	}
+	for taskID, status := range conversationRecords {
+		if status != string(issueExecutionCompleted) {
+			t.Fatalf("conversation task %s terminal = %q", taskID, status)
+		}
+	}
+
+	// The duplicate calls above used the same scope/turn and returned the
+	// retained receipts. They must not create another operation, execution or
+	// Runtime task.
+	var operationCount, executionCount int
+	h.pump.do(func() {
+		operationCount = len(h.app.issueToolLedger.Operations)
+		executionCount = len(h.app.selectedContact().issueByID(aID).Executions)
+	})
+	if operationCount != 2 || executionCount != 2 {
+		t.Fatalf("duplicate calls changed operations/executions: ops=%d execs=%d", operationCount, executionCount)
+	}
+	if provider.count("a-work") != 2 || provider.count("b-work") != 1 ||
+		provider.count("stop-conversation") != 3 || provider.count("run-conversation") != 3 ||
+		provider.count("other") != 0 {
+		t.Fatalf("provider groups = a=%d b=%d stop=%d run=%d other=%d", provider.count("a-work"), provider.count("b-work"), provider.count("stop-conversation"), provider.count("run-conversation"), provider.count("other"))
+	}
+	var selectedB, bIntact bool
+	var bRequirementsText []string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		b := ct.issueByID(bID)
+		selectedB = ct.SelectedIssueID == bID
+		bIntact = b != nil && b.Goal == bGoal && b.RequirementsRevision == bRevision &&
+			len(b.Executions) == 1 && b.Executions[0].ID == bExecution.ID &&
+			b.Executions[0].Status == issueExecutionCompleted &&
+			b.Executions[0].SessionID == bExecution.SessionID && b.Executions[0].TaskID == bExecution.TaskID &&
+			b.Executions[0].MessageID == bExecution.MessageID &&
+			b.Executions[0].Prompt == bExecution.Prompt && b.WorkSessionID == bExecution.SessionID
+		for _, requirement := range b.Requirements {
+			bRequirementsText = append(bRequirementsText, requirement.Text)
+		}
+	})
+	if !selectedB || !bIntact {
+		t.Fatalf("selected/B state changed after final A continuation: selected=%v intact=%v", selectedB, bIntact)
+	}
+	if strings.Join(bRequirementsText, "\n") != strings.Join(bRequirements, "\n") {
+		t.Fatalf("B requirements changed: %v -> %v", bRequirements, bRequirementsText)
+	}
+	bRecords := issueToolJournalTasks(t, h, bExecution.SessionID)
+	if len(bRecords) != 1 || bRecords[bExecution.TaskID] != string(issueExecutionCompleted) {
+		t.Fatalf("B journal tasks = %v", bRecords)
+	}
+	t.Logf("provider groups: a=%d b=%d stop=%d run=%d other=%d", provider.count("a-work"), provider.count("b-work"), provider.count("stop-conversation"), provider.count("run-conversation"), provider.count("other"))
+	t.Logf("journal A=%v B=%v conversation=%v", aRecords, bRecords, conversationRecords)
+	t.Logf("receipts stop=%+v run=%+v", stopReceipt, runReceipt)
+	t.Logf("final facts: operations=%d A_executions=%d selectedB=%v conversation_session=%s A_session=%s B_session=%s", operationCount, executionCount, selectedB, conversationSession, aOldSession, bExecution.SessionID)
+	h.shutdown(t)
+}

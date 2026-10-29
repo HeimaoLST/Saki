@@ -691,6 +691,8 @@ type resolvedTheme struct {
 - **最终在线试用（独立证据）**：隔离 store/session/workspace、仅 snapshot fixture，`deepseek/deepseek-flash` + Chat Completions + Magpie；observer 允许 24 上游、共享 180s，实际 **23 请求全部 200**、exit 0、36.344s。五阶段新 task：discussion `1793043578025997000-96774`、delegation `1793043579607681000-96774`、work `1793043583314141000-96774`、query `1793043597185680000-96774`、restart `1793043605750879000-97545`；restart task 不同于前一查询 task，事项仍为 1、execution 仍为 1，无重派。结果文件 `result.txt` 保留青岚/林/result.txt 事实。旧 19f/1012 等 FAIL 原样保留。
 - **未完成边界**：schema 1/legacy 既有 session、容量下问答自动继续的独立矩阵、多个 work session 的 tool-process release/load 压力、完整动作成熟度与完整 MVP 仍未完成；native/CUA 未验，不把 headless/Go 结果扩称为原生验收。
 
+- **#200 定向真实链回归（2026-10-29）**：新增测试走真实 conversation → same-binary MCP helper → Unix IPC → app → Rust `task.cancel` 链路；A 的 stop 以 Runtime 实际 `interrupted` 终态和 GUI execution 同步为准，不只接受 `stop_requested`/stopping。下一 conversation turn 以合法 `run` 继续同一事项，产生新的 execution/task 并实际 `completed`；本用例 Stop 后事项仍 `in_progress`，`resume` 用于 waiting/needs_attention，不能替代这里创建下一执行的 `run`。界面保持选中已完成执行的 B，B 的 goal、requirements、非空 execution/session/task/message 与内容不变。同一 scope/turn 内重复 stop/run 工具往返返回原 receipt，不新增 operation、execution、Runtime task 或 provider work 请求。精确结果见 [#200](https://github.com/HeimaoLST/Saki/issues/200)。证据来自受控本地 provider、headless/Go 链路与真实 Rust candidate，不是 native、真实 IME 或在线 provider 验收。
+
 ## #182 可读事项工作台与恢复边界（实现事实，2026-10-27）
 
 代码来源：`agent/gui/182-readable-workspace`，从 QA 基线 `7a6b9b1` 开出；当前增量实现源 `ad8998930bc5dc55a543b2d1cc450dc9640953a1`（前序 `003df7a`、`7f37afc` 的完整矩阵证据是历史候选，不自动覆盖此增量）。本节只描述本轮工作台可读性修复，不代表 #156 全 MVP、原生包或在线模型验收通过。
