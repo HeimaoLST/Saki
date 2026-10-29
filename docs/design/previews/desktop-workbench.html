@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Nagi · 工作台设计预览</title>
+    <title>Nagi · 工作台设计预览 v08</title>
     <style>
       :root {
         color-scheme: light;
@@ -994,6 +994,277 @@
         color: var(--muted);
         margin-bottom: 24px;
       }
+      .settings-entry {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 34px;
+        padding: 6px 9px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .settings-entry:hover {
+        color: var(--ink);
+      }
+      .settings-entry[aria-current="page"] {
+        background: var(--tint);
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .settings-page {
+        grid-column: 1;
+        grid-row: 1;
+        display: block;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: var(--surface);
+      }
+      .settings-page[hidden] {
+        display: none !important;
+      }
+      .app.settings-open {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr);
+      }
+      .app.settings-open .rail,
+      .app.settings-open .main,
+      .app.settings-open .splitter,
+      .app.settings-open .work {
+        display: none !important;
+      }
+      .settings-shell {
+        display: grid;
+        grid-template-columns: 200px minmax(0, 1fr);
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+      }
+      .settings-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        min-height: 0;
+        padding: 20px 14px;
+        border-right: 1px solid var(--line);
+        background: var(--rail);
+      }
+      .settings-back {
+        align-self: flex-start;
+      }
+      .settings-sidebar h1 {
+        padding: 0 10px;
+        font-size: 24px;
+        line-height: 1.3;
+        font-weight: 600;
+      }
+      .settings-purpose {
+        padding: 0 10px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .settings-leave-note {
+        margin-bottom: 18px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: var(--warning-bg);
+        color: var(--warning);
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .settings-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        min-height: 0;
+      }
+      .settings-nav button {
+        min-height: 36px;
+        padding: 8px 10px;
+        border-radius: 7px;
+        text-align: left;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .settings-nav button[aria-current="page"] {
+        background: var(--tint);
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .settings-main {
+        min-width: 0;
+        min-height: 0;
+        overflow: auto;
+        padding: 32px 40px 48px;
+      }
+      .settings-content {
+        width: 100%;
+        max-width: 720px;
+        min-width: 0;
+        margin: 0 auto;
+      }
+      .appearance-cards {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 4px;
+      }
+      .appearance-card {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 7px;
+        min-height: 142px;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+        text-align: left;
+      }
+      .appearance-card:hover {
+        background: var(--panel);
+        border-color: var(--muted);
+      }
+      .appearance-card[aria-pressed="true"] {
+        border-color: var(--accent);
+        box-shadow: inset 0 0 0 1px var(--accent);
+      }
+      .appearance-preview {
+        display: block;
+        height: 64px;
+        border: 1px solid #0002;
+        border-radius: 7px;
+        background: #ffffff;
+        color: #252c28;
+      }
+      .appearance-preview.night {
+        background: #202622;
+        color: #edf1eb;
+        border-color: #0006;
+      }
+      .appearance-preview.system {
+        background: linear-gradient(90deg, #ffffff 0 50%, #202622 50% 100%);
+      }
+      .appearance-preview span {
+        display: block;
+        margin: 12px 10px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .appearance-card strong {
+        font-size: 13px;
+      }
+      .appearance-card small {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .appearance-check {
+        color: var(--accent);
+        font-size: 11px;
+        font-weight: 600;
+        min-height: 16px;
+      }
+      .appearance-card[aria-pressed="false"] .appearance-check {
+        visibility: hidden;
+      }
+      .connection-summary {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--panel);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .connection-summary strong {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .settings-issue {
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: var(--warning-bg);
+        color: var(--warning);
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .settings-form label {
+        display: block;
+        margin: 14px 0 6px;
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .settings-form .field {
+        min-height: 36px;
+      }
+      .settings-form small {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .field-error {
+        margin-top: 5px;
+        color: var(--warning);
+        font-size: 13px;
+      }
+      .settings-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .settings-grid label {
+        margin-top: 0;
+      }
+      .settings-advanced {
+        margin-top: 18px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+      }
+      .settings-advanced summary {
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .settings-advanced .settings-grid {
+        margin-top: 10px;
+      }
+      .settings-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 20px;
+      }
+      .settings-status {
+        min-height: 44px;
+        padding: 9px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .settings-status:empty {
+        min-height: 44px;
+      }
+      .settings-diagnostics {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: 10px 18px;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .settings-diagnostics dt {
+        color: var(--muted);
+      }
+      .settings-diagnostics dd {
+        margin: 0;
+      }
       .modal {
         padding: 0;
         background: var(--surface);
@@ -1153,6 +1424,50 @@
           opacity: 1;
           transform: none;
         }
+      }
+      .app.settings-open.settings-narrow .settings-shell {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+      .app.settings-open.settings-narrow .settings-sidebar {
+        gap: 8px;
+        padding: 12px 16px;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .app.settings-open.settings-narrow .settings-back {
+        align-self: flex-start;
+      }
+      .app.settings-open.settings-narrow .settings-sidebar h1,
+      .app.settings-open.settings-narrow .settings-purpose {
+        padding: 0;
+      }
+      .app.settings-open.settings-narrow .settings-sidebar h1 {
+        font-size: 22px;
+      }
+      .app.settings-open.settings-narrow .settings-nav {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .app.settings-open.settings-narrow .settings-nav button {
+        flex: 0 0 auto;
+        min-height: 34px;
+        padding: 7px 10px;
+      }
+      .app.settings-open.settings-narrow .settings-main {
+        padding: 20px 16px 32px;
+      }
+      .app.settings-open.settings-narrow .appearance-cards,
+      .app.settings-open.settings-narrow .settings-grid,
+      .app.settings-open.settings-narrow .settings-diagnostics {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .app.settings-open.settings-narrow .settings-diagnostics {
+        gap: 4px;
+      }
+      .app.settings-open.settings-narrow .settings-diagnostics dd {
+        margin-bottom: 10px;
       }
       @media (prefers-reduced-motion: reduce) {
         *,
@@ -1324,7 +1639,7 @@
     </svg>
     <header class="proto-bar">
       <div>
-        <strong>Nagi</strong> 工作台 / 设计预览 07
+        <strong>Nagi</strong> 工作台 / 设计预览 08
         <span class="muted"> · 示例数据</span>
       </div>
       <div class="proto-tools">
@@ -1373,12 +1688,13 @@
         <div class="rail-bottom">
           <span class="small">本地工作台</span
           ><button
-            class="icon"
-            id="appearance"
-            aria-label="应用外观"
-            title="应用外观"
+            class="settings-entry"
+            id="settings-entry"
+            aria-label="设置"
+            aria-current="false"
           >
-            <svg aria-hidden="true"><use href="#i-settings" /></svg>
+            <svg aria-hidden="true"><use href="#i-settings" /></svg
+            ><span>设置</span>
           </button>
         </div>
       </aside>
@@ -1415,9 +1731,9 @@
               ><span class="status" id="work-count">· 3</span></button
             ><button
               class="icon"
-              id="contact-settings"
-              aria-label="联系人设置"
-              title="联系人设置"
+              id="contact-profile-open"
+              aria-label="联系人资料"
+              title="联系人资料"
             >
               <svg aria-hidden="true"><use href="#i-more" /></svg>
             </button>
@@ -1429,7 +1745,7 @@
         <div class="composer-wrap">
           <div class="alert-inline" id="connection-error" hidden>
             <span>连接已断开，草稿仍在。恢复连接后可继续发送。</span
-            ><button class="quiet" id="diagnostics">查看诊断</button>
+            ><button class="quiet" id="diagnostics">连接设置</button>
           </div>
           <div class="composer">
             <label class="sr" for="draft">给当前联系人发消息</label
@@ -1453,6 +1769,186 @@
           </div>
         </div>
       </main>
+      <section
+        class="settings-page"
+        id="settings-page"
+        aria-labelledby="settings-title"
+        hidden
+      >
+        <div class="settings-shell">
+          <aside class="settings-sidebar">
+            <button class="soft settings-back" id="settings-back">
+              ← 返回工作台
+            </button>
+            <h1 id="settings-title" tabindex="-1">设置</h1>
+            <p class="settings-purpose">外观、连接与联系人资料</p>
+            <nav class="settings-nav" aria-label="设置分类">
+              <button type="button" data-settings-tab="appearance" aria-current="page">
+                外观
+              </button>
+              <button type="button" data-settings-tab="connection">
+                连接与模型
+              </button>
+              <button type="button" data-settings-tab="contact">
+                联系人资料
+              </button>
+              <button type="button" data-settings-tab="advanced">高级</button>
+            </nav>
+          </aside>
+          <div class="settings-main" id="settings-main">
+            <div class="settings-content">
+              <div class="settings-leave-note" id="settings-leave-note" hidden></div>
+              <section
+                class="settings-panel"
+                data-settings-panel="appearance"
+                aria-labelledby="settings-appearance-title"
+              >
+                <h2 id="settings-appearance-title" tabindex="-1">外观</h2>
+                <p class="settings-help">
+                  选择整个工作台的显示方式，更改立即生效。
+                </p>
+                <div class="appearance-cards" role="group" aria-label="外观模式">
+                  <button
+                    type="button"
+                    class="appearance-card"
+                    data-appearance-choice="system"
+                    aria-pressed="false"
+                  >
+                    <span class="appearance-preview system" aria-hidden="true"
+                      ><span>系统</span></span
+                    >
+                    <strong>跟随系统</strong>
+                    <small>随 macOS 外观变化</small>
+                    <span class="appearance-check"></span>
+                  </button>
+                  <button
+                    type="button"
+                    class="appearance-card"
+                    data-appearance-choice="paper"
+                    aria-pressed="false"
+                  >
+                    <span class="appearance-preview" aria-hidden="true"
+                      ><span>浅色</span></span
+                    >
+                    <strong>浅色</strong>
+                    <small>Paper · 明亮阅读</small>
+                    <span class="appearance-check"></span>
+                  </button>
+                  <button
+                    type="button"
+                    class="appearance-card"
+                    data-appearance-choice="night"
+                    aria-pressed="false"
+                  >
+                    <span class="appearance-preview night" aria-hidden="true"
+                      ><span>深色</span></span
+                    >
+                    <strong>深色</strong>
+                    <small>Night · 低光环境</small>
+                    <span class="appearance-check"></span>
+                  </button>
+                </div>
+                <div class="settings-status" id="settings-appearance-status" role="status" aria-live="polite"></div>
+              </section>
+
+              <section
+                class="settings-panel"
+                data-settings-panel="connection"
+                aria-labelledby="settings-connection-title"
+                hidden
+              >
+                <h2 id="settings-connection-title" tabindex="-1">连接与模型</h2>
+                <p class="settings-help">
+                  管理模型连接。保存、应用和测试是三个独立动作。
+                </p>
+                <div class="settings-issue" id="settings-connection-issue" hidden></div>
+                <div class="connection-summary" id="settings-connection-summary"></div>
+                <form id="settings-connection-form" class="settings-form" novalidate>
+                  <label for="settings-protocol">API 协议</label>
+                  <select class="field" id="settings-protocol">
+                    <option value="openai-chat-completions">Chat Completions</option>
+                    <option value="openai-responses">Responses</option>
+                  </select>
+                  <label for="settings-endpoint">地址</label>
+                  <input class="field" id="settings-endpoint" autocomplete="off" placeholder="https://provider.example/v1" />
+                  <p class="field-error" id="settings-endpoint-error" hidden></p>
+                  <label for="settings-api-key">API 密钥</label>
+                  <input class="field" id="settings-api-key" type="password" autocomplete="off" placeholder="本地 dummy 值或留空" />
+                  <small>此预览仅使用 dummy 值；不要输入真实密钥。</small>
+                  <label for="settings-model">默认模型</label>
+                  <input class="field" id="settings-model" autocomplete="off" placeholder="provider model ID" />
+                  <p class="field-error" id="settings-model-error" hidden></p>
+                  <label for="settings-working-directory">工作目录</label>
+                  <input class="field" id="settings-working-directory" autocomplete="off" placeholder="/absolute/path/to/workspace" />
+                  <p class="field-error" id="settings-working-directory-error" hidden></p>
+                  <details class="settings-advanced">
+                    <summary>容量与执行</summary>
+                    <div class="settings-grid">
+                      <label for="settings-context-tokens">上下文上限<input class="field" id="settings-context-tokens" inputmode="numeric" /></label>
+                      <label for="settings-output-tokens">输出上限<input class="field" id="settings-output-tokens" inputmode="numeric" /></label>
+                      <label for="settings-max-active">最大并发<input class="field" id="settings-max-active" inputmode="numeric" /></label>
+                    </div>
+                  </details>
+                  <div class="settings-actions">
+                    <button class="primary" type="submit">保存变更</button>
+                    <button class="soft" type="button" id="settings-apply" hidden>应用保存的变更</button>
+                    <button class="quiet" type="button" id="settings-discard" hidden>放弃修改</button>
+                    <button class="quiet" type="button" id="settings-test">测试连接</button>
+                  </div>
+                  <div class="settings-status" id="settings-connection-status" role="status" aria-live="polite"></div>
+                </form>
+              </section>
+
+              <section
+                class="settings-panel"
+                data-settings-panel="contact"
+                aria-labelledby="settings-contact-title"
+                hidden
+              >
+                <h2 id="settings-contact-title" tabindex="-1">联系人资料</h2>
+                <p class="settings-help">
+                  正在编辑：<strong id="settings-contact-current"></strong>。这里只修改此联系人；保存后新会话使用新资料，已有会话保留创建时的快照。
+                </p>
+                <form id="settings-contact-form" class="settings-form" novalidate>
+                  <label for="settings-contact-picker">编辑联系人</label>
+                  <select class="field" id="settings-contact-picker"></select>
+                  <label for="settings-contact-name">名称</label>
+                  <input class="field" id="settings-contact-name" autocomplete="off" />
+                  <label for="settings-contact-purpose">用途</label>
+                  <input class="field" id="settings-contact-purpose" autocomplete="off" placeholder="这位搭档主要帮你做什么？" />
+                  <small>仅影响正在编辑的联系人的后续会话；不会修改全局连接、模型或容量设置。</small>
+                  <div class="settings-actions">
+                    <button class="primary" type="submit">保存联系人资料</button>
+                    <button class="quiet" type="button" id="settings-contact-discard" hidden>放弃修改</button>
+                  </div>
+                  <div class="settings-status" id="settings-contact-status" role="status" aria-live="polite"></div>
+                </form>
+              </section>
+
+              <section
+                class="settings-panel"
+                data-settings-panel="advanced"
+                aria-labelledby="settings-advanced-title"
+                hidden
+              >
+                <h2 id="settings-advanced-title" tabindex="-1">高级</h2>
+                <p class="settings-help">
+                  只读信息。
+                </p>
+                <dl class="settings-diagnostics">
+                  <dt>示例诊断</dt>
+                  <dd>恢复会话时连接断开，草稿仍保留。</dd>
+                  <dt>版本</dt>
+                  <dd>Nagi 工作台 v08</dd>
+                </dl>
+                <div class="settings-actions">
+                  <button class="soft" type="button" id="settings-advanced-connection">打开连接设置</button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </section>
       <div
         class="splitter"
         id="right-split"
@@ -1494,9 +1990,8 @@
     </div>
     <footer class="proto-footer">
       <span
-        >可试：打开工作区 → 查看事项 →
-        返回；切换联系人、看板、轨迹和外观。</span
-      ><span>交互提案 · 不调用模型</span>
+        >可试：设置 → 分类 → 返回；工作区、阅读与看板仍可用。</span
+      ><span>交互提案 v08 · 不调用模型</span>
     </footer>
     <dialog class="modal" id="modal" aria-labelledby="modal-title">
       <header class="modal-head">
@@ -1674,6 +2169,35 @@
         rightWidth = 340,
         modalOrigin = null,
         toastTimer;
+      const defaultConnection = {
+        protocol: "openai-chat-completions",
+        endpoint: "http://127.0.0.1:8787/v1",
+        key: "",
+        model: "deepseek-v4.1-flash",
+        workingDirectory: "/Users/you/Workspace/saki",
+        contextTokens: "131072",
+        outputTokens: "8192",
+        maxActiveTasks: "2",
+      };
+      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+      const settings = {
+        open: false,
+        tab: "appearance",
+        origin: null,
+        returnState: null,
+        appearance:
+          document.documentElement.dataset.theme === "night"
+            ? "night"
+            : "paper",
+        connection: { ...defaultConnection },
+        connectionSaved: null,
+        connectionApplied: { ...defaultConnection },
+        contact: { name: "Saki", purpose: "日常搭档" },
+        contactID: "saki",
+        contactDrafts: {},
+        notice: "",
+        issue: "",
+      };
       const current = () => contacts.find((c) => c.id === selected);
       const currentTasks = () => tasks.filter((t) => t.contact === selected);
       const stateLabel = (t) =>
@@ -1979,11 +2503,289 @@
           true,
         );
       }
-      function openSettings() {
-        showModal(
-          "联系人设置",
-          `<form id="settings-form"><label for="name">名称</label><input id="name" class="field" required value="${escapeHTML(current().name)}"><label for="purpose">用途</label><input id="purpose" class="field" value="${escapeHTML(current().description)}"><small>这里只修改预览中的联系人，不影响真实配置。</small><div class="form-actions"><button type="button" class="quiet" data-close>取消</button><button class="primary">保存</button></div></form>`,
+      function connectionProtocolLabel(value) {
+        return value === "openai-responses" ? "Responses" : "Chat Completions";
+      }
+      function connectionEqual(a, b) {
+        return JSON.stringify(a) === JSON.stringify(b);
+      }
+      function captureChatDraft() {
+        current().draft = $("draft").value;
+      }
+      function captureConnectionDraft() {
+        settings.connection = {
+          protocol: $("settings-protocol").value,
+          endpoint: $("settings-endpoint").value.trim(),
+          key: $("settings-api-key").value,
+          model: $("settings-model").value.trim(),
+          workingDirectory: $("settings-working-directory").value.trim(),
+          contextTokens: $("settings-context-tokens").value.trim(),
+          outputTokens: $("settings-output-tokens").value.trim(),
+          maxActiveTasks: $("settings-max-active").value.trim(),
+        };
+      }
+      function captureContactDraft() {
+        settings.contact = {
+          name: $("settings-contact-name").value.trim(),
+          purpose: $("settings-contact-purpose").value.trim(),
+        };
+        settings.contactDrafts[settings.contactID || selected] = {
+          ...settings.contact,
+        };
+      }
+      function captureSettingsDrafts() {
+        if (!settings.open) return;
+        captureConnectionDraft();
+        captureContactDraft();
+      }
+      function settingsContact() {
+        return (
+          contacts.find((contact) => contact.id === settings.contactID) ||
+          current()
         );
+      }
+      function setContactEditingTarget(id) {
+        settings.contactID = id;
+        const target = settingsContact();
+        const draft = settings.contactDrafts[target.id];
+        settings.contact = draft
+          ? { ...draft }
+          : { name: target.name, purpose: target.description };
+      }
+      function connectionDraftDirty() {
+        const base = settings.connectionSaved || settings.connectionApplied;
+        return !connectionEqual(settings.connection, base);
+      }
+      function contactDraftDirty() {
+        const target = settingsContact();
+        return (
+          settings.contact.name !== target.name ||
+          settings.contact.purpose !== target.description
+        );
+      }
+      function connectionPendingApply() {
+        return (
+          settings.connectionSaved &&
+          !connectionEqual(settings.connectionSaved, settings.connectionApplied)
+        );
+      }
+      function updateSettingsActionVisibility() {
+        $("settings-apply").hidden = !connectionPendingApply();
+        $("settings-discard").hidden = !connectionDraftDirty();
+        $("settings-contact-discard").hidden = !contactDraftDirty();
+      }
+      function settingsLeaveNotice() {
+        const changed = [];
+        if (connectionDraftDirty()) changed.push("连接设置");
+        if (contactDraftDirty()) changed.push("联系人资料");
+        if (!changed.length) return "";
+        return changed.join("、") + "中有未保存的更改，已保留。";
+      }
+      function renderConnectionSummary() {
+        const c = settings.connectionApplied;
+        $("settings-connection-summary").innerHTML =
+          `<strong>当前应用</strong><span>${escapeHTML(connectionProtocolLabel(c.protocol))} · ${escapeHTML(c.model)} · ${escapeHTML(c.workingDirectory)}</span>` +
+          `<span class="small muted">地址 ${escapeHTML(c.endpoint)} · 容量与执行可在下方展开调整</span>`;
+      }
+      function renderAppearanceCards() {
+        document
+          .querySelectorAll("[data-appearance-choice]")
+          .forEach((card) => {
+            const chosen = card.dataset.appearanceChoice === settings.appearance;
+            card.setAttribute("aria-pressed", String(chosen));
+            card.querySelector(".appearance-check").textContent = chosen
+              ? "当前"
+              : "";
+          });
+        const effective =
+          settings.appearance === "system"
+            ? systemTheme.matches
+              ? "深色"
+              : "浅色"
+            : settings.appearance === "night"
+              ? "深色"
+              : "浅色";
+        $("settings-appearance-status").textContent =
+          "当前：" +
+          (settings.appearance === "system"
+            ? "跟随系统（" + effective + "）"
+            : settings.appearance === "night"
+              ? "深色"
+              : "浅色");
+      }
+      function applyAppearanceChoice(choice, announceIt = true) {
+        settings.appearance = choice;
+        const dark =
+          choice === "system" ? systemTheme.matches : choice === "night";
+        document.documentElement.dataset.theme = dark ? "night" : "paper";
+        $("theme").value = dark ? "night" : "paper";
+        renderAppearanceCards();
+        if (announceIt) announce("外观已应用");
+      }
+      function showConnectionFieldError(inputID, errorID, message) {
+        $(inputID).setAttribute(
+          "aria-invalid",
+          message ? "true" : "false",
+        );
+        const error = $(errorID);
+        error.textContent = message;
+        error.hidden = !message;
+      }
+      function validateConnection() {
+        const errors = {};
+        if (!/^https?:\/\/\S+$/.test(settings.connection.endpoint))
+          errors.endpoint = "请输入以 http:// 或 https:// 开头的完整地址。";
+        if (!settings.connection.model)
+          errors.model = "请输入这个连接使用的默认模型。";
+        if (!settings.connection.workingDirectory.startsWith("/"))
+          errors.cwd = "请输入以 / 开头的绝对工作目录。";
+        for (const key of ["contextTokens", "outputTokens", "maxActiveTasks"]) {
+          const value = Number(settings.connection[key]);
+          if (
+            settings.connection[key] !== "" &&
+            (!Number.isInteger(value) || value < 1)
+          )
+            errors.capacity = "容量与并发必须是正整数。";
+        }
+        showConnectionFieldError(
+          "settings-endpoint",
+          "settings-endpoint-error",
+          errors.endpoint,
+        );
+        showConnectionFieldError(
+          "settings-model",
+          "settings-model-error",
+          errors.model,
+        );
+        showConnectionFieldError(
+          "settings-working-directory",
+          "settings-working-directory-error",
+          errors.cwd,
+        );
+        if (errors.endpoint) $("settings-endpoint").focus();
+        else if (errors.model) $("settings-model").focus();
+        else if (errors.cwd) $("settings-working-directory").focus();
+        if (errors.capacity)
+          $("settings-connection-status").textContent = errors.capacity;
+        return !Object.keys(errors).length;
+      }
+      function renderConnectionForm() {
+        $("settings-protocol").value = settings.connection.protocol;
+        $("settings-endpoint").value = settings.connection.endpoint;
+        $("settings-api-key").value = settings.connection.key;
+        $("settings-model").value = settings.connection.model;
+        $("settings-working-directory").value =
+          settings.connection.workingDirectory;
+        $("settings-context-tokens").value = settings.connection.contextTokens;
+        $("settings-output-tokens").value = settings.connection.outputTokens;
+        $("settings-max-active").value = settings.connection.maxActiveTasks;
+        $("settings-connection-issue").hidden = !settings.issue;
+        $("settings-connection-issue").textContent = settings.issue;
+        renderConnectionSummary();
+      }
+      function renderContactForm() {
+        const target = settingsContact();
+        if (target.id !== settings.contactID) settings.contactID = target.id;
+        $("settings-contact-current").textContent = target.name;
+        $("settings-contact-picker").innerHTML = contacts
+          .map(
+            (contact) =>
+              `<option value="${contact.id}">${escapeHTML(contact.name)}${contact.archived ? "（已归档）" : ""}</option>`,
+          )
+          .join("");
+        $("settings-contact-picker").value = target.id;
+        $("settings-contact-name").value = settings.contact.name;
+        $("settings-contact-purpose").value = settings.contact.purpose;
+        $("settings-contact-status").textContent = contactDraftDirty()
+          ? "有未保存的更改。"
+          : "";
+      }
+      function renderSettings() {
+        $("settings-leave-note").hidden = !settings.notice;
+        $("settings-leave-note").textContent = settings.notice;
+        renderAppearanceCards();
+        renderConnectionForm();
+        renderContactForm();
+        updateSettingsActionVisibility();
+      }
+      function selectSettingsTab(tab, { focus = true, capture = true } = {}) {
+        if (capture) captureSettingsDrafts();
+        settings.tab = tab;
+        document.querySelectorAll("[data-settings-tab]").forEach((button) => {
+          button.setAttribute(
+            "aria-current",
+            button.dataset.settingsTab === tab ? "page" : "false",
+          );
+        });
+        document.querySelectorAll("[data-settings-panel]").forEach((panel) => {
+          panel.hidden = panel.dataset.settingsPanel !== tab;
+        });
+        renderSettings();
+        $("settings-main").scrollTop = 0;
+        if (focus) {
+          const panel = document.querySelector(
+            `[data-settings-panel="${tab}"]`,
+          );
+          panel?.querySelector("h2")?.focus();
+        }
+      }
+      function openSettings(tab = "appearance", opts = {}) {
+        if (settings.open) {
+          if (opts.issue) settings.issue = opts.issue;
+          selectSettingsTab(tab);
+          return;
+        }
+        captureChatDraft();
+        settings.returnState = {
+          workOpen: $("work").open,
+          workScroll: $("work-body").scrollTop,
+          conversationScroll: $("conversation").scrollTop,
+          selectedTask,
+          workspaceView,
+          filter,
+        };
+        settings.origin = opts.origin || document.activeElement;
+        settings.issue = opts.issue || "";
+        if ($("work").open) closeWork(false);
+        settings.open = true;
+        $("app").classList.add("settings-open");
+        $("settings-page").hidden = false;
+        $("settings-entry").setAttribute("aria-current", "page");
+        setContactEditingTarget(selected);
+        settings.notice = settingsLeaveNotice();
+        selectSettingsTab(tab, { focus: false, capture: false });
+        $("settings-main").scrollTop = 0;
+        $("settings-title").focus();
+      }
+      function closeSettingsPage() {
+        if (!settings.open) return;
+        captureSettingsDrafts();
+        settings.notice = settingsLeaveNotice();
+        if (settings.notice) announce(settings.notice);
+        const ret = settings.returnState;
+        const origin = settings.origin;
+        settings.open = false;
+        $("settings-page").hidden = true;
+        $("app").classList.remove("settings-open");
+        $("settings-entry").setAttribute("aria-current", "false");
+        settings.returnState = null;
+        settings.origin = null;
+        if (ret) {
+          selectedTask = ret.selectedTask;
+          workspaceView = ret.workspaceView;
+          filter = ret.filter;
+          if (ret.workOpen) {
+            openWork();
+            $("work-body").scrollTop = ret.workScroll;
+          }
+          $("conversation").scrollTop = ret.conversationScroll;
+        }
+        renderHeader();
+        renderContacts();
+        if ($("work").open && !$("app").classList.contains("docked"))
+          $("close-work").focus();
+        else if (origin?.isConnected) origin.focus();
+        else $("settings-entry").focus();
       }
       function newTask() {
         showModal(
@@ -2006,6 +2808,7 @@
           wasOpen = $("work").open;
         app.classList.toggle("docked", docked);
         app.classList.toggle("narrow", width < 1000);
+        app.classList.toggle("settings-narrow", width < 760);
         app.style.setProperty("--panel-right", innerWidth - rect.right + "px");
         app.style.setProperty("--panel-top", rect.top + "px");
         app.style.setProperty("--panel-height", rect.height + "px");
@@ -2099,9 +2902,23 @@
         closeModal();
       });
       document.addEventListener("keydown", (e) => {
+        if (settings.open) {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            $("settings-title").focus();
+          }
+          return;
+        }
         if (e.key === "Escape" && !$("modal").open && $("work").open) {
           e.preventDefault();
           closeWork();
+        }
+      });
+      document.addEventListener("keydown", (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+          e.preventDefault();
+          if ($("modal").open) closeModal();
+          openSettings("appearance", { origin: document.activeElement });
         }
       });
       $("work-body").addEventListener("change", (e) => {
@@ -2222,10 +3039,9 @@
         scene = e.target.value;
         render();
       });
-      $("theme").addEventListener(
-        "change",
-        (e) => (document.documentElement.dataset.theme = e.target.value),
-      );
+      $("theme").addEventListener("change", (e) => {
+        applyAppearanceChoice(e.target.value === "night" ? "night" : "paper", false);
+      });
       $("frame").addEventListener("change", (e) => {
         $("app").style.setProperty("--frame", e.target.value + "px");
         layout();
@@ -2233,38 +3049,148 @@
       $("board").addEventListener("click", () => showBoard());
       $("schedule").addEventListener("click", () => showBoard("schedule"));
       $("new-task").addEventListener("click", newTask);
-      $("contact-settings").addEventListener("click", openSettings);
-      $("appearance").addEventListener("click", () =>
-        showModal(
-          "应用外观",
-          '<p class="muted">预览中的外观会应用到整个工作台。</p><div class="tabs"><button data-theme-choice="paper">浅色</button><button data-theme-choice="night">深色</button></div>',
-        ),
-      );
-      $("history").addEventListener("click", () =>
-        showModal(
-          "对话历史",
-          `<p class="view-note">${escapeHTML(current().name)} 的对话</p>${current().messages.length ? '<button class="task-row" id="history-jump">' + icon("history") + '<span class="grow"><strong>今天的对话</strong><small>' + current().messages.length + " 条消息 · 回到最早一条</small></span>" + icon("chevron") + "</button>" : "<p>还没有对话记录。</p>"}`,
-        ),
-      );
-      $("add-contact").addEventListener("click", () =>
-        showModal(
-          "添加联系人",
-          '<form id="contact-form"><label for="new-name">名称</label><input id="new-name" class="field" required placeholder="给这位搭档起个名字"><label for="new-purpose">用途</label><input id="new-purpose" class="field" placeholder="例如：一起阅读和整理资料"><div class="form-actions"><button type="button" class="quiet" data-close>取消</button><button class="primary">添加联系人</button></div></form>',
-        ),
+      $("settings-entry").addEventListener("click", () => {
+        if (settings.open) {
+          selectSettingsTab("appearance");
+          $("settings-title").focus();
+          return;
+        }
+        openSettings("appearance", { origin: $("settings-entry") });
+      });
+      $("contact-profile-open").addEventListener("click", () =>
+        openSettings("contact", { origin: $("contact-profile-open") }),
       );
       $("diagnostics").addEventListener("click", () =>
-        showModal(
-          "连接诊断",
-          '<p>示例状态：Runtime 连接在恢复会话时断开。</p><p class="muted">草稿已保留。真实产品应显示具体失败原因，并提供重新连接入口；本预览不启动进程。</p>',
-        ),
+        openSettings("connection", {
+          origin: $("diagnostics"),
+          issue:
+            "示例：连接在恢复会话时断开。草稿已保留；请核对协议、地址和模型后重新连接。",
+        }),
       );
+      $("settings-page").addEventListener("click", (e) => {
+        const tab = e.target.closest("[data-settings-tab]");
+        if (tab) selectSettingsTab(tab.dataset.settingsTab);
+        const card = e.target.closest("[data-appearance-choice]");
+        if (card) applyAppearanceChoice(card.dataset.appearanceChoice);
+        if (e.target.id === "settings-back") closeSettingsPage();
+        if (e.target.id === "settings-advanced-connection") {
+          settings.issue = "";
+          selectSettingsTab("connection");
+        }
+      });
+      function clearConnectionFieldErrorFor(inputID) {
+        const map = {
+          "settings-endpoint": "settings-endpoint-error",
+          "settings-model": "settings-model-error",
+          "settings-working-directory": "settings-working-directory-error",
+        };
+        if (map[inputID]) showConnectionFieldError(inputID, map[inputID], "");
+      }
+      $("settings-connection-form").addEventListener("input", (e) => {
+        if (!settings.open) return;
+        captureConnectionDraft();
+        clearConnectionFieldErrorFor(e.target.id);
+        $("settings-connection-status").textContent = "有未保存的更改。";
+        updateSettingsActionVisibility();
+      });
+      $("settings-connection-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        if (!settings.open) return;
+        captureConnectionDraft();
+        $("settings-connection-status").textContent = "";
+        if (!validateConnection()) {
+          $("settings-connection-status").textContent =
+            "请检查标记的字段。";
+          return;
+        }
+        settings.connectionSaved = { ...settings.connection };
+        updateSettingsActionVisibility();
+        $("settings-connection-status").textContent = connectionPendingApply()
+          ? "已保存，待应用。"
+          : "已保存。";
+        announce(
+          connectionPendingApply()
+            ? "连接设置已保存，待应用"
+            : "连接设置已保存",
+        );
+      });
+      $("settings-apply").addEventListener("click", () => {
+        if (!settings.connectionSaved) return;
+        settings.connectionApplied = { ...settings.connectionSaved };
+        renderConnectionSummary();
+        updateSettingsActionVisibility();
+        $("settings-connection-status").textContent = "已应用。";
+        announce("连接设置已应用");
+      });
+      $("settings-test").addEventListener("click", () => {
+        $("settings-connection-status").textContent =
+          "演示状态：已记录测试操作，未发送模型请求。";
+        announce("演示状态：未发送模型请求");
+      });
+      $("settings-discard").addEventListener("click", () => {
+        settings.connection = {
+          ...(settings.connectionSaved || settings.connectionApplied),
+        };
+        ["settings-endpoint", "settings-model", "settings-working-directory"].forEach(
+          clearConnectionFieldErrorFor,
+        );
+        renderConnectionForm();
+        updateSettingsActionVisibility();
+        $("settings-connection-status").textContent = "已放弃未保存的更改。";
+      });
+      $("settings-contact-form").addEventListener("input", (e) => {
+        if (!settings.open || e.target.id === "settings-contact-picker") return;
+        captureContactDraft();
+        $("settings-contact-status").textContent = "有未保存的更改。";
+        updateSettingsActionVisibility();
+      });
+      $("settings-contact-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        if (!settings.open) return;
+        captureContactDraft();
+        if (!settings.contact.name) {
+          $("settings-contact-status").textContent = "请输入联系人名称。";
+          $("settings-contact-name").focus();
+          return;
+        }
+        const target = settingsContact();
+        target.name = settings.contact.name;
+        target.description = settings.contact.purpose;
+        settings.contactDrafts[target.id] = { ...settings.contact };
+        renderContacts();
+        if (target.id === selected) renderHeader();
+        renderContactForm();
+        updateSettingsActionVisibility();
+        $("settings-contact-status").textContent =
+          "已保存。仅影响正在编辑的联系人的后续会话。";
+        announce("联系人资料已保存");
+      });
+      $("settings-contact-discard").addEventListener("click", () => {
+        const target = settingsContact();
+        settings.contact = { name: target.name, purpose: target.description };
+        delete settings.contactDrafts[target.id];
+        renderContactForm();
+        updateSettingsActionVisibility();
+        $("settings-contact-status").textContent = "已放弃未保存的更改。";
+      });
+      $("settings-contact-picker").addEventListener("change", (e) => {
+        captureContactDraft();
+        setContactEditingTarget(e.target.value);
+        renderContactForm();
+        updateSettingsActionVisibility();
+      });
+      if (systemTheme.addEventListener)
+        systemTheme.addEventListener("change", () => {
+          if (settings.appearance === "system")
+            applyAppearanceChoice("system", false);
+        });
+      else if (systemTheme.addListener)
+        systemTheme.addListener(() => {
+          if (settings.appearance === "system")
+            applyAppearanceChoice("system", false);
+        });
       $("modal-content").addEventListener("click", (e) => {
         const b = e.target.closest("button");
-        if (b?.dataset.themeChoice) {
-          document.documentElement.dataset.theme = b.dataset.themeChoice;
-          $("theme").value = b.dataset.themeChoice;
-          closeModal();
-        }
         if (b?.id === "history-jump") {
           closeModal();
           $("conversation").scrollTop = 0;
@@ -2291,13 +3217,6 @@
           closeModal();
           render();
           $("draft").focus();
-        }
-        if (e.target.id === "settings-form") {
-          current().name = $("name").value.trim();
-          current().description = $("purpose").value.trim();
-          closeModal();
-          render();
-          announce("预览中的联系人已更新");
         }
         if (e.target.id === "task-form") {
           tasks.push({

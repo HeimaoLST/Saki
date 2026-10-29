@@ -106,4 +106,4 @@ Cumora 观察：
 
 ## 对 Nagi 的采用与取舍
 
-当前设计只有一个入口：[Nagi 工作台设计规范](../../design/desktop-workbench.md)，[可交互 HTML](../../design/previews/desktop-workbench.html)。研究记录只保存来源、观察及推论，不维护另一份尺寸或配色规范。v07 替代 v06 的视觉约束；产品定义和现有能力不能被旧原型阶段限制覆盖。
+当前设计只有一个入口：[Nagi 工作台设计规范](../../design/desktop-workbench.md)，[可交互 HTML](../../design/previews/desktop-workbench.html)。研究记录只保存来源、观察及推论，不维护另一份尺寸或配色规范。现行规范承接 v07 的视觉约束，并以 v08 统一设置页面取代分散设置弹窗；本研究不另立设置页面规范。产品定义和现有能力不能被旧原型阶段限制覆盖。

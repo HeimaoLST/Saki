@@ -65,7 +65,7 @@ src/
 | `design/` | [Multimodal input](design/multimodal-input.md) | 图片附件、剪贴板／路径输入、消息契约及图片压缩 |
 | `design/` | [Session management](design/session-management.md) | 持久会话、JSONL 恢复、会话选择器、中断语义与核心边界 |
 | `design/` | [Desktop contacts](design/desktop.md) | 原生 GUI 的实现事实、当前主题接线与后续自定义边界 |
-| `design/` | [Desktop workbench](design/desktop-workbench.md) | v07 视觉与信息层次提案；可选工作区、事项概览/详情及开发验收 |
+| `design/` | [Desktop workbench](design/desktop-workbench.md) | v08 工作台与统一设置页面；可选工作区、事项概览/详情及开发验收 |
 | `design/` | [CI governance](design/ci.md) | Runtime／TUI／GUI 的 GitHub Actions 门禁、责任矩阵、工具链与失败修复约定 |
 | `requirements/` | [Agent runtime requirements](requirements/agent-runtime.md) | 多 session 重叠执行、可观察执行事实、contact 边界与历史检索的 runtime 需求交接（未实施） |
 | `requirements/` | [MVP requirements](requirements/mvp.md) | 两端 MVP（TUI + GUI）的长期产品目标、行为边界，以及工程候选／首批真实试用／稳定发布的证据矩阵 |
