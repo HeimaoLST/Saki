@@ -190,9 +190,9 @@ func ensureIssueToolTestHelper(t *testing.T) string {
 		}
 		return helper
 	}
-	goTool, err := exec.LookPath("go")
+	python, err := exec.LookPath("python3")
 	if err != nil {
-		t.Fatalf("go tool is required to build the issue tool helper: %v", err)
+		t.Fatalf("python3 is required to build the issue tool helper: %v", err)
 	}
 	dir, err := os.MkdirTemp("", "saki-issue-tool-helper-")
 	if err != nil {
@@ -200,7 +200,7 @@ func ensureIssueToolTestHelper(t *testing.T) string {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	helper := filepath.Join(dir, "saki-issue-tool-helper")
-	cmd := exec.Command(goTool, "build", "-o", helper, ".")
+	cmd := exec.Command(python, "../scripts/gui-go.py", "build", "-o", helper, ".")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build issue tool helper: %v\n%s", err, out)
 	}
