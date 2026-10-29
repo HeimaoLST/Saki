@@ -129,7 +129,7 @@ func newRuntimeApp() (*appModel, error) {
 		a.connectionForm.SavedSummary = connectionSummary(startup.Config)
 	}
 	if startup.LoadErr != nil || (startup.Config == nil && !startup.External) {
-		a.aux = "configuration"
+		a.openSettingsTab(settingsTabConnection, settingsSourceConnection)
 	}
 	// The first launch can legitimately have no store file yet. Appearance is
 	// the first GUI-global preference, so allow a lazy save through persist;
@@ -266,7 +266,15 @@ func (a *appModel) startRuntime() {
 	if a.demo || a.store == nil || a.rt != nil || a.connectionApplying {
 		return
 	}
+	if a.connectionEffective == nil && !a.connectionLegacy && a.connectionForm != nil && !a.connectionForm.HasSaved {
+		a.runtimeStatus = runtimeStateFailed
+		a.runtimeStage = "Connection configuration"
+		a.runtimeErr = "Connection settings are required before the runtime can start."
+		a.runtimeHint = "Enter a connection, model and working directory, then save and apply."
+		return
+	}
 	binary := findRuntimeBinary()
+	a.runtimeHelperChecked = true
 	if binary == "" {
 		a.runtimeStatus = runtimeStateFailed
 		a.runtimeStage = "Runtime helper"

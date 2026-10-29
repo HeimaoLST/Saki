@@ -23,12 +23,10 @@ func (a *appModel) openContactProfile(contactID string) {
 	if ct == nil {
 		return
 	}
-	a.contactProfileID = ct.ID
-	a.contactProfile = newContactProfileEditor(contactProfileDraft(ct))
-	a.contactProfile.Archived = ct.Archived
-	a.contactProfile.HasConversation = ct.SessionID != ""
-	a.contactProfile.ActiveWork, a.contactProfile.UnknownWork = a.contactActivity(ct)
-	a.aux = "settings"
+	a.settingsContactID = ct.ID
+	a.settingsPickerChoice = ""
+	a.ensureSettingsProfileEditor(ct.ID)
+	a.openSettingsTab(settingsTabContact, settingsSourceProfile)
 }
 
 func (a *appModel) contactActivity(ct *contact) (active, unknown bool) {
@@ -83,34 +81,43 @@ func (a *appModel) contactArchiveBlocked(ct *contact) string {
 
 func (a *appModel) saveContactProfileDraft(draft profileDraft, startNew bool) bool {
 	ct := a.selectedContact()
+	if ct == nil {
+		return false
+	}
+	return a.saveContactProfileDraftFor(ct.ID, draft, startNew)
+}
+
+func (a *appModel) saveContactProfileDraftFor(contactID string, draft profileDraft, startNew bool) bool {
+	ct := a.contactByID(contactID)
+	editor := a.profileEditorFor(contactID)
 	entered := draft
-	if ct == nil || (a.contactProfile != nil && a.contactProfileID != "" && a.contactProfileID != ct.ID) {
+	if ct == nil {
 		return false
 	}
 	if !a.demo && a.store == nil {
-		if a.contactProfile != nil {
-			a.contactProfile.Draft = entered
-			a.contactProfile.SetError("Could not save this profile: the local contact store is unavailable.")
+		if editor != nil {
+			editor.Draft = entered
+			editor.SetError("Could not save this profile: the local contact store is unavailable.")
 		}
 		return false
 	}
 	if ct.Archived {
-		if a.contactProfile != nil {
-			a.contactProfile.SetError("Restore this contact before saving its profile.")
+		if editor != nil {
+			editor.SetError("Restore this contact before saving its profile.")
 		}
 		return false
 	}
 	if startNew {
 		active, unknown := a.contactActivity(ct)
 		if unknown || active {
-			if a.contactProfile != nil {
-				a.contactProfile.SetError(a.contactProfile.activityReason())
+			if editor != nil {
+				editor.SetError(editor.activityReason())
 			}
 			return false
 		}
 		if ct.SessionID == "" {
-			if a.contactProfile != nil {
-				a.contactProfile.SetError("There is no current conversation to leave.")
+			if editor != nil {
+				editor.SetError("There is no current conversation to leave.")
 			}
 			return false
 		}
@@ -118,11 +125,11 @@ func (a *appModel) saveContactProfileDraft(draft profileDraft, startNew bool) bo
 
 	draft, problems := validateProfileDraft(entered)
 	if len(problems) > 0 {
-		if a.contactProfile != nil {
-			a.contactProfile.Draft = entered
-			a.contactProfile.Errors = problems
-			a.contactProfile.Error = ""
-			a.contactProfile.Status = ""
+		if editor != nil {
+			editor.Draft = entered
+			editor.Errors = problems
+			editor.Error = ""
+			editor.Status = ""
 		}
 		return false
 	}
@@ -175,19 +182,19 @@ func (a *appModel) saveContactProfileDraft(draft profileDraft, startNew bool) bo
 		if a.store != nil {
 			a.store.state = oldState
 		}
-		if a.contactProfile != nil {
-			a.contactProfile.Draft = entered
-			a.contactProfile.SetError("Could not save this profile. Your changes are still here.")
+		if editor != nil {
+			editor.Draft = entered
+			editor.SetError("Could not save this profile. Your changes are still here.")
 		}
 		return false
 	}
-	if a.contactProfile != nil {
-		a.contactProfile.SetProfile(draft)
-		a.contactProfile.HasConversation = ct.SessionID != ""
-		a.contactProfile.Status = "Profile saved. New conversations and new issue work sessions use these defaults; existing work is unchanged."
+	if editor != nil {
+		editor.SetProfile(draft)
+		editor.HasConversation = ct.SessionID != ""
+		editor.Status = "Profile saved. New conversations and new issue work sessions use these defaults; existing work is unchanged."
 		if startNew {
-			a.contactProfile.HasConversation = false
-			a.contactProfile.Status = "Profile saved. The next message starts a new conversation with these defaults."
+			editor.HasConversation = false
+			editor.Status = "Profile saved. The next message starts a new conversation with these defaults."
 		}
 	}
 	return true
@@ -199,14 +206,14 @@ func (a *appModel) archiveContact(contactID string) bool {
 		return false
 	}
 	if !a.demo && a.store == nil {
-		if a.contactProfile != nil && a.contactProfileID == contactID {
-			a.contactProfile.SetError("Could not archive this contact: the local contact store is unavailable.")
+		if editor := a.profileEditorFor(contactID); editor != nil {
+			editor.SetError("Could not archive this contact: the local contact store is unavailable.")
 		}
 		return false
 	}
 	if reason := a.contactArchiveBlocked(ct); reason != "" {
-		if a.contactProfile != nil && a.contactProfileID == contactID {
-			a.contactProfile.SetError(reason)
+		if editor := a.profileEditorFor(contactID); editor != nil {
+			editor.SetError(reason)
 		}
 		return false
 	}
@@ -222,14 +229,14 @@ func (a *appModel) archiveContact(contactID string) bool {
 		if a.store != nil {
 			a.store.state = oldState
 		}
-		if a.contactProfile != nil && a.contactProfileID == contactID {
-			a.contactProfile.SetError("Could not archive this contact. Its previous state is unchanged.")
+		if editor := a.profileEditorFor(contactID); editor != nil {
+			editor.SetError("Could not archive this contact. Its previous state is unchanged.")
 		}
 		return false
 	}
-	if a.contactProfile != nil && a.contactProfileID == contactID {
-		a.contactProfile.Archived = true
-		a.contactProfile.Status = "Contact archived. Sending and new issue runs are disabled; history and issue data are retained."
+	if editor := a.profileEditorFor(contactID); editor != nil {
+		editor.Archived = true
+		editor.Status = "Contact archived. Sending and new issue runs are disabled; history and issue data are retained."
 	}
 	if a.selectedContact().ID == contactID {
 		a.contactScope = "archived"
@@ -243,8 +250,8 @@ func (a *appModel) restoreContact(contactID string) bool {
 		return false
 	}
 	if !a.demo && a.store == nil {
-		if a.contactProfile != nil && a.contactProfileID == contactID {
-			a.contactProfile.SetError("Could not restore this contact: the local contact store is unavailable.")
+		if editor := a.profileEditorFor(contactID); editor != nil {
+			editor.SetError("Could not restore this contact: the local contact store is unavailable.")
 		}
 		return false
 	}
@@ -260,14 +267,14 @@ func (a *appModel) restoreContact(contactID string) bool {
 		if a.store != nil {
 			a.store.state = oldState
 		}
-		if a.contactProfile != nil && a.contactProfileID == contactID {
-			a.contactProfile.SetError("Could not restore this contact. Its archived state is unchanged.")
+		if editor := a.profileEditorFor(contactID); editor != nil {
+			editor.SetError("Could not restore this contact. Its archived state is unchanged.")
 		}
 		return false
 	}
-	if a.contactProfile != nil && a.contactProfileID == contactID {
-		a.contactProfile.Archived = false
-		a.contactProfile.Status = "Contact restored."
+	if editor := a.profileEditorFor(contactID); editor != nil {
+		editor.Archived = false
+		editor.Status = "Contact restored."
 	}
 	if a.selectedContact().ID == contactID {
 		a.contactScope = "active"

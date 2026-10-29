@@ -1,6 +1,6 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-28。本文保留各阶段的实现与验证记录；连接配置见末尾 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118，资料快照与递交见 **#117 资料快照、阅读与递交**，联系人编辑、归档及旧对话访问见 **#152 联系人管理与已保存对话**。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
+更新日期：2026-10-29。当前设置页面见文末 **#199 独立设置页面**。本文保留各阶段的实现与验证记录；连接配置见末尾 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118，资料快照与递交见 **#117 资料快照、阅读与递交**，联系人编辑、归档及旧对话访问见 **#152 联系人管理与已保存对话**。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
 
 [previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。当前主题事实见 `desktop/theme.go` 的 `resolveWorkbenchTheme`（Paper/Moss；light/dark 语义角色）；#92 的 Moon/Dawn 和 #90 的 11px/12px 数值只保留为历史设计/实现记录，不再作为当前规范。此前将这些能力或颜色列为后续独立任务的说明已失效，不再作为当前实现或未来承诺；具体状态以对应任务段、PR 和 `dev` 为准。
 
@@ -772,3 +772,15 @@ type resolvedTheme struct {
 - **验证边界**：正式 Editor 回归在 patched MyGo 上 PASS，未 patch 的同源副本保留 RED；`scripts/gui-go.py test github.com/egoist/mygo/ui -run '^TestEditorSelectionReleaseBeforeFrame$'`、应用 `TestComposer*`、既有 G4/G5 helper 子集和普通 Go 包均通过。以上是 headless/event-level 证据；没有 native/CUA/系统 IME、没有在线模型调用，也不把旧包或旧图转记为当前候选通过。
 
 - **历史44b限定原生证据**：PM [#114 comment 6468384981](https://github.com/HeimaoLST/Saki/issues/114#issuecomment-6468384981) 已验证冻结 `44b81c1` 的 1040×720 浅色真实双向/跨行准确复制及局部替换、A/B 草稿、同版退出恢复、Shift+Enter 不误发 PASS；真实 IME marked text、完整 Send/Stop 串联及所有宽度/主题仍未验，不能作为本组合的 native PASS。
+
+
+## #199 独立设置页面（实现事实与待验，2026-10-29）
+
+代码来源：`agent/gui/199-settings-page`，精确基线 `f3d8485c36f4345cfc52c6857ac4d35991009528`（PR #198）；按 [v08 固定规范](https://github.com/HeimaoLST/Saki/blob/074d9eeb9d3ef8f4b4c70ed82a27a3b03c39c6e7/docs/design/desktop-workbench.md#统一设置页面) 实施。此节替代本文早期 settings/configuration/appearance 浮层的入口说明；最终提交与验证证据以 #199 的交付 PR 为准，不表示已经集成 dev 或通过原生验收。
+
+- **唯一页面**：工作台左下 Settings 进入独立应用内页面；仅渲染设置导航与内容，联系人列表、聊天、工作区不在视图或键盘顺序中。Appearance、Connection & model、Contact profile、Advanced 共用该页面；页头 Contact profile 与连接/启动错误入口定位对应分类。会话模型选择仍是作用于当前对话/事项的独立上下文操作，不替换成全局默认配置。1040/1380 使用约 200px 分类栏、最多 720px 正文；720 使用顶部可换行导航和单列内容。
+- **草稿与联系人范围**：连接表单和每个联系人的资料编辑器在本次应用生命周期中保留。分类切换、返回工作台及再次进入不隐式保存或丢弃；Discard 只恢复当前有修改的表单，不清空聊天草稿或别人的资料草稿。联系人编辑对象独立于工作台选中对象，名称与选择器按同一内部 ID 对齐；界面不展示原始 ID，重名使用可读区分。保存、保存并新建对话、归档/恢复继续走既有持久化与活动工作约束，原会话快照和历史保留。
+- **连接生命周期**：页面复用唯一连接表单与 `saveConnection` / `applyConnection` / `testConnection`，区分输入、已保存和当前生效值。保存不替换正在运行的 helper；Apply 使用已保存配置，活动或状态未知的工作仍阻止重载。每帧根据现有 `connectionReloadBlocked()` 刷新操作原因，工作结束后解除过时禁用。Test 仍需显式点击并使用当前表单值；忙碌与失败保留原有处理，已应用配置重开页面不会重新标为待应用。容量/执行限制可展开，字段校验错误会展开对应区域。
+- **外观与诊断**：Appearance 沿用现有 System/Light/Dark 模式及持久化；预览与选择即时生效，不新增主题 ID。Advanced 使用原启动状态与路径事实；没有配置、尚未检查 helper 时不称缺失，只有实际探测失败才显示 not found。启动错误快捷入口展开诊断。首用没有 Runtime 时继续不显示容量警告与无效 Retry；已有 ready Runtime 的容量恢复入口保留。
+- **返回与键盘**：Back to workbench 恢复原联系人、聊天草稿、工作区开合/宽度、事项与成果上下文；消息与详情阅读位置保留。Cmd+, 支持工作台及既有历史/成果阅读层；Escape 只处理临时控件，不把整页设置关闭。打开设置本身不创建会话、不重建 Runtime、不取消工作、不调用模型。
+- **验证边界**：本轮沿统一 `scripts/gui-go.py` 入口使用 headless UI 和本地受控 provider/真实 helper 验证页面、草稿隔离、真实 Save/Apply/Test、滚动与焦点；包含 720×640 / 1040×720 / 1380×900 的浅深色截图与控件边界检查。固定 SHA、最终完整测试、同源签名包及 CI 账户阻塞事实在 #199 交付记录，不把早期 f3 图片或局部检查转记为新包通过。原生窗口、系统输入法及用户试用仍由 PM 协调；#193 偶发退出问题继续独立记录，本功能不声称修复它。

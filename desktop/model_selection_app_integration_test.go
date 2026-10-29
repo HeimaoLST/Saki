@@ -53,7 +53,7 @@ func clickModelAction(t *testing.T, h *guiHarness, action string) {
 	h.pump.do(func() {
 		tr := ui.NewTester(h.app.view, 1280, 720)
 		tr.Frame()
-		clickErr = clickConnectionAction(tr, action)
+		clickErr = clickSettingsAction(tr, action)
 	})
 	if clickErr != nil {
 		t.Fatal(clickErr)

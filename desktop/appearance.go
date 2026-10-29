@@ -3,8 +3,6 @@ package main
 import (
 	"errors"
 	"strings"
-
-	"github.com/egoist/mygo/ui"
 )
 
 const (
@@ -61,7 +59,7 @@ func appearanceModeFromLabel(label string) string {
 
 func (a *appModel) openAppearance() {
 	a.appearanceStatus = ""
-	a.aux = "appearance"
+	a.openSettingsTab(settingsTabAppearance, settingsSourceRail)
 }
 
 // setAppearanceMode applies the mode immediately, then persists it in the same
@@ -137,34 +135,6 @@ func (a *appModel) effectiveAppearanceLabel() string {
 	return appearanceModeLabel(a.appearanceMode) + " · " + appearance
 }
 
-func (a *appModel) appearancePanel(c *ui.Context, t *ui.Theme) {
-	ui.Row(c).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "Appearance").FontSize(17).FontWeight(600).TextColor(t.Text)
-		ui.Spacer(c)
-		secondaryButton(c, "Close").OnClick(func() { a.closeAux() })
-	})
-	ui.Text(c, "Choose how the whole workbench looks. The mode applies immediately and is kept for the next launch.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
-	a.appearanceChoice = appearanceModeLabel(a.appearanceMode)
-	choice := ui.Select(c, &a.appearanceChoice, []string{"System", "Light", "Dark"}).Label("Appearance mode").FontSize(13).FillWidth()
-	if choice.Changed() {
-		a.setAppearanceMode(appearanceModeFromLabel(a.appearanceChoice))
-	}
-	ui.Text(c, "Effective: "+a.effectiveAppearanceLabel()).FontSize(14).LineHeight(1.4).TextColor(t.Text)
-	if a.appearanceMode == appearanceSystem {
-		ui.Text(c, "System follows the operating system appearance; changing it updates the workbench on the next frame.").FontSize(12).LineHeight(1.45).TextColor(t.TextMuted)
-	}
-	if a.appearanceStatus != "" {
-		ui.Text(c, a.appearanceStatus).FontSize(12).LineHeight(1.4).TextColor(t.Success)
-	}
-	if a.appearanceError != "" {
-		ui.Text(c, a.appearanceError).FontSize(12).LineHeight(1.4).TextColor(t.Danger)
-		secondaryButton(c, "Retry save").OnClick(func() { a.saveAppearance() })
-	}
-}
-
-// connectionDefaultModel is the saved/effective fallback shown before a
-// conversation has a Runtime session. It deliberately does not read the
-// editable connection draft, which has not been applied.
 func (a *appModel) connectionDefaultModel() string {
 	for _, config := range []*connectionConfig{a.connectionEffective, a.connectionSaved} {
 		if config != nil && strings.TrimSpace(config.Model) != "" {

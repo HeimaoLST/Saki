@@ -24,6 +24,19 @@ func (a *appModel) view(c *ui.Context) {
 	a.workTheme = resolveWorkbenchTheme(resolveAppearanceDark(a.appearanceMode, a.systemDark))
 	t := a.workTheme.Theme
 	c.SetTheme(t)
+	c.OnShortcut(ui.Cmd, ui.KeyComma, func() {
+		if !a.settingsOpen {
+			source := settingsSourceCommand
+			if c.Focused(a.composerHandle) {
+				source = settingsSourceComposer
+			}
+			a.openSettingsTab(settingsTabAppearance, source)
+		}
+	})
+	if a.settingsOpen {
+		a.settingsPage(c, t)
+		return
+	}
 	if a.aux == "" && a.screen == viewChat && a.workspaceOpen && !a.workOverlay() {
 		c.OnShortcut(0, ui.KeyEscape, func() { a.escapeWorkspaceLayer() })
 	}
@@ -71,10 +84,10 @@ func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
 				}
 			})
 		}
-		appearance := secondaryButton(c, "Appearance").FillWidth().OnClick(func() { a.openAppearance() })
-		if a.focusAppearance {
-			appearance.Focus()
-			a.focusAppearance = false
+		settings := secondaryButton(c, "Settings").FillWidth().OnClick(func() { a.openSettingsTab(settingsTabAppearance, settingsSourceRail) })
+		if a.focusSettings {
+			settings.Focus()
+			a.focusSettings = false
 		}
 	})
 }
@@ -203,8 +216,13 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 						ui.Text(c, a.runtimeHint).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 					}
 					ui.Row(c).Children(func() {
-						if secondaryButton(c, "Configuration details").Clicked() {
-							a.openConfiguration()
+						details := secondaryButton(c, "Configuration details")
+						if a.focusConfiguration {
+							details.Focus()
+							a.focusConfiguration = false
+						}
+						if details.Clicked() {
+							a.openAdvancedSettings()
 						}
 					})
 				})
@@ -223,7 +241,7 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 				ui.Text(c, "Archived contact · sending and new issue runs are disabled. History, drafts and issue data are retained.").FontSize(14).TextColor(t.Warning)
 				ui.Spacer(c)
 				secondaryButton(c, "Restore contact").TextColor(t.Text).OnClick(func() { a.restoreContact(ct.ID) })
-				secondaryButton(c, "Settings").OnClick(func() { a.openSettings() })
+				secondaryButton(c, "Contact profile").OnClick(func() { a.openContactProfile(ct.ID) })
 			})
 		}
 		a.header(c, t)
@@ -300,7 +318,7 @@ func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 					nav("History", a.screen == viewHistory, &a.focusHistory, func() { a.openHistory() })
 				})
 				ui.Row(c).Gap(6).Children(func() {
-					nav("Settings", a.aux == "settings", &a.focusSettings, func() { a.openSettings() })
+					nav("Contact profile", false, &a.focusContactProfile, func() { a.openContactProfile(ct.ID) })
 				})
 				return
 			}
@@ -311,7 +329,7 @@ func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 				nav("Work", a.workspaceOpen, &a.focusWorkspace, func() { a.toggleWorkspace() })
 				a.workEntryHint(c, t, ct)
 				nav("History", a.screen == viewHistory, &a.focusHistory, func() { a.openHistory() })
-				nav("Settings", a.aux == "settings", &a.focusSettings, func() { a.openSettings() })
+				nav("Contact profile", false, &a.focusContactProfile, func() { a.openContactProfile(ct.ID) })
 			})
 		})
 	})
@@ -534,9 +552,6 @@ func (a *appModel) emptyState(c *ui.Context, t *ui.Theme) {
 		} else {
 			ui.Text(c, "Start a conversation with "+ct.Name+". Edit this contact in Settings. Changes apply to new conversations.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
 		}
-		ui.Row(c).Children(func() {
-			secondaryButton(c, "Settings").OnClick(func() { a.openSettings() })
-		})
 	})
 }
 
@@ -579,7 +594,12 @@ func (a *appModel) connectionErrorBanner(c *ui.Context, t *ui.Theme, ct *contact
 	ui.Column(c).Padding(8, 16).Gap(3).Background(t.SurfaceHover).Children(func() {
 		ui.Text(c, summary).FontSize(14).LineHeight(1.4).TextColor(t.Warning).MaxLines(3)
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			secondaryButton(c, "Connection settings").TextColor(t.Text).OnClick(func() { a.openConfiguration() })
+			entry := secondaryButton(c, "Connection settings").TextColor(t.Text)
+			entry.OnClick(func() { a.openSettingsTab(settingsTabConnection, settingsSourceConnection) })
+			if a.focusConnectionEntry {
+				entry.Focus()
+				a.focusConnectionEntry = false
+			}
 			label := "Details"
 			if expanded {
 				label = "Hide details"
@@ -604,7 +624,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Column(c).Padding(10, 0).Gap(4).Children(func() {
 		ui.Row(c).Gap(6).AlignItems(ui.End).Padding(6, 10).Radius(14).Background(a.workTheme.Well).Children(func() {
-			input := ui.TextArea(c, &ct.Draft).Label("Composer for " + ct.Name).FontSize(15).LineHeight(1.6).Height(44).Background(ui.Transparent).BorderWidth(0).Padding(2).Placeholder("Message " + ct.Name).Grow(1).OnChange(func() {
+			input := ui.TextArea(c, &ct.Draft).Bind(&a.composerHandle).Label("Composer for " + ct.Name).FontSize(15).LineHeight(1.6).Height(44).Background(ui.Transparent).BorderWidth(0).Padding(2).Placeholder("Message " + ct.Name).Grow(1).OnChange(func() {
 				a.draftChanged(ct)
 			}).OnEnter(func(e ui.Enter) bool {
 				if e.Mods&ui.Shift != 0 {
@@ -699,7 +719,9 @@ func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 	open := a.screen == viewHistory
 	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
-		panel.Width(560).FillHeight().Background(a.workTheme.Panel).Children(func() {
+		panel.Width(560).FillHeight().Background(a.workTheme.Panel).OnShortcut(ui.Cmd, ui.KeyComma, func() {
+			a.openSettingsTab(settingsTabAppearance, settingsSourceHistory)
+		}).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Padding(12, 12).Children(func() {
 				ui.Text(c, "History · "+ct.Name).FontSize(17).FontWeight(600).TextColor(t.Text)
 				ui.Spacer(c)
@@ -712,7 +734,7 @@ func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 					a.focusHistoryOpen = false
 				}
 			})
-			ui.Scroll(c).Grow(1).Padding(12).Children(func() {
+			ui.Scroll(c).Grow(1).TrackScroll(&a.historyScroll).Padding(12).Children(func() {
 				ui.Column(c).Gap(10).Children(func() {
 					ui.Text(c, "Searching only "+ct.Name+"'s conversation history. Messages from other contacts are never included.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 					if !a.demo && ct.SessionID != "" && !ct.Loaded {
@@ -804,7 +826,7 @@ func speakerLabel(c *contact, e historyEntry) string {
 func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 	returnAux := a.aux
 	width := float32(340)
-	if returnAux == "configuration" || returnAux == "model" || returnAux == "task-context" {
+	if returnAux == "model" || returnAux == "task-context" {
 		width = 560
 	}
 	if returnAux == "issue-result" {
@@ -813,24 +835,20 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 	open := true
 	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
-		panel.Width(width).FillHeight().Background(a.workTheme.Panel).Children(func() {
-			ui.Scroll(c).Grow(1).Padding(12).Children(func() {
+		panel.Width(width).FillHeight().Background(a.workTheme.Panel).OnShortcut(ui.Cmd, ui.KeyComma, func() {
+			a.openSettingsTab(settingsTabAppearance, settingsSourceAux)
+		}).Children(func() {
+			ui.Scroll(c).Grow(1).TrackScroll(a.auxScrollFor(returnAux)).Padding(12).Children(func() {
 				ui.Column(c).Gap(10).Children(func() {
 					switch returnAux {
 					case "sources":
 						a.sourcesPanel(c, t)
-					case "configuration":
-						a.configurationPanel(c, t)
 					case "model":
 						a.modelPanel(c, t)
 					case "task-context":
 						a.taskContextPanel(c, t)
-					case "appearance":
-						a.appearancePanel(c, t)
 					case "issue-result":
 						a.issueResultPanelView(c, t)
-					default:
-						a.settingsPanel(c, t)
 					}
 				})
 			})
@@ -848,13 +866,8 @@ func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
 		if returnAux == "task-context" {
 			a.taskContextIssueID = ""
 		}
-		switch returnAux {
-		case "settings":
-			a.focusSettings = true
-		case "sources":
+		if returnAux == "sources" {
 			a.focusHistory = false
-		case "appearance":
-			a.focusAppearance = true
 		}
 	}
 }
@@ -884,65 +897,15 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 	}
 }
 
-func (a *appModel) settingsPanel(c *ui.Context, t *ui.Theme) {
-	ct := a.selectedContact()
-	if a.contactProfile == nil || a.contactProfileID != ct.ID {
-		a.openContactProfile(ct.ID)
-	}
-	editor := a.contactProfile
-	editor.Archived = ct.Archived
-	editor.HasConversation = ct.SessionID != ""
-	editor.ActiveWork, editor.UnknownWork = a.contactActivity(ct)
-	ui.Row(c).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "Contact settings").FontSize(17).FontWeight(600).TextColor(t.Text)
-		ui.Spacer(c)
-		if !a.demo {
-			secondaryButton(c, "Startup status").OnClick(func() { a.openConfiguration() })
-		}
-		secondaryButton(c, "Close").OnClick(func() { a.closeAux() })
-	})
-	editor.view(c, t, contactProfileActions{
-		Save: func(draft profileDraft) {
-			a.saveContactProfileDraft(draft, false)
-		},
-		SaveAndNew: func(draft profileDraft) {
-			a.saveContactProfileDraft(draft, true)
-		},
-		Archive: func() {
-			a.archiveContact(ct.ID)
-		},
-		Restore: func() {
-			a.restoreContact(ct.ID)
-		},
-		Cancel: func() { a.closeAux() },
-	})
-}
-
 func (a *appModel) openConfiguration() {
 	a.ensureConnectionForm()
-	a.aux = "configuration"
-	if a.store == nil {
-		a.startupDetailsOpen = true
-	}
-}
-
-func (a *appModel) configurationPanel(c *ui.Context, t *ui.Theme) {
-	a.connectionPanel(c, t)
-	label := "Startup details"
-	if a.startupDetailsOpen {
-		label = "Hide startup details"
-	}
-	secondaryButton(c, label).OnClick(func() { a.startupDetailsOpen = !a.startupDetailsOpen })
-	if !a.startupDetailsOpen {
-		return
-	}
-	ui.Text(c, "Startup & configuration").FontSize(16).FontWeight(500).TextColor(t.Text)
-	a.runtimePanel(c, t, a.selectedContact())
+	a.openSettingsTab(settingsTabConnection, settingsSourceConnection)
 }
 
 func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 	localStore := a.runtimeStage == startupStageLocalStore
 	if localStore {
+		ui.Text(c, "Local contact store: unavailable; the runtime was not started.").FontSize(14).LineHeight(1.4).TextColor(t.Danger)
 		ui.Text(c, "Runtime: not started (local contact store unavailable)").FontSize(14).LineHeight(1.4).TextColor(t.Text)
 	} else {
 		status := a.runtimeStatus
@@ -966,10 +929,15 @@ func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 	}
 	helper := a.runtimeBinary
 	if helper == "" {
-		if localStore {
+		switch {
+		case localStore:
 			helper = "not started; fix the local contact store first"
-		} else {
+		case a.runtimeHelperChecked || a.runtimeStage == "Runtime helper":
 			helper = "not found (expected next to Saki as Saki-runtime, or set SAKI_RUNTIME_BIN)"
+		case a.connectionForm != nil && a.connectionForm.HasSaved:
+			helper = "not started yet; apply the saved connection to check the helper"
+		default:
+			helper = "not checked yet; configure and apply a connection first"
 		}
 	}
 	ui.Text(c, "Helper: "+helper).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)

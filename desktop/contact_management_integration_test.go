@@ -34,7 +34,7 @@ func clickContactManagementAction(t *testing.T, h *guiHarness, action string) {
 	h.pump.do(func() {
 		tr := ui.NewTester(h.app.view, 1280, 720)
 		tr.Frame()
-		err = clickConnectionAction(tr, action)
+		err = clickSettingsAction(tr, action)
 	})
 	if err != nil {
 		t.Fatal(err)

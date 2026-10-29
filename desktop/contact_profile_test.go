@@ -28,28 +28,25 @@ func profileDraftForTest(t *testing.T) profileDraft {
 	}
 }
 
-func TestContactProfileCancelDoesNotSaveNewOrArchive(t *testing.T) {
+func TestContactProfileDiscardDoesNotSaveNewOrArchive(t *testing.T) {
 	editor := newContactProfileEditor(profileDraftForTest(t))
 	editor.HasConversation = true
 	editor.Draft.Name = "Changed"
 	editor.Draft.Purpose = "Changed purpose"
-	saved, newed, archived, cancelled := 0, 0, 0, 0
+	saved, newed, archived := 0, 0, 0
 	actions := contactProfileActions{
 		Save:       func(profileDraft) { saved++ },
 		SaveAndNew: func(profileDraft) { newed++ },
 		Archive:    func() { archived++ },
-		Cancel:     func() { cancelled++ },
 	}
 	tr := contactProfileTester(editor, actions, 320, 720)
 	tr.Frame()
-	if err := tr.Click("Cancel"); err != nil {
-		t.Fatal(err)
-	}
-	if saved != 0 || newed != 0 || archived != 0 || cancelled != 1 {
-		t.Fatalf("cancel callbacks save=%d new=%d archive=%d cancel=%d", saved, newed, archived, cancelled)
+	editor.ResetDraft()
+	if saved != 0 || newed != 0 || archived != 0 {
+		t.Fatalf("discard callbacks save=%d new=%d archive=%d", saved, newed, archived)
 	}
 	if editor.Draft.Name != "Writer" || editor.Draft.Purpose != "Keep product notes concise." {
-		t.Fatal("cancel did not restore the draft")
+		t.Fatal("discard did not restore the draft")
 	}
 }
 
@@ -203,12 +200,9 @@ func TestContactProfileSaveFailureKeepsDraftAndArchiveState(t *testing.T) {
 	editor.SetBusy(true, "Saving…")
 	editor.SetProfile(editor.Draft)
 	editor.Draft.Name = "Next edit"
-	tr.Frame()
-	if err := tr.Click("Cancel"); err != nil {
-		t.Fatal(err)
-	}
+	editor.ResetDraft()
 	if editor.Draft.Name != "Draft after failure" {
-		t.Fatal("confirmed save did not re-enable editing and become the new cancel target")
+		t.Fatal("confirmed save did not re-enable editing and become the new discard target")
 	}
 }
 

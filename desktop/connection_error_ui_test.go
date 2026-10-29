@@ -28,12 +28,11 @@ func TestKnownConnectionFailureIsConciseAndKeepsOriginalDetails(t *testing.T) {
 	if !tr.HasText(raw) || !tr.HasText("Copy error details") {
 		t.Fatalf("connection detail was not accessible: %v", tr.Texts())
 	}
-	priorAux := a.aux
 	if err := tr.Click("Connection settings"); err != nil {
 		t.Fatal(err)
 	}
-	if a.aux == priorAux {
-		t.Fatal("connection settings entry did not open a settings surface")
+	if !a.settingsOpen || a.settingsTab != settingsTabConnection {
+		t.Fatalf("connection settings entry = open=%v tab=%q", a.settingsOpen, a.settingsTab)
 	}
 }
 

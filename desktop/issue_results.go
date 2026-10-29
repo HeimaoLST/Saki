@@ -279,24 +279,34 @@ func requestRevealIssueResultWithSystem(path string) error {
 // local reading mode (ReaderKey) and renders matching results on the next
 // frame. It contains no file I/O, task dispatch or persistence.
 type issueResultPanelState struct {
-	RunLabel        string
-	RunStatus       string
-	Response        string
-	Files           []issueResultFile
-	Selected        string
-	Inspection      *issueResultFileInspection
-	InspectFor      string
-	Checking        bool
-	ActionFor       string
-	Action          issueResultFileAction
-	SourceFor       string
-	ReaderKey       string
-	ReaderReturnKey string
+	RunLabel           string
+	RunStatus          string
+	Response           string
+	Files              []issueResultFile
+	Selected           string
+	Inspection         *issueResultFileInspection
+	InspectFor         string
+	Checking           bool
+	ActionFor          string
+	Action             issueResultFileAction
+	SourceFor          string
+	ReaderKey          string
+	ReaderReturnKey    string
+	ReaderScroll       ui.ScrollState
+	FocusClose         bool
+	FocusReader        bool
+	FocusReturn        string
+	CloseHandle        ui.Handle
+	ReloadHandle       ui.Handle
+	ReaderCloseHandle  ui.Handle
+	ReaderCheckHandle  ui.Handle
+	ReaderSourceHandle ui.Handle
 }
 
 // issueResultPanelActions are explicit user requests. The component never
 // inspects, opens, reveals or starts a task by itself.
 type issueResultPanelActions struct {
+	OpenSettings func()
 	Close        func()
 	Reload       func()
 	SelectFile   func(key string)
@@ -329,14 +339,24 @@ func issueResultFileKey(file issueResultFile) string {
 func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issueResultPanelActions) ui.Element {
 	th := c.Theme()
 	root := ui.Column(c).AlignSelf(ui.Stretch).MinWidth(0).Gap(12)
+	if actions.OpenSettings != nil {
+		root.OnShortcut(ui.Cmd, ui.KeyComma, func() {
+			state.FocusReturn = issueResultFocusedName(c, state, false)
+			actions.OpenSettings()
+		})
+	}
 	root.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			ui.Text(c, "Run results").FontSize(16).FontWeight(600).TextColor(th.Text).Grow(1)
 			if actions.Reload != nil {
-				secondaryButton(c, "Reload result").OnClick(actions.Reload)
+				secondaryButton(c, "Reload result").Bind(&state.ReloadHandle).OnClick(actions.Reload)
 			}
 			if actions.Close != nil {
-				secondaryButton(c, "Close results").OnClick(actions.Close)
+				close := secondaryButton(c, "Close results").Bind(&state.CloseHandle).OnClick(actions.Close)
+				if state.FocusClose {
+					close.Focus()
+					state.FocusClose = false
+				}
 			}
 		})
 		if state.RunLabel != "" {
@@ -370,6 +390,7 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 			}
 		})
 	})
+	focusIssueResultReturn(c, state, false)
 	if state.ReaderReturnKey != "" {
 		if _, ok := issueResultFileByKey(state.Files, state.ReaderReturnKey); !ok {
 			state.ReaderReturnKey = ""
@@ -418,9 +439,54 @@ func issueResultFileRow(c *ui.Context, th *ui.Theme, state *issueResultPanelStat
 	if row.Clicked() {
 		state.ReaderReturnKey = ""
 		state.ReaderKey = key
+		state.ReaderScroll = ui.ScrollState{}
 		if actions.SelectFile != nil {
 			actions.SelectFile(key)
 		}
+	}
+}
+
+func issueResultFocusedName(c *ui.Context, state *issueResultPanelState, reader bool) string {
+	if reader {
+		switch {
+		case c.Focused(state.ReaderCheckHandle):
+			return "reader-check"
+		case c.Focused(state.ReaderSourceHandle):
+			return "reader-source"
+		case c.Focused(state.ReaderCloseHandle):
+			return "reader-close"
+		}
+		return "reader-close"
+	}
+	switch {
+	case c.Focused(state.ReloadHandle):
+		return "reload"
+	case c.Focused(state.CloseHandle):
+		return "close"
+	}
+	return "close"
+}
+
+func focusIssueResultReturn(c *ui.Context, state *issueResultPanelState, reader bool) {
+	if state.FocusReturn == "" {
+		return
+	}
+	name := state.FocusReturn
+	if !reader && (name == "reader-check" || name == "reader-source" || name == "reader-close") {
+		return
+	}
+	state.FocusReturn = ""
+	switch name {
+	case "reader-check":
+		state.ReaderCheckHandle.Focus(c)
+	case "reader-source":
+		state.ReaderSourceHandle.Focus(c)
+	case "reader-close":
+		state.ReaderCloseHandle.Focus(c)
+	case "reload":
+		state.ReloadHandle.Focus(c)
+	default:
+		state.CloseHandle.Focus(c)
 	}
 }
 
@@ -434,8 +500,15 @@ func issueResultReaderDialog(c *ui.Context, th *ui.Theme, state *issueResultPane
 	}
 	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
-		panel.WidthPercent(86).MaxWidth(760).FillHeight().Background(th.Surface).Children(func() {
-			ui.Scroll(c).Grow(1).Padding(16).Children(func() {
+		panel.WidthPercent(86).MaxWidth(760).FillHeight().Background(th.Surface)
+		if actions.OpenSettings != nil {
+			panel.OnShortcut(ui.Cmd, ui.KeyComma, func() {
+				state.FocusReturn = issueResultFocusedName(c, state, true)
+				actions.OpenSettings()
+			})
+		}
+		panel.Children(func() {
+			ui.Scroll(c).Grow(1).TrackScroll(&state.ReaderScroll).Padding(16).Children(func() {
 				ui.Column(c).AlignSelf(ui.Stretch).MinWidth(0).Gap(10).Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 						ui.Column(c).MinWidth(0).Shrink(1).Gap(2).Children(func() {
@@ -443,7 +516,11 @@ func issueResultReaderDialog(c *ui.Context, th *ui.Theme, state *issueResultPane
 							ui.Text(c, filepath.Base(file.Path)).FontSize(16).FontWeight(600).TextColor(th.Text).MaxLines(2)
 						})
 						ui.Spacer(c)
-						secondaryButton(c, "Close reading").OnClick(closeReader)
+						close := secondaryButton(c, "Close reading").Bind(&state.ReaderCloseHandle).OnClick(closeReader)
+						if state.FocusReader {
+							close.Focus()
+							state.FocusReader = false
+						}
 					})
 					markdownReader(c, file.Path, markdownReaderOptions{
 						PlainText: true, CopyLabel: "Copy path", CopyText: actions.CopyText,
@@ -472,7 +549,7 @@ func issueResultReaderActions(c *ui.Context, th *ui.Theme, state *issueResultPan
 	}
 	ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
 		if actions.CheckFile != nil {
-			secondaryButton(c, "Check again").OnClick(func() { actions.CheckFile(file) })
+			secondaryButton(c, "Check again").Bind(&state.ReaderCheckHandle).OnClick(func() { actions.CheckFile(file) })
 		}
 		if inspection != nil && inspection.Exists && inspection.Regular {
 			if actions.OpenFile != nil {
@@ -487,9 +564,10 @@ func issueResultReaderActions(c *ui.Context, th *ui.Theme, state *issueResultPan
 			if state.SourceFor == key {
 				label = "Hide source & raw record"
 			}
-			secondaryButton(c, label).OnClick(func() { actions.ToggleSource(key) })
+			secondaryButton(c, label).Bind(&state.ReaderSourceHandle).OnClick(func() { actions.ToggleSource(key) })
 		}
 	})
+	focusIssueResultReturn(c, state, true)
 	if state.ActionFor == key && state.Action.Err != "" {
 		ui.Text(c, state.Action.Err).FontSize(13).LineHeight(1.4).TextColor(th.Danger)
 	} else if state.ActionFor == key && state.Action.Notice != "" {

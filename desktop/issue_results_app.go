@@ -305,12 +305,13 @@ func (a *appModel) issueResultPanelView(c *ui.Context, t *ui.Theme) {
 
 func (a *appModel) issueResultPanelActions(generation int) issueResultPanelActions {
 	return issueResultPanelActions{
-		Close:      func() { a.closeIssueResult() },
-		Reload:     func() { a.reloadIssueResult(generation) },
-		SelectFile: func(key string) { a.checkIssueResultFileByKey(generation, key) },
-		CheckFile:  func(file issueResultFile) { a.checkIssueResultFile(generation, file) },
-		OpenFile:   func(file issueResultFile) { a.requestIssueResultFileAction(generation, file, true) },
-		RevealFile: func(file issueResultFile) { a.requestIssueResultFileAction(generation, file, false) },
+		OpenSettings: func() { a.openSettingsTab(settingsTabAppearance, settingsSourceAux) },
+		Close:        func() { a.closeIssueResult() },
+		Reload:       func() { a.reloadIssueResult(generation) },
+		SelectFile:   func(key string) { a.checkIssueResultFileByKey(generation, key) },
+		CheckFile:    func(file issueResultFile) { a.checkIssueResultFile(generation, file) },
+		OpenFile:     func(file issueResultFile) { a.requestIssueResultFileAction(generation, file, true) },
+		RevealFile:   func(file issueResultFile) { a.requestIssueResultFileAction(generation, file, false) },
 		ToggleSource: func(key string) {
 			page := &a.issueResult
 			if page.Generation != generation {

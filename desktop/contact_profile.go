@@ -15,7 +15,7 @@ type contactProfileActions struct {
 	SaveAndNew func(profileDraft)
 	Archive    func()
 	Restore    func()
-	Cancel     func()
+	Discard    func()
 }
 
 type contactProfileEditor struct {
@@ -133,16 +133,6 @@ func (e *contactProfileEditor) activityReason() string {
 func (e *contactProfileEditor) view(c *ui.Context, t *ui.Theme, actions contactProfileActions) {
 	editable := !e.Busy && !e.Archived
 	ui.Column(c).Gap(10).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Contact profile").FontSize(17).FontWeight(600).TextColor(t.Text)
-			ui.Spacer(c)
-			secondaryButton(c, "Cancel").Disabled(e.Busy).OnClick(func() {
-				e.ResetDraft()
-				if actions.Cancel != nil {
-					actions.Cancel()
-				}
-			})
-		})
 		ui.Text(c, "Saving updates this contact's name. Purpose, instructions and workspace are defaults for future conversations and issues; existing conversations and issue work keep the snapshots they were created with.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 		if reason := e.activityReason(); reason != "" {
 			ui.Text(c, reason).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
@@ -176,31 +166,40 @@ func (e *contactProfileEditor) view(c *ui.Context, t *ui.Theme, actions contactP
 		ui.Text(c, "Leave Workspace empty to use the applied default directory.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 
 		ui.Column(c).Gap(6).Children(func() {
-			ui.PrimaryButton(c, "Save changes").FontSize(13).Disabled(!editable).OnClick(func() {
-				if draft, ok := e.Request(false); ok && actions.Save != nil {
-					actions.Save(draft)
+			ui.Row(c).Gap(8).Wrap().Children(func() {
+				ui.PrimaryButton(c, "Save changes").Label("Save changes").FontSize(13).MinHeight(32).Disabled(!editable).OnClick(func() {
+					if draft, ok := e.Request(false); ok && actions.Save != nil {
+						actions.Save(draft)
+					}
+				})
+				if e.HasConversation && !e.Archived {
+					secondaryButton(c, "Save and start new conversation").Disabled(!editable || e.ActiveWork || e.UnknownWork).OnClick(func() {
+						if draft, ok := e.Request(true); ok && actions.SaveAndNew != nil {
+							actions.SaveAndNew(draft)
+						}
+					})
+				}
+				if e.Draft != e.initial && !e.Busy && actions.Discard != nil {
+					secondaryButton(c, "Discard changes").OnClick(actions.Discard)
 				}
 			})
-			if e.HasConversation && !e.Archived {
-				secondaryButton(c, "Save and start new conversation").Disabled(!editable || e.ActiveWork || e.UnknownWork).OnClick(func() {
-					if draft, ok := e.Request(true); ok && actions.SaveAndNew != nil {
-						actions.SaveAndNew(draft)
-					}
-				})
-			}
-			if e.Archived {
-				secondaryButton(c, "Restore").Disabled(e.Busy).OnClick(func() {
-					if actions.Restore != nil {
-						actions.Restore()
-					}
-				})
-			} else {
-				secondaryButton(c, "Archive").Disabled(e.Busy || e.ActiveWork || e.UnknownWork).OnClick(func() {
-					if actions.Archive != nil {
-						actions.Archive()
-					}
-				})
-			}
+			ui.Divider(c)
+			ui.Text(c, "Contact management").FontSize(13).FontWeight(600).TextColor(t.TextMuted)
+			ui.Row(c).Gap(8).Wrap().Children(func() {
+				if e.Archived {
+					secondaryButton(c, "Restore").Disabled(e.Busy).OnClick(func() {
+						if actions.Restore != nil {
+							actions.Restore()
+						}
+					})
+				} else {
+					secondaryButton(c, "Archive").Disabled(e.Busy || e.ActiveWork || e.UnknownWork).OnClick(func() {
+						if actions.Archive != nil {
+							actions.Archive()
+						}
+					})
+				}
+			})
 		})
 		if e.Busy {
 			ui.Text(c, "Saving…").FontSize(14).TextColor(t.TextMuted)

@@ -20,7 +20,7 @@ func appReadingTestApp(t *testing.T) (*appModel, *contact) {
 
 func scrollToVisibleControl(tr *ui.Tester, label string, dy float32) bool {
 	composer, composerOK := tr.Find("Composer for Saki")
-	settings, settingsOK := tr.Find("Settings")
+	settings, settingsOK := tr.Find("Contact profile")
 	if !composerOK || !settingsOK || composer.W <= 0 || composer.H <= 0 {
 		return false
 	}
@@ -328,7 +328,7 @@ func TestAppChatScrollUpSurvivesStreamAppendAndBackToLatest(t *testing.T) {
 	ct.Draft = "draft stays across appearance switch"
 	first, _ := ct.list.Visible()
 	composer, composerOK := tr.Find("Composer for Saki")
-	settings, settingsOK := tr.Find("Settings")
+	settings, settingsOK := tr.Find("Contact profile")
 	if !composerOK || !settingsOK {
 		t.Fatalf("reading viewport bounds unavailable: composer=%+v/%v settings=%+v/%v", composer, composerOK, settings, settingsOK)
 	}

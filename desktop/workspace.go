@@ -254,7 +254,7 @@ func (a *appModel) layoutBody(c *ui.Context, t *ui.Theme) {
 }
 
 func (a *appModel) layoutMainArea(c *ui.Context, t *ui.Theme, left float32) {
-	if !a.workspaceOpen || a.aux == "settings" || a.workOverlay() {
+	if !a.workspaceOpen || a.workOverlay() {
 		a.main(c, t)
 		return
 	}

@@ -147,7 +147,7 @@ func TestCapacityNoticeHiddenBeforeRuntimeReady(t *testing.T) {
 		}
 	}
 
-	a.closeAux()
+	a.closeSettings()
 	startupError := a.runtimeErr
 	if startupError == "" {
 		t.Fatal("unconfigured first launch lost its real startup error")
@@ -173,10 +173,10 @@ func TestCapacityNoticeHiddenBeforeRuntimeReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.aux != "configuration" || !tr.HasText("Connection settings") {
-		t.Fatalf("Configuration details did not open the configuration entry: aux=%q texts=%v", a.aux, tr.Texts())
+	if !a.settingsOpen || a.settingsTab != settingsTabAdvanced || !tr.HasText("Startup & configuration") {
+		t.Fatalf("Configuration details did not open Advanced: open=%v tab=%q texts=%v", a.settingsOpen, a.settingsTab, tr.Texts())
 	}
-	a.closeAux()
+	a.closeSettings()
 
 	// A nil Runtime must not show an actionable retry even if status is ready.
 	a.runtimeStatus = runtimeStateReady

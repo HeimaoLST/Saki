@@ -152,8 +152,9 @@ func TestUnavailableStoreFallbackKeepsPathsAndFile(t *testing.T) {
 		}
 	}
 
-	a.openConfiguration()
+	a.openAdvancedSettings()
 	tr := ui.NewTester(a.view, 960, 640)
+	tr.Frame()
 	tr.Frame()
 	for _, want := range []string{
 		"Startup & configuration",
@@ -198,8 +199,9 @@ func TestRuntimePanelShowsPathsAndMetadata(t *testing.T) {
 		storePath: "/tmp/contacts.json", sessionDir: "/tmp/sessions", workDir: "/tmp/work",
 		scrollTo: -1, contacts: []*contact{ct},
 	}
-	a.openConfiguration()
+	a.openAdvancedSettings()
 	tr := ui.NewTester(a.view, 960, 640)
+	tr.Frame()
 	tr.Frame()
 	for _, want := range []string{
 		"Startup & configuration",
@@ -214,7 +216,7 @@ func TestRuntimePanelShowsPathsAndMetadata(t *testing.T) {
 		"Session model: model-x",
 	} {
 		if !tr.HasText(want) {
-			t.Errorf("runtime panel missing %q", want)
+			t.Errorf("runtime panel missing %q; texts=%v", want, tr.Texts())
 		}
 	}
 	if ct.Draft != "keep" {
@@ -233,31 +235,32 @@ func TestConfigurationEntryKeepsContactSettingsUsable(t *testing.T) {
 	a.openSettings()
 	tr := ui.NewTester(a.view, 960, 640)
 	tr.Frame()
-	for _, want := range []string{"Contact settings", "Contact name", "Save changes", "Close", "Startup status"} {
+	for _, want := range []string{"Contact profile", "Contact name", "Save changes", "← Back to workbench"} {
 		if !tr.HasText(want) {
-			t.Fatalf("contact settings missing %q", want)
+			t.Fatalf("contact profile page missing %q", want)
 		}
 	}
-	if err := tr.Click("Startup status"); err != nil {
+	if err := tr.Click("Advanced"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.aux != "configuration" {
-		t.Fatalf("aux = %q, want configuration", a.aux)
+	tr.Frame()
+	if !a.settingsOpen || a.settingsTab != settingsTabAdvanced {
+		t.Fatalf("advanced route = open=%v tab=%q", a.settingsOpen, a.settingsTab)
 	}
-	for _, want := range []string{"Startup & configuration", "Helper: /tmp/Saki-runtime", "Close"} {
+	for _, want := range []string{"Startup & configuration", "Helper: /tmp/Saki-runtime"} {
 		if !tr.HasText(want) {
-			t.Fatalf("configuration panel missing %q", want)
+			t.Fatalf("advanced page missing %q", want)
 		}
 	}
 	if ct.Draft != "keep" {
 		t.Fatalf("configuration view changed the draft: %q", ct.Draft)
 	}
-	if err := tr.Click("Close"); err != nil {
+	if err := tr.Click("← Back to workbench"); err != nil {
 		t.Fatal(err)
 	}
-	if a.aux != "" {
-		t.Fatalf("close left aux = %q", a.aux)
+	if a.settingsOpen {
+		t.Fatal("back did not close the settings page")
 	}
 }
 
@@ -290,9 +293,10 @@ func TestStartupBannerKeepsComposerFocusAndDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.aux != "configuration" {
-		t.Fatalf("banner opened aux %q, want configuration", a.aux)
+	if !a.settingsOpen || a.settingsTab != settingsTabAdvanced {
+		t.Fatalf("banner opened settings=%v tab=%q, want Advanced", a.settingsOpen, a.settingsTab)
 	}
+	a.closeSettings()
 }
 
 func TestTaskFailureKeepsAcceptedHistoryAndLaterDraft(t *testing.T) {

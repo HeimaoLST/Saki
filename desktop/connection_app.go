@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/egoist/mygo/ui"
 )
 
 type connectionStartup struct {
@@ -157,7 +155,6 @@ func (a *appModel) connectionActions() connectionSettingsActions {
 		Save:  a.saveConnection,
 		Apply: a.applyConnection,
 		Test:  a.testConnection,
-		Close: a.closeAux,
 	}
 }
 
@@ -201,9 +198,13 @@ func (a *appModel) saveConnection(config connectionConfig) {
 			form.Busy = false
 			a.connectionSaved = &config
 			a.connectionForm.HasSaved = true
+			a.connectionForm.initial = a.connectionForm.Draft
 			a.connectionForm.Source = "Nagi connection settings"
 			a.connectionForm.SavedSummary = connectionSummary(&config)
 			a.connectionForm.Status = "Saved. Apply saved to use this connection."
+			if a.connectionApplied() && *a.connectionEffective == config {
+				a.connectionForm.Status = "Saved. This configuration is already applied."
+			}
 			a.connectionForm.Error = ""
 			if err != nil {
 				a.connectionForm.Error = "Configuration was saved, but the local contact store could not be created: " + a.redactConnectionText(err.Error())
@@ -306,6 +307,12 @@ func (a *appModel) applyConnectionWorker(gen int, path, sessionDir, helperHint s
 		return
 	}
 	binary := findRuntimeBinary()
+	a.updateUI(func() {
+		if a.rt == nil {
+			a.runtimeHelperChecked = true
+			a.runtimeBinary = binary
+		}
+	})
 	if binary == "" {
 		fail("Runtime helper not found. " + helperHint)
 		return
@@ -440,6 +447,10 @@ func (a *appModel) testConnection(config connectionConfig) {
 		return
 	}
 	binary := findRuntimeBinary()
+	if a.rt == nil {
+		a.runtimeHelperChecked = true
+		a.runtimeBinary = binary
+	}
 	if binary == "" {
 		form.Error = "Runtime helper not found. " + a.runtimeHelperHint()
 		return
@@ -682,13 +693,6 @@ func (c *runtimeClient) createConfiguredSessionWithTools(workingDir, systemPromp
 		return runtimeSession{}, errors.New("runtime returned a session without session_id")
 	}
 	return session, nil
-}
-
-func (a *appModel) connectionPanel(c *ui.Context, t *ui.Theme) {
-	if a.connectionForm == nil {
-		return
-	}
-	a.connectionForm.view(c, t, a.connectionActions())
 }
 
 // finishShutdown drains Runtime only after in-flight history reads have

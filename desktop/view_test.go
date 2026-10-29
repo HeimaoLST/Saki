@@ -43,6 +43,8 @@ func TestMinimumWindowRenders(t *testing.T) {
 	if !tr.HasText("Save changes") {
 		t.Fatal("settings should render at the 960x640 minimum")
 	}
+	a.closeSettings()
+	tr.Frame()
 	a.addDefaultContact()
 	tr.Frame()
 	if !tr.HasText("New contact 1") {
@@ -273,7 +275,7 @@ func TestSettingsFieldsReceiveInputAndDoNotStealComposerFocus(t *testing.T) {
 	if ct.Draft != "keep me" {
 		t.Fatalf("composer draft = %q", ct.Draft)
 	}
-	if err := tr.Click("Settings"); err != nil {
+	if err := tr.Click("Contact profile"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()

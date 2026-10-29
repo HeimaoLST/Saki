@@ -14,6 +14,7 @@ type connectionDraft struct {
 
 type connectionSettings struct {
 	Draft            connectionDraft
+	initial          connectionDraft
 	Errors           map[string]string
 	Source           string
 	SavedSummary     string
@@ -23,14 +24,15 @@ type connectionSettings struct {
 	ReloadBlocked    string
 	Busy             bool
 	HasSaved         bool
+	LimitsOpen       bool
 	focusField       string
 }
 
 type connectionSettingsActions struct {
-	Save  func(connectionConfig)
-	Apply func()
-	Test  func(connectionConfig)
-	Close func()
+	Save    func(connectionConfig)
+	Apply   func()
+	Test    func(connectionConfig)
+	Discard func()
 }
 
 func newConnectionSettings(config *connectionConfig, workDir string) *connectionSettings {
@@ -47,7 +49,24 @@ func newConnectionSettings(config *connectionConfig, workDir string) *connection
 		s.HasSaved = true
 		s.Source = "Nagi connection settings"
 	}
+	s.initial = s.Draft
 	return s
+}
+
+func (s *connectionSettings) Dirty() bool {
+	return s != nil && s.Draft != s.initial
+}
+
+func (s *connectionSettings) ResetDraft() {
+	if s == nil {
+		return
+	}
+	s.Draft = s.initial
+	s.Errors = nil
+	s.Error = ""
+	s.Status = ""
+	s.ReloadBlocked = ""
+	s.focusField = "Endpoint"
 }
 
 func (s *connectionSettings) validated() (connectionConfig, bool) {
@@ -76,6 +95,9 @@ func (s *connectionSettings) validated() (connectionConfig, bool) {
 	for key, message := range numericErrors {
 		s.Errors[key] = message
 	}
+	if s.Errors["ContextTokens"] != "" || s.Errors["OutputTokens"] != "" || s.Errors["MaxActiveTasks"] != "" {
+		s.LimitsOpen = true
+	}
 	s.Error = ""
 	if len(s.Errors) > 0 {
 		s.Error = "Check the highlighted fields. Your changes are still here."
@@ -94,13 +116,7 @@ func (s *connectionSettings) validated() (connectionConfig, bool) {
 // and editing this form never starts a model request or writes configuration.
 func (s *connectionSettings) view(c *ui.Context, t *ui.Theme, actions connectionSettingsActions) {
 	ui.Column(c).Gap(10).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Connection settings").FontSize(17).FontWeight(600).TextColor(t.Text)
-			ui.Spacer(c)
-			secondaryButton(c, "Close").Disabled(s.Busy).OnClick(actions.Close)
-		})
 		ui.Text(c, "Connect a model to start working with your contacts.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
-		ui.Text(c, "Source: "+s.Source).FontSize(14).TextColor(t.TextMuted)
 		if s.Error != "" {
 			ui.Text(c, s.Error).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
 		}
@@ -122,31 +138,34 @@ func (s *connectionSettings) view(c *ui.Context, t *ui.Theme, actions connection
 		s.field(c, t, "APIKey", "API key", "Paste your API key", &s.Draft.APIKey, true)
 		ui.Text(c, "Saved in a private local file, without encryption. Nagi does not add this key to contact settings or model prompts.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 		s.field(c, t, "Model", "Default model", "Provider model ID", &s.Draft.Model, false)
-		ui.Text(c, "Capacity · explicit limits").FontSize(14).FontWeight(500).TextColor(t.Text)
-		ui.Text(c, "Enter limits supported by this model. These values are not inferred from its name.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
-		s.field(c, t, "ContextTokens", "Context tokens", "131072", &s.Draft.ContextTokens, false)
-		s.field(c, t, "OutputTokens", "Output tokens", "8192", &s.Draft.OutputTokens, false)
+		limitsLabel := "Capacity & execution limits"
+		if s.LimitsOpen {
+			limitsLabel = "Hide capacity & execution limits"
+		}
+		secondaryButton(c, limitsLabel).OnClick(func() { s.LimitsOpen = !s.LimitsOpen })
+		if s.LimitsOpen {
+			ui.Text(c, "Enter limits supported by this model. These values are not inferred from its name.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+			s.field(c, t, "ContextTokens", "Context tokens", "131072", &s.Draft.ContextTokens, false)
+			s.field(c, t, "OutputTokens", "Output tokens", "8192", &s.Draft.OutputTokens, false)
+			s.field(c, t, "MaxActiveTasks", "Maximum active tasks", "2", &s.Draft.Slots, false)
+		}
 		s.field(c, t, "WorkingDirectory", "Default working directory", "/absolute/path/to/project", &s.Draft.WorkingDirectory, false)
-		s.field(c, t, "MaxActiveTasks", "Maximum active tasks", "2", &s.Draft.Slots, false)
 		ui.Text(c, "Defaults apply to new work. Existing sessions keep their model, limits and working directory.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 		ui.Row(c).Gap(8).Children(func() {
-			ui.PrimaryButton(c, "Save configuration").FontSize(13).Disabled(s.Busy).OnClick(func() {
+			ui.PrimaryButton(c, "Save configuration").Label("Save configuration").FontSize(13).MinHeight(32).Disabled(s.Busy).OnClick(func() {
 				if config, ok := s.validated(); ok && actions.Save != nil {
 					actions.Save(config)
 				}
 			})
 			secondaryButton(c, "Apply saved").Disabled(s.Busy || !s.HasSaved || s.ReloadBlocked != "").OnClick(actions.Apply)
+			if s.Dirty() && actions.Discard != nil {
+				secondaryButton(c, "Discard changes").Disabled(s.Busy).OnClick(actions.Discard)
+			}
 		})
 		if s.ReloadBlocked != "" {
 			ui.Text(c, s.ReloadBlocked).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
 		}
 		ui.Text(c, "Saving does not interrupt work. When all work has finished, choose Apply saved to use the saved settings.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
-		if s.SavedSummary != "" {
-			ui.Text(c, "Saved: "+s.SavedSummary).FontSize(14).LineHeight(1.4).TextColor(t.Text)
-		}
-		if s.EffectiveSummary != "" {
-			ui.Text(c, "Effective: "+s.EffectiveSummary).FontSize(14).LineHeight(1.4).TextColor(t.Text)
-		}
 		secondaryButton(c, "Test connection and model").Disabled(s.Busy).OnClick(func() {
 			if config, ok := s.validated(); ok && actions.Test != nil {
 				actions.Test(config)

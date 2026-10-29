@@ -347,7 +347,7 @@ func TestHistoryEmptyQueryDoesNotClaimNoMatch(t *testing.T) {
 	}
 }
 
-func TestSettingsModalEscapeReturnsToThreePane(t *testing.T) {
+func TestSettingsPageEscapeDoesNotLeavePageAndBackReturnsToThreePane(t *testing.T) {
 	a, _ := workspaceTestApp(t)
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
@@ -355,16 +355,20 @@ func TestSettingsModalEscapeReturnsToThreePane(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.aux != "settings" || !tr.HasText("Close") {
-		t.Fatal("settings modal did not open")
+	if !a.settingsOpen || !tr.HasText("Settings") {
+		t.Fatal("settings page did not open")
 	}
 	tr.Key(0, ui.KeyEscape)
 	tr.Frame()
-	if a.aux != "" || !tr.Focused("Settings") {
-		t.Fatal("Escape did not close settings and return focus")
+	if !a.settingsOpen {
+		t.Fatal("Escape incorrectly closed the settings page")
 	}
-	if !tr.HasText("Issues") {
-		t.Fatal("closing settings did not return to the three-pane work view")
+	if err := tr.Click("← Back to workbench"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.settingsOpen || !tr.Focused("Settings") || !tr.HasText("Issues") {
+		t.Fatal("Back did not return to the three-pane work view with entry focus")
 	}
 }
 

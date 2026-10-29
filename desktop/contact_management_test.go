@@ -317,7 +317,7 @@ func TestContactManagementAppPreviews(t *testing.T) {
 			tr := ui.NewTester(a.view, width, 720)
 			tr.SetDark(dark)
 			tr.Frame()
-			if !tr.HasText("Contact settings") || !tr.HasText("Save changes") {
+			if !tr.HasText("Contact profile") || !tr.HasText("Save changes") {
 				t.Fatalf("settings preview missing content at width %d", width)
 			}
 			theme := "light"
@@ -334,8 +334,8 @@ func TestContactManagementAppPreviews(t *testing.T) {
 	archived.openSettings()
 	tr := ui.NewTester(archived.view, 1280, 720)
 	tr.Frame()
-	if !tr.HasText("Archived contact") || !tr.HasText("Restore") {
-		t.Fatal("archived app preview is missing the read-only banner or Restore")
+	if !tr.HasText("Archived") || !tr.HasText("Restore") {
+		t.Fatal("archived settings preview is missing the archived state or Restore")
 	}
 	writePreviewPNG(t, filepath.Join(dir, "app-archive-restore-1280.png"), tr.Image())
 

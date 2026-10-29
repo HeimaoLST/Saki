@@ -251,13 +251,18 @@ func TestIssueAuxEscapePreservesDetailLayer(t *testing.T) {
 	tr.Frame()
 	a.openSettings()
 	tr.Frame()
-	if a.aux != "settings" || !tr.HasText("Contact settings") {
-		t.Fatalf("settings did not open over detail: aux=%q", a.aux)
+	if !a.settingsOpen || a.settingsTab != settingsTabContact || !tr.HasText("Contact profile") {
+		t.Fatalf("settings did not open over detail: open=%v tab=%q", a.settingsOpen, a.settingsTab)
 	}
 	tr.Key(0, ui.KeyEscape)
 	tr.Frame()
-	if a.aux != "" || !a.workspaceOpen || ct.issueNavigation().DetailID != issue.ID {
-		t.Fatalf("aux Escape closed work layer: aux=%q open=%v detail=%q", a.aux, a.workspaceOpen, ct.issueNavigation().DetailID)
+	if !a.settingsOpen || !a.workspaceOpen || ct.issueNavigation().DetailID != issue.ID {
+		t.Fatalf("Escape closed settings/work layer: open=%v work=%v detail=%q", a.settingsOpen, a.workspaceOpen, ct.issueNavigation().DetailID)
+	}
+	a.closeSettings()
+	tr.Frame()
+	if !a.workspaceOpen || ct.issueNavigation().DetailID != issue.ID {
+		t.Fatalf("return changed work layer: open=%v detail=%q", a.workspaceOpen, ct.issueNavigation().DetailID)
 	}
 }
 

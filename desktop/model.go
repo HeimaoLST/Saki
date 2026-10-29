@@ -158,6 +158,22 @@ type appModel struct {
 	auxMessage      int
 	defaultContactN int
 	focusComposer   bool
+	composerHandle  ui.Handle
+
+	settingsOpen         bool
+	settingsTab          string
+	settingsReturnFocus  string
+	settingsContactID    string
+	settingsProfiles     map[string]*contactProfileEditor
+	settingsPickerChoice string
+	settingsScroll       ui.ScrollState
+	settingsFocusBack    bool
+	settingsFocusTab     string
+	sourcesScroll        ui.ScrollState
+	modelScroll          ui.ScrollState
+	taskContextScroll    ui.ScrollState
+	issueResultScroll    ui.ScrollState
+	historyScroll        ui.ScrollState
 
 	contactProfile           *contactProfileEditor
 	contactProfileID         string
@@ -179,7 +195,6 @@ type appModel struct {
 	appearanceStatus string
 	appearanceError  string
 	systemDark       bool
-	focusAppearance  bool
 	storeInitAllowed bool
 	localSaveErr     string
 	localSavePrevErr string
@@ -212,6 +227,7 @@ type appModel struct {
 	runtimeStage              string
 	runtimeHint               string
 	runtimeBinary             string
+	runtimeHelperChecked      bool
 	runtimeAPI                string
 	runtimeHandshake          bool
 	runtimeMaxActiveTasks     int
@@ -274,19 +290,22 @@ type appModel struct {
 	// Layout is a GUI-wide preference, not a contact or runtime fact. Widths
 	// are persisted in the contact store; windowWidth is only the current
 	// native viewport and never overwrites a preferred width when it shrinks.
-	windowWidth        int
-	leftPaneWidth      float32
-	rightPaneWidth     float32
-	centerPaneWidth    float32
-	workspaceOpen      bool
-	railCollapsed      bool
-	focusWorkspace     bool
-	focusWorkspaceOpen bool
-	focusRail          bool
-	focusHistory       bool
-	focusHistoryOpen   bool
-	focusSettings      bool
-	workTheme          workbenchTheme
+	windowWidth          int
+	leftPaneWidth        float32
+	rightPaneWidth       float32
+	centerPaneWidth      float32
+	workspaceOpen        bool
+	railCollapsed        bool
+	focusWorkspace       bool
+	focusWorkspaceOpen   bool
+	focusRail            bool
+	focusHistory         bool
+	focusHistoryOpen     bool
+	focusSettings        bool
+	focusContactProfile  bool
+	focusConnectionEntry bool
+	focusConfiguration   bool
+	workTheme            workbenchTheme
 
 	seq int
 	win *mygo.Window
@@ -517,25 +536,31 @@ func (a *appModel) addDefaultContact() {
 }
 
 func (a *appModel) openSettings() {
-	c := a.selectedContact()
-	a.openContactProfile(c.ID)
+	a.settingsContactID = a.selectedContact().ID
+	a.settingsPickerChoice = ""
+	a.openSettingsTab(settingsTabContact, settingsSourceRail)
+}
+
+func (a *appModel) openAdvancedSettings() {
+	a.startupDetailsOpen = true
+	a.openSettingsTab(settingsTabAdvanced, settingsSourceConfiguration)
 }
 
 func (a *appModel) closeAux() {
+	if a.settingsOpen {
+		a.closeSettings()
+		return
+	}
 	if a.aux == "model" && a.modelOpActive {
 		return
 	}
 	switch a.aux {
-	case "settings":
-		a.focusSettings = true
 	case "sources":
 		a.focusHistory = false
 	case "model":
 		a.modelForm = nil
 		a.modelPanelMessage = ""
 		a.modelPanelError = ""
-	case "appearance":
-		a.focusAppearance = true
 	case "issue-result":
 		a.closeIssueResult()
 		return

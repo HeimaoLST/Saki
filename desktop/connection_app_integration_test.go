@@ -26,7 +26,7 @@ func openConnectionHarness(t *testing.T) *guiHarness {
 	return h
 }
 
-func clickConnectionAction(tr *ui.Tester, action string) error {
+func clickSettingsAction(tr *ui.Tester, action string) error {
 	for i := 0; i < 12; i++ {
 		if r, ok := tr.Find(action); ok && r.W > 0 && r.H > 0 && r.Y >= 0 && r.Y+r.H <= 720 {
 			return tr.Click(action)
@@ -100,7 +100,10 @@ func TestConnectionGUIFirstSaveApplyTestSendAndRestart(t *testing.T) {
 		h.app.connectionForm.Draft = newConnectionSettings(&config, "").Draft
 		tr := ui.NewTester(h.app.view, 1040, 720)
 		tr.Frame()
-		clickErr = clickConnectionAction(tr, "Save configuration")
+		clickErr = clickSettingsAction(tr, "Save configuration")
+		if r, ok := tr.Find("Save configuration"); !ok || r.H < 32 {
+			t.Error("Save configuration does not provide the minimum click target")
+		}
 		tr.Frame()
 	})
 	if clickErr != nil {
@@ -116,7 +119,7 @@ func TestConnectionGUIFirstSaveApplyTestSendAndRestart(t *testing.T) {
 		}
 		tr := ui.NewTester(h.app.view, 1040, 720)
 		tr.Frame()
-		clickErr = clickConnectionAction(tr, "Apply saved")
+		clickErr = clickSettingsAction(tr, "Apply saved")
 		tr.Frame()
 	})
 	if clickErr != nil {
@@ -125,8 +128,27 @@ func TestConnectionGUIFirstSaveApplyTestSendAndRestart(t *testing.T) {
 	h.pump.wait(func() bool {
 		return h.app.runtimeStatus == runtimeStateReady && h.app.runtimeCapabilitiesLoaded && !h.app.connectionForm.Busy
 	})
+	h.pump.do(func() {
+		running, generation := h.app.rt, h.app.connectionGeneration
+		ct := h.app.selectedContact()
+		ct.Draft = "conversation draft survives settings"
+		tr := ui.NewTester(h.app.view, 1040, 720)
+		for _, action := range []string{"← Back to workbench", "Settings", "Connection & model"} {
+			if err := tr.Click(action); err != nil {
+				t.Error(err)
+				return
+			}
+			tr.Frame()
+		}
+		if !tr.HasText("Current: "+config.Model) || tr.HasText("awaiting Apply") || tr.HasText("Saved. Apply saved") || h.app.connectionForm.Dirty() {
+			t.Error("reopening the applied connection showed pending or unsaved settings")
+		}
+		if h.app.rt != running || h.app.connectionGeneration != generation || h.app.selectedContact() != ct || ct.Draft != "conversation draft survives settings" {
+			t.Error("settings roundtrip changed the runtime, contact or conversation draft")
+		}
+	})
 	if provider.count() != 0 {
-		t.Fatal("Apply performed a model test without an explicit request")
+		t.Fatal("Apply or reopening settings performed a model test without an explicit request")
 	}
 	beforeTest, err := os.ReadFile(guiStorePath())
 	if err != nil {
@@ -135,7 +157,7 @@ func TestConnectionGUIFirstSaveApplyTestSendAndRestart(t *testing.T) {
 	h.pump.do(func() {
 		tr := ui.NewTester(h.app.view, 1040, 720)
 		tr.Frame()
-		clickErr = clickConnectionAction(tr, "Test connection and model")
+		clickErr = clickSettingsAction(tr, "Test connection and model")
 		tr.Frame()
 	})
 	if clickErr != nil {
@@ -250,7 +272,16 @@ func TestConnectionGUISaveDuringIssueAndReloadFailurePreservesHelper(t *testing.
 		return issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle && len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
 	})
 	t.Setenv("SAKI_RUNTIME_BIN", filepath.Join(t.TempDir(), "missing-helper"))
-	h.pump.do(func() { h.app.applyConnection() })
+	h.pump.do(func() {
+		tr := ui.NewTester(h.app.view, 1040, 720)
+		if err := clickSettingsAction(tr, "Apply saved"); err != nil {
+			t.Error(err)
+			return
+		}
+		if !h.app.connectionApplying || !h.app.connectionForm.Busy {
+			t.Error("Apply remained disabled after the real issue reached its terminal state")
+		}
+	})
 	h.pump.wait(func() bool { return !h.app.connectionForm.Busy })
 	h.pump.do(func() {
 		if h.app.rt != original || h.app.runtimeStatus != runtimeStateReady || h.app.connectionForm.Error == "" {
@@ -492,4 +523,32 @@ func TestConnectionGUIEndpointChangePreservesOldContextAndNewDefaults(t *testing
 	if oldSession == newSession || providerA.count() != 1 || providerB.count() != 1 || !strings.Contains(providerB.body(0), `"model":"model-B"`) {
 		t.Fatal("new work did not use a new context on B without replaying A")
 	}
+}
+
+func TestSettingsHelperDiagnosticsUseActualProbe(t *testing.T) {
+	isolateConnectionApp(t, t.TempDir(), "")
+	t.Setenv("PATH", "")
+	h := openConnectionHarness(t)
+	assertHelper := func(want string) {
+		t.Helper()
+		h.pump.do(func() {
+			h.app.openAdvancedSettings()
+			tr := ui.NewTester(h.app.view, 1040, 720)
+			if !tr.HasText("Helper: " + want) {
+				t.Errorf("helper diagnostics did not reflect %q", want)
+			}
+		})
+	}
+	assertHelper("not checked yet")
+	config := testConnectionConfig(t)
+	saveAppConnection(t, h, config)
+	assertHelper("not started yet")
+	h.pump.do(func() { h.app.applyConnection() })
+	h.pump.wait(func() bool { return !h.app.connectionForm.Busy })
+	assertHelper("not found")
+	h.pump.do(func() {
+		if h.app.rt != nil || !h.app.runtimeHelperChecked || h.app.connectionForm.Error == "" {
+			t.Error("failed helper discovery did not retain its failure and probe fact")
+		}
+	})
 }

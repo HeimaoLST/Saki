@@ -213,11 +213,11 @@ func TestAppearancePanelSwitchesModeAndKeepsCurrentDraft(t *testing.T) {
 	ct.Draft = draftBeforeAppearance
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	if err := tr.Click("Appearance"); err != nil {
+	if err := tr.Click("Settings"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if !tr.HasText("Appearance") || !tr.HasText("Effective:") {
+	if !a.settingsOpen || a.settingsTab != settingsTabAppearance || !tr.HasText("Appearance") || !tr.HasText("Effective:") {
 		t.Fatalf("appearance panel missing: %q", tr.Texts())
 	}
 	if err := tr.Click("System"); err != nil {

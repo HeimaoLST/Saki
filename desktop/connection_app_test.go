@@ -24,8 +24,8 @@ func TestConnectionFirstUseDoesNotPersistWrongDefaultWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.connectionForm == nil || a.aux != "configuration" {
-		t.Fatal("an empty profile must open the usable configuration form")
+	if a.connectionForm == nil || !a.settingsOpen || a.settingsTab != settingsTabConnection {
+		t.Fatalf("an empty profile must open the connection settings page: form=%v open=%v tab=%q", a.connectionForm != nil, a.settingsOpen, a.settingsTab)
 	}
 	if _, err := os.Stat(guiStorePath()); !os.IsNotExist(err) {
 		t.Fatal("first use persisted a contact before the user selected a working directory")
@@ -127,7 +127,7 @@ func TestConnectionInvalidSavedSourceRemainsRepairable(t *testing.T) {
 	if a.connectionForm == nil || a.connectionForm.Draft.Model != config.Model || a.connectionForm.Draft.WorkingDirectory != config.WorkingDirectory || a.connectionForm.Error == "" {
 		t.Fatal("invalid saved settings must open for correction with their previous values")
 	}
-	if a.rt != nil || a.aux != "configuration" {
-		t.Fatal("invalid GUI configuration fell back to an unrelated external connection")
+	if a.rt != nil || !a.settingsOpen || a.settingsTab != settingsTabConnection {
+		t.Fatalf("invalid GUI configuration did not open the repair page: rt=%v open=%v tab=%q", a.rt, a.settingsOpen, a.settingsTab)
 	}
 }
