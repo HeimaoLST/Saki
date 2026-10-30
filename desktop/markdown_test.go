@@ -459,6 +459,20 @@ func readerImageRegionDiff(a, b *image.RGBA, r ui.Rect) int {
 	return count
 }
 
+func readerRegionHasInk(img *image.RGBA, r ui.Rect) bool {
+	x0, y0 := max(0, int(r.X)), max(0, int(r.Y))
+	x1, y1 := min(img.Bounds().Dx(), int(r.X+r.W)), min(img.Bounds().Dy(), int(r.Y+r.H))
+	background := img.RGBAAt(x0+2, y0+2)
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			if img.RGBAAt(x, y) != background {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func TestMarkdownReaderCompactSourceCopyVisibilityAndGeometry(t *testing.T) {
 	source := "一句话中文消息，复制按钮应贴在消息右侧。"
 	streaming := false
@@ -484,8 +498,11 @@ func TestMarkdownReaderCompactSourceCopyVisibilityAndGeometry(t *testing.T) {
 	if text.Y < button.Y || text.Y > button.Y+button.H {
 		t.Fatalf("content is not first/top-aligned with the control: text=%+v button=%+v", text, button)
 	}
-	hidden := tr.Image()
-	tr.Move(text.X+text.W/2, text.Y+text.H/2)
+	rest := tr.Image()
+	if !readerRegionHasInk(rest, button) {
+		t.Fatal("source copy icon is not visible at rest")
+	}
+	tr.Move(button.X+button.W/2, button.Y+button.H/2)
 	tr.Frame()
 	hoverButton, _ := tr.Find("Copy message")
 	hoverText, _ := tr.Find(source)
@@ -493,12 +510,15 @@ func TestMarkdownReaderCompactSourceCopyVisibilityAndGeometry(t *testing.T) {
 		t.Fatalf("hover changed geometry: button %+v -> %+v text %+v -> %+v", button, hoverButton, text, hoverText)
 	}
 	hovered := tr.Image()
-	if readerImageRegionDiff(hidden, hovered, button) == 0 {
-		t.Fatal("copy control is not visible on message hover")
+	if readerImageRegionDiff(rest, hovered, button) == 0 {
+		t.Fatal("copy control shows no hover face")
 	}
 	tr.Move(1, 1)
 	tr.Frame()
 	beforeFocus := tr.Image()
+	if !readerRegionHasInk(beforeFocus, button) {
+		t.Fatal("source copy icon is not visible after hover leaves")
+	}
 	tr.Key(0, ui.KeyTab)
 	tr.Frame()
 	if !tr.Focused("Copy message") {
@@ -510,7 +530,7 @@ func TestMarkdownReaderCompactSourceCopyVisibilityAndGeometry(t *testing.T) {
 		t.Fatalf("focus changed geometry: button %+v -> %+v text %+v -> %+v", button, focusButton, text, focusText)
 	}
 	if readerImageRegionDiff(beforeFocus, tr.Image(), button) == 0 {
-		t.Fatal("copy control is not visible on keyboard focus")
+		t.Fatal("copy control shows no keyboard focus face")
 	}
 }
 
@@ -553,10 +573,10 @@ func TestMarkdownReaderScreenshot(t *testing.T) {
 	}
 	long := strings.Repeat("abcdefghij", 24)
 	scenes := []struct {
-		name, hover, source string
+		name, source string
 	}{
-		{"one-line", "一句话中文消息，复制按钮应贴在消息右侧。", "一句话中文消息，复制按钮应贴在消息右侧。"},
-		{"rich", "宽表", readerFourColumnSource + "\n```\n" + long + "\n```\n"},
+		{"one-line", "一句话中文消息，复制按钮应贴在消息右侧。"},
+		{"rich", readerFourColumnSource + "\n```\n" + long + "\n```\n"},
 	}
 	streaming := false
 	options := markdownReaderOptions{CopyLabel: "Copy message"}
@@ -588,7 +608,7 @@ func TestMarkdownReaderScreenshot(t *testing.T) {
 					}
 				}
 				write("")
-				if r, ok := tr.Find(scene.hover); ok {
+				if r, ok := tr.Find("Copy message"); ok {
 					tr.Move(r.X+r.W/2, r.Y+r.H/2)
 					tr.Frame()
 					write("-hover")

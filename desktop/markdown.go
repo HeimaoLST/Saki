@@ -145,7 +145,7 @@ func markdownReader(c *ui.Context, source string, options markdownReaderOptions)
 	}
 
 	root.Children(func() {
-		st.sourceCopyButton(c, c.Now(), label, func() string { return source }, &st.sourceFeedback, root, options.CopyHandle)
+		st.sourceCopyButton(c, c.Now(), label, func() string { return source }, &st.sourceFeedback, options.CopyHandle)
 		ui.Column(c).Padding(0, 32, 0, 0).Children(func() {
 			switch {
 			case options.PlainText:
@@ -276,19 +276,15 @@ func (st *markdownReaderState) codeFeedbackFor(index int) *readerCopyFeedback {
 	return fb
 }
 
-func (st *markdownReaderState) sourceCopyButton(c *ui.Context, now time.Time, accessible string, text func() string, fb *readerCopyFeedback, owner ui.Element, handle *ui.Handle) ui.Element {
+func (st *markdownReaderState) sourceCopyButton(c *ui.Context, now time.Time, accessible string, text func() string, fb *readerCopyFeedback, handle *ui.Handle) ui.Element {
 	feedbackVisible, failed := fb.show(now)
-	show := owner.Hovered() || owner.FocusWithin() || feedbackVisible
 	btn := ui.Button(c, "").Label(accessible).Tooltip(accessible)
 	if handle != nil {
 		btn.Bind(handle)
 	}
 	theme := c.Theme()
 	btn.Key("source-copy").Size(32, 32).Padding(0).Gap(0).Radius(6).
-		Background(ui.Transparent).BorderWidth(0).Opacity(0).Absolute().Top(0).Right(0)
-	if show {
-		btn.Opacity(1)
-	}
+		Background(ui.Transparent).BorderWidth(0).Absolute().Top(0).Right(0)
 	if btn.Pressed() {
 		btn.Background(theme.SurfacePressed)
 	} else if btn.Hovered() {
