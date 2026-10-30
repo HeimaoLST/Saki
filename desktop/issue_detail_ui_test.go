@@ -417,7 +417,11 @@ func issueHistoryFindCard(t *testing.T, tr *ui.Tester, headerText, revisionText,
 		open, openOK := issueHistoryVisibleRect(tr, openText, panelX, width, height)
 		view, viewOK := issueHistoryVisibleRect(tr, viewText, panelX, width, height)
 		if headerOK && revisionOK && openOK && viewOK {
-			return header, revision, open, view
+			// Keep a full action control inside the readable viewport, not just
+			// its text line; secondaryButton has a 32px minimum height.
+			if view.Y+view.H+20 <= height {
+				return header, revision, open, view
+			}
 		}
 		tr.Scroll(panelX+40, height/2, 0, 180)
 		tr.Frame()
@@ -491,9 +495,6 @@ func TestIssueExecutionHistoryLayoutKeepsHeaderRevisionAndActionsDistinct(t *tes
 			if history.X < panelX || history.X+history.W > float32(tc.width) {
 				t.Errorf("Execution history bounds=%+v panelX=%.1f width=%d", history, panelX, tc.width)
 			}
-			if dir := os.Getenv("SAKI_PREVIEW_DIR"); dir != "" {
-				writePreviewPNG(t, filepath.Join(dir, "headless-issue-execution-history-"+tc.name+".png"), tr.Image())
-			}
 			for index, execution := range issue.Executions {
 				headerText := "Execution " + fmt.Sprint(index+1) + " · " + issueExecutionLabel(execution)
 				revisionText := "revision " + fmt.Sprint(execution.RequirementsRevision)
@@ -501,6 +502,10 @@ func TestIssueExecutionHistoryLayoutKeepsHeaderRevisionAndActionsDistinct(t *tes
 				viewText := "View execution · run " + fmt.Sprint(index+1)
 				header, revision, open, view := issueHistoryFindCard(t, tr, headerText, revisionText, openText, viewText,
 					panelX, float32(tc.width), float32(tc.height))
+				if dir := os.Getenv("SAKI_PREVIEW_DIR"); dir != "" {
+					writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf(
+						"headless-issue-execution-history-%s-run-%d.png", tc.name, index+1)), tr.Image())
+				}
 				horizontalGap, verticalGap := issueHistoryGap(header, revision)
 				t.Logf("layout %s run %d header=%+v revision=%+v open=%+v view=%+v gaps=(%.1f,%.1f) panelX=%.1f width=%d",
 					tc.name, index+1, header, revision, open, view, horizontalGap, verticalGap, panelX, tc.width)
