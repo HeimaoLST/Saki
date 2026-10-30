@@ -80,8 +80,10 @@
 
 - 中性背景承载正文；`accent`/`on_accent` 只用于发送、停止、选中标记和焦点集中。`success`、`warning`、`error` 同时配文字或图形，不用绿色猜完成。
 - `line` 只作装饰分组，不能单独证明输入、焦点或选中；控件需要边界时用 `control_border`。当前 CSS 只把 `control_border` 用于搜索框、字段和 composer 等输入边界，装饰线继续用 `line`。
-- 复制和普通工具使用不透明 `muted`；hover 只加底面，不以 opacity/filter 降低对比。按钮默认/hover/pressed 使用 `accent`／`accent_hover`／`accent_pressed`，不拿 brightness 代替核定值。禁用候选不能只靠透明度；原因在相邻可读文字，MyGo 若再合成 disabled 状态必须按最终颜色重算。4.6/5.4 只是候选测量记录，不把 4.5 写成 WCAG 对禁用控件的强制要求。
-- #221 的 92 对检查中 88 对有阈值通过、4 对仅记录；覆盖范围限于已列出的背景/状态组合，不宣称任意透明度、组件默认状态或原生渲染都通过。最终原生颜色、焦点、hover/pressed/disabled 仍需 GUI 主责验证。
+- 复制和普通工具使用不透明 `muted`；hover 只加底面，不以 opacity/filter 降低对比。按钮默认/hover/pressed 使用 `accent`／`accent_hover`／`accent_pressed`，不拿 brightness 代替核定值。
+- 原生禁用沿用 MyGo 官方 Disabled 语义和默认绘制，不为候选禁用色单独加框架 patch；#221 的 `disabled_text`/`disabled_bg` 4.60/5.40 只是不透明候选，不是当前 native 门槛，实际默认变淡约浅 2.94/深 4.33 只作适配记录，不能写成当前渲染已达候选值。
+- 必要的禁用原因、当前有效模型、错误和容量原因必须另用独立、可读的正常文字（普通文字仍以 4.5 为目标），不能只放在不可聚焦的 disabled tooltip；关键状态也不能只靠变淡区分。
+- #221 的 92 对检查中 88 对有阈值通过、4 对仅记录；覆盖范围限于已列出的背景/状态组合，不宣称任意透明度、组件默认状态或原生渲染都通过。最终原生颜色、焦点、hover/pressed 仍待 GUI 主责验证；disabled 按官方默认绘制，不另加 patch。
 - Adobe 实测参数：单色规则、基础色 `#365E4D`，原始输出为 `#365E4D`、`#709183`、`#A3C4B6`、`#9CF7D1`、`#6EFFC2`；这些原始值不直接铺满 UI。完整研究见 [#221](https://github.com/HeimaoLST/Saki/issues/221#issuecomment-6524653785)。
 
 
