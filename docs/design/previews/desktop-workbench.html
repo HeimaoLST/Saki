@@ -2900,6 +2900,32 @@
       function detailOpen() {
         return $("app").classList.contains("work-open");
       }
+      function detailReturnTarget() {
+        return $("app").classList.contains("docked")
+          ? $("close-work")
+          : $("detail-back");
+      }
+      function isVisibleFocusTarget(el) {
+        if (!el || !el.isConnected) return false;
+        for (let node = el; node; node = node.parentElement) {
+          if (node.inert) return false;
+        }
+        const style = getComputedStyle(el);
+        return style.display !== "none" && style.visibility !== "hidden";
+      }
+      function syncInertRegions() {
+        const page = pageOpen();
+        const settingsOpen = settings.open;
+        const narrowDetail = detailOpen() && !$("app").classList.contains("docked");
+        const backgroundInert = page || settingsOpen || narrowDetail;
+        for (const id of ["rail", "main", "left-split", "right-split"]) {
+          const el = $(id);
+          if (el) el.inert = backgroundInert;
+        }
+        $("work").inert = page || settingsOpen;
+        $("settings-page").inert = !settingsOpen || page;
+        $("page-layer").inert = !page;
+      }
       function renderHistoryResults() {
         const c = current();
         const query = historyQuery.trim().toLowerCase();
@@ -2974,10 +3000,11 @@
         $("app").classList.add("work-open");
         $("work").hidden = false;
         layout();
+        syncInertRegions();
         renderWork();
         renderHeader();
         if (atBottom) $("conversation").scrollTop = $("conversation").scrollHeight;
-        $("close-work").focus();
+        detailReturnTarget().focus();
       }
       function closeWork(restore = true) {
         if (detailOpen()) detailScroll[detailView] = $("work-body").scrollTop;
@@ -2987,6 +3014,7 @@
         $("work").hidden = true;
         $("app").classList.remove("work-open");
         layout();
+        syncInertRegions();
         if (atBottom) $("conversation").scrollTop = $("conversation").scrollHeight;
         renderHeader();
         if (restore) {
@@ -3043,15 +3071,17 @@
         $("page-content").classList.toggle("wide", wide);
         $("page-layer").hidden = false;
         $("app").classList.add("page-open");
+        syncInertRegions();
         $("page-title").focus();
       }
       function closePage() {
         $("page-layer").hidden = true;
         $("app").classList.remove("page-open");
+        syncInertRegions();
         const origin = pageOrigin;
         pageOrigin = null;
-        if (origin?.isConnected) origin.focus();
-        else if (detailOpen()) $("close-work").focus();
+        if (isVisibleFocusTarget(origin)) origin.focus();
+        else if (detailOpen()) detailReturnTarget().focus();
         else $("work-toggle").focus();
       }
       function pageOpen() {
@@ -3360,6 +3390,7 @@
         settings.open = true;
         $("app").classList.add("settings-open");
         $("settings-page").hidden = false;
+        syncInertRegions();
         $("settings-entry").setAttribute("aria-current", "page");
         setContactEditingTarget(selected);
         settings.notice = settingsLeaveNotice();
@@ -3377,6 +3408,7 @@
         settings.open = false;
         $("settings-page").hidden = true;
         $("app").classList.remove("settings-open");
+        syncInertRegions();
         $("settings-entry").setAttribute("aria-current", "false");
         settings.returnState = null;
         settings.origin = null;
@@ -3397,8 +3429,8 @@
         }
         renderHeader();
         renderContacts();
-        if (detailOpen()) $("close-work").focus();
-        else if (origin?.isConnected) origin.focus();
+        if (detailOpen()) detailReturnTarget().focus();
+        else if (isVisibleFocusTarget(origin)) origin.focus();
         else $("settings-entry").focus();
       }
       function newTask() {
@@ -3423,6 +3455,17 @@
         app.classList.toggle("docked", docked);
         app.classList.toggle("narrow", width < 1000);
         app.classList.toggle("settings-narrow", width < 760);
+        syncInertRegions();
+        if (detailOpen()) {
+          const active = document.activeElement;
+          const target = detailReturnTarget();
+          if (
+            (active === $("close-work") || active === $("detail-back")) &&
+            !isVisibleFocusTarget(active)
+          ) {
+            target.focus();
+          }
+        }
         app.style.setProperty("--panel-right", innerWidth - rect.right + "px");
         app.style.setProperty("--panel-top", rect.top + "px");
         app.style.setProperty("--panel-height", rect.height + "px");
