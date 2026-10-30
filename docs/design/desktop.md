@@ -560,6 +560,16 @@ type resolvedTheme struct {
 - `view.go` 保留 Back to latest/FollowEnd 行为；键盘焦点、消息选择和复制反馈沿用 reader 的实现。`workspace_test.go` 新增 received-output copy 回归；本次 #118 UI 改动没有修改 parser，也没有把 reader 测试改写成 #118 路由测试。
 - 证据边界：reader 的 headless 测试与 #118 的 app/real-runtime 测试分开记录；原生窗口/输入法仍未由 #118 执行，不能把 headless 通过写成 native PASS。
 
+### #217 消息复制降权（阶段实现事实，2026-10-30）
+
+本切片基于冻结 `4546a1a9d2cfaf28771748f42b600c0abccaba07`，由 reader/Iris 实现，reader 主责评审；它是可组合的阅读组件阶段输入，不代表 #98 升级、#218 组合或新原生验收完成。
+
+- 全文复制不再独占正文上方一行；复用标准 `ui.Button`、`ui.Icon`、Label、Tooltip 与原有 CopyHandle。图形 16px、透明命中区 32×32px；正文侧预留固定水平空间，按钮绝对定位，不参与正文高度计算。消息/按钮 hover、焦点在 reader 内或有复制结果时显示，hover/pressed/focus 使用既有主题角色，不新增动画或主题系统。
+- 保留同一 `performCopy` / `readerCopyFeedback`：全文仍是当前收到的完整 source 原字节，代码复制仍使用原有代码块内容；成功/失败用图形及主题语义色反馈，失败 Tooltip 显示实际剪贴板错误，不挤动正文。流式、最终、用户 literal、历史、来源及成果阅读仍共用 reader，不改调用方、选择/链接模型或持久化协议。
+- 官方基线：[Button](https://mygo.egoist.dev/docs/ui/button) 的 icon-only Label/Tooltip 与固定版本附带 `docs/ui/button.md` 一致。该阶段依赖仍为 MyGo `v0.4.9-0.20261014025635-fea932a7a2a9`；仅一个附着复制控件，因此不引入带溢出菜单和方向键组的 Toolbar，复用标准按钮并设透明 idle face。依用户最新要求，后续以 #98 最新稳定版共同基线继续适配，不将旧版记录当作冻结策略。
+- 阶段证据：定向 Go race **45 PASS / 0 FAIL / 1 SKIP，5.406s**（SKIP 为未启用截图环境变量的 opt-in 测试；截图另行运行），vet/build 通过。覆盖精确全文/代码与行尾、复制失败重试反馈、流式选择与转最终、窄表/代码、实际消息/历史/来源/工具，以及 Settings 返回 reader/重复链接的既有回归。短中文的同场景 headless 测量由原 reader 高 53px / 正文起点 y=32，变为 reader 高 21px / y=0；复制不再添加 32px 独占行。
+- 预览是同场景旧 source 与本阶段 source 的 Tester 图：组件 340/720px、浅深色、一行中文/长 Markdown/代码/表格及静止/hover/focus；实际 app 720×640、1040×720 的聊天/详情。未运行本阶段全套 Go、打包、原生剪贴板/IME或在线模型；最终组合/原生由 #218 统一执行，不能将冻结4546的旧原生结果转记到本切片。CI账户限制与网络恢复分别记录，不以此宣称 required CI 通过。
+
 ## #118 独立工作会话与事项 UI（实现事实，2026-10-25）
 
 代码来源：本分支 `agent/gui/118-independent-execution`；reader 精确提交 `75fdfc7` 的 merge 为 `79299b3`，UI/路由与 rail 整理最终为 `c4779f9`（中间 UI 提交 `3197849`、preview `6702e6a`）。本节只陈述 #118 阶段事实，不表示完整 MVP、#142/#153/#154 或全部 MVP 已完成。

@@ -17,8 +17,8 @@ type markdownReaderOptions struct {
 	PlainText bool
 	// Streaming shows source as a reply still being written.
 	Streaming bool
-	// CopyLabel is the visible and accessible label of the full-source
-	// copy control, as "Copy message" or "Copy received".
+	// CopyLabel is the accessible name and idle tooltip of the icon-only
+	// full-source copy control, as "Copy message" or "Copy received".
 	CopyLabel string
 	// CopyText writes text and reports whether it stuck. When nil,
 	// markdownReader writes the native clipboard on the UI thread and
@@ -45,6 +45,12 @@ type markdownReaderOptions struct {
 }
 
 var errClipboardReadback = errors.New("clipboard readback did not match")
+
+var (
+	markdownCopyIcon       = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`))
+	markdownCopiedIcon     = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`))
+	markdownCopyFailedIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`))
+)
 
 const (
 	readerCopiedFor     = 2 * time.Second
@@ -139,18 +145,17 @@ func markdownReader(c *ui.Context, source string, options markdownReaderOptions)
 	}
 
 	root.Children(func() {
-		ui.Row(c).AlignSelf(ui.Stretch).AlignItems(ui.Center).Key("source-copy").Children(func() {
-			ui.Spacer(c)
-			st.copyButton(c, c.Now(), label, label, func() string { return source }, &st.sourceFeedback, markdownReaderTheme(c, options.Theme), options.CopyHandle)
+		st.sourceCopyButton(c, c.Now(), label, func() string { return source }, &st.sourceFeedback, root, options.CopyHandle)
+		ui.Column(c).Padding(0, 32, 0, 0).Children(func() {
+			switch {
+			case options.PlainText:
+				ui.Text(c, source).Selectable()
+			case options.Streaming:
+				markdown.Stream(c, source, &st.opts)
+			default:
+				markdown.View(c, source, &st.opts)
+			}
 		})
-		switch {
-		case options.PlainText:
-			ui.Text(c, source).Selectable()
-		case options.Streaming:
-			markdown.Stream(c, source, &st.opts)
-		default:
-			markdown.View(c, source, &st.opts)
-		}
 	})
 	return root
 }
@@ -269,6 +274,53 @@ func (st *markdownReaderState) codeFeedbackFor(index int) *readerCopyFeedback {
 		st.codeFeedback[index] = fb
 	}
 	return fb
+}
+
+func (st *markdownReaderState) sourceCopyButton(c *ui.Context, now time.Time, accessible string, text func() string, fb *readerCopyFeedback, owner ui.Element, handle *ui.Handle) ui.Element {
+	feedbackVisible, failed := fb.show(now)
+	show := owner.Hovered() || owner.FocusWithin() || feedbackVisible
+	btn := ui.Button(c, "").Label(accessible).Tooltip(accessible)
+	if handle != nil {
+		btn.Bind(handle)
+	}
+	theme := c.Theme()
+	btn.Key("source-copy").Size(32, 32).Padding(0).Gap(0).Radius(6).
+		Background(ui.Transparent).BorderWidth(0).Opacity(0).Absolute().Top(0).Right(0)
+	if show {
+		btn.Opacity(1)
+	}
+	if btn.Pressed() {
+		btn.Background(theme.SurfacePressed)
+	} else if btn.Hovered() {
+		btn.Background(theme.SurfaceHover)
+	}
+	color := markdownReaderTheme(c, st.opts.Theme).Muted
+	icon := markdownCopyIcon
+	if feedbackVisible {
+		if failed {
+			color, icon = theme.Danger, markdownCopyFailedIcon
+			btn.Tooltip(fb.err.Error())
+		} else {
+			color, icon = theme.Success, markdownCopiedIcon
+			btn.Tooltip("Copied")
+		}
+	}
+	btn.Children(func() {
+		ui.Icon(c, icon).Size(16, 16).TextColor(color)
+	})
+	if btn.Clicked() {
+		fb.at = now
+		fb.err = st.performCopy(c, text())
+		if st.onCopyResult != nil {
+			st.onCopyResult(fb.err)
+		}
+		if fb.err != nil {
+			c.After(readerCopyFailedFor)
+		} else {
+			c.After(readerCopiedFor)
+		}
+	}
+	return btn
 }
 
 func (st *markdownReaderState) copyButton(c *ui.Context, now time.Time, accessible, idle string, text func() string, fb *readerCopyFeedback, th markdown.Theme, handle *ui.Handle) ui.Element {

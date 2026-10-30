@@ -744,18 +744,36 @@ func TestIssueResultPanelCopyPathShowsReaderFailureFeedback(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
+	button, ok := tr.Find("Copy path")
+	if !ok {
+		t.Fatalf("copy path control is missing: %q", tr.Texts())
+	}
+	before := tr.Image()
 	if err := tr.Click("Copy path"); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || !tr.HasText("Copy failed") {
-		t.Fatalf("copy failure was swallowed or not shown: calls=%d texts=%q", calls, tr.Texts())
+	if calls != 1 {
+		t.Fatalf("copy failure was swallowed: calls=%d", calls)
+	}
+	if got, ok := tr.Find("Copy path"); !ok || got != button {
+		t.Fatalf("copy failure moved the control: before=%+v after=%+v", button, got)
+	}
+	failedImage := tr.Image()
+	if readerImageRegionDiff(before, failedImage, button) == 0 {
+		t.Fatal("copy failure was not shown")
 	}
 	fail = false
 	if err := tr.Click("Copy path"); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 2 || !tr.HasText("Copied") {
-		t.Fatalf("copy success was not shown after retry: calls=%d texts=%q", calls, tr.Texts())
+	if calls != 2 {
+		t.Fatalf("copy success callback missing: calls=%d", calls)
+	}
+	if got, ok := tr.Find("Copy path"); !ok || got != button {
+		t.Fatalf("copy success moved the control: before=%+v after=%+v", button, got)
+	}
+	if readerImageRegionDiff(failedImage, tr.Image(), button) == 0 {
+		t.Fatal("copy success feedback does not differ from failure feedback")
 	}
 }
 
