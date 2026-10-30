@@ -116,6 +116,16 @@ func TestModelSelectionProxyHelper(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	var outMu sync.Mutex
+	writeLine := func(data []byte) {
+		outMu.Lock()
+		defer outMu.Unlock()
+		_, _ = os.Stdout.Write(append(data, '\n'))
+	}
+	writeControlledError := func(id, code, message string) {
+		data, _ := json.Marshal(map[string]any{"version": runtimeProtocolVersion, "type": "response", "id": id, "error": map[string]string{"code": code, "message": message}})
+		writeLine(data)
+	}
 	var updates sync.Map
 	var reads sync.Map
 	go func() {
@@ -139,6 +149,22 @@ func TestModelSelectionProxyHelper(t *testing.T) {
 			if request.Method == "session.config.get" {
 				reads.Store(request.ID, true)
 			}
+			if request.Method == "session.load" {
+				if path := os.Getenv("SAKI_MODEL_PROXY_LOAD_COUNT"); path != "" {
+					file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+					if err != nil {
+						return
+					}
+					_, _ = file.WriteString("load\n")
+					_ = file.Close()
+				}
+				if marker := os.Getenv("SAKI_MODEL_PROXY_FAIL_LOAD_AFTER"); marker != "" {
+					if _, err := os.Stat(marker); err == nil {
+						writeControlledError(request.ID, "io_error", "controlled session.load failure")
+						continue
+					}
+				}
+			}
 			if _, err := input.Write(append(append([]byte(nil), scanner.Bytes()...), '\n')); err != nil {
 				break
 			}
@@ -151,8 +177,7 @@ func TestModelSelectionProxyHelper(t *testing.T) {
 	failedRead := false
 	mode := os.Getenv("SAKI_MODEL_PROXY_MODE")
 	writeError := func(id, code string) {
-		data, _ := json.Marshal(map[string]any{"version": runtimeProtocolVersion, "type": "response", "id": id, "error": map[string]string{"code": code, "message": "controlled reply failure after the real update"}})
-		_, _ = os.Stdout.Write(append(data, '\n'))
+		writeControlledError(id, code, "controlled reply failure after the real update")
 	}
 	for scanner.Scan() {
 		var response struct {
@@ -164,14 +189,16 @@ func TestModelSelectionProxyHelper(t *testing.T) {
 			if mode == "commit_unknown" {
 				writeError(response.ID, "commit_unknown")
 			}
-			continue
+			if mode != "pass" {
+				continue
+			}
 		}
 		if _, ok := reads.Load(response.ID); ok && dropped && !failedRead && mode == "fail_readback" {
 			failedRead = true
 			writeError(response.ID, "io_error")
 			continue
 		}
-		_, _ = os.Stdout.Write(append(append([]byte(nil), scanner.Bytes()...), '\n'))
+		writeLine(scanner.Bytes())
 	}
 	if err := cmd.Wait(); err != nil {
 		os.Exit(1)
