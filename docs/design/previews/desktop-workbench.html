@@ -2911,7 +2911,11 @@
           if (node.inert) return false;
         }
         const style = getComputedStyle(el);
-        return style.display !== "none" && style.visibility !== "hidden";
+        return (
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          el.getClientRects().length > 0
+        );
       }
       function syncInertRegions() {
         const page = pageOpen();
@@ -3000,7 +3004,6 @@
         $("app").classList.add("work-open");
         $("work").hidden = false;
         layout();
-        syncInertRegions();
         renderWork();
         renderHeader();
         if (atBottom) $("conversation").scrollTop = $("conversation").scrollHeight;
@@ -3014,7 +3017,6 @@
         $("work").hidden = true;
         $("app").classList.remove("work-open");
         layout();
-        syncInertRegions();
         if (atBottom) $("conversation").scrollTop = $("conversation").scrollHeight;
         renderHeader();
         if (restore) {
@@ -3451,17 +3453,22 @@
           "--right",
           Math.min(rightWidth, Math.max(280, available)) + "px",
         );
+        const activeBefore = document.activeElement;
         const docked = width >= leftWidth + 280 + 482;
         app.classList.toggle("docked", docked);
         app.classList.toggle("narrow", width < 1000);
         app.classList.toggle("settings-narrow", width < 760);
         syncInertRegions();
-        if (detailOpen()) {
-          const active = document.activeElement;
+        if (detailOpen() && !settings.open && !pageOpen()) {
           const target = detailReturnTarget();
+          const returnControl =
+            activeBefore === $("close-work") || activeBefore === $("detail-back");
+          const backgroundControl = ["rail", "main", "left-split", "right-split"].some(
+            (id) => $(id).contains(activeBefore),
+          );
           if (
-            (active === $("close-work") || active === $("detail-back")) &&
-            !isVisibleFocusTarget(active)
+            (returnControl || backgroundControl) &&
+            !isVisibleFocusTarget(activeBefore)
           ) {
             target.focus();
           }
