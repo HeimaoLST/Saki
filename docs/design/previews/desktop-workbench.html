@@ -2090,7 +2090,7 @@
       </div>
     </header>
     <div class="app" id="app">
-      <aside class="rail" aria-label="联系人">
+      <aside class="rail" id="rail" aria-label="联系人">
         <div class="brand">
           <div class="row">
             <svg class="brand-mark" aria-hidden="true">
@@ -2137,7 +2137,7 @@
         aria-valuemax="280"
         aria-valuenow="200"
       ></div>
-      <main class="main">
+      <main class="main" id="main">
         <header class="main-head">
           <div id="header-avatar"></div>
           <div class="identity">
@@ -2922,10 +2922,10 @@
         const settingsOpen = settings.open;
         const narrowDetail = detailOpen() && !$("app").classList.contains("docked");
         const backgroundInert = page || settingsOpen || narrowDetail;
-        for (const id of ["rail", "main", "left-split", "right-split"]) {
-          const el = $(id);
-          if (el) el.inert = backgroundInert;
-        }
+        $("rail").inert = backgroundInert;
+        $("main").inert = backgroundInert;
+        $("left-split").inert = backgroundInert;
+        $("right-split").inert = backgroundInert;
         $("work").inert = page || settingsOpen;
         $("settings-page").inert = !settingsOpen || page;
         $("page-layer").inert = !page;
