@@ -1,40 +1,19 @@
 --- a/ui/markdown/view.go
 +++ b/ui/markdown/view.go
-@@ -26,6 +26,12 @@
- 	// router around the view, a link to #a-heading scrolls to that
- 	// heading, and links of other schemes do nothing.
- 	OnLink func(url string)
+@@ -29,0 +30,6 @@
 +	// LinkElement, when set, is called for each inline link after its normal
 +	// construction, children and tooltip. It may bind the element for focus
 +	// tracking; it cannot replace it, and it does not change OnLink, router,
 +	// anchor or link validation behavior. block and inline are the link's
 +	// parsed block and inline indices in this document.
 +	LinkElement func(c *ui.Context, block, inline int, dest string, element ui.Element)
- 	// LoadImage loads the image at url, on a goroutine of its own, for the
- 	// views to show; until it has, they show its description. Without
- 	// it, images show as their descriptions. FileImages loads files.
-@@ -420,12 +426,12 @@
- 		}
- 	default:
- 		in := st.doc.Inlines(block)[pc.link]
+@@ -448 +454 @@
 -		st.link(c, &in, func() { ui.RichText(c, pc.spans...) })
 +		st.link(c, block, pc.link, &in, func() { ui.RichText(c, pc.spans...) })
- 	}
- }
- 
- // link builds a link to in.Dest whose text children builds.
+@@ -453 +459 @@
 -func (st *viewState) link(c *ui.Context, in *parser.Inline, children func()) {
 +func (st *viewState) link(c *ui.Context, block, inline int, in *parser.Inline, children func()) {
- 	dest := in.Dest
- 	var l ui.Element
- 	switch {
-@@ -453,6 +459,9 @@
- 	case !in.Auto && !in.Pending && dest != "" && !strings.HasPrefix(dest, "#"):
- 		l.Tooltip(dest)
- 	}
+@@ -481,0 +488,3 @@
 +	if st.o.LinkElement != nil {
 +		st.o.LinkElement(c, block, inline, dest, l)
 +	}
- }
- 
- // linkAllowed reports whether a link's destination opens without

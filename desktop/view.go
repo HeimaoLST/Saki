@@ -56,14 +56,19 @@ func (a *appModel) view(c *ui.Context) {
 		a.settingsPage(c, t)
 		return
 	}
-	if a.aux == "" && a.screen == viewChat && a.workspaceOpen && !a.workOverlay() {
+	// Capture the pane/overlay decision before the frame builds. A divider
+	// OnChange can clamp widths during this build; reading workOverlay again
+	// after the split has built must not mount the same workspace twice and
+	// bind one scroll state to two controls.
+	workspaceOverlay := a.workspaceOpen && a.workOverlay()
+	if a.aux == "" && a.screen == viewChat && a.workspaceOpen && !workspaceOverlay {
 		c.OnShortcut(0, ui.KeyEscape, func() { a.escapeWorkspaceLayer() })
 	}
 	ui.Box(c).Fill().Children(func() {
 		ui.Row(c).Fill().Children(func() {
 			a.layoutBody(c, t)
 		})
-		if a.workspaceOpen && a.workOverlay() && a.aux == "" {
+		if workspaceOverlay && a.aux == "" {
 			a.workspaceModal(c, t)
 		}
 		if a.aux != "" && !a.composerInlineAux() {
@@ -762,16 +767,16 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				Background(ui.Transparent).BorderWidth(0).Padding(2).
 				Placeholder("Message " + ct.Name).FillWidth().OnChange(func() {
 				a.draftChanged(ct)
-			}).OnEnter(func(e ui.Enter) bool {
-				if e.Mods&ui.Shift != 0 {
+			}).OnTextKey(func(k ui.TextKey) bool {
+				if k.Key != ui.KeyEnter || k.Mods&ui.Shift != 0 {
 					return false
 				}
-				text := strings.TrimSpace(e.Text())
+				text := strings.TrimSpace(k.Text())
 				if text == "" {
 					return true
 				}
 				if a.send(ct, text) && a.demo {
-					e.SetText("")
+					k.SetText("")
 				}
 				return true
 			})

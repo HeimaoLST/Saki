@@ -1,6 +1,6 @@
 --- a/ui/split.go
 +++ b/ui/split.go
-@@ -107,0 +108,4 @@
+@@ -153,0 +154,4 @@
 +			if !held && handle.st.released && (handle.st.dragX != 0 || handle.st.dragY != 0) {
 +				// Consume moves whose release arrived before the next frame.
 +				dx, dy, held = handle.st.dragX, handle.st.dragY, true

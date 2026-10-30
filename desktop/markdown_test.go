@@ -600,7 +600,9 @@ func TestMarkdownLinkElementPreservesOnLinkAndIgnoresUnopenableDestinations(t *t
 
 	for _, withHook := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pending-hook=%v", withHook), func(t *testing.T) {
-			options := markdown.Options{}
+			// Stream reveals text over the Tester's still clock by default.
+			// AtOnce makes the pending link actually present before testing Tab.
+			options := markdown.Options{Reveal: &markdown.Reveal{Unit: markdown.AtOnce}}
 			if withHook {
 				options.LinkElement = func(c *ui.Context, block, inline int, dest string, element ui.Element) {}
 			}

@@ -1,6 +1,6 @@
 --- a/ui/input.go
 +++ b/ui/input.go
-@@ -382,0 +383,7 @@
+@@ -469,0 +470,7 @@
 +		if s.editor.dragging && (s.dragX != 0 || s.dragY != 0) {
 +			// The release can arrive before the frame that would process the
 +			// editor drag. Apply its final pointer position once before the
