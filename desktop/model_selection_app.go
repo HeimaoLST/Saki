@@ -102,6 +102,15 @@ func (a *appModel) updateModelContactDisplay(sessionID, model string) {
 	}
 }
 
+func (a *appModel) openComposerModel() {
+	ct := a.selectedContact()
+	if ct == nil {
+		return
+	}
+	a.composerPanel = composerPanelModel
+	a.openSessionModel(ct.SessionID, "conversation", ct.Name)
+}
+
 func (a *appModel) openSessionModel(sessionID, kind, label string) {
 	if a.shutdownStarted || a.connectionApplying || a.modelOpActive {
 		return

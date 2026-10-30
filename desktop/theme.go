@@ -5,6 +5,20 @@ import "github.com/egoist/mygo/ui"
 // workbenchTheme is the one per-frame resolution of the Paper & Moss
 // appearance. Theme keeps the framework's control roles semantic; the small
 // app-only set names reading surfaces that must not be reused as button faces.
+// Composer and workbench type roles are shared by the existing render paths
+// rather than a second design system. Body and metadata sizes keep the
+// pre-existing 15px reading text and 12px supporting text.
+const (
+	typeContactTitle float32 = 20
+	typePageTitle    float32 = 18
+	typeGroupTitle   float32 = 14
+	typeBody         float32 = 15
+	typeAction       float32 = 13
+	typeMeta         float32 = 12
+	typeRailName     float32 = 14
+	typeRailSummary  float32 = 13
+)
+
 type workbenchTheme struct {
 	Theme         *ui.Theme
 	Rail          ui.Color

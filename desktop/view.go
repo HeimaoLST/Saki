@@ -13,6 +13,20 @@ import (
 // parser, clipboard and file behavior stay untouched (#187 owns those files).
 var messageMarkdownTheme = &markdown.Theme{FontSize: 15, LineHeight: 1.8}
 
+const (
+	composerPanelModel   = "model"
+	composerPanelContext = "task-context"
+)
+
+// Small, deliberately understated composer glyphs. MyGo's Icon inherits the
+// button's text color, so these stay in the same semantic color path as UI text.
+var (
+	composerAttachIcon  = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a6 6 0 0 1-8.5-8.5l9.3-9.3a4 4 0 0 1 5.7 5.7l-9.3 9.3a2 2 0 0 1-2.8-2.8l8.6-8.6"/></svg>`))
+	composerChevronIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`))
+	composerSendIcon    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>`))
+	composerStopIcon    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>`))
+)
+
 func messageReaderOptions(plain bool) markdownReaderOptions {
 	return markdownReaderOptions{PlainText: plain, CopyLabel: "Copy message", Theme: messageMarkdownTheme}
 }
@@ -52,9 +66,9 @@ func (a *appModel) view(c *ui.Context) {
 		if a.workspaceOpen && a.workOverlay() && a.aux == "" {
 			a.workspaceModal(c, t)
 		}
-		if a.aux != "" {
+		if a.aux != "" && !a.composerInlineAux() {
 			a.auxView(c, t)
-		} else if a.screen == viewHistory {
+		} else if a.aux == "" && a.screen == viewHistory {
 			a.historyView(c, t)
 		}
 	})
@@ -148,10 +162,10 @@ func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
 				a.focusRail = false
 			}
 		})
-		ui.Text(c, "Contacts").FontSize(12).FontWeight(500).TextColor(t.TextMuted)
+		ui.Text(c, "Contacts").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
 		secondaryButton(c, "Add contact").FillWidth().Radius(999).OnClick(func() { a.addDefaultContact() })
 		ui.TextInput(c, &a.contactSearch).Label("Search contacts").FontSize(13).Placeholder("Name or purpose")
-		ui.Text(c, "Contact scope").FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, "Contact scope").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
 		a.contactScopeSelect(c)
 		visible := a.visibleContactIndices()
 		if len(visible) == 0 {
@@ -370,7 +384,7 @@ func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 			ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
 				a.avatarTile(c, t, 35)
 				ui.Column(c).Gap(1).Children(func() {
-					ui.Text(c, ct.Name).FontSize(17).FontWeight(600).TextColor(t.Text)
+					ui.Text(c, ct.Name).FontSize(typeContactTitle).FontWeight(600).TextColor(t.Text)
 					ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
 						ui.Text(c, a.statusLabel(ct)).FontSize(12).LineHeight(1.35).TextColor(a.statusColor(t, ct.Status))
 						ui.Text(c, "· "+ct.Role).FontSize(12).LineHeight(1.35).MaxLines(1).TextColor(t.TextMuted)
@@ -626,7 +640,7 @@ func (a *appModel) emptyState(c *ui.Context, t *ui.Theme) {
 			}
 			return
 		}
-		ui.Text(c, "No messages yet").FontSize(17).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, "No messages yet").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
 		if a.demo {
 			ui.Text(c, "Start typing below to talk with "+ct.Name+"; you can personalize name, purpose, instructions and workspace any time in Settings.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
 		} else {
@@ -700,11 +714,53 @@ func (a *appModel) connectionErrorBanner(c *ui.Context, t *ui.Theme, ct *contact
 
 // ---------- composer ----------
 
+func (a *appModel) composerInlineAux() bool {
+	return a.screen == viewChat && a.aux != "" && a.composerPanel == a.aux &&
+		(a.aux == composerPanelModel || a.aux == composerPanelContext)
+}
+
+func (a *appModel) composerModelButton(c *ui.Context, t *ui.Theme, ct *contact) ui.Element {
+	summary := a.conversationModelSummary(ct)
+	button := ui.Button(c, "").Label("Conversation model").
+		MinHeight(32).Height(32).Padding(4, 8).
+		Tooltip("Conversation model · " + summary)
+	button.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(3).Children(func() {
+			ui.Text(c, a.conversationModelShortName(ct)).FontSize(typeAction).FontWeight(500).
+				MaxLines(1).TextColor(t.Text)
+			ui.Icon(c, composerChevronIcon).Width(16).Height(16).TextColor(t.TextMuted)
+		})
+	})
+	return button
+}
+
+func (a *appModel) composerInlinePanel(c *ui.Context, t *ui.Theme) {
+	if !a.composerInlineAux() {
+		return
+	}
+	c.OnShortcut(0, ui.KeyEscape, func() { a.closeAux() })
+	ui.Column(c).FillWidth().Children(func() {
+		ui.Scroll(c).MaxHeight(300).TrackScroll(a.auxScrollFor(a.aux)).Children(func() {
+			ui.Column(c).Padding(8, 10).Radius(10).Background(t.Surface).Gap(8).Children(func() {
+				switch a.aux {
+				case composerPanelModel:
+					a.modelPanel(c, t)
+				case composerPanelContext:
+					a.taskContextPanel(c, t)
+				}
+			})
+		})
+	})
+}
+
 func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Column(c).Padding(10, 0).Gap(4).Children(func() {
-		ui.Row(c).Gap(6).AlignItems(ui.End).Padding(6, 10).Radius(14).Background(a.workTheme.Well).Children(func() {
-			input := ui.TextArea(c, &ct.Draft).Bind(&a.composerHandle).Label("Composer for " + ct.Name).FontSize(15).LineHeight(1.6).Height(44).Background(ui.Transparent).BorderWidth(0).Padding(2).Placeholder("Message " + ct.Name).Grow(1).OnChange(func() {
+		ui.Column(c).FillWidth().Padding(8, 10).Radius(14).Background(a.workTheme.Well).Gap(6).Children(func() {
+			input := ui.TextArea(c, &ct.Draft).Bind(&a.composerHandle).Label("Composer for "+ct.Name).
+				FontSize(typeBody).LineHeight(1.6).Lines(1, 6).
+				Background(ui.Transparent).BorderWidth(0).Padding(2).
+				Placeholder("Message " + ct.Name).FillWidth().OnChange(func() {
 				a.draftChanged(ct)
 			}).OnEnter(func(e ui.Enter) bool {
 				if e.Mods&ui.Shift != 0 {
@@ -723,72 +779,99 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				input.Focus()
 				a.focusComposer = false
 			}
+			contextCount := ct.Context.count()
+			contextLabel := "Task context"
+			if contextCount > 0 {
+				contextLabel = fmt.Sprintf("Task context · %d", contextCount)
+			}
 			sendDisabled := strings.TrimSpace(ct.Draft) == "" || ct.Status == statusWorking
 			if !a.demo {
 				sendDisabled = strings.TrimSpace(ct.Draft) == "" || a.canSend(ct) != ""
 			}
-			label := "Task context"
-			if count := ct.Context.count(); count > 0 {
-				label = fmt.Sprintf("Task context · %d", count)
-			}
-			secondaryButton(c, label).OnClick(func() { a.openConversationTaskContext() })
-			send := ui.PrimaryButton(c, "Send").FontSize(13).MinHeight(32).Padding(3, 10).Disabled(sendDisabled)
-			if send.Clicked() {
-				a.sendCurrent()
-			}
-		})
-		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-			secondaryButton(c, "Conversation model").OnClick(func() {
-				a.openSessionModel(ct.SessionID, "conversation", ct.Name)
-			})
-			ui.Text(c, a.conversationModelSummary(ct)).FontSize(12).LineHeight(1.35).MaxLines(1).TextColor(t.TextMuted).Grow(1)
-		})
-		if !a.demo && ct.ActiveTaskID != "" {
-			ui.Row(c).Justify(ui.End).Children(func() {
-				secondaryButton(c, "Stop conversation").TextColor(t.Warning).OnClick(func() { a.cancelSelected() })
-			})
-		}
-		if !a.demo {
-			if a.rt != nil && a.runtimeStatus == runtimeStateReady && !a.capacityKnown() {
-				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-					message := a.runtimeCapabilitiesErr
-					if message == "" {
-						message = "Runtime task capacity is not loaded; using the conservative single-slot behavior."
-					}
-					ui.Text(c, message).FontSize(14).LineHeight(1.4).TextColor(t.Warning).Grow(1)
-					secondaryButton(c, "Retry capacity").OnClick(func() { a.retryCapabilities() })
+			ui.Toolbar(c, func() {
+				contextButton := ui.Button(c, "").Label(contextLabel).Tooltip(contextLabel).
+					MinWidth(32).Height(32).Padding(2, 6)
+				contextButton.Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(2).Children(func() {
+						ui.Icon(c, composerAttachIcon).Width(18).Height(18).TextColor(t.TextMuted)
+						ui.Text(c, fmt.Sprint(contextCount)).FontSize(typeMeta).LineHeight(1.3).TextColor(t.TextMuted)
+					})
 				})
-			}
-			if reason := a.canSend(ct); strings.Contains(reason, "Another contact is working") {
-				ui.Text(c, reason).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
-			}
-			switch {
-			case ct.SendState == sendSubmitting:
-				ui.Text(c, "Sending…").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
-			case ct.SendState == sendAccepted && ct.Status != statusWorking:
-				ui.Text(c, "Accepted; waiting for the runtime to start.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
-			case ct.SendState == sendUnknown:
-				if a.runtimeStatus == runtimeStateReady && a.rt != nil {
-					ui.Text(c, "Delivery not confirmed. Reload to verify before sending again.").FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+				contextButton.OnClick(func() { a.openComposerTaskContext() })
+				if a.composerFocusContext {
+					contextButton.Focus()
+					a.composerFocusContext = false
+				}
+				ui.Spacer(c)
+				modelButton := a.composerModelButton(c, t, ct)
+				modelButton.OnClick(func() { a.openComposerModel() })
+				if a.composerFocusModel {
+					modelButton.Focus()
+					a.composerFocusModel = false
+				}
+				if !a.demo && ct.ActiveTaskID != "" {
+					stop := ui.Button(c, "").Label("Stop conversation").Tooltip("Stop conversation").
+						Width(32).Height(32).Padding(0).TextColor(t.Warning)
+					stop.Children(func() {
+						ui.Icon(c, composerStopIcon).Width(18).Height(18)
+					})
+					stop.OnClick(func() { a.cancelSelected() })
 				} else {
-					ui.Text(c, "Runtime disconnected; restart Saki to check the task and history.").FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+					send := ui.PrimaryButton(c, "").Label("Send").Tooltip("Send message").
+						Width(32).Height(32).Padding(0).Disabled(sendDisabled)
+					send.Children(func() {
+						ui.Icon(c, composerSendIcon).Width(18).Height(18)
+					})
+					if send.Clicked() {
+						a.sendCurrent()
+					}
+				}
+			}).Label("Composer actions")
+			ui.Text(c, "Enter to send · Shift + Enter for a new line").FontSize(typeMeta).LineHeight(1.4).TextColor(t.TextMuted)
+			if !a.demo {
+				if a.rt != nil && a.runtimeStatus == runtimeStateReady && !a.capacityKnown() {
+					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+						message := a.runtimeCapabilitiesErr
+						if message == "" {
+							message = "Runtime task capacity is not loaded; using the conservative single-slot behavior."
+						}
+						ui.Text(c, message).FontSize(14).LineHeight(1.4).TextColor(t.Warning).Grow(1)
+						secondaryButton(c, "Retry capacity").OnClick(func() { a.retryCapabilities() })
+					})
+				}
+				if reason := a.canSend(ct); strings.Contains(reason, "Another contact is working") {
+					ui.Text(c, reason).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+				}
+				switch {
+				case ct.SendState == sendSubmitting:
+					ui.Text(c, "Sending…").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+				case ct.SendState == sendAccepted && ct.Status != statusWorking:
+					ui.Text(c, "Accepted; waiting for the runtime to start.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+				case ct.SendState == sendUnknown:
+					if a.runtimeStatus == runtimeStateReady && a.rt != nil {
+						ui.Text(c, "Delivery not confirmed. Reload to verify before sending again.").FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+					} else {
+						ui.Text(c, "Runtime disconnected; restart Saki to check the task and history.").FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+					}
+				}
+				if ct.SendError != "" && !a.connectionSendFailureKnown(ct) {
+					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+						ui.Text(c, ct.SendError).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+						if (ct.SendState == sendUnknown || ct.SendError != "") && a.runtimeStatus == runtimeStateReady && a.rt != nil {
+							if secondaryButton(c, "Reload").Clicked() {
+								a.reloadSelected()
+							}
+						}
+					})
+				}
+				if ct.StatusDetail != "" {
+					ui.Text(c, ct.StatusDetail).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
 				}
 			}
-			if ct.SendError != "" && !a.connectionSendFailureKnown(ct) {
-				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-					ui.Text(c, ct.SendError).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
-					if (ct.SendState == sendUnknown || ct.SendError != "") && a.runtimeStatus == runtimeStateReady && a.rt != nil {
-						if secondaryButton(c, "Reload").Clicked() {
-							a.reloadSelected()
-						}
-					}
-				})
-			}
-			if ct.StatusDetail != "" {
-				ui.Text(c, ct.StatusDetail).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
-			}
+		})
+		if a.composerInlineAux() {
+			a.composerInlinePanel(c, t)
 		}
-		ui.Text(c, "Enter to send · Shift + Enter for a new line").FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 	})
 }
 
@@ -803,7 +886,7 @@ func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
 			a.openSettingsFromContext(c, settingsTabAppearance, settingsSourceHistory)
 		}).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Padding(12, 12).Children(func() {
-				ui.Text(c, "History · "+ct.Name).FontSize(17).FontWeight(600).TextColor(t.Text)
+				ui.Text(c, "History · "+ct.Name).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
 				ui.Spacer(c)
 				close := secondaryButton(c, "Close history").OnClick(func() {
 					open = false
@@ -956,7 +1039,7 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	entries := a.sourceEntries(a.auxMessage)
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "Sources").FontSize(17).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, "Sources").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
 		ui.Spacer(c)
 		secondaryButton(c, "Close").OnClick(func() { a.closeAux() })
 	})

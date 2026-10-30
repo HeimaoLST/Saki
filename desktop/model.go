@@ -162,10 +162,13 @@ type appModel struct {
 	screen   viewMode
 	aux      string // "", "sources", "settings"
 
-	auxMessage      int
-	defaultContactN int
-	focusComposer   bool
-	composerHandle  ui.Handle
+	auxMessage           int
+	defaultContactN      int
+	focusComposer        bool
+	composerHandle       ui.Handle
+	composerPanel        string
+	composerFocusModel   bool
+	composerFocusContext bool
 
 	settingsOpen         bool
 	settingsTab          string
@@ -469,6 +472,9 @@ func (a *appModel) selectContact(i int) {
 		a.cancelIssueResultView()
 	}
 	a.aux = ""
+	a.composerPanel = ""
+	a.composerFocusModel = false
+	a.composerFocusContext = false
 	a.highlight = ""
 	if !a.demo {
 		ct := a.contacts[i]
@@ -543,6 +549,9 @@ func (a *appModel) addDefaultContact() {
 	a.contactSearch = ""
 	a.screen = viewChat
 	a.aux = ""
+	a.composerPanel = ""
+	a.composerFocusModel = false
+	a.composerFocusContext = false
 	a.focusComposer = true
 }
 
@@ -565,6 +574,13 @@ func (a *appModel) closeAux() {
 	if a.aux == "model" && a.modelOpActive {
 		return
 	}
+	switch a.composerPanel {
+	case composerPanelModel:
+		a.composerFocusModel = true
+	case composerPanelContext:
+		a.composerFocusContext = true
+	}
+	a.composerPanel = ""
 	switch a.aux {
 	case "sources":
 		a.focusHistory = false
@@ -581,12 +597,14 @@ func (a *appModel) closeAux() {
 
 func (a *appModel) openSources(messageID int) {
 	a.aux = "sources"
+	a.composerPanel = ""
 	a.auxMessage = messageID
 }
 
 func (a *appModel) openHistory() {
 	a.screen = viewHistory
 	a.aux = ""
+	a.composerPanel = ""
 	a.historyQuery = ""
 	a.contactHistory = nil
 	a.contactHistoryFull = nil

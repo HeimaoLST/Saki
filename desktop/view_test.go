@@ -725,3 +725,136 @@ func TestContactRailControlsStayVisibleAtNarrowWidths(t *testing.T) {
 		}
 	}
 }
+
+func TestComposerModelAndTaskContextStayInlineAndReturnFocus(t *testing.T) {
+	a := testApp(t)
+	ct := a.selectedContact()
+	ct.Context.items = []taskContextItem{
+		{ID: "p1", Name: "资料一", Text: "第一条"},
+		{ID: "p2", Name: "资料二", Text: "第二条"},
+	}
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("Conversation model"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.aux != "model" || !a.composerInlineAux() || a.screen != viewChat {
+		t.Fatalf("conversation model aux=%q panel=%q inline=%v", a.aux, a.composerPanel, a.composerInlineAux())
+	}
+	if !tr.HasText("This context has no Runtime session yet") {
+		t.Fatalf("inline model panel missing actual target state: %v", tr.Texts())
+	}
+	if err := tr.Click("Close"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.aux != "" || a.composerPanel != "" || !tr.Focused("Conversation model") {
+		t.Fatalf("model close = aux=%q panel=%q focused=%v", a.aux, a.composerPanel, tr.Focused("Conversation model"))
+	}
+
+	if err := tr.Click("Task context · 2"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.aux != "task-context" || !a.composerInlineAux() || !tr.HasText("Conversation · Saki") || !tr.HasText("资料一") {
+		t.Fatalf("inline context = aux=%q panel=%q texts=%v", a.aux, a.composerPanel, tr.Texts())
+	}
+	if err := tr.Click("Close task context"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.aux != "" || a.composerPanel != "" || !tr.Focused("Task context · 2") {
+		t.Fatalf("context close = aux=%q panel=%q focused=%v", a.aux, a.composerPanel, tr.Focused("Task context · 2"))
+	}
+
+	// The visible model label is the selected contact's value, not a stale
+	// value left by another contact.
+	a.contacts[1].SessionID = "session-mio"
+	a.contacts[1].SessionModel = "model-mio"
+	a.selectContact(1)
+	tr.Frame()
+	if !tr.HasText("model-mio") || tr.HasText("model-default") {
+		t.Fatalf("selected contact model label crossed contacts: %v", tr.Texts())
+	}
+}
+
+// TestPreviewComposerTypography writes the composer review matrix through the
+// existing headless preview entry. It is inert without SAKI_PREVIEW_DIR.
+func TestPreviewComposerTypography(t *testing.T) {
+	dir := os.Getenv("SAKI_PREVIEW_DIR")
+	type scene struct {
+		name, draft string
+		context     int
+		active      bool
+		width       int
+		height      int
+	}
+	scenes := []scene{
+		{name: "empty", width: 1040, height: 720},
+		{name: "single", draft: "帮我整理这周的发布说明。", context: 2, width: 1040, height: 720},
+		{name: "multiline", draft: "第一行：保留项目代号。\n第二行：确认负责人。\n第三行：列出下一步。", context: 2, width: 720, height: 640},
+		{name: "long", draft: "把这周的资料整理成一份可以执行的计划：先核对项目代号和负责人，再把风险、依赖和下一步写清楚，最后给出可以直接继续处理的最小行动。", context: 3, width: 720, height: 640},
+		{name: "stop", draft: "当前对话正在运行；这个位置应显示停止动作。", context: 1, active: true, width: 720, height: 640},
+	}
+	for _, sc := range scenes {
+		for _, dark := range []bool{false, true} {
+			a := testApp(t)
+			a.windowWidth = sc.width
+			a.workspaceOpen = false
+			a.runtimeStatus = runtimeStateReady
+			a.runtimeCapabilitiesLoaded = true
+			a.runtimeMaxActiveTasks = 2
+			ct := a.selectedContact()
+			ct.SessionID = "composer-preview-session"
+			ct.SessionModel = "deepseek/deepseek-chat"
+			ct.Draft = sc.draft
+			ct.Context.items = nil
+			for i := 0; i < sc.context; i++ {
+				ct.Context.items = append(ct.Context.items, taskContextItem{Name: "资料 " + fmt.Sprint(i+1), Text: "预览资料"})
+			}
+			if sc.active {
+				a.demo = false
+				a.rt = &runtimeClient{}
+				ct.ActiveTaskID = "composer-preview-task"
+				ct.Status = statusWorking
+			}
+			tr := ui.NewTester(a.view, sc.width, sc.height)
+			tr.SetDark(dark)
+			tr.Frame()
+			visible := func(label string) ui.Rect {
+				t.Helper()
+				r, ok := tr.Find(label)
+				if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.Y < 0 || r.X+r.W > float32(sc.width) || r.Y+r.H > float32(sc.height) {
+					t.Fatalf("%s: %s bounds=%+v ok=%v", sc.name, label, r, ok)
+				}
+				return r
+			}
+			visible("Composer for Saki")
+			visible(contextLabelForTest(sc.context))
+			visible("Conversation model")
+			if sc.active {
+				visible("Stop conversation")
+			} else {
+				visible("Send")
+			}
+			if !tr.HasText("deepseek/deepseek-chat") {
+				t.Fatalf("%s: actual model label missing: %v", sc.name, tr.Texts())
+			}
+			if dir != "" {
+				theme := "light"
+				if dark {
+					theme = "dark"
+				}
+				writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("headless-composer-%s-%dx%d-%s.png", sc.name, sc.width, sc.height, theme)), tr.Image())
+			}
+		}
+	}
+}
+
+func contextLabelForTest(count int) string {
+	if count > 0 {
+		return fmt.Sprintf("Task context · %d", count)
+	}
+	return "Task context"
+}

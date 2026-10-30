@@ -157,7 +157,7 @@ func TestContactScopeSelectAndComposerModelEntry(t *testing.T) {
 	a.connectionEffective = &connectionConfig{Model: "model-default"}
 	tr = ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	if !tr.HasText("Connection default · model-default") {
+	if !tr.HasText("model-default") {
 		t.Fatalf("unbound conversation default is not explicit: %q", tr.Texts())
 	}
 	if tr.HasText("Issue model") {

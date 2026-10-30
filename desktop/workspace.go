@@ -325,7 +325,7 @@ func (a *appModel) workspaceContent(c *ui.Context, t *ui.Theme) {
 		title = "Conversation work"
 	}
 	ui.Column(c).Padding(12, 12).Gap(5).Children(func() {
-		ui.Text(c, title).FontSize(17).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, title).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 			ui.Spacer(c)
 			if issue == nil && !nav.ShowConversationWork && !a.issueFormOpen {
@@ -532,7 +532,7 @@ func (a *appModel) conversationWorkView(c *ui.Context, t *ui.Theme, ct *contact)
 				if ct.ActiveTaskID == work.TaskID {
 					title = "Current work"
 				}
-				ui.Text(c, title).FontSize(17).FontWeight(600).TextColor(t.Text)
+				ui.Text(c, title).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
 				a.workCard(c, t, work, ct.ActiveTaskID == work.TaskID, false)
 				a.workActivity(c, t, work)
 			}
@@ -650,7 +650,7 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 	expanded := a.issueDetailOpen[issue.ID]
 	ui.Column(c).Padding(10).Radius(10).Background(a.workTheme.Well).Gap(5).Children(func() {
 		ui.Column(c).Gap(2).Children(func() {
-			ui.Text(c, issue.Goal).FontSize(20).FontWeight(600).LineHeight(1.5).TextColor(t.Text)
+			ui.Text(c, issue.Goal).FontSize(typePageTitle).FontWeight(600).LineHeight(1.5).TextColor(t.Text)
 		})
 		if a.issueActionError != "" {
 			ui.Text(c, a.issueActionError).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
@@ -718,7 +718,7 @@ func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, is
 		ui.Text(c, "No execution yet").FontSize(14).FontWeight(500).TextColor(t.TextMuted)
 		return
 	}
-	ui.Text(c, "Latest execution").FontSize(14).FontWeight(500).TextColor(t.TextMuted)
+	ui.Text(c, "Latest execution").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
 	ui.Text(c, issueExecutionLabel(execution)).FontSize(14).TextColor(t.TextMuted)
 	text := strings.TrimSpace(ct.resultTextForExecution(execution))
 	work := workFor(ct, execution.TaskID)
@@ -784,11 +784,11 @@ func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, is
 
 func (a *appModel) issueRequirementSummary(c *ui.Context, t *ui.Theme, issue *productIssue) {
 	if len(issue.Requirements) == 0 {
-		ui.Text(c, "Requirements").FontSize(14).FontWeight(500).TextColor(t.TextMuted)
+		ui.Text(c, "Requirements").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
 		ui.Text(c, "No requirements recorded.").FontSize(14).TextColor(t.TextMuted)
 		return
 	}
-	ui.Text(c, "Requirements").FontSize(14).FontWeight(500).TextColor(t.TextMuted)
+	ui.Text(c, "Requirements").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
 	for _, requirement := range issue.Requirements {
 		if requirement == nil {
 			continue
@@ -837,7 +837,7 @@ func (a *appModel) issueRequirementEvidence(c *ui.Context, t *ui.Theme, ct *cont
 	if len(issue.Requirements) == 0 {
 		return
 	}
-	ui.Text(c, "Requirement evidence").FontSize(14).FontWeight(500).TextColor(t.TextMuted)
+	ui.Text(c, "Requirement evidence").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
 	for _, requirement := range issue.Requirements {
 		if requirement == nil {
 			continue
@@ -876,7 +876,7 @@ func (a *appModel) issueExecutions(c *ui.Context, t *ui.Theme, ct *contact, issu
 		return
 	}
 	ui.Divider(c)
-	ui.Text(c, "Execution history").FontSize(14).FontWeight(500).TextColor(t.TextMuted)
+	ui.Text(c, "Execution history").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
 	for index, execution := range issue.Executions {
 		if execution == nil {
 			continue
@@ -1092,7 +1092,7 @@ func (a *appModel) workEmptyState(c *ui.Context, t *ui.Theme, ct *contact) {
 		ui.Text(c, "No work is shown until the Runtime connection is ready; this is not a claim that no work exists.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
 		return
 	}
-	ui.Text(c, "No current work").FontSize(16).FontWeight(600).TextColor(t.Text)
+	ui.Text(c, "No current work").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
 	ui.Text(c, "Work will appear here when "+ct.Name+" starts a task. Tool activity and results stay out of the conversation.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
 }
 

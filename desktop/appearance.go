@@ -144,6 +144,21 @@ func (a *appModel) connectionDefaultModel() string {
 	return ""
 }
 
+func (a *appModel) conversationModelShortName(ct *contact) string {
+	if ct != nil {
+		if model := strings.TrimSpace(ct.SessionModel); model != "" {
+			return truncate(model, 30)
+		}
+		if ct.SessionID != "" {
+			return "Model not loaded"
+		}
+	}
+	if model := a.connectionDefaultModel(); model != "" {
+		return truncate(model, 30)
+	}
+	return "Model not set"
+}
+
 func (a *appModel) conversationModelSummary(ct *contact) string {
 	if ct == nil {
 		return "Connection default not configured"

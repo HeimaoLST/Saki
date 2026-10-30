@@ -58,6 +58,11 @@ func (a *appModel) bindTaskContexts() {
 	}
 }
 
+func (a *appModel) openComposerTaskContext() {
+	a.composerPanel = composerPanelContext
+	a.openConversationTaskContext()
+}
+
 func (a *appModel) openConversationTaskContext() {
 	a.taskContextIssueID = ""
 	a.aux = "task-context"
@@ -86,7 +91,7 @@ func (a *appModel) taskContextPanel(c *ui.Context, t *ui.Theme) {
 		target = &issue.Context
 	}
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, owner).FontSize(16).FontWeight(600).TextColor(t.Text).MaxLines(2)
+		ui.Text(c, owner).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).MaxLines(2)
 		ui.Spacer(c)
 		ui.Button(c, "Close task context").FontSize(12).OnClick(func() { a.closeAux() })
 	})

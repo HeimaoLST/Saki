@@ -327,7 +327,7 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 	compaction := effective.Compaction
 	ui.Column(c).Gap(10).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Session model").FontSize(17).FontWeight(600).TextColor(t.Text)
+			ui.Text(c, "Session model").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
 			ui.Spacer(c)
 			secondaryButton(c, "Cancel").Disabled(s.Busy).OnClick(func() {
 				s.ResetDraft()

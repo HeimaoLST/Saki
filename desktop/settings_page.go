@@ -214,7 +214,7 @@ func (a *appModel) settingsSidebar(c *ui.Context, t *ui.Theme, narrow bool) {
 			back.Focus()
 			a.settingsFocusBack = false
 		}
-		ui.Text(c, "Settings").FontSize(24).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, "Settings").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
 		if !narrow {
 			ui.Text(c, "Appearance, connection and contact details").FontSize(13).LineHeight(1.45).TextColor(t.TextMuted)
 		}
@@ -274,7 +274,7 @@ func (a *appModel) settingsMain(c *ui.Context, t *ui.Theme, narrow bool) {
 }
 
 func (a *appModel) settingsAppearanceContent(c *ui.Context, t *ui.Theme) {
-	ui.Text(c, "Appearance").FontSize(22).FontWeight(600).TextColor(t.Text)
+	ui.Text(c, "Appearance").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
 	ui.Text(c, "Choose how the whole workbench looks. The change applies immediately.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
 	a.appearanceChoice = appearanceModeLabel(a.appearanceMode)
 	ui.Row(c).Gap(10).Wrap().Children(func() {
@@ -334,7 +334,7 @@ func appearanceModeDescription(mode string) string {
 
 func (a *appModel) settingsConnectionContent(c *ui.Context, t *ui.Theme) {
 	form := a.connectionForm
-	ui.Text(c, "Connection & model").FontSize(22).FontWeight(600).TextColor(t.Text)
+	ui.Text(c, "Connection & model").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
 	ui.Text(c, "Save, apply and test are separate actions. Applying never interrupts current work.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
 	if a.connectionApplied() && a.connectionEffective != nil {
 		ui.Column(c).Padding(10, 12).Radius(9).Background(t.SurfaceHover).Gap(3).Children(func() {
@@ -361,7 +361,7 @@ func (a *appModel) settingsConnectionContent(c *ui.Context, t *ui.Theme) {
 func (a *appModel) settingsContactContent(c *ui.Context, t *ui.Theme) {
 	editor := a.settingsContactEditor()
 	if editor == nil {
-		ui.Text(c, "Contact profile").FontSize(22).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, "Contact profile").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
 		ui.Text(c, "No contact is available to edit.").FontSize(14).TextColor(t.Warning)
 		return
 	}
@@ -389,7 +389,7 @@ func (a *appModel) settingsContactContent(c *ui.Context, t *ui.Theme) {
 	var ct *contact
 	ct = a.contactByID(a.settingsContactID)
 	editor = a.settingsContactEditor()
-	ui.Text(c, "Contact profile · "+a.settingsContactChoice(ct)).FontSize(22).FontWeight(600).TextColor(t.Text)
+	ui.Text(c, "Contact profile · "+a.settingsContactChoice(ct)).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
 	if editor.Draft != editor.initial {
 		ui.Text(c, "Unsaved changes.").FontSize(13).LineHeight(1.45).TextColor(t.Warning)
 	}
@@ -460,9 +460,9 @@ func containsString(values []string, want string) bool {
 }
 
 func (a *appModel) settingsAdvancedContent(c *ui.Context, t *ui.Theme) {
-	ui.Text(c, "Advanced").FontSize(22).FontWeight(600).TextColor(t.Text)
+	ui.Text(c, "Advanced").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
 	ui.Text(c, "Read-only Runtime and startup diagnostics. Open connection settings to repair configuration.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
-	ui.Text(c, "Startup & configuration").FontSize(14).FontWeight(600).TextColor(t.Text)
+	ui.Text(c, "Startup & configuration").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.Text)
 	label := "Show runtime, paths and session"
 	if a.startupDetailsOpen {
 		label = "Hide runtime, paths and session"
