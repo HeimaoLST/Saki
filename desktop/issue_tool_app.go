@@ -1144,7 +1144,12 @@ func (a *appModel) issueToolCompleteExecution(execution *issueExecution, accepte
 func (a *appModel) issueToolHandleAction(_ context.Context, raw json.RawMessage) (issueToolForwardResponse, error) {
 	var request IssueToolActionRequest
 	if err := json.Unmarshal(raw, &request); err != nil {
-		return issueToolErrorResponse("invalid_arguments", "invalid issue_action arguments")
+		message := "invalid issue_action arguments"
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &typeErr) && typeErr.Field == "expected_revision" {
+			message += ": " + issueToolExpectedRevisionCorrection
+		}
+		return issueToolErrorResponse("invalid_arguments", message)
 	}
 	request.ScopeRef = strings.TrimSpace(request.ScopeRef)
 	var scope IssueToolScope

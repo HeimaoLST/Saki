@@ -97,6 +97,14 @@ func TestIssueToolHelperInitializeListAndNotification(t *testing.T) {
 	if list.Tools[0].Name != "issue_list" || list.Tools[1].Name != "issue_get" || list.Tools[2].Name != "issue_wait" || list.Tools[3].Name != "issue_action" {
 		t.Fatalf("tool names = %+v", list.Tools)
 	}
+	properties, _ := list.Tools[3].InputSchema["properties"].(map[string]any)
+	expectedRevision, _ := properties["expected_revision"].(map[string]any)
+	description, _ := expectedRevision["description"].(string)
+	for _, want := range []string{"update/wait", "positive integer", "requirements_revision", "create receipt", "issue_get"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("expected_revision description %q missing %q", description, want)
+		}
+	}
 	if list.Tools[0].InputSchema["required"] == nil {
 		t.Fatal("issue_list schema has no required fields")
 	}

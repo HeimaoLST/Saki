@@ -706,6 +706,15 @@ type resolvedTheme struct {
 
 - **#207 续测与 query-tail 证据（2026-10-30）**：首轮 049 原样复验保持 FAIL，5 次上游请求、无 run accepted/work/plan；首轮之后先有一次 0 请求的 setup RED（contact history 尚未 loaded 时 send 被拒，随后仅增加 restore 的 Loaded/HistoryDirty 准入，无产品改动）。真实补答阶段 9 次上游 200：同一 issue 的 `add_supplement` 返回 saved，store supplement ledger 为 submitted/accepted 并绑定唯一 execution `execution-bbe5b4528fa94e68`，execution Prompt 含 Python/7 自然日；work 最后写 `plan.md` 7434B（SHA `392dd08e…`），conversation 无 write/edit/bash 修改产物。该阶段 validator FAIL 是因为测试把模型整理后的 supplement 文本与用户原回答做逐字相等比较（源 `Text==answer` 误判），不是产品未补充；不覆盖原 FAIL JSON。随后 query-tail 仅发一次原文“刚才那件事完成了吗？请告诉我目前进度和成果在哪里。”，3 次上游 200，test PASS 7.37s/package PASS 8.887s；新工具仅 `issue_get` 与只读 bash，返回同一 issue/唯一 completed execution，最终 assistant 明确 Issue 仍 in_progress、6 条 requirements unverified；plan/notes hash 未变，旧 history 为字节前缀。总计 5+9+3=17 次上游。该证据是当前合成样本的一次有限真实链，不是重复写修复的硬保证，也不把 query-tail PASS 扩张为全量或 native 验收；详见 [#207 result 6513483964](https://github.com/HeimaoLST/Saki/issues/207#issuecomment-6513483964) 与 [PM review 6513478045](https://github.com/HeimaoLST/Saki/issues/207#issuecomment-6513478045)。
 
+### #210 事项工具的 revision 参数说明（实现事实与待验，2026-10-30）
+
+代码来源：`agent/gui/210-issue-tool-revision-errors`，基于固定 `04981e693e6ceeaa8d940181a3da056e1f3e6c15`。#207 的真实对话中，模型在 create 后省略 wait 的 `expected_revision`，只收到笼统 `invalid_action`；原线上结果仍按 #207 记录，不作为本修复的通过证据。
+
+- **可发现的条件参数**：`issue_action` 的 revision 描述明确 update / wait 必须传正整数，从 create 回执或 `issue_get` 的当前 `requirements_revision` 获取；不得猜测。目标、完整要求列表、提问文本与回答的 `question_ref` 按原动作条件说明。顶层 required 仍为 scope / action，不引入条件 schema 框架，不自动补版本或重试。
+- **可操作错误**：缺失、null、零或负数的 revision 沿原验证路径返回 `invalid_action`，说明字段、合法值和来源；JSON 类型不合法或整数溢出仍保留原解码错误码 `invalid_arguments`，仅为 `expected_revision` 补充相同修正信息。其他参数的解析、scope 检查、正数旧版本的 `revision_mismatch/current_revision` 与幂等预留路径不变。参数拒绝发生在操作预留和业务写入之前。
+- **先提问再运行**：现有路径已允许刚创建且没有 execution 的事项 wait。使用真实回执 revision 保存 `waiting_user`、开放问题和 `question_ref`，可从 store 重新读回；回答沿原 add_supplement / question_ref 保存，并回到 `not_started`，不创建 execution、不自动继续，仍需用户明确 run。此为工具请求/回执与持久化边界的确定性验证，没有强行运行或伪造执行记录，也没有为本单改状态机。
+- **证据边界**：保留原笼统错误 RED；定向 race 覆盖 update / wait 非法 revision 的无写入拒绝、合法未运行事项问答、真实版本变更后的旧 revision 拒绝、重复调用及 scope。工具列表通过既有 MCP helper 测试读取，不以提示字符串检查替代业务断言。最终命令、SHA 与限制写入 #210；全包和最终产物交 #200 组合后统一验证。本单不再发真实模型请求，不宣称任意模型或本修复已通过线上、原生或完整 MVP 验收。
+
 ## #182 可读事项工作台与恢复边界（实现事实，2026-10-27）
 
 代码来源：`agent/gui/182-readable-workspace`，从 QA 基线 `7a6b9b1` 开出；当前增量实现源 `ad8998930bc5dc55a543b2d1cc450dc9640953a1`（前序 `003df7a`、`7f37afc` 的完整矩阵证据是历史候选，不自动覆盖此增量）。本节只描述本轮工作台可读性修复，不代表 #156 全 MVP、原生包或在线模型验收通过。

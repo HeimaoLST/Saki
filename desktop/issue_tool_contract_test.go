@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -232,5 +233,18 @@ func TestIssueToolSetReceiptRequiresCurrentLedgerMemberAndTarget(t *testing.T) {
 	}
 	if operation.Receipt != accepted || saves != 2 {
 		t.Fatalf("current ledger receipt = %+v saves=%d", operation.Receipt, saves)
+	}
+}
+
+func TestIssueToolRevisionValidationKeepsInvalidActionSentinel(t *testing.T) {
+	scope := issueToolScopeForTest()
+	for _, action := range []string{issueToolActionUpdate, issueToolActionWait} {
+		request := IssueToolActionRequest{
+			ScopeRef: scope.Ref, Action: action, IssueID: "issue-a", Goal: "goal", Text: "text",
+		}
+		err := request.Validate(scope)
+		if !errors.Is(err, errIssueToolAction) {
+			t.Fatalf("%s revision error = %v, want errIssueToolAction", action, err)
+		}
 	}
 }
