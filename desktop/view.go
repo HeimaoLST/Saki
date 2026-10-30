@@ -727,10 +727,12 @@ func (a *appModel) composerInlineAux() bool {
 func (a *appModel) composerModelButton(c *ui.Context, t *ui.Theme, ct *contact) ui.Element {
 	summary := a.conversationModelSummary(ct)
 	button := ui.Button(c, "").Label("Conversation model").
-		MinHeight(32).Height(32).Padding(4, 8).
+		MinHeight(32).Height(32).MinWidth(0).MaxWidth(230).Shrink(1).Padding(4, 8).
 		Tooltip("Conversation model · " + summary)
 	button.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(3).Children(func() {
+			ui.Text(c, "Conversation").FontSize(typeMeta).LineHeight(1.3).
+				MaxLines(1).TextColor(t.TextMuted)
 			ui.Text(c, a.conversationModelShortName(ct)).FontSize(typeAction).FontWeight(500).
 				MaxLines(1).TextColor(t.Text)
 			ui.Icon(c, composerChevronIcon).Width(16).Height(16).TextColor(t.TextMuted)
@@ -744,8 +746,12 @@ func (a *appModel) composerInlinePanel(c *ui.Context, t *ui.Theme) {
 		return
 	}
 	c.OnShortcut(0, ui.KeyEscape, func() { a.closeAux() })
+	scrollLabel := "Model details"
+	if a.aux == composerPanelContext {
+		scrollLabel = "Task context details"
+	}
 	ui.Column(c).FillWidth().Children(func() {
-		ui.Scroll(c).MaxHeight(300).TrackScroll(a.auxScrollFor(a.aux)).Children(func() {
+		ui.Scroll(c).Label(scrollLabel).MaxHeight(300).TrackScroll(a.auxScrollFor(a.aux)).Children(func() {
 			ui.Column(c).Padding(8, 10).Radius(10).Background(t.Surface).Gap(8).Children(func() {
 				switch a.aux {
 				case composerPanelModel:
@@ -790,23 +796,27 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				contextLabel = fmt.Sprintf("Task context · %d", contextCount)
 			}
 			sendDisabled := strings.TrimSpace(ct.Draft) == "" || ct.Status == statusWorking
+			sendReason := ""
 			if !a.demo {
-				sendDisabled = strings.TrimSpace(ct.Draft) == "" || a.canSend(ct) != ""
+				sendReason = a.canSend(ct)
+				sendDisabled = strings.TrimSpace(ct.Draft) == "" || sendReason != ""
 			}
-			ui.Toolbar(c, func() {
-				contextButton := ui.Button(c, "").Label(contextLabel).Tooltip(contextLabel).
-					MinWidth(32).Height(32).Padding(2, 6)
-				contextButton.Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(2).Children(func() {
-						ui.Icon(c, composerAttachIcon).Width(18).Height(18).TextColor(t.TextMuted)
-						ui.Text(c, fmt.Sprint(contextCount)).FontSize(typeMeta).LineHeight(1.3).TextColor(t.TextMuted)
+			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(2).Children(func() {
+				ui.Toolbar(c, func() {
+					contextButton := ui.Button(c, "").Label(contextLabel).Tooltip(contextLabel).
+						MinWidth(32).Height(32).Padding(2, 6)
+					contextButton.Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Gap(2).Children(func() {
+							ui.Icon(c, composerAttachIcon).Width(18).Height(18).TextColor(t.TextMuted)
+							ui.Text(c, fmt.Sprint(contextCount)).FontSize(typeMeta).LineHeight(1.3).TextColor(t.TextMuted)
+						})
 					})
-				})
-				contextButton.OnClick(func() { a.openComposerTaskContext() })
-				if a.composerFocusContext {
-					contextButton.Focus()
-					a.composerFocusContext = false
-				}
+					contextButton.OnClick(func() { a.openComposerTaskContext() })
+					if a.composerFocusContext {
+						contextButton.Focus()
+						a.composerFocusContext = false
+					}
+				}).Label("Composer tools")
 				ui.Spacer(c)
 				modelButton := a.composerModelButton(c, t, ct)
 				modelButton.OnClick(func() { a.openComposerModel() })
@@ -814,6 +824,8 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 					modelButton.Focus()
 					a.composerFocusModel = false
 				}
+				// Send/Stop are outside the Toolbar: the main action must never
+				// disappear into a toolbar overflow menu at narrow widths.
 				if !a.demo && ct.ActiveTaskID != "" {
 					stop := ui.Button(c, "").Label("Stop conversation").Tooltip("Stop conversation").
 						Width(32).Height(32).Padding(0).TextColor(t.Warning)
@@ -831,7 +843,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 						a.sendCurrent()
 					}
 				}
-			}).Label("Composer actions")
+			})
 			ui.Text(c, "Enter to send · Shift + Enter for a new line").FontSize(typeMeta).LineHeight(1.4).TextColor(t.TextMuted)
 			if !a.demo {
 				if a.rt != nil && a.runtimeStatus == runtimeStateReady && !a.capacityKnown() {
@@ -844,8 +856,8 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 						secondaryButton(c, "Retry capacity").OnClick(func() { a.retryCapabilities() })
 					})
 				}
-				if reason := a.canSend(ct); strings.Contains(reason, "Another contact is working") {
-					ui.Text(c, reason).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+				if sendReason != "" && strings.TrimSpace(ct.Draft) != "" {
+					ui.Text(c, sendReason).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 				}
 				switch {
 				case ct.SendState == sendSubmitting:

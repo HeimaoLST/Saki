@@ -107,13 +107,14 @@ func (a *appModel) openComposerModel() {
 	if ct == nil {
 		return
 	}
-	a.composerPanel = composerPanelModel
-	a.openSessionModel(ct.SessionID, "conversation", ct.Name)
+	if a.openSessionModel(ct.SessionID, "conversation", ct.Name) {
+		a.composerPanel = composerPanelModel
+	}
 }
 
-func (a *appModel) openSessionModel(sessionID, kind, label string) {
+func (a *appModel) openSessionModel(sessionID, kind, label string) bool {
 	if a.shutdownStarted || a.connectionApplying || a.modelOpActive {
-		return
+		return false
 	}
 	a.aux = "model"
 	a.modelPanelMessage = ""
@@ -123,11 +124,11 @@ func (a *appModel) openSessionModel(sessionID, kind, label string) {
 	openToken := a.modelOpenToken
 	if strings.TrimSpace(sessionID) == "" {
 		a.modelPanelMessage = "This context has no Runtime session yet. New work uses the model from Connection settings; after the first task creates a session you can switch it independently."
-		return
+		return true
 	}
 	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
 		a.modelPanelError = "Runtime is not ready; the session model cannot be read."
-		return
+		return true
 	}
 	rt, generation := a.rt, a.connectionGeneration
 	a.modelPanelMessage = "Reading the session model from Runtime…"
@@ -164,6 +165,7 @@ func (a *appModel) openSessionModel(sessionID, kind, label string) {
 			a.modelPanelError = ""
 		})
 	}()
+	return true
 }
 
 func (a *appModel) refreshSessionModel(target modelSelectionTarget) {

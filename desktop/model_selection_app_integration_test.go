@@ -32,7 +32,7 @@ func openModelPanel(t *testing.T, h *guiHarness, entry string) {
 	t.Helper()
 	var clickErr error
 	h.pump.do(func() {
-		tr := ui.NewTester(h.app.view, 1280, 720)
+		tr := ui.NewTester(h.app.view, 1040, 720)
 		tr.Frame()
 		clickErr = tr.Click(entry)
 	})
@@ -51,13 +51,53 @@ func clickModelAction(t *testing.T, h *guiHarness, action string) {
 	t.Helper()
 	var clickErr error
 	h.pump.do(func() {
-		tr := ui.NewTester(h.app.view, 1280, 720)
+		tr := ui.NewTester(h.app.view, 1040, 720)
 		tr.Frame()
-		clickErr = clickSettingsAction(tr, action)
+		if h.app.composerInlineAux() {
+			clickErr = clickInlineModelAction(tr, action, 1040, 720)
+		} else {
+			clickErr = clickSettingsAction(tr, action)
+		}
 	})
 	if clickErr != nil {
 		t.Fatal(clickErr)
 	}
+}
+
+// clickInlineModelAction scrolls the composer-owned model panel, not the
+// settings/modal scroll region used by clickSettingsAction. The action must
+// remain reachable at the configured test viewport.
+func clickInlineModelAction(tr *ui.Tester, action string, width, height int) error {
+	visible := func() bool {
+		if r, ok := tr.Find(action); ok && r.W > 0 && r.H > 0 && r.Y >= 0 && r.Y+r.H <= float32(height) {
+			return true
+		}
+		return false
+	}
+	if visible() {
+		return tr.Click(action)
+	}
+	panel, ok := tr.Find("Model details")
+	if !ok || panel.W <= 0 || panel.H <= 0 {
+		return fmt.Errorf("inline model details viewport not found at %dx%d: %v", width, height, tr.Texts())
+	}
+	x := panel.X + panel.W/2
+	y := panel.Y + panel.H/2
+	for attempt := 0; attempt < 16; attempt++ {
+		tr.Scroll(x, y, 0, 180)
+		tr.Frame()
+		if visible() {
+			return tr.Click(action)
+		}
+	}
+	for attempt := 0; attempt < 16; attempt++ {
+		tr.Scroll(x, y, 0, -180)
+		tr.Frame()
+		if visible() {
+			return tr.Click(action)
+		}
+	}
+	return fmt.Errorf("inline model action %q was not reachable at %dx%d in viewport %+v: %v", action, width, height, panel, tr.Texts())
 }
 
 func updateModelGUI(t *testing.T, h *guiHarness, model string) {

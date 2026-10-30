@@ -768,6 +768,59 @@ func TestComposerModelAndTaskContextStayInlineAndReturnFocus(t *testing.T) {
 		t.Fatalf("context close = aux=%q panel=%q focused=%v", a.aux, a.composerPanel, tr.Focused("Task context · 2"))
 	}
 
+	// A model open request refused by an active model transaction must not
+	// expose a model panel flag while the context panel remains the owner.
+	for _, reject := range []struct {
+		name  string
+		set   func(*appModel)
+		clear func(*appModel)
+	}{
+		{name: "model-busy", set: func(a *appModel) { a.modelOpActive = true }, clear: func(a *appModel) { a.modelOpActive = false }},
+		{name: "connection-applying", set: func(a *appModel) { a.connectionApplying = true }, clear: func(a *appModel) { a.connectionApplying = false }},
+	} {
+		t.Run(reject.name, func(t *testing.T) {
+			a := testApp(t)
+			ct := a.selectedContact()
+			ct.Context.items = []taskContextItem{{ID: "reject-1", Name: "资料", Text: "保留"}}
+			tr := ui.NewTester(a.view, 1040, 720)
+			tr.Frame()
+			if err := tr.Click("Task context · 1"); err != nil {
+				t.Fatal(err)
+			}
+			tr.Frame()
+			reject.set(a)
+			if err := tr.Click("Conversation model"); err != nil {
+				t.Fatal(err)
+			}
+			tr.Frame()
+			if a.aux != "task-context" || a.composerPanel != composerPanelContext || !a.composerInlineAux() || tr.HasText("Session model") {
+				t.Fatalf("rejected model open changed owner: aux=%q panel=%q inline=%v texts=%v", a.aux, a.composerPanel, a.composerInlineAux(), tr.Texts())
+			}
+			reject.clear(a)
+			if err := tr.Click("Conversation model"); err != nil {
+				t.Fatal(err)
+			}
+			tr.Frame()
+			if a.aux != "model" || a.composerPanel != composerPanelModel || !a.composerInlineAux() {
+				t.Fatalf("model could not open after rejection cleared: aux=%q panel=%q inline=%v", a.aux, a.composerPanel, a.composerInlineAux())
+			}
+		})
+	}
+
+	// Switching contacts while the inline model entry is open must drop the
+	// owner-specific panel rather than leaving it attached to the new target.
+	if err := tr.Click("Conversation model"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	a.selectContact(1)
+	tr.Frame()
+	if a.aux != "" || a.composerPanel != "" || a.composerInlineAux() || tr.HasText("Session model") {
+		t.Fatalf("contact switch kept stale inline model panel: aux=%q panel=%q texts=%v", a.aux, a.composerPanel, tr.Texts())
+	}
+	a.selectContact(0)
+	tr.Frame()
+
 	// The visible model label is the selected contact's value, not a stale
 	// value left by another contact.
 	a.contacts[1].SessionID = "session-mio"
@@ -779,8 +832,91 @@ func TestComposerModelAndTaskContextStayInlineAndReturnFocus(t *testing.T) {
 	}
 }
 
-// TestPreviewComposerTypography writes the composer review matrix through the
-// existing headless preview entry. It is inert without SAKI_PREVIEW_DIR.
+func TestComposerKeepsModelScopeAndPrimaryActionAtNarrowCenter(t *testing.T) {
+	a := testApp(t)
+	a.windowWidth = 1040
+	a.leftPaneWidth = defaultLeftPaneWidth
+	a.rightPaneWidth = 358 // leaves the real minimum 480px center beside the work pane
+	a.workspaceOpen = true
+	ct := a.selectedContact()
+	ct.SessionID = "long-model-session"
+	ct.SessionModel = "provider/very-long-model-name-that-must-not-push-the-action-out-of-the-composer"
+	ct.Draft = "保留这段草稿"
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if a.workOverlay() {
+		t.Fatal("test setup must keep the three-pane center")
+	}
+	composer, ok := tr.Find("Composer for Saki")
+	if !ok || composer.W <= 0 {
+		t.Fatalf("composer bounds missing: %+v ok=%v", composer, ok)
+	}
+	left, right := composer.X, composer.X+composer.W
+	withinComposer := func(label string) ui.Rect {
+		t.Helper()
+		r, ok := tr.Find(label)
+		if !ok || r.W <= 0 || r.H <= 0 || r.X < left || r.X+r.W > right {
+			t.Fatalf("%s is outside the composer bounds: rect=%+v ok=%v composer=%+v", label, r, ok, composer)
+		}
+		return r
+	}
+	model := withinComposer("Conversation model")
+	scope := withinComposer("Conversation")
+	if scope.X < model.X || scope.X+scope.W > model.X+model.W {
+		t.Fatalf("model scope is outside its chip: scope=%+v model=%+v", scope, model)
+	}
+	short := a.conversationModelShortName(ct)
+	if short == "" || !tr.HasText(short) {
+		t.Fatalf("short model name %q missing: %v", short, tr.Texts())
+	}
+	send := withinComposer("Send")
+	if send.X < model.X+model.W {
+		t.Fatalf("send action overlaps the model chip: send=%+v model=%+v", send, model)
+	}
+
+	// A running conversation replaces Send with the same fixed Stop target.
+	a.demo = false
+	a.runtimeStatus = runtimeStateReady
+	a.runtimeCapabilitiesLoaded = true
+	a.rt = &runtimeClient{}
+	ct.ActiveTaskID = "conversation-task"
+	ct.Status = statusWorking
+	tr.Frame()
+	composer, ok = tr.Find("Composer for Saki")
+	if !ok || composer.W <= 0 {
+		t.Fatalf("composer bounds missing after stop switch: %+v ok=%v", composer, ok)
+	}
+	left, right = composer.X, composer.X+composer.W
+	model = withinComposer("Conversation model")
+	stop := withinComposer("Stop conversation")
+	if stop.X < model.X+model.W {
+		t.Fatalf("stop action overlaps the model chip: stop=%+v model=%+v", stop, model)
+	}
+	if tr.HasText("Send") {
+		t.Fatal("running conversation kept the Send action instead of Stop conversation")
+	}
+
+	// The same view shows the real send guard reason when the model recovery
+	// state blocks a non-empty draft; it is not hidden only in the button tip.
+	a = testApp(t)
+	a.demo = false
+	a.runtimeStatus = runtimeStateReady
+	a.runtimeCapabilitiesLoaded = true
+	a.rt = &runtimeClient{}
+	ct = a.selectedContact()
+	ct.SessionID = "recovery-session"
+	ct.Loaded = true
+	ct.Draft = "保留并提示原因"
+	a.modelRecovery = map[string]modelRecoveryState{ct.SessionID: modelRecoveryNeedsReload}
+	tr = ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if !tr.HasText("Reload the session before sending") {
+		t.Fatalf("send guard reason missing: %v", tr.Texts())
+	}
+}
+
+// TestPreviewComposerTypography always exercises the composer geometry matrix;
+// it writes the review PNGs only when SAKI_PREVIEW_DIR is set.
 func TestPreviewComposerTypography(t *testing.T) {
 	dir := os.Getenv("SAKI_PREVIEW_DIR")
 	type scene struct {
