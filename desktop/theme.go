@@ -44,56 +44,59 @@ func resolveWorkbenchTheme(dark bool) workbenchTheme {
 		t.FontSize = 14
 		t.Spacing = 4
 		t.Radius = 8
-		t.Background = ui.Hex("#202622")
-		t.Surface = ui.Hex("#2a332d")
-		t.SurfaceHover = ui.Hex("#33473a")
-		t.SurfacePressed = ui.Hex("#3b5042")
-		t.Border = ui.Hex("#3b473f")
-		t.Text = ui.Hex("#edf1eb")
-		t.TextMuted = ui.Hex("#adb8af")
-		t.Accent = ui.Hex("#b7d1bd")
-		t.AccentHover = ui.Hex("#c9dfcd")
-		t.AccentPressed = ui.Hex("#d6e8d6")
-		t.AccentText = ui.Hex("#203328")
-		t.Selection = ui.Hex("#33473a")
-		t.Focus = ui.Hex("#b7d1bd")
-		t.Danger = ui.Hex("#f0a89a")
-		t.Warning = ui.Hex("#edbb8c")
-		t.Success = ui.Hex("#b7d1bd")
-		t.Scrollbar = ui.Hex("#7e8c82")
+		// #218 palette: the same theme fields, populated from the researched
+		// semantic roles. Border is the control/input boundary; the decorative
+		// line role has no separate Theme field in v0.7.3.
+		t.Background = ui.Hex("#1D2520")
+		t.Surface = ui.Hex("#29362D")
+		t.SurfaceHover = ui.Hex("#314D3B")
+		t.SurfacePressed = ui.Hex("#303B33")
+		t.Border = ui.Hex("#879B8D")
+		t.Text = ui.Hex("#EDF3EE")
+		t.TextMuted = ui.Hex("#B0BFB3")
+		t.Accent = ui.Hex("#B5D5BE")
+		t.AccentHover = ui.Hex("#C7E3CF")
+		t.AccentPressed = ui.Hex("#D8EDDE")
+		t.AccentText = ui.Hex("#183624")
+		t.Selection = ui.Hex("#314D3B")
+		t.Focus = ui.Hex("#A7D6B8")
+		t.Danger = ui.Hex("#F2A8AF")
+		t.Warning = ui.Hex("#F0C38E")
+		t.Success = ui.Hex("#A2D5AF")
+		t.Scrollbar = ui.Hex("#B0BFB3")
 		return workbenchTheme{
 			Theme: t,
-			Rail:  ui.Hex("#1a201c"), Reading: ui.Hex("#202622"), Panel: ui.Hex("#1d231f"),
-			Well: ui.Hex("#2a332d"), BubbleUser: ui.Hex("#33473a"), BubbleContact: ui.Hex("#2a332d"),
-			WorkSurface: ui.Hex("#1d231f"), WorkText: ui.Hex("#edf1eb"),
-			WorkMuted: ui.Hex("#adb8af"), WorkAttention: ui.Hex("#edbb8c"),
-			WorkWarningBg: ui.Hex("#3b3027"),
+			Rail:  ui.Hex("#171E19"), Reading: ui.Hex("#1D2520"), Panel: ui.Hex("#202A23"),
+			Well: ui.Hex("#29362D"), BubbleUser: ui.Hex("#324A3B"), BubbleContact: ui.Hex("#28332B"),
+			WorkSurface: ui.Hex("#202A23"), WorkText: ui.Hex("#EDF3EE"),
+			WorkMuted: ui.Hex("#B0BFB3"), WorkAttention: ui.Hex("#F0C38E"),
+			WorkWarningBg: ui.Hex("#403222"),
 		}
 	}
-	t.Background = ui.Hex("#ffffff")
-	t.Surface = ui.Hex("#eff2f0")
-	t.SurfaceHover = ui.Hex("#e8f0ea")
-	t.SurfacePressed = ui.Hex("#dce7df")
-	t.Border = ui.Hex("#dde3df")
-	t.Text = ui.Hex("#252c28")
-	t.TextMuted = ui.Hex("#626c65")
-	t.Accent = ui.Hex("#365e4d")
-	t.AccentHover = ui.Hex("#2d5343")
-	t.AccentPressed = ui.Hex("#244437")
-	t.AccentText = ui.Hex("#ffffff")
-	t.Selection = ui.Hex("#e8f0ea")
-	t.Focus = ui.Hex("#437762")
-	t.Danger = ui.Hex("#9c4a62")
-	t.Warning = ui.Hex("#8b542d")
-	t.Success = ui.Hex("#3d6a52")
-	t.Scrollbar = ui.Hex("#aeb8b1")
+	t.Background = ui.Hex("#FFFFFF")
+	t.Surface = ui.Hex("#EEF2EF")
+	t.SurfaceHover = ui.Hex("#E5EFE8")
+	t.SurfacePressed = ui.Hex("#E5EAE6")
+	t.Border = ui.Hex("#7C8A7F")
+	t.Text = ui.Hex("#252E28")
+	t.TextMuted = ui.Hex("#5D6B61")
+	t.Accent = ui.Hex("#365E4D")
+	t.AccentHover = ui.Hex("#2D5242")
+	t.AccentPressed = ui.Hex("#244536")
+	t.AccentText = ui.Hex("#FFFFFF")
+	t.Selection = ui.Hex("#E5EFE8")
+	t.Focus = ui.Hex("#3C7155")
+	t.Danger = ui.Hex("#9B3C43")
+	t.Warning = ui.Hex("#80501F")
+	t.Success = ui.Hex("#31684A")
+	t.Scrollbar = ui.Hex("#5D6B61")
 	return workbenchTheme{
 		Theme: t,
-		Rail:  ui.Hex("#f5f6f5"), Reading: ui.Hex("#ffffff"), Panel: ui.Hex("#f8f9f8"),
-		Well: ui.Hex("#eff2f0"), BubbleUser: ui.Hex("#e8f0ea"), BubbleContact: ui.Hex("#f2f4f2"),
-		WorkSurface: ui.Hex("#f8f9f8"), WorkText: ui.Hex("#252c28"),
-		WorkMuted: ui.Hex("#626c65"), WorkAttention: ui.Hex("#8b542d"),
-		WorkWarningBg: ui.Hex("#f7ede3"),
+		Rail:  ui.Hex("#F5F7F5"), Reading: ui.Hex("#FFFFFF"), Panel: ui.Hex("#F8FAF8"),
+		Well: ui.Hex("#EEF2EF"), BubbleUser: ui.Hex("#E5EFE8"), BubbleContact: ui.Hex("#F2F5F2"),
+		WorkSurface: ui.Hex("#F8FAF8"), WorkText: ui.Hex("#252E28"),
+		WorkMuted: ui.Hex("#5D6B61"), WorkAttention: ui.Hex("#80501F"),
+		WorkWarningBg: ui.Hex("#FFF2DF"),
 	}
 }
 

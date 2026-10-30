@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,102 @@ func TestAppearanceModeResolutionUsesDarkTheme(t *testing.T) {
 		resolveAppearanceDark(appearanceLight, true) != false ||
 		resolveAppearanceDark(appearanceDark, false) != true {
 		t.Fatal("appearance mode did not resolve to the requested/system appearance")
+	}
+}
+
+func paletteLuminance(c ui.Color) float64 {
+	linear := func(v uint8) float64 {
+		f := float64(v) / 255
+		if f <= 0.04045 {
+			return f / 12.92
+		}
+		return math.Pow((f+0.055)/1.055, 2.4)
+	}
+	return 0.2126*linear(c.R) + 0.7152*linear(c.G) + 0.0722*linear(c.B)
+}
+
+func paletteContrast(a, b ui.Color) float64 {
+	x, y := paletteLuminance(a), paletteLuminance(b)
+	if x < y {
+		x, y = y, x
+	}
+	return (x + 0.05) / (y + 0.05)
+}
+
+func TestSemanticPaletteContrastInvariants(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		theme workbenchTheme
+	}{
+		{name: "light", theme: resolveWorkbenchTheme(false)},
+		{name: "dark", theme: resolveWorkbenchTheme(true)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			th := tc.theme
+			textBases := []struct {
+				name string
+				bg   ui.Color
+			}{
+				{"surface", th.Reading},
+				{"panel", th.Panel},
+				{"well", th.Well},
+				{"bubble-user", th.BubbleUser},
+				{"bubble-assistant", th.BubbleContact},
+				{"hover", th.Theme.SurfaceHover},
+				{"pressed", th.Theme.SurfacePressed},
+				{"selection", th.Theme.Selection},
+			}
+			for _, base := range textBases {
+				if got := paletteContrast(th.Theme.Text, base.bg); got < 4.5 {
+					t.Errorf("%s text/%s contrast = %.3f, want >= 4.5", tc.name, base.name, got)
+				}
+			}
+			// The reader copy control and composer attach icon render muted
+			// glyphs on these same control faces, including pressed and selected.
+			for _, base := range textBases {
+				if got := paletteContrast(th.Theme.TextMuted, base.bg); got < 4.5 {
+					t.Errorf("%s muted/%s contrast = %.3f, want >= 4.5", tc.name, base.name, got)
+				}
+			}
+			for _, accent := range []struct {
+				name string
+				bg   ui.Color
+			}{
+				{"accent", th.Theme.Accent},
+				{"accent-hover", th.Theme.AccentHover},
+				{"accent-pressed", th.Theme.AccentPressed},
+			} {
+				if got := paletteContrast(th.Theme.AccentText, accent.bg); got < 4.5 {
+					t.Errorf("%s on_accent/%s contrast = %.3f, want >= 4.5", tc.name, accent.name, got)
+				}
+			}
+			for _, base := range []struct {
+				name string
+				bg   ui.Color
+			}{
+				{"surface", th.Reading},
+				{"panel", th.Panel},
+				{"well", th.Well},
+				{"selected", th.Theme.Selection},
+			} {
+				if got := paletteContrast(th.Theme.Focus, base.bg); got < 3 {
+					t.Errorf("%s focus/%s contrast = %.3f, want >= 3", tc.name, base.name, got)
+				}
+			}
+			for _, base := range []struct {
+				name string
+				bg   ui.Color
+			}{
+				{"surface", th.Reading},
+				{"panel", th.Panel},
+				{"well", th.Well},
+				{"selected", th.Theme.Selection},
+			} {
+				if got := paletteContrast(th.Theme.Border, base.bg); got < 3 {
+					t.Errorf("%s control-border/%s contrast = %.3f, want >= 3", tc.name, base.name, got)
+				}
+			}
+		})
 	}
 }
 

@@ -850,3 +850,30 @@ type resolvedTheme struct {
 代码来源：`agent/gui/218-composer-final`，基于 #98 迁移提交 `62d142c460c01b23a49ebc087724acd6212f0f4d`。conversation composer 的 `Send`/`Stop conversation` 已移出 `ui.Toolbar`，固定为工具栏右侧的 `PrimaryButton`/`Button`，长模型名和 1040 最小正文 480px 时不会进入 Toolbar overflow；资料按钮仍在官方 Toolbar 内，使用标准按钮的 hover/pressed/焦点。模型入口固定显示 `Conversation` 作用域和截断短名，完整有效模型仍由原 model panel 显示；`Open model/context` 在内嵌 `Model details`/`Task context details` 视口滚动，既有 controller、会话 owner、async generation/openToken 守卫保留。被 `modelOpActive` 或 `connectionApplying` 拒绝的打开请求不会先改变 `composerPanel`，context owner 和 legacy dialog 状态保持一致。空草稿不新增禁用错误文案；有草稿时 `canSend` 的模型 recovery/容量/错误原因在 composer 内可见，原 Reload/Retry/更新路径仍可达。
 
 定向回归使用 1040×720 的 `TestModelSelectionGUI` 全组（含真实更新、取消、rejection/unknown、重启/退出恢复）、`TestComposerKeepsModelScopeAndPrimaryActionAtNarrowCenter`、`TestComposerModelAndTaskContextStayInlineAndReturnFocus` 及 `TestPreviewComposerTypography`；`SAKI_PREVIEW_DIR` 下生成 10 张浅深色 composer 图，图片与日志在 `/private/tmp/saki-gui-218-final/`。这是 headless/既有真实 Rust fixture 的定向证据；62d 的旧 full 结果仍为 8 FAIL，218 定向修正后未重跑整体 full/package，也不表示 native、IME 或线上模型验收；#219 导航与 217 reader 独立范围未改写。
+
+## #218 语义色板接入（实现事实与框架限制，2026-10-30）
+
+代码来源：`agent/gui/218-semantic-palette`，基于 `0e9b4daa8bea77bf8ac09d14221e3d053dafa2e9`。采用 #221 研究的 Paper/Moss 语义适配值，继续使用唯一 `resolveWorkbenchTheme` 和既有 `paper`/`night` 配置；不新增主题 ID、第二 Theme、品牌框架、字体或动效。Adobe 原始五色没有直接铺入 UI，以下为映射后的语义角色。
+
+| 角色 | 现有接入 |
+| --- | --- |
+| `surface` / `rail` / `panel` / `well` | `Theme.Background`、`Reading`、`Rail`、`Panel`/`WorkSurface`、`Theme.Surface`/`Well` |
+| `bubble_user` / `bubble_assistant` | `BubbleUser` / `BubbleContact` |
+| `text` / `muted` | `Theme.Text` / `Theme.TextMuted` |
+| `control_border` | `Theme.Border`（输入与控制边界） |
+| `accent` / `accent_hover` / `accent_pressed` / `on_accent` | 对应 `ui.Theme` 的 Accent/Hover/Pressed/AccentText |
+| `focus` | `Theme.Focus` |
+| `selected` | `Theme.Selection`，并作为普通工具 hover 的中性 selected 面 |
+| 普通工具 hover / pressed | `Theme.SurfaceHover` 取 selected；`Theme.SurfacePressed` 取 `disabled_bg` 的中性值（浅 `#E5EAE6` / 深 `#303B33`）；复用该中性数值不等于实现 Disabled 语义，不使用 line 作控件底 |
+| `success` / `warning` / `error` | `Theme.Success` / `Theme.Warning` / `Theme.Danger` |
+| `line` | v0.7.3 没有独立 Theme 字段；未新增 app-only 字段。`Theme.Border` 按输入边界取 `control_border`，装饰 caller 若需独立 `line` 由 #219 的既有 view 接缝处理 |
+| `selected_text` | 没有独立 Theme 字段；实际选中文字使用 `Theme.Text`，其与 selected 的对比为 11.89:1（浅）/8.27:1（深） |
+| `success_bg` / `error_bg` | 当前没有现有消费者，未新增字段；不把未接的角色伪装成已实现 |
+| `warning_bg` | 仅既有 `workbenchTheme.WorkWarningBg`，本切片没有当前消费者 |
+| `disabled_text` / `disabled_bg` | `ui.Theme` 没有禁用前景/背景接口，不能静态接入 4.5 表值 |
+
+`SurfacePressed` 使用 `disabled_bg` 的中性不透明值；`Scrollbar` 使用不透明 muted（不再叠加项目自定义透明层）。Markdown 的链接取 `Theme.Accent`；代码 span/块沿用框架默认的 `Theme.Text` alpha 底色与 `Theme.Border` 边界；tooltip 继续使用 `ui.Theme.inverse` 的默认 `Text`/`Background` 反转。普通工具不额外设 `Background` 覆盖 Button 的既有 hover/pressed。
+
+**实际对比与限制**：本地按 sRGB/alpha 合成的记录在 `/private/tmp/saki-gui-218-palette/contrast-actual-v2.json`。正文/辅助文字、selected、accent 三态、focus、control_border、选择文字、Markdown 链接/代码、tooltip 的已接角色通过目标对比；muted 在 pressed 中性底为 4.61:1（浅）/6.09:1（深），满足实际 copy/attach 状态的 4.5 目标。关键限制是 MyGo v0.7.3 `paint.go:257-260` 对 `flagDisabled` 统一乘 `opacity *= 0.5`，Theme 没有 DisabledText/Bg 配置；按实际合成，浅色 disabled 前景/底色约 2.94:1，深色约 4.33:1，不能拿静态 `disabled_text/disabled_bg` 的 4.60/5.40 写成渲染通过。没有绕过 Disabled 语义、改 framework/patch 或伪造颜色。该限制保留给父/后续框架接缝判断；其余映射不因此回退。
+
+**验证**：`TestSemanticPaletteContrastInvariants` 使用主题字段与 luminance/alpha 关系检查实际阅读底、hover/pressed、focus、control border、selected 的可读性；`TestAppearanceModeResolutionUsesDarkTheme` 保留。`SAKI_PREVIEW_DIR` 下现有 preview/Tester 矩阵生成 68 张默认/最小/设置/宽屏两色图（`/private/tmp/saki-gui-218-palette/previews/`），另生成两色 composer 图。headless 结果不替代原生、IME、全状态或完整包验收；#219 导航源码未改。
