@@ -1643,6 +1643,14 @@
       }
       .model-control {
         min-width: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+      }
+      .model-scope {
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
       }
       .model-select {
         max-width: 145px;
@@ -1692,6 +1700,14 @@
       }
       .composer:focus-within .composer-hint {
         opacity: 1;
+      }
+      .composer-status {
+        margin: 0 14px;
+        padding: 0 0 8px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
       }
       .composer .alert-inline {
         margin: 10px 12px 0;
@@ -2160,12 +2176,14 @@
                 </button>
               </div>
               <div class="composer-right">
-                <label class="model-control">
+                <label class="model-control" title="当前对话 · deepseek-v4.1-flash">
+                  <span class="model-scope">对话</span>
                   <span class="sr">当前对话模型</span>
                   <select
                     class="model-select"
                     id="model"
-                    aria-label="当前对话模型（仅预览）"
+                    aria-label="当前对话模型：deepseek-v4.1-flash（仅预览）"
+                    title="当前对话 · deepseek-v4.1-flash"
                   >
                     <option>DeepSeek Flash</option>
                     <option>跟随联系人默认</option>
@@ -2195,6 +2213,9 @@
             <div class="composer-hint" id="composer-hint">
               <span id="draft-hint">消息与工作分开，随时可以回来</span
               ><span>Enter 发送 · ⇧ Enter 换行</span>
+            </div>
+            <div class="composer-status" id="composer-status">
+              当前对话 · 模型 deepseek-v4.1-flash · 容量 2 · 停止仅作用于本对话
             </div>
           </div>
         </div>
@@ -2261,7 +2282,7 @@
                       ><span>浅色</span></span
                     >
                     <strong>浅色</strong>
-                    <small>Paper · 明亮阅读</small>
+                    <small>浅色样本 · 待 #221</small>
                     <span class="appearance-check"></span>
                   </button>
                   <button
@@ -2274,7 +2295,7 @@
                       ><span>深色</span></span
                     >
                     <strong>深色</strong>
-                    <small>Night · 低光环境</small>
+                    <small>深色样本 · 待 #221</small>
                     <span class="appearance-check"></span>
                   </button>
                 </div>
@@ -2428,7 +2449,7 @@
     <footer class="proto-footer">
       <span
         >可试：复制、统一输入区、三项详情、设置与主区阅读。</span
-      ><span>MyGo 官方文档基线 · 版本由 GUI 主责核定 · HTML 非原生</span>
+      ><span>MyGo 官方 v0.7.3 基线 · 实际版本由 GUI 核定 · 配色待 #221 · HTML 非原生</span>
     </footer>
     <div
       id="announcer"
@@ -2736,6 +2757,10 @@
         $("work-count").hidden = !active.length;
         $("draft").placeholder = `和 ${c.name} 说点什么…`;
         $("connection-error").hidden = scene !== "error";
+        $("composer-status").textContent =
+          scene === "error"
+            ? "连接异常 · 草稿保留 · 未知结果需核对 · 容量与停止入口不隐藏"
+            : "当前对话 · 模型 deepseek-v4.1-flash · 容量 2 · 停止仅作用于本对话";
         $("simulate").disabled = !running;
         for (const [id, view] of [
           ["work-toggle", "work"],
