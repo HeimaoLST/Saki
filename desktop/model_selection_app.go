@@ -279,7 +279,6 @@ func (a *appModel) updateSessionModel(request modelSelectionRequest) {
 				if loaded.State != "" {
 					issue.Work.SessionState = loaded.State
 				}
-				_ = a.persist()
 			}
 			if loadErr != nil {
 				form.SetBusy(false, "")
