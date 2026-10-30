@@ -11,7 +11,7 @@
 - 先按核定的最新稳定版 Button/Toolbar/Text/布局能力和主题角色做朴素、统一的及格实现，再评估精修；不为兼容旧版自造框架。icon-only 操作必须有可访问名称、tooltip、焦点与按压反馈；hover 才出现的工具不应成为唯一发现方式。
 - 必要偏离必须记录“适用组件／依据／不可替代缺口／最小兼容做法”。若核定版本缺少不可替代的 API，交 GUI 主责复用 [#98](https://github.com/HeimaoLST/Saki/issues/98) 评估；不擅自全量升级，也不把其他设计工作全部堵在升级上。
 - 以下字体数值是候选设计起点，不是对现有正文的普遍缩字／加粗命令；实现应以主题、官方示例和实际渲染校准，不为特色机械覆写全站。标题不得抢长回复的主体地位。
-- 语义配色采用 [#221 正式报告](https://github.com/HeimaoLST/Saki/issues/221#issuecomment-6524653785) 的人工适配值；[PM 复核](https://github.com/HeimaoLST/Saki/issues/221#issuecomment-6524280721) 可作承接引用。Adobe 原始五色只记来源／方法，不等于 UI 色板；92 对静态对比边界见下，最终原生颜色与组件状态仍待验证。
+- 语义配色采用 [#221 正式报告](https://github.com/HeimaoLST/Saki/issues/221#issuecomment-6524653785) 的人工适配值；[PM 复核](https://github.com/HeimaoLST/Saki/issues/221#issuecomment-6524790831) 可作承接引用。Adobe 原始五色只记来源／方法，不等于 UI 色板；92 对静态对比边界见下，最终原生颜色与组件状态仍待验证。
 
 ## 设计方向
 
