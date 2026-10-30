@@ -19,9 +19,16 @@ func TestIssueToolExistingSessionGetsRoleWithoutRebindingProfile(t *testing.T) {
 	var sessionID, promptBefore string
 	var rt *runtimeClient
 	var setupErr error
+	userPrompt := "Keep this user prompt verbatim. It quotes an old rule: When the user explicitly delegates work, use the issue tools already available in this conversation. Do not rewrite this quote."
+	selection := map[string]any{
+		"builtin": []string{"read", "bash"},
+		"external": []map[string]string{{
+			"source_id": issueToolSourceID, "tool_name": "issue_get", "exposed_name": "alias_issue_get",
+		}},
+	}
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
-		session, err := h.app.rt.createConfiguredConversationSession(h.root, "OLD SESSION PROMPT", nil)
+		session, err := h.app.rt.createConfiguredConversationSession(h.root, previousIssueToolConversationGuidance+"\n\n"+userPrompt, selection)
 		if err != nil {
 			setupErr = err
 			return
@@ -41,7 +48,7 @@ func TestIssueToolExistingSessionGetsRoleWithoutRebindingProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	promptBefore = configBefore.EffectiveConfig.SystemPrompt
-	if promptBefore != "OLD SESSION PROMPT" || runtimeSelectionHasIssueTools(configBefore.EffectiveConfig.ToolSelection) {
+	if promptBefore != previousIssueToolConversationGuidance+"\n\n"+userPrompt || runtimeSelectionHasIssueTools(configBefore.EffectiveConfig.ToolSelection) {
 		t.Fatalf("precondition = prompt=%q issueTools=%v", promptBefore, runtimeSelectionHasIssueTools(configBefore.EffectiveConfig.ToolSelection))
 	}
 	configured, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false)
@@ -52,10 +59,26 @@ func TestIssueToolExistingSessionGetsRoleWithoutRebindingProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPrompt := issueToolConversationGuidance + "\n\n" + promptBefore
+	wantPrompt := issueToolConversationGuidance + "\n\n" + userPrompt
 	if configAfter.SessionID != configBefore.SessionID || configAfter.EffectiveConfig.SystemPrompt != wantPrompt ||
 		!runtimeSelectionHasIssueTools(configAfter.EffectiveConfig.ToolSelection) {
 		t.Fatalf("existing session update = session=%q prompt=%q tools=%v", configAfter.SessionID, configAfter.EffectiveConfig.SystemPrompt, configAfter.EffectiveConfig.ToolSelection)
+	}
+	if !strings.Contains(configAfter.EffectiveConfig.SystemPrompt, userPrompt) {
+		t.Fatal("existing session did not preserve the user prompt after the previous app guidance")
+	}
+	builtin, alias := configAfter.EffectiveConfig.ToolSelection.Builtin, false
+	for _, binding := range configAfter.EffectiveConfig.ToolSelection.External {
+		if binding.SourceID == issueToolSourceID && binding.ToolName == "issue_get" && binding.ExposedName == "alias_issue_get" {
+			alias = true
+		}
+	}
+	builtinSet := map[string]bool{}
+	for _, name := range builtin {
+		builtinSet[name] = true
+	}
+	if len(builtin) != 2 || !builtinSet["read"] || !builtinSet["bash"] || !alias {
+		t.Fatalf("existing session did not preserve builtin/alias selection: builtin=%v alias=%v", builtin, alias)
 	}
 	if strings.Contains(configAfter.EffectiveConfig.SystemPrompt, "CURRENT PROFILE") {
 		t.Fatal("existing session was rebound to the current contact profile")
