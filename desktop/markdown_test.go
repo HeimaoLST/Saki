@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"image"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -120,14 +121,30 @@ func TestMarkdownReaderAcknowledgesCopyFailureLocallyAndByCallback(t *testing.T)
 	dark := false
 	tr := ui.NewTester(readerTestView(&source, &streaming, &options, &dark), 500, 500)
 
+	button, ok := tr.Find("Copy message")
+	if !ok {
+		t.Fatalf("copy control is missing: %q", tr.Texts())
+	}
+	text, ok := tr.Find("正文")
+	if !ok {
+		t.Fatalf("message text is missing: %q", tr.Texts())
+	}
+	before := tr.Image()
 	if err := tr.Click("Copy message"); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 || !errors.Is(result, copyErr) {
 		t.Fatalf("failure callback got %v after %d calls", result, calls)
 	}
-	if !tr.HasText("Copy failed") {
-		t.Fatalf("failure is not visible in %q", tr.Texts())
+	if got, ok := tr.Find("Copy message"); !ok || got != button {
+		t.Fatalf("failure feedback moved the copy control: before=%+v after=%+v", button, got)
+	}
+	if got, ok := tr.Find("正文"); !ok || got != text {
+		t.Fatalf("failure feedback moved the prose: before=%+v after=%+v", text, got)
+	}
+	failedImage := tr.Image()
+	if readerImageRegionDiff(before, failedImage, button) == 0 {
+		t.Fatal("failure feedback is not visible")
 	}
 
 	fail = false
@@ -137,8 +154,14 @@ func TestMarkdownReaderAcknowledgesCopyFailureLocallyAndByCallback(t *testing.T)
 	if calls != 2 || result != nil || successes != 1 {
 		t.Fatalf("success callback got %v, successes %d after %d calls", result, successes, calls)
 	}
-	if !tr.HasText("Copied") {
-		t.Fatalf("success is not visible in %q", tr.Texts())
+	if got, ok := tr.Find("Copy message"); !ok || got != button {
+		t.Fatalf("success feedback moved the copy control: before=%+v after=%+v", button, got)
+	}
+	if got, ok := tr.Find("正文"); !ok || got != text {
+		t.Fatalf("success feedback moved the prose: before=%+v after=%+v", text, got)
+	}
+	if readerImageRegionDiff(failedImage, tr.Image(), button) == 0 {
+		t.Fatal("success feedback does not differ from failure feedback")
 	}
 }
 
@@ -167,7 +190,9 @@ func TestMarkdownReaderStreamsIncompleteFenceThenKeepsFocusIntoFinalAndHistory(t
 	if tr.Focused("Copy received") {
 		t.Fatal("the reader stole focus on first render")
 	}
-	tr.Key(0, ui.KeyTab)
+	for i := 0; i < 12 && !tr.Focused("Copy received"); i++ {
+		tr.Key(0, ui.KeyTab)
+	}
 	if !tr.Focused("Copy received") {
 		t.Fatal("the full-source copy control is not keyboard focusable")
 	}
@@ -420,6 +445,118 @@ func TestMarkdownReaderSelectionSurvivesStreamAppendAndCopiesCurrentSource(t *te
 	}
 }
 
+func readerImageRegionDiff(a, b *image.RGBA, r ui.Rect) int {
+	x0, y0 := max(0, int(r.X)), max(0, int(r.Y))
+	x1, y1 := min(a.Bounds().Dx(), int(r.X+r.W)), min(a.Bounds().Dy(), int(r.Y+r.H))
+	count := 0
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			if a.RGBAAt(x, y) != b.RGBAAt(x, y) {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func readerRegionHasInk(img *image.RGBA, r ui.Rect) bool {
+	x0, y0 := max(0, int(r.X)), max(0, int(r.Y))
+	x1, y1 := min(img.Bounds().Dx(), int(r.X+r.W)), min(img.Bounds().Dy(), int(r.Y+r.H))
+	background := img.RGBAAt(x0+2, y0+2)
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			if img.RGBAAt(x, y) != background {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestMarkdownReaderCompactSourceCopyVisibilityAndGeometry(t *testing.T) {
+	source := "一句话中文消息，复制按钮应贴在消息右侧。"
+	streaming := false
+	options := markdownReaderOptions{CopyLabel: "Copy message"}
+	dark := false
+	tr := ui.NewTester(readerTestView(&source, &streaming, &options, &dark), 340, 300)
+	tr.SetFocused(true)
+	tr.Frame()
+	button, ok := tr.Find("Copy message")
+	if !ok {
+		t.Fatalf("copy control is missing: %q", tr.Texts())
+	}
+	if button.W != 32 || button.H != 32 {
+		t.Fatalf("copy hit area = %+v, want 32x32", button)
+	}
+	text, ok := tr.Find(source)
+	if !ok {
+		t.Fatalf("one-line message is missing: %q", tr.Texts())
+	}
+	if button.X+button.W > 340 || text.X < 0 || text.X+text.W > button.X+0.5 {
+		t.Fatalf("content/control overflow or overlap: text=%+v button=%+v", text, button)
+	}
+	if text.Y < button.Y || text.Y > button.Y+button.H {
+		t.Fatalf("content is not first/top-aligned with the control: text=%+v button=%+v", text, button)
+	}
+	rest := tr.Image()
+	if !readerRegionHasInk(rest, button) {
+		t.Fatal("source copy icon is not visible at rest")
+	}
+	tr.Move(button.X+button.W/2, button.Y+button.H/2)
+	tr.Frame()
+	hoverButton, _ := tr.Find("Copy message")
+	hoverText, _ := tr.Find(source)
+	if hoverButton != button || hoverText != text {
+		t.Fatalf("hover changed geometry: button %+v -> %+v text %+v -> %+v", button, hoverButton, text, hoverText)
+	}
+	hovered := tr.Image()
+	if readerImageRegionDiff(rest, hovered, button) == 0 {
+		t.Fatal("copy control shows no hover face")
+	}
+	tr.Move(1, 1)
+	tr.Frame()
+	beforeFocus := tr.Image()
+	if !readerRegionHasInk(beforeFocus, button) {
+		t.Fatal("source copy icon is not visible after hover leaves")
+	}
+	tr.Key(0, ui.KeyTab)
+	tr.Frame()
+	if !tr.Focused("Copy message") {
+		t.Fatalf("copy control is not first in keyboard order: %q", tr.Texts())
+	}
+	focusButton, _ := tr.Find("Copy message")
+	focusText, _ := tr.Find(source)
+	if focusButton != button || focusText != text {
+		t.Fatalf("focus changed geometry: button %+v -> %+v text %+v -> %+v", button, focusButton, text, focusText)
+	}
+	if readerImageRegionDiff(beforeFocus, tr.Image(), button) == 0 {
+		t.Fatal("copy control shows no keyboard focus face")
+	}
+}
+
+func TestMarkdownReaderCompactSourceCopyAddsNoShortMessageHeight(t *testing.T) {
+	source := "一句话中文消息。"
+	options := markdownReaderOptions{CopyLabel: "Copy message"}
+	dark := false
+	var root ui.Handle
+	var rootBounds ui.Rect
+	tr := ui.NewTester(func(c *ui.Context) {
+		c.SetTheme(resolveWorkbenchTheme(dark).Theme)
+		element := markdownReader(c, source, options)
+		element.Bind(&root)
+		rootBounds = root.Bounds(c)
+	}, 340, 300)
+	tr.Frame()
+	tr.Frame()
+	text, ok := tr.Find(source)
+	if !ok {
+		t.Fatalf("one-line message is missing: %q", tr.Texts())
+	}
+	if rootBounds.H <= 0 || rootBounds.H > text.H+1 {
+		t.Fatalf("short message height = %v for text height %v; compact copy added a vertical row", rootBounds.H, text.H)
+	}
+}
+
 // TestMarkdownReaderScreenshot is opt-in because it writes images. Run it
 // with SAKI_MARKDOWN_READER_SCREENSHOT_DIR, or the Go test cache may reuse
 // an older result:
@@ -435,31 +572,54 @@ func TestMarkdownReaderScreenshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	long := strings.Repeat("abcdefghij", 24)
-	source := readerFourColumnSource + "\n```\n" + long + "\n```\n"
+	scenes := []struct {
+		name, source string
+	}{
+		{"one-line", "一句话中文消息，复制按钮应贴在消息右侧。"},
+		{"rich", readerFourColumnSource + "\n```\n" + long + "\n```\n"},
+	}
 	streaming := false
 	options := markdownReaderOptions{CopyLabel: "Copy message"}
-	for _, size := range []struct {
-		name string
-		w, h int
-	}{{"narrow", 340, 760}, {"normal", 720, 960}} {
-		for _, dark := range []bool{false, true} {
-			dark := dark
-			tr := ui.NewTester(readerTestView(&source, &streaming, &options, &dark), size.w, size.h)
-			theme := "light"
-			if dark {
-				theme = "dark"
-			}
-			path := filepath.Join(dir, fmt.Sprintf("markdown-reader-%s-%s.png", theme, size.name))
-			f, err := os.Create(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := png.Encode(f, tr.Image()); err != nil {
-				f.Close()
-				t.Fatal(err)
-			}
-			if err := f.Close(); err != nil {
-				t.Fatal(err)
+	for _, scene := range scenes {
+		source := scene.source
+		for _, size := range []struct {
+			name string
+			w, h int
+		}{{"narrow", 340, 760}, {"normal", 720, 960}} {
+			for _, dark := range []bool{false, true} {
+				dark := dark
+				tr := ui.NewTester(readerTestView(&source, &streaming, &options, &dark), size.w, size.h)
+				theme := "light"
+				if dark {
+					theme = "dark"
+				}
+				write := func(state string) {
+					path := filepath.Join(dir, fmt.Sprintf("markdown-reader-%s-%s-%s%s.png", scene.name, theme, size.name, state))
+					f, err := os.Create(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := png.Encode(f, tr.Image()); err != nil {
+						f.Close()
+						t.Fatal(err)
+					}
+					if err := f.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				write("")
+				if r, ok := tr.Find("Copy message"); ok {
+					tr.Move(r.X+r.W/2, r.Y+r.H/2)
+					tr.Frame()
+					write("-hover")
+				}
+				tr.Move(1, 1)
+				tr.Frame()
+				for i := 0; i < 20 && !tr.Focused("Copy message"); i++ {
+					tr.Key(0, ui.KeyTab)
+				}
+				tr.Frame()
+				write("-focus")
 			}
 		}
 	}
