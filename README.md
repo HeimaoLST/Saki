@@ -69,7 +69,7 @@ Session 承载一段工作的上下文与历史；一次任务执行有自己的
 
 ## 当前进度
 
-运行能力按 `dev@fd58ec2` 定点核对；GUI 视觉与完整联系人／事项工作流仍须分别实施和验收。
+运行能力与候选以 `7145225` 基线核对；完整产品状态、跨线依赖与候选证据见 [#140](https://github.com/HeimaoLST/Saki/issues/140)、[#156](https://github.com/HeimaoLST/Saki/issues/156) 与 [#200](https://github.com/HeimaoLST/Saki/issues/200)。本文档接入不改变代码或已打包产物的 SHA。
 
 | 范围 | 当前状态 |
 | --- | --- |
@@ -78,9 +78,9 @@ Session 承载一段工作的上下文与历史；一次任务执行有自己的
 | 工作上下文 | 已实现 usage 校准、自动 compact、有限超限恢复及 checkpoint |
 | 会话 | 已实现 JSONL 历史、显式恢复、新建／切换／重命名；Runtime 管理执行归属，同一会话仍不能无约束并发写入 |
 | TUI／console 展示 | 已接入 Rust 核心；TUI 提供工作记录、Markdown、工具展开、图文输入与会话操作 |
-| GUI | `desktop/` 提供 MyGo 原生应用，已连接真实 Runtime；当前三栏气泡与独立工作区仍在实施，设计原型不等于产品交付 |
-| 多 session 重叠执行 | Runtime 已有容量配置与多会话执行实现；默认容量为 1，GUI 消费与产品验收单独推进，见 [Runtime API](docs/design/runtime-api.md) |
-| 联系人与事项 | 当前 GUI 有联系人／会话绑定；独立对话与工作会话、持续事项管理及 GUI/TUI 接续是[产品目标](docs/requirements/desktop.md)，不等于已经交付 |
+| GUI | `desktop/` 提供 MyGo 原生应用，已连接真实 Runtime；联系人、事项、独立工作、设置连接与结果阅读已有实现，完整 MVP 与原生验收仍按 #140/#156 推进，设计原型不等于产品交付 |
+| 多 session 重叠执行 | Runtime 已有容量配置与多会话执行实现；默认容量为 1，GUI 的产品并发验收单独推进，见 [Runtime API](docs/design/runtime-api.md) |
+| 联系人与事项 | 已有联系人／会话映射、事项创建与执行、补充要求和结果阅读等实现；独立对话与工作会话、持续跟进及 GUI/TUI 接续仍是[产品目标](docs/requirements/desktop.md)，不等于已经交付 |
 | 长期成长 | 已有设计与独立实验，尚未接入主 Agent |
 
 ## 运行终端展示
@@ -122,7 +122,20 @@ SAKI_UI=console cargo run
 SAKI_SESSION=your-session-id cargo run
 ```
 
-历史默认保存在当前工作目录的 `.saki/sessions/`。恢复会话会读取已保存状态，不自动重跑未完成的模型或工具任务。更多操作见[会话管理](docs/design/session-management.md)、[本地命令](docs/design/command-system.md)和 [TUI 使用说明](docs/design/tui.md)。GUI 的运行方式见[桌面应用文档](docs/design/desktop.md)，当前视觉与初版范围见[工作台设计](docs/design/desktop-workbench.md)。
+历史默认保存在当前工作目录的 `.saki/sessions/`。恢复会话会读取已保存状态，不自动重跑未完成的模型或工具任务。更多操作见[会话管理](docs/design/session-management.md)、[本地命令](docs/design/command-system.md)和 [TUI 使用说明](docs/design/tui.md)。
+
+## 运行桌面应用（macOS arm64）
+
+Nagi（GUI 暂定名）以联系人为入口，通过 GUI 连接真实 Agent Runtime。当前只支持 macOS arm64，以及已经明确验证过的模型协议组合；其他系统或仅 API 名称兼容的方案，在没有真实运行证据前不列为已支持。当前提供的是开发候选，不是公开发布的公证安装版；ad-hoc 签名只用于开发验证，不应写成公开安装包，也不要绕过系统安全警告。
+
+首次试用不需要手动编辑 `.env`。从当前开发候选启动后，按应用内完整路径配置：
+
+1. 打开 **Settings -> Connection & model**，填写 protocol、API base、model、key 和 default working directory。
+2. 选择 **Save configuration**，再执行 **Apply saved**；需要确认供应商是否真正接受请求时，显式执行 **Test connection and model**。
+3. 添加 **Add contact**，在 **Contact profile** 中按需补充职责或工作要求；联系人名称始终可编辑。
+4. 在聊天中交办事项；在 **Work** 中查看事项、执行状态和结果，有结果时使用 **Read latest result** 打开阅读。
+
+保存和应用只负责写入配置并让后续工作使用它，不等于真实模型已经验证成功；只有 **Test connection and model** 的明确结果才能证明该连接和模型组合可用。已经运行的 session 保留其配置快照，修改连接不会静默改写正在运行的工作；需要新配置时使用新会话或明确的模型切换路径。候选版本、完整 MVP 验收和原生限制分别见 [#156](https://github.com/HeimaoLST/Saki/issues/156)、[#200](https://github.com/HeimaoLST/Saki/issues/200) 与[桌面应用文档](docs/design/desktop.md)。
 
 ## 从哪里开始理解与构建
 
