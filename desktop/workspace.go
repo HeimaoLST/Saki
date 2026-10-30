@@ -883,9 +883,8 @@ func (a *appModel) issueExecutions(c *ui.Context, t *ui.Theme, ct *contact, issu
 		}
 		w := workFor(ct, execution.TaskID)
 		ui.Column(c).Padding(7).Radius(7).Background(t.Surface).Gap(2).Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).Gap(2).Children(func() {
 				ui.Text(c, fmt.Sprintf("Execution %d · %s", index+1, issueExecutionLabel(execution))).FontSize(14).TextColor(t.TextMuted)
-				ui.Spacer(c)
 				if execution.RequirementsRevision > 0 {
 					ui.Text(c, fmt.Sprintf("revision %d", execution.RequirementsRevision)).FontSize(14).TextColor(t.TextMuted)
 				}
@@ -930,7 +929,7 @@ func (a *appModel) issueExecutions(c *ui.Context, t *ui.Theme, ct *contact, issu
 					}
 				})
 			}
-			ui.Row(c).Gap(8).Children(func() {
+			ui.Column(c).AlignItems(ui.Start).Gap(6).Children(func() {
 				resultButton := secondaryButton(c, fmt.Sprintf("Open result · run %d", index+1)).OnClick(func() { a.openIssueResult(issue.ID, execution.ID) })
 				if a.issueResultShouldFocus(issue.ID, execution.ID, false) {
 					resultButton.Focus()

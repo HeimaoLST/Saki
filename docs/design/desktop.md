@@ -818,3 +818,9 @@ type resolvedTheme struct {
 - **一次返回与失效回退**：在工作台实际重建期间确认原目标是否存在，不按渲染次数或延时判断。原链接被删除或地址替换时清除请求；聊天回 composer，历史回 Close history，成果或文件回当前层已有关闭入口。原内容后来重现不再抢焦点。显式点击 Settings 使用原入口返回行为，不复用先前链接请求；普通关闭历史同时清除该阅读面的旧链接焦点。
 - **唯一渲染路径**：沿固定 MyGo `v0.4.9-0.20261014025635-fea932a7a2a9` 的既有临时补丁流程增加可选 `Markdown.Options.LinkElement` 通知，在原 Link 构造、children 和 tooltip 后提供元素与 AST 位置，不替换 renderer 或打开回调。`scripts/gui-go.py` 检查 Markdown 补丁前后 SHA，继续检查 Split / Editor 补丁；真实 go.mod 与共享 module cache 不改。nil hook、OnLink、未允许地址及流式未完成链接的原行为有针对性键盘回归，未新增 anchor/router 的独立自动化证明。
 - **证据边界**：持续存在的实际 app Tester 覆盖四阅读面的第二个同址链接、历史摘要/完整条目隔离、删除/替换后重现、显式 Settings 返回及旧自有控件。结果与文件测试从生产页面初始化接点建立，读取内容使用 fixture；定向 race 另含真实 helper 的嵌套文件返回回归。最终完整 helper / 18 MUST、同源包与原生复验按 [PM 组合安排](https://github.com/HeimaoLST/Saki/issues/203#issuecomment-6490132162)统一在 #200 接纳精确 #203 后进行，实际验证 SHA 与结果写入交付记录；本节不把阶段定向通过写成完整门禁通过。#193 和远端 Actions 账户阻塞保持独立记录。
+
+## #214 执行历史标题与操作可读性（实现事实与待验，2026-10-30）
+
+代码来源：`agent/gui/214-execution-history-layout`，基线 `7145225c47b9b29c8011edbaefc410d0d6d46b61`。事项执行卡原先用同一行 `Text + Spacer + Text` 放编号/完整执行状态与 revision，在右栏 340、最小 280 和 720 抽屉宽度下会出现状态文字换行后与 revision 零间距粘连；280 下 `Open result`/`View execution` 同排还会把后一按钮的文字裁窄。卡片内的这两个局部区域改为自然高度的 `Column`：14px 编号与完整状态独占主行并按实际卡宽换行，revision 在下一行；结果操作在同卡内纵向排列，保留原有 `Open result · run N` / `View execution · run N` 目标、回调、结果返回焦点，不缩字号、不截断、不改其他卡片布局。
+
+新增 `issue_detail_ui_test.go` 用例在 1040×720 默认 340、1040×720 最小 280、720×640 overlay 三种实际工作栏宽度的明暗主题下，用有界滚动把整张执行卡带入可读区域，同一 frame 校验标题/revision 有明确分隔且不越界、两个结果操作完整可见且不重叠；每张卡实际点击 `Open result` 核对对应 execution ID，并通过既有 `Close results` 检查返回层与入口焦点。图片复用现有 `SAKI_PREVIEW_DIR` 分 before/after 外部目录生成，旧实现保存几何 RED，修复后 GREEN。这些是 `ui.Tester` headless 结果，不是原生窗口、输入法或完整发布验收；before/after PNG、日志和 SHA 证据在 `/private/tmp/saki-gui-214/`。

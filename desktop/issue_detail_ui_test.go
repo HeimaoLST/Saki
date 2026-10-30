@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -382,4 +383,160 @@ func TestIssueListLongGoalFitsAt320(t *testing.T) {
 		tr.Frame()
 	}
 	t.Fatalf("long issue-list entry %q was not contained at %dx%d: rect=%+v selected=%q texts=%v", label, width, height, last, ct.SelectedIssueID, tr.Texts())
+}
+
+func issueHistoryFindVisible(t *testing.T, tr *ui.Tester, label string, panelX, width, height float32) ui.Rect {
+	t.Helper()
+	for attempt := 0; attempt < 24; attempt++ {
+		if r, ok := issueHistoryVisibleRect(tr, label, panelX, width, height); ok {
+			return r
+		}
+		tr.Scroll(panelX+40, height/2, 0, 220)
+		tr.Frame()
+	}
+	t.Fatalf("could not find visible %q inside work panel [%.1f, %.1f] x [0, %.1f]", label, panelX, width, height)
+	return ui.Rect{}
+}
+
+func issueHistoryVisibleRect(tr *ui.Tester, label string, panelX, width, height float32) (ui.Rect, bool) {
+	r, ok := tr.Find(label)
+	// Find returns the collected visible box, which can be a clipped slice.
+	// Require a full text line (13-14px text is at least 12 high) and keep the
+	// target inside a bounded, scrollable frame before comparing geometry.
+	if !ok || r.W <= 0 || r.H < 12 || r.X < panelX || r.X+r.W > width || r.Y < 0 || r.Y+r.H > height-4 {
+		return r, false
+	}
+	return r, true
+}
+
+func issueHistoryFindCard(t *testing.T, tr *ui.Tester, headerText, revisionText, openText, viewText string, panelX, width, height float32) (ui.Rect, ui.Rect, ui.Rect, ui.Rect) {
+	t.Helper()
+	for attempt := 0; attempt < 24; attempt++ {
+		header, headerOK := issueHistoryVisibleRect(tr, headerText, panelX, width, height)
+		revision, revisionOK := issueHistoryVisibleRect(tr, revisionText, panelX, width, height)
+		open, openOK := issueHistoryVisibleRect(tr, openText, panelX, width, height)
+		view, viewOK := issueHistoryVisibleRect(tr, viewText, panelX, width, height)
+		if headerOK && revisionOK && openOK && viewOK {
+			return header, revision, open, view
+		}
+		tr.Scroll(panelX+40, height/2, 0, 180)
+		tr.Frame()
+	}
+	t.Fatalf("could not find one visible execution card %q / %q / %q / %q inside work panel", headerText, revisionText, openText, viewText)
+	return ui.Rect{}, ui.Rect{}, ui.Rect{}, ui.Rect{}
+}
+
+func issueHistoryRectsOverlap(a, b ui.Rect) bool {
+	return a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H
+}
+
+func issueHistoryGap(a, b ui.Rect) (float32, float32) {
+	horizontal := b.X - (a.X + a.W)
+	if a.X > b.X+b.W {
+		horizontal = a.X - (b.X + b.W)
+	}
+	vertical := b.Y - (a.Y + a.H)
+	if a.Y > b.Y+b.H {
+		vertical = a.Y - (b.Y + b.H)
+	}
+	return horizontal, vertical
+}
+
+func TestIssueExecutionHistoryLayoutKeepsHeaderRevisionAndActionsDistinct(t *testing.T) {
+	cases := []struct {
+		name          string
+		width, height int
+		right, left   float32
+		dark          bool
+	}{
+		{name: "1040-default-light", width: 1040, height: 720, right: defaultRightPaneWidth, left: defaultLeftPaneWidth},
+		{name: "1040-default-dark", width: 1040, height: 720, right: defaultRightPaneWidth, left: defaultLeftPaneWidth, dark: true},
+		{name: "1040-min-light", width: 1040, height: 720, right: minRightPaneWidth, left: defaultLeftPaneWidth},
+		{name: "1040-min-dark", width: 1040, height: 720, right: minRightPaneWidth, left: defaultLeftPaneWidth, dark: true},
+		{name: "720-overlay-light", width: 720, height: 640, right: defaultRightPaneWidth, left: defaultLeftPaneWidth},
+		{name: "720-overlay-dark", width: 720, height: 640, right: defaultRightPaneWidth, left: defaultLeftPaneWidth, dark: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a, ct := workspaceTestApp(t)
+			a.rt = nil
+			a.windowWidth = tc.width
+			a.leftPaneWidth = tc.left
+			a.rightPaneWidth = tc.right
+			a.runtimeCapabilitiesLoaded = true
+			a.runtimeMaxActiveTasks = 2
+			issue := &productIssue{
+				ID: "i-history", ContactID: ct.ID, Goal: "execution history layout",
+				Status: issueStatusInProgress, RequirementsRevision: 1,
+				Requirements:  parseIssueRequirements("keep history readable"),
+				WorkSessionID: "work-history", Work: issueWorkSession{Loaded: true},
+				Executions: []*issueExecution{
+					{ID: "e-1", SessionID: "work-history", TaskID: "task-1", MessageID: "msg-1",
+						Status: issueExecutionCompleted, RequirementsRevision: 2},
+					{ID: "e-2", SessionID: "work-history", TaskID: "task-2", MessageID: "msg-2",
+						Status: issueExecutionInterrupted, RequirementsRevision: 12,
+						Detail: "The execution stopped after the provider returned an incomplete result; inspect the recorded terminal state."},
+				},
+			}
+			ct.Issues = []*productIssue{issue}
+			ct.SelectedIssueID = issue.ID
+			ct.Works = []*workItem{{TaskID: "task-1", State: workCompleted}, {TaskID: "task-2", State: workInterrupted}}
+			a.issueDetailOpen = map[string]bool{issue.ID: true}
+			openIssueDetailForTest(a, ct, issue.ID)
+			tr := ui.NewTester(a.view, tc.width, tc.height)
+			tr.SetDark(tc.dark)
+			tr.Frame()
+			panelX := float32(tc.width) - a.workWidth()
+			history := issueHistoryFindVisible(t, tr, "Execution history", panelX, float32(tc.width), float32(tc.height))
+			if history.X < panelX || history.X+history.W > float32(tc.width) {
+				t.Errorf("Execution history bounds=%+v panelX=%.1f width=%d", history, panelX, tc.width)
+			}
+			if dir := os.Getenv("SAKI_PREVIEW_DIR"); dir != "" {
+				writePreviewPNG(t, filepath.Join(dir, "headless-issue-execution-history-"+tc.name+".png"), tr.Image())
+			}
+			for index, execution := range issue.Executions {
+				headerText := "Execution " + fmt.Sprint(index+1) + " · " + issueExecutionLabel(execution)
+				revisionText := "revision " + fmt.Sprint(execution.RequirementsRevision)
+				openText := "Open result · run " + fmt.Sprint(index+1)
+				viewText := "View execution · run " + fmt.Sprint(index+1)
+				header, revision, open, view := issueHistoryFindCard(t, tr, headerText, revisionText, openText, viewText,
+					panelX, float32(tc.width), float32(tc.height))
+				horizontalGap, verticalGap := issueHistoryGap(header, revision)
+				t.Logf("layout %s run %d header=%+v revision=%+v open=%+v view=%+v gaps=(%.1f,%.1f) panelX=%.1f width=%d",
+					tc.name, index+1, header, revision, open, view, horizontalGap, verticalGap, panelX, tc.width)
+				if issueHistoryRectsOverlap(header, revision) {
+					t.Errorf("execution header/revision overlap header=%+v revision=%+v", header, revision)
+				}
+				if horizontalGap < 2 && verticalGap < 2 {
+					t.Errorf("execution header/revision have no readable gap header=%+v revision=%+v gaps=(%.1f,%.1f)", header, revision, horizontalGap, verticalGap)
+				}
+				if issueHistoryRectsOverlap(open, view) {
+					t.Errorf("result actions overlap open=%+v view=%+v", open, view)
+				}
+				if view.W < open.W {
+					t.Errorf("View execution label is clipped narrower than Open result: open=%+v view=%+v", open, view)
+				}
+				// Exercise each visible result entry and verify its real execution
+				// ownership. Close through the existing result control so the
+				// detail layer and its return focus remain observable.
+				if err := tr.Click(openText); err != nil {
+					t.Fatal(err)
+				}
+				if !a.issueResult.Open || a.issueResult.ExecutionID != execution.ID {
+					t.Errorf("%s target = open=%v execution=%q, want open=true execution=%q",
+						openText, a.issueResult.Open, a.issueResult.ExecutionID, execution.ID)
+				}
+				if err := tr.Click("Close results"); err != nil {
+					t.Fatal(err)
+				}
+				tr.Frame()
+				if a.issueResult.Open {
+					t.Errorf("%s close left result page open", openText)
+				}
+				if !tr.Focused(openText) {
+					t.Errorf("%s did not restore focus after Close results", openText)
+				}
+			}
+		})
+	}
 }
