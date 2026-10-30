@@ -205,11 +205,11 @@ v2 `8a04d63` 的原生修复证据（13..18）：
 
 ## 已知限制
 
-- 默认单执行槽的 UI 观感仍按既有容量与 #118 的独立事项工作路径核对；同宿主无约束并行、跨工作持续占用与容量满后的完整产品矩阵仍按 #140/#156 验收。
-- `search_history`／`read_history` 未实现；History 只对已加载 transcript 做本地过滤，不是模型检索工具。
+- 默认 Runtime 容量为 1；并行执行由 #118/#196 的容量与准入边界约束，跨工作持续占用和容量满后的完整产品矩阵仍按 #140/#156 验收。
+- 当前对话可即时过滤，并可由 #152 的 `Search saved contexts` 读取当前联系人及其显式保留的旧对话；`search_history`／`read_history` 模型工具仍未实现，不是模型检索工具。
 - profile 修改按已保存快照生效：可保存未来默认值，已有执行上下文不热更新；显式新对话保留旧历史，详见 #152。
 - 无自动重连；断连后重启应用重新加载 history。未知接纳不自动重发。
-- 无附件、托盘/菜单、contact 级模型配置、头像 picker；原生窗口的发送/切换/设置/Stop/History/退出/重启已实测，但真实系统 IME 组合、VoiceOver、light 系统主题、复杂滚动与更多 provider 组合仍需后续验收。
+- 无图片输入、PDF/Office/二进制容器提取、托盘/菜单、contact 级模型配置、头像 picker；Task context 已有命名文字与 UTF-8 文件快照（[#117](#117-资料快照阅读与递交候选实现2026-10-26)）。原生窗口的发送/切换/设置/Stop/History/退出/重启已实测，但真实系统 IME 组合、VoiceOver、light 系统主题、复杂滚动与更多 provider 组合仍需后续验收。
 - GUI 不解析 Rust JSONL；旧 journal 的零时间戳显示为空，不伪造日期，缺失 message_id 保持缺失。
 - 模式切换已由 #96 实现（System/Light/Dark）；自定义主题加载、主题商城/同步和热重载仍属 #97 后续，不写成已实现。
 
@@ -239,25 +239,25 @@ GUI 的可读性、操作可发现性、布局、焦点与视觉验收以 [Deskt
 
 ## 关键流程（当前原生应用）
 
-1. **选择 contact**：切换 name、profile、messages 与 draft；草稿按 contact 保存。A 在 runtime 执行时切到 B 查看不会 cancel A；首轮 B 的发送返回 busy。状态词只描述工作：Ready／Working／Needs attention，不假装在线。
-2. **Add contact**：一次点击直接创建、选中 Ready 默认联系人并进入空会话；无需填写 Name／Purpose／Instructions／Workspace。composer 只取得一次焦点，连续创建也可直接输入。个性化通过可选 Settings 编辑；首次发送才创建 runtime session。
-3. **Contact settings**：显示名始终可编辑；purpose／instructions／workspace 只在首次 create 时使用，绑定后只读。不会提示“changes apply to future messages”，也不会重建 session 或丢历史/草稿。
-4. **Composer**：textarea、Send 与 Stop；Enter 发送、Shift+Enter 换行、IME 组合期不发送。发送进入真实 runtime：接纳后显示等待开始，`task_started` 后才 Working；delta 流式、final 覆盖同一项；工具与最终文字按 task 归属。当前没有附件入口。
-5. **History action**：对当前 contact 已加载的 transcript 做本地过滤；无结果有明确说明。它不等于 runtime 的 `search_history`，也不会出现其他 contact 的消息或暗示 shared memory。
+1. **选择 contact**：切换 name、profile、messages 与 draft；草稿按 contact 保存。A 执行时切到 B 查看不会取消 A；对话与其他事项能否同时发送由 Runtime 容量和准入决定，容量满时保留草稿并给出原因（[#118](#118-独立工作会话与事项-ui实现事实2026-10-25)）。状态词只描述工作：Ready／Working／Needs attention，不假装在线。
+2. **Add contact 与 Contact profile**：一次点击创建 Ready 默认联系人；无完整 profile 也可开始。显示名保存后立即更新；Purpose／Instructions／Workspace 保存为未来新执行上下文的默认值，已有 session/事项保留开始时快照，活动工作中仍可保存未来值；`Save and start new conversation` 不重建旧历史（[#152](#152-联系人管理与已保存对话候选实现2026-10-26)）。
+3. **Composer 与资料**：textarea、Send、Stop；Enter 发送、Shift+Enter 换行；composition 期不发送是事件级契约，真实 macOS IME 仍待原生验收。Task context 支持命名文字和 UTF-8 文件快照，文件变化需显式刷新；PDF／Office／图片不提取。资料作为独立 context 派发并保留执行快照（[#117](#117-资料快照阅读与递交候选实现2026-10-26)）。
+4. **History**：当前对话可即时过滤；`Search saved contexts` 只检索当前联系人及其显式保留的旧对话/Context，经 Runtime `session.history` 读取，不解析 JSONL、不调用模型；不扫描其他联系人或事项工作会话（[#152](#152-联系人管理与已保存对话候选实现2026-10-26)）。
+5. **事项工作**：每个事项使用独立 work session；Work 区读取真实 execution/history，事项完成与 execution 终态分开；补充自动继续、wait/answer 续跑等现有路径见 #142/#154，不把它们写成完整持续自主跟进。
 
 ## 状态与反馈
 
 | 状态 | 表现与下一步 |
 | --- | --- |
 | Empty conversation | 可直接写第一条消息，或按需编辑 Settings；无 profile 不阻止开始 |
-| Working | 会话尾部有进行中行；Send 暂时不可用，Stop 可用；切走保留状态 |
+| Working | 会话尾部有进行中行；当前目标忙时 Send 不可用、Stop 可用，切走保留状态；容量允许的其他对话/事项可继续（[#118](#118-独立工作会话与事项-ui实现事实2026-10-25)） |
 | Needs attention | gold 状态 + 已保存的失败/中断原因；不在未知接纳时自动重发 |
-| No history results | 说明该 query 在此 contact 已加载历史中无匹配，建议更短的短语 |
-| Validation | Settings 保存时名称不得为空；绑定后 profile 字段只读 |
+| No history results | 当前对话或 `Search saved contexts` 无匹配时说明范围，建议更短的短语 |
+| Validation | 名称不得为空；非空 Workspace 必须是存在的绝对目录；profile 保存为未来默认值，不改已有执行快照（[#152](#152-联系人管理与已保存对话候选实现2026-10-26)） |
 
 ## 当前不做
 
-多 agent 协作、shared memory、同宿主无约束并行执行、原始推理链展示、contact 级模型/provider/key 设置（deferred）、附件、头像 picker／上传／contact 级头像设置（same-family 集合以后再评估）。Stop／取消已实现，只按 `(session,task)` 生效。自定义主题编辑器、主题商城/下载/同步、主题热重载不在当前范围；模式切换由 #96 交付，自定义主题由 #97 后续推进。当前基线限制不覆盖后续任务已明确的实施范围。
+多 agent 协作、shared memory、原始推理链展示、contact 级模型/provider/key 设置（deferred）、图片输入与 PDF／Office／二进制容器提取（基础命名文字与 UTF-8 文件快照已实现）、头像 picker／上传／contact 级头像设置（same-family 集合以后再评估）。Stop／取消已实现，只按 `(session,task)` 生效；并行执行由 Runtime 容量与 #118 准入边界约束。自定义主题编辑器、主题商城/下载/同步、主题热重载不在当前范围；模式切换由 #96 交付，自定义主题由 #97 后续推进。
 
 ## #141 产品事项与执行关联（实现事实，2026-10-24）
 

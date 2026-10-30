@@ -44,7 +44,7 @@ Runtime 承担模型调用、工具执行、会话、上下文与执行事件等
 
 Session 承载一段工作的上下文与历史；一次任务执行有自己的开始、结果与失败；长期经历、判断和承诺则可能跨越多个 session。新建会话、结束任务与改变长期身份，分别属于不同的操作。
 
-这些边界为不同的 Agent 应用留下空间。当前已经实现会话持久化与恢复；Nagi 的对话与工作会话分离属于产品目标，具体存储和迁移仍待设计。联系人持续存在不以完整人格或成长机制为前提。
+这些边界为不同的 Agent 应用留下空间。当前已实现会话持久化与恢复；Nagi 已有联系人的持续对话与事项独立工作会话，联系人、事项、资料和补充等应用层状态由 GUI store 保存（[#118](docs/design/desktop.md#118-独立工作会话与事项-ui实现事实2026-10-25)、[#141](docs/design/desktop.md#141-产品事项与执行关联实现事实2026-10-24)）。补充自动继续、wait/answer 续跑等有限跟进路径已实现；GUI/TUI 围绕同一工作跨端接续仍是产品目标，完整的跨端协调与迁移仍待交付。联系人持续存在不以完整人格或成长机制为前提。
 
 ### 长期研究：让经历影响未来的行动
 
@@ -80,7 +80,7 @@ Session 承载一段工作的上下文与历史；一次任务执行有自己的
 | TUI／console 展示 | 已接入 Rust 核心；TUI 提供工作记录、Markdown、工具展开、图文输入与会话操作 |
 | GUI | `desktop/` 提供 MyGo 原生应用，已连接真实 Runtime；联系人、事项、独立工作、设置连接与结果阅读已有实现，完整 MVP 与原生验收仍按 #140/#156 推进，设计原型不等于产品交付 |
 | 多 session 重叠执行 | Runtime 已有容量配置与多会话执行实现；默认容量为 1，GUI 的产品并发验收单独推进，见 [Runtime API](docs/design/runtime-api.md) |
-| 联系人与事项 | 已有联系人／会话映射、事项创建与执行、补充要求和结果阅读等实现；独立对话与工作会话、持续跟进及 GUI/TUI 接续仍是[产品目标](docs/requirements/desktop.md)，不等于已经交付 |
+| 联系人与事项 | 已有联系人资料保存未来默认值、事项与独立工作会话、补充自动继续、文字与 UTF-8 文件资料快照、结果阅读等实现（[#152](docs/design/desktop.md#152-联系人管理与已保存对话候选实现2026-10-26)、[#117](docs/design/desktop.md#117-资料快照阅读与递交候选实现2026-10-26)、[#142](docs/design/desktop.md#142-事项补充与自动继续候选实现2026-10-26)）；GUI/TUI 跨端接续和完整 MVP 仍按 #140/#156 验收，不等于已经交付 |
 | 长期成长 | 已有设计与独立实验，尚未接入主 Agent |
 
 ## 运行终端展示
@@ -108,7 +108,7 @@ cargo run
 SAKI_API=openai-chat-completions cargo run
 ```
 
-Chat 首版支持文字和 function tools，不支持图片输入、Responses 续接数据或厂商专用 reasoning 扩展；已有会话不支持跨协议恢复，API 不匹配时明确拒绝。DeepSeek thinking 的 Chat 多轮工具续接已观察到不支持，不宣称所有兼容厂商都可用。完整能力、已实测组合与失败边界见[模型调用分层](docs/design/model-runtime.md)，恢复契约见[会话管理](docs/design/session-management.md)。
+Chat 首版支持文字和 function tools，不支持图片输入，也不能把 Responses 的 ProviderItem continuation 跨协议搬运；已有会话不支持跨协议恢复，API 不匹配时明确拒绝。Chat 适配器保留并回传供应商返回的 `reasoning_content`/`ProviderData`，包括 #177 对 `null`、空字符串与字段缺失的区分；`reasoning_effort` 等未建模参数仍在请求前拒绝。已有 Magpie DeepSeek Flash 的有限续接证据见 [#177](https://github.com/HeimaoLST/Saki/issues/177) 与 [#207](https://github.com/HeimaoLST/Saki/issues/207)，不能扩称所有 DeepSeek、thinking 模型或兼容服务均支持。完整能力、已实测组合与失败边界见[模型调用分层](docs/design/model-runtime.md)，恢复契约见[会话管理](docs/design/session-management.md)。
 
 stdin 与 stdout 都是终端时默认使用 TUI；管道与重定向自动使用 console。也可显式选择纯文本展示：
 
@@ -135,7 +135,7 @@ Nagi（GUI 暂定名）以联系人为入口，通过 GUI 连接真实 Agent Run
 3. 添加 **Add contact**，在 **Contact profile** 中按需补充职责或工作要求；联系人名称始终可编辑。
 4. 在聊天中交办事项；在 **Work** 中查看事项、执行状态和结果，有结果时使用 **Read latest result** 打开阅读。
 
-保存和应用只负责写入配置并让后续工作使用它，不等于真实模型已经验证成功；只有 **Test connection and model** 的明确结果才能证明该连接和模型组合可用。已经运行的 session 保留其配置快照，修改连接不会静默改写正在运行的工作；需要新配置时使用新会话或明确的模型切换路径。候选版本、完整 MVP 验收和原生限制分别见 [#156](https://github.com/HeimaoLST/Saki/issues/156)、[#200](https://github.com/HeimaoLST/Saki/issues/200) 与[桌面应用文档](docs/design/desktop.md)。
+Test connection and model 会使用当前表单值发起一次短模型请求，用于检查连接与模型的基本可用性；保存和应用只写入/重载配置，不是验证。Test 成功只证明本次短请求通过，不代替工具调用、复杂或长任务、上下文资料或所有模型组合的验收；失败也不改写已运行工作的会话快照。已经运行的 session 保留其配置快照，修改连接不会静默改写正在运行的工作；需要新配置时使用新会话或明确的模型切换路径。候选版本、完整 MVP 验收和原生限制分别见 [#156](https://github.com/HeimaoLST/Saki/issues/156)、[#200](https://github.com/HeimaoLST/Saki/issues/200) 与[桌面应用文档](docs/design/desktop.md)。
 
 ## 从哪里开始理解与构建
 
