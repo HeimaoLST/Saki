@@ -7,43 +7,65 @@
     <style>
       :root {
         color-scheme: light;
-        --page: #e9ecea;
+        --page: #f5f7f5;
         --surface: #ffffff;
-        --rail: #f5f6f5;
-        --panel: #f8f9f8;
-        --well: #eff2f0;
-        --hover: #e8ede9;
-        --line: #dde3df;
-        --ink: #252c28;
-        --muted: #626c65;
+        --rail: #f5f7f5;
+        --panel: #f8faf8;
+        --well: #eef2ef;
+        --hover: #eef2ef;
+        --line: #d8e1da;
+        --control-border: #7c8a7f;
+        --ink: #252e28;
+        --muted: #5d6b61;
         --accent: #365e4d;
+        --accent-hover: #2d5242;
+        --accent-pressed: #244536;
         --on-accent: #ffffff;
-        --tint: #e8f0ea;
-        --warning: #8b542d;
-        --warning-bg: #f7ede3;
-        --focus: #437762;
+        --tint: #e5efe8;
+        --selected: #e5efe8;
+        --selected-text: #254d38;
+        --bubble: #f2f5f2;
+        --warning: #80501f;
+        --warning-bg: #fff2df;
+        --error: #9b3c43;
+        --error-bg: #fbECEF;
+        --success: #31684a;
+        --success-bg: #e9f3ec;
+        --disabled-text: #5e6b61;
+        --disabled-bg: #e5eae6;
+        --focus: #3c7155;
         --shadow: 0 18px 60px #20302814;
-        --bubble: #f2f4f2;
       }
       [data-theme="night"] {
         color-scheme: dark;
-        --page: #131714;
-        --surface: #202622;
-        --rail: #1a201c;
-        --panel: #1d231f;
-        --well: #2a332d;
-        --hover: #354239;
-        --line: #3b473f;
-        --ink: #edf1eb;
-        --muted: #adb8af;
-        --accent: #b7d1bd;
-        --on-accent: #203328;
-        --tint: #33473a;
-        --warning: #edbb8c;
-        --warning-bg: #3b3027;
-        --focus: #b7d1bd;
+        --page: #171e19;
+        --surface: #1d2520;
+        --rail: #171e19;
+        --panel: #202a23;
+        --well: #29362d;
+        --hover: #29362d;
+        --line: #3d4b41;
+        --control-border: #879b8d;
+        --ink: #edf3ee;
+        --muted: #b0bfb3;
+        --accent: #b5d5be;
+        --accent-hover: #c7e3cf;
+        --accent-pressed: #d8edde;
+        --on-accent: #183624;
+        --tint: #324a3b;
+        --selected: #314d3b;
+        --selected-text: #d3ebd9;
+        --bubble: #28332b;
+        --warning: #f0c38e;
+        --warning-bg: #403222;
+        --error: #f2a8af;
+        --error-bg: #432b31;
+        --success: #a2d5af;
+        --success-bg: #263e2d;
+        --disabled-text: #a6b4a9;
+        --disabled-bg: #303b33;
+        --focus: #a7d6b8;
         --shadow: 0 18px 60px #0004;
-        --bubble: #2a332d;
       }
       * {
         box-sizing: border-box;
@@ -80,10 +102,11 @@
         background: var(--hover);
       }
       button:active {
-        background: var(--line);
+        background: var(--selected);
       }
       button:disabled {
-        opacity: 0.45;
+        color: var(--disabled-text);
+        background: var(--disabled-bg);
         cursor: default;
       }
       button:focus-visible,
@@ -189,8 +212,10 @@
         color: var(--on-accent);
       }
       .primary:hover {
-        background: var(--accent);
-        filter: brightness(0.92);
+        background: var(--accent-hover);
+      }
+      .primary:active {
+        background: var(--accent-pressed);
       }
       .dot {
         width: 6px;
@@ -317,7 +342,7 @@
         gap: 7px;
         margin: 16px 5px 14px;
         padding: 0 9px;
-        border: 1px solid var(--line);
+        border: 1px solid var(--control-border);
         border-radius: 7px;
         color: var(--muted);
         background: var(--surface);
@@ -596,7 +621,7 @@
         max-width: 710px;
         margin: auto;
         background: var(--surface);
-        border: 1px solid var(--line);
+        border: 1px solid var(--control-border);
         border-radius: 13px;
         box-shadow: 0 3px 12px #20302806;
       }
@@ -1153,15 +1178,15 @@
         border: 1px solid #0002;
         border-radius: 7px;
         background: #ffffff;
-        color: #252c28;
+        color: #252e28;
       }
       .appearance-preview.night {
-        background: #202622;
-        color: #edf1eb;
+        background: #1d2520;
+        color: #edf3ee;
         border-color: #0006;
       }
       .appearance-preview.system {
-        background: linear-gradient(90deg, #ffffff 0 50%, #202622 50% 100%);
+        background: linear-gradient(90deg, #ffffff 0 50%, #1d2520 50% 100%);
       }
       .appearance-preview span {
         display: block;
@@ -1283,7 +1308,7 @@
       }
       .field {
         width: 100%;
-        border: 1px solid var(--line);
+        border: 1px solid var(--control-border);
         border-radius: 7px;
         background: var(--panel);
         padding: 9px 11px;
@@ -1385,11 +1410,9 @@
       }
       @keyframes enter {
         from {
-          opacity: 0;
           transform: translateX(6px);
         }
         to {
-          opacity: 1;
           transform: none;
         }
       }
@@ -1596,19 +1619,10 @@
         align-self: flex-start;
         flex: none;
         margin-top: 2px;
-        opacity: 0.55;
-        transition:
-          opacity 120ms ease,
-          background-color 120ms ease;
+        color: var(--muted);
       }
       .message.user .message-tools {
         order: -1;
-      }
-      .message:hover .message-tools,
-      .message:focus-within .message-tools,
-      .message-tools:focus-within,
-      .message-tools:has(.copy-tool:focus) {
-        opacity: 1;
       }
       .copy-tool {
         width: 32px;
@@ -1620,7 +1634,7 @@
       }
       .copy-tool:hover,
       .copy-tool:focus-visible {
-        color: var(--accent);
+        color: var(--muted);
         background: var(--well);
       }
       .copy-tool svg {
@@ -1698,11 +1712,14 @@
         color: var(--on-accent);
       }
       .send-icon:hover {
-        background: var(--accent);
-        filter: brightness(1.06);
+        background: var(--accent-hover);
+      }
+      .send-icon:active {
+        background: var(--accent-pressed);
       }
       .send-icon:disabled {
-        opacity: 0.4;
+        color: var(--disabled-text);
+        background: var(--disabled-bg);
       }
       .stop-button {
         min-height: 32px;
@@ -1723,11 +1740,8 @@
       .composer-hint {
         margin: 0 14px;
         padding: 0 0 9px;
+        color: var(--muted);
         font-size: 12px;
-        opacity: 0.72;
-      }
-      .composer:focus-within .composer-hint {
-        opacity: 1;
       }
       .composer .alert-inline {
         margin: 10px 12px 0;
@@ -2300,7 +2314,7 @@
                       ><span>浅色</span></span
                     >
                     <strong>浅色</strong>
-                    <small>浅色样本 · 待 #221</small>
+                    <small>浅色 · 语义适配</small>
                     <span class="appearance-check"></span>
                   </button>
                   <button
@@ -2313,7 +2327,7 @@
                       ><span>深色</span></span
                     >
                     <strong>深色</strong>
-                    <small>深色样本 · 待 #221</small>
+                    <small>深色 · 语义适配</small>
                     <span class="appearance-check"></span>
                   </button>
                 </div>
@@ -2467,7 +2481,7 @@
     <footer class="proto-footer">
       <span
         >可试：复制、统一输入区、三项详情、设置与主区阅读。</span
-      ><span>MyGo 官方 v0.7.3 基线 · 实际版本由 GUI 核定 · 配色待 #221 · HTML 非原生</span>
+      ><span>MyGo 官方 v0.7.3 基线 · 实际版本由 GUI 核定 · 配色 #221 语义适配 · HTML 非原生</span>
     </footer>
     <div
       id="announcer"
