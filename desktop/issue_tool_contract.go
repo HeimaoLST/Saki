@@ -36,6 +36,8 @@ const (
 	issueToolReceiptUnknown       = "unknown"
 )
 
+const issueToolExpectedRevisionCorrection = "expected_revision must be a positive integer copied from the issue's current requirements_revision (from the create receipt or issue_get); do not guess"
+
 var (
 	errIssueToolScope             = errors.New("issue tool scope is invalid")
 	errIssueToolAction            = errors.New("issue tool action is invalid")
@@ -140,16 +142,22 @@ func (r IssueToolActionRequest) Validate(scope IssueToolScope) error {
 			return errIssueToolAction
 		}
 	case issueToolActionUpdate:
-		if strings.TrimSpace(r.IssueID) == "" || strings.TrimSpace(r.Goal) == "" || r.ExpectedRevision == nil || *r.ExpectedRevision < 1 {
+		if strings.TrimSpace(r.IssueID) == "" || strings.TrimSpace(r.Goal) == "" {
 			return errIssueToolAction
+		}
+		if r.ExpectedRevision == nil || *r.ExpectedRevision < 1 {
+			return fmt.Errorf("%w: update: %s", errIssueToolAction, issueToolExpectedRevisionCorrection)
 		}
 	case issueToolActionRun, issueToolActionStop:
 		if strings.TrimSpace(r.IssueID) == "" {
 			return errIssueToolAction
 		}
 	case issueToolActionWait:
-		if strings.TrimSpace(r.IssueID) == "" || strings.TrimSpace(r.Text) == "" || r.ExpectedRevision == nil || *r.ExpectedRevision < 1 {
+		if strings.TrimSpace(r.IssueID) == "" || strings.TrimSpace(r.Text) == "" {
 			return errIssueToolAction
+		}
+		if r.ExpectedRevision == nil || *r.ExpectedRevision < 1 {
+			return fmt.Errorf("%w: wait: %s", errIssueToolAction, issueToolExpectedRevisionCorrection)
 		}
 	case issueToolActionResume:
 		if strings.TrimSpace(r.IssueID) == "" {

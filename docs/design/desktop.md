@@ -1,6 +1,6 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-29。当前设置页面见文末 **#199 独立设置页面**。本文保留各阶段的实现与验证记录；连接配置见末尾 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118，资料快照与递交见 **#117 资料快照、阅读与递交**，联系人编辑、归档及旧对话访问见 **#152 联系人管理与已保存对话**。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
+更新日期：2026-10-30。当前设置页面见文末 **#199 独立设置页面**。本文保留各阶段的实现与验证记录；连接配置见末尾 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118，资料快照与递交见 **#117 资料快照、阅读与递交**，联系人编辑、归档及旧对话访问见 **#152 联系人管理与已保存对话**。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
 
 [previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。当前主题事实见 `desktop/theme.go` 的 `resolveWorkbenchTheme`（Paper/Moss；light/dark 语义角色）；#92 的 Moon/Dawn 和 #90 的 11px/12px 数值只保留为历史设计/实现记录，不再作为当前规范。此前将这些能力或颜色列为后续独立任务的说明已失效，不再作为当前实现或未来承诺；具体状态以对应任务段、PR 和 `dev` 为准。
 
@@ -694,6 +694,15 @@ type resolvedTheme struct {
 - **#200 定向真实链回归（2026-10-29）**：新增测试走真实 conversation → same-binary MCP helper → Unix IPC → app → Rust `task.cancel` 链路；A 的 stop 以 Runtime 实际 `interrupted` 终态和 GUI execution 同步为准，不只接受 `stop_requested`/stopping。下一 conversation turn 以合法 `run` 继续同一事项，产生新的 execution/task 并实际 `completed`；本用例 Stop 后事项仍 `in_progress`，`resume` 用于 waiting/needs_attention，不能替代这里创建下一执行的 `run`。界面保持选中已完成执行的 B，B 的 goal、requirements、非空 execution/session/task/message 与内容不变。同一 scope/turn 内重复 stop/run 工具往返返回原 receipt，不新增 operation、execution、Runtime task 或 provider work 请求。精确结果见 [#200](https://github.com/HeimaoLST/Saki/issues/200)。证据来自受控本地 provider、headless/Go 链路与真实 Rust candidate，不是 native、真实 IME 或在线 provider 验收。默认 test helper 构建统一经 `scripts/gui-go.py` 的 patched build；显式 `SAKI_TEST_ISSUE_TOOL_HELPER` 覆盖仍支持；RED/GREEN 范围见 #200。
 
 - **#207 委派后不重复执行（机制与边界，2026-10-30）**：6339 原生首用证据中，conversation 已通过 `issue_action:run` accepted 独立事项，issue work 先写 `plan.md` 6090B（SHA `4b8225…`），conversation 随后又写同路径 5544B（SHA `c5d23a…`）覆盖；当前文件等于 conversation 版本，而 issue 仍 `in_progress`、7 条 requirements unverified。该原始失败保留，不把两个 completed task、HTTP 200 或文件存在当作验收通过。conversation role guidance 现在明确：委派后 issue work 拥有该工作，不在 conversation 重复执行或覆盖其文件；`accepted` 只是 started，不是 completed；用 `issue_get` 查询真实 progress/executions/requirements/results；issue 仍 running 时可以正常结束响应，不忙轮询，成果声明必须来自实际 `issue_get`；补充/继续/要求变化沿用同一 issue 路径。`issue_get`/`issue_action` 工具描述同步说明查询与 accepted 语义。已有 idle session 只替换精确的上一版 conversation guidance 前缀，保留用户 profile/custom prompt 与显式 tool selection；未变的 work guidance 不复制、不参与升级。以上是模型提示/tool description 的软约束，离线定向 race/vet 只证明 config readback、旧 guidance 替换、幂等与真实 receipt/query 接线，不证明任意模型一定遵守；真实 Magpie DeepSeek Flash 同类合成输入与 journal/write hash 验收尚待本次执行。详见 [#207](https://github.com/HeimaoLST/Saki/issues/207)。
+
+### #210 事项工具的 revision 参数说明（实现事实与待验，2026-10-30）
+
+代码来源：`agent/gui/210-issue-tool-revision-errors`，基于固定 `04981e693e6ceeaa8d940181a3da056e1f3e6c15`。#207 的真实对话中，模型在 create 后省略 wait 的 `expected_revision`，只收到笼统 `invalid_action`；原线上结果仍按 #207 记录，不作为本修复的通过证据。
+
+- **可发现的条件参数**：`issue_action` 的 revision 描述明确 update / wait 必须传正整数，从 create 回执或 `issue_get` 的当前 `requirements_revision` 获取；不得猜测。目标、完整要求列表、提问文本与回答的 `question_ref` 按原动作条件说明。顶层 required 仍为 scope / action，不引入条件 schema 框架，不自动补版本或重试。
+- **可操作错误**：缺失、null、零或负数的 revision 沿原验证路径返回 `invalid_action`，说明字段、合法值和来源；JSON 类型不合法或整数溢出仍保留原解码错误码 `invalid_arguments`，仅为 `expected_revision` 补充相同修正信息。其他参数的解析、scope 检查、正数旧版本的 `revision_mismatch/current_revision` 与幂等预留路径不变。参数拒绝发生在操作预留和业务写入之前。
+- **先提问再运行**：现有路径已允许刚创建且没有 execution 的事项 wait。使用真实回执 revision 保存 `waiting_user`、开放问题和 `question_ref`，可从 store 重新读回；回答沿原 add_supplement / question_ref 保存，并回到 `not_started`，不创建 execution、不自动继续，仍需用户明确 run。此为工具请求/回执与持久化边界的确定性验证，没有强行运行或伪造执行记录，也没有为本单改状态机。
+- **证据边界**：保留原笼统错误 RED；定向 race 覆盖 update / wait 非法 revision 的无写入拒绝、合法未运行事项问答、真实版本变更后的旧 revision 拒绝、重复调用及 scope。工具列表通过既有 MCP helper 测试读取，不以提示字符串检查替代业务断言。最终命令、SHA 与限制写入 #210；全包和最终产物交 #200 组合后统一验证。本单不再发真实模型请求，不宣称任意模型或本修复已通过线上、原生或完整 MVP 验收。
 
 ## #182 可读事项工作台与恢复边界（实现事实，2026-10-27）
 
