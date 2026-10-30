@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Nagi · 工作台设计预览 v08</title>
+    <title>Nagi · 工作台设计预览 v09</title>
     <style>
       :root {
         color-scheme: light;
@@ -657,39 +657,32 @@
         align-items: center;
       }
       .work {
-        margin: 0;
-        padding: 0;
-        border: 0;
-        background: var(--panel);
-        color: var(--ink);
-        max-height: none;
-        max-width: none;
-        width: var(--right, 340px);
-      }
-      .work[open] {
         display: flex;
         flex-direction: column;
-        animation: enter 140ms ease-out;
+        min-height: 0;
+        background: var(--panel);
+        color: var(--ink);
       }
-      .docked .work {
+      .work[hidden] {
+        display: none !important;
+      }
+      .docked.work-open .work {
         grid-column: 5;
         grid-row: 1;
         position: relative;
         height: 100%;
-        min-height: 0;
+        width: var(--right, 340px);
+        animation: enter 140ms ease-out;
       }
       .app:not(.docked) .work {
-        position: fixed;
-        left: auto;
-        right: var(--panel-right, 30px);
-        top: var(--panel-top, 64px);
-        height: var(--panel-height, 720px);
-        width: min(360px, calc(100vw - 40px));
-        border-radius: 0 12px 12px 0;
-        box-shadow: -12px 0 44px #0002;
-      }
-      .work::backdrop {
-        background: #16201a45;
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 18;
+        background: var(--surface);
+        box-shadow: none;
+        border-radius: 0;
       }
       .work-head {
         height: 76px;
@@ -1265,51 +1258,6 @@
       .settings-diagnostics dd {
         margin: 0;
       }
-      .modal {
-        padding: 0;
-        background: var(--surface);
-        color: var(--ink);
-        border: 1px solid var(--line);
-        border-radius: 13px;
-        width: min(480px, calc(100vw - 40px));
-        max-height: calc(100dvh - 60px);
-        box-shadow: var(--shadow);
-      }
-      .modal.wide {
-        width: min(860px, calc(100vw - 40px));
-      }
-      .modal::backdrop {
-        background: #16201a55;
-      }
-      .modal-head {
-        padding: 18px 22px;
-        border-bottom: 1px solid var(--line);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-      }
-      .modal-head h2 {
-        font-size: 16px;
-      }
-      .modal-content {
-        padding: 22px;
-        overflow: auto;
-        max-height: calc(100dvh - 160px);
-      }
-      .modal-content p {
-        line-height: 1.8;
-        margin: 0 0 16px;
-      }
-      .modal-content h3 {
-        margin: 18px 0 10px;
-      }
-      .modal-content label {
-        display: block;
-        font-size: 13px;
-        font-weight: 500;
-        margin: 16px 0 6px;
-      }
       .field {
         width: 100%;
         border: 1px solid var(--line);
@@ -1411,9 +1359,6 @@
       }
       .app.narrow .composer-wrap {
         padding-inline: 20px;
-      }
-      .app.narrow .history-label {
-        display: none;
       }
       @keyframes enter {
         from {
@@ -1555,6 +1500,425 @@
           display: none;
         }
       }
+
+      /* v09 content-first overrides. */
+      .identity h1 {
+        font-size: 20px;
+        font-weight: 600;
+        line-height: 1.25;
+      }
+      .detail-title {
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .settings-sidebar h1 {
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .contact strong {
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .contact small {
+        font-size: 13px;
+        font-weight: 400;
+      }
+      .head-actions .tool {
+        position: relative;
+        width: 32px;
+        height: 32px;
+        min-height: 32px;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        border-radius: 8px;
+      }
+      .head-actions .tool[aria-expanded="true"] {
+        background: var(--tint);
+        color: var(--accent);
+      }
+      .head-actions .tool svg {
+        width: 17px;
+        height: 17px;
+      }
+      .tool-count,
+      .context-count {
+        position: absolute;
+        top: -2px;
+        right: -2px;
+        min-width: 15px;
+        height: 15px;
+        padding: 0 3px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: var(--on-accent);
+        font-size: 9px;
+        line-height: 15px;
+        text-align: center;
+      }
+      .message-line {
+        max-width: calc(100% - 38px);
+        display: flex;
+        align-items: flex-start;
+        gap: 5px;
+        min-width: 0;
+      }
+      .message.user .message-line {
+        margin-left: auto;
+      }
+      .message-line .bubble {
+        max-width: 100%;
+      }
+      .message-tools {
+        align-self: flex-start;
+        flex: none;
+        margin-top: 2px;
+        opacity: 0;
+        transition: opacity 120ms ease;
+      }
+      .message:hover .message-tools,
+      .message:focus-within .message-tools,
+      .message-tools:focus-within,
+      .message-tools:has(.copy-tool:focus) {
+        opacity: 1 !important;
+      }
+      .copy-tool {
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        background: transparent;
+      }
+      .copy-tool:hover,
+      .copy-tool:focus-visible {
+        color: var(--accent);
+        background: var(--well);
+      }
+      .copy-tool svg {
+        width: 16px;
+        height: 16px;
+      }
+      .message-meta {
+        margin-top: 3px;
+        font-size: 12px;
+      }
+      .composer {
+        padding: 0;
+      }
+      .composer textarea {
+        height: 78px;
+        min-height: 0;
+        padding: 13px 14px 5px;
+        line-height: 1.6;
+      }
+      .composer-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 2px 8px 5px;
+      }
+      .composer-left,
+      .composer-right {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        min-width: 0;
+      }
+      .composer .tool {
+        width: 32px;
+        height: 32px;
+        min-height: 32px;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+      }
+      .composer .tool svg {
+        width: 17px;
+        height: 17px;
+      }
+      .context-toggle {
+        position: relative;
+      }
+      .model-control {
+        min-width: 0;
+      }
+      .model-select {
+        max-width: 145px;
+        padding: 6px 5px;
+        color: var(--muted);
+        background: transparent;
+        font-size: 12px;
+      }
+      .send-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 9px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        background: var(--accent);
+        color: var(--on-accent);
+      }
+      .send-icon:hover {
+        background: var(--accent);
+        filter: brightness(1.06);
+      }
+      .send-icon:disabled {
+        opacity: 0.4;
+      }
+      .stop-button {
+        min-height: 32px;
+        padding: 0 10px;
+        border-radius: 8px;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        background: var(--warning-bg);
+        color: var(--warning);
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .stop-button svg {
+        width: 15px;
+        height: 15px;
+      }
+      .composer-hint {
+        margin: 0 14px;
+        padding: 0 0 9px;
+        font-size: 12px;
+        opacity: 0.72;
+      }
+      .composer:focus-within .composer-hint {
+        opacity: 1;
+      }
+      .composer .alert-inline {
+        margin: 10px 12px 0;
+        padding: 9px 10px;
+      }
+      .context-panel {
+        margin: 2px 10px 4px;
+        padding: 9px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+      .context-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      .context-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 13px;
+      }
+      .context-item small {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .context-add {
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .work {
+        width: auto;
+        max-width: none;
+        max-height: none;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: var(--panel);
+        color: var(--ink);
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      .work[hidden] {
+        display: none !important;
+      }
+      .docked.work-open .work {
+        grid-column: 5;
+        grid-row: 1;
+        position: relative;
+        height: 100%;
+        width: var(--right, 340px);
+        animation: enter 140ms ease-out;
+      }
+      .app:not(.docked) .work {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 18;
+        background: var(--surface);
+        box-shadow: none;
+        border-radius: 0;
+      }
+      .app:not(.docked) .work-head {
+        padding-left: 20px;
+      }
+      .app:not(.docked) #right-split {
+        display: none;
+      }
+      .work-head h2 {
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .work-head p {
+        font-size: 12px;
+      }
+      .page-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 24;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+        background: var(--surface);
+        color: var(--ink);
+      }
+      .page-layer[hidden] {
+        display: none !important;
+      }
+      .page-head {
+        flex: none;
+        min-height: 64px;
+        padding: 10px 20px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .page-head h2 {
+        font-size: 18px;
+        font-weight: 600;
+        line-height: 1.3;
+      }
+      .page-content {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 22px;
+      }
+      .page-content p {
+        line-height: 1.75;
+        margin: 0 0 14px;
+      }
+      .page-content h3 {
+        margin: 18px 0 8px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .page-content label {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        margin: 14px 0 6px;
+      }
+      .page-layer .reader {
+        max-width: 720px;
+        margin: 0 auto;
+      }
+      .app.narrow .head-actions .tool {
+        width: 32px;
+      }
+      @media (max-width: 580px) {
+        .message-line {
+          max-width: calc(100% - 34px);
+        }
+        .copy-tool,
+        .composer .tool,
+        .send-icon {
+          width: 32px;
+          height: 32px;
+        }
+        .model-select {
+          max-width: 108px;
+        }
+        .context-panel {
+          margin-inline: 7px;
+        }
+      }
+
+      .history-search {
+        margin-bottom: 14px;
+      }
+      .history-result {
+        width: 100%;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: start;
+        padding: 10px 0;
+        border-top: 1px solid var(--line);
+        text-align: left;
+        font-size: 13px;
+        line-height: 1.55;
+      }
+      .history-result:first-child {
+        border-top: 0;
+      }
+      .history-role {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .history-result .grow {
+        overflow-wrap: anywhere;
+      }
+      .profile-summary {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+      .profile-summary h2 {
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .profile-summary p {
+        color: var(--muted);
+        font-size: 13px;
+        margin-top: 3px;
+      }
+      .profile-facts {
+        margin: 0 0 18px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .profile-facts div {
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      .profile-facts dt {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .profile-facts dd {
+        margin: 3px 0 0;
+        font-size: 14px;
+      }
+      .small-action {
+        min-height: 32px;
+        padding: 6px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        font-size: 13px;
+      }
+      .history-result:hover {
+        background: var(--hover);
+      }
     </style>
   </head>
   <body>
@@ -1591,6 +1955,16 @@
           <circle cx="5" cy="12" r="1" />
           <circle cx="12" cy="12" r="1" />
           <circle cx="19" cy="12" r="1" />
+        </symbol>
+        <symbol id="i-user" viewBox="0 0 24 24">
+          <circle cx="12" cy="8" r="3.5" />
+          <path d="M5 20c.8-3.4 3.2-5 7-5s6.2 1.6 7 5" />
+        </symbol>
+        <symbol id="i-clip" viewBox="0 0 24 24">
+          <path d="m9 12 6-6a4 4 0 0 1 5.7 5.7l-8.3 8.3a5.5 5.5 0 0 1-7.8-7.8l8-8" />
+        </symbol>
+        <symbol id="i-stop" viewBox="0 0 24 24">
+          <rect x="7" y="7" width="10" height="10" rx="1.5" />
         </symbol>
         <symbol id="i-arrow" viewBox="0 0 24 24">
           <path d="M12 19V5m-6 6 6-6 6 6" />
@@ -1639,7 +2013,7 @@
     </svg>
     <header class="proto-bar">
       <div>
-        <strong>Nagi</strong> 工作台 / 设计预览 08
+        <strong>Nagi</strong> 工作台 / 设计预览 09
         <span class="muted"> · 示例数据</span>
       </div>
       <div class="proto-tools">
@@ -1716,26 +2090,37 @@
             <h1 id="contact-name">Saki</h1>
             <p id="contact-status">正在整理旅行资料</p>
           </div>
-          <div class="head-actions">
-            <button class="quiet" id="history" title="对话历史">
-              <svg aria-hidden="true"><use href="#i-history" /></svg
-              ><span class="history-label">历史</span></button
-            ><button
-              class="soft"
+          <div class="head-actions" aria-label="联系人工具">
+            <button
+              class="icon tool"
               id="work-toggle"
+              aria-label="工作"
+              title="工作"
               aria-expanded="false"
               aria-controls="work"
             >
               <svg aria-hidden="true"><use href="#i-work" /></svg
-              ><span>工作区</span
-              ><span class="status" id="work-count">· 3</span></button
-            ><button
-              class="icon"
+              ><span class="tool-count" id="work-count" hidden></span>
+            </button>
+            <button
+              class="icon tool"
+              id="history"
+              aria-label="历史"
+              title="历史"
+              aria-expanded="false"
+              aria-controls="work"
+            >
+              <svg aria-hidden="true"><use href="#i-history" /></svg>
+            </button>
+            <button
+              class="icon tool"
               id="contact-profile-open"
               aria-label="联系人资料"
               title="联系人资料"
+              aria-expanded="false"
+              aria-controls="work"
             >
-              <svg aria-hidden="true"><use href="#i-more" /></svg>
+              <svg aria-hidden="true"><use href="#i-user" /></svg>
             </button>
           </div>
         </header>
@@ -1743,29 +2128,74 @@
           <div class="reading" id="messages"></div>
         </div>
         <div class="composer-wrap">
-          <div class="alert-inline" id="connection-error" hidden>
-            <span>连接已断开，草稿仍在。恢复连接后可继续发送。</span
-            ><button class="quiet" id="diagnostics">连接设置</button>
-          </div>
-          <div class="composer">
+          <div class="composer" id="composer">
+            <div class="alert-inline" id="connection-error" hidden>
+              <span>连接已断开，草稿仍在。恢复连接后可继续发送。</span
+              ><button class="quiet" id="diagnostics">连接设置</button>
+            </div>
             <label class="sr" for="draft">给当前联系人发消息</label
             ><textarea id="draft" placeholder="和 Saki 说点什么…"></textarea>
-            <div class="composer-bottom">
-              <select
-                class="model-select"
-                id="model"
-                aria-label="对话模型（仅预览）"
-              >
-                <option>DeepSeek Flash · Magpie</option>
-                <option>跟随联系人默认模型</option></select
-              ><button class="primary" id="send" disabled>
-                发送<svg aria-hidden="true"><use href="#i-arrow" /></svg>
+            <div class="context-panel" id="context-panel" hidden>
+              <div class="context-head">
+                <strong>对话资料</strong><span class="small muted">示例 · 只随本轮发送</span>
+              </div>
+              <div id="context-items"></div>
+              <button class="quiet context-add" id="add-context" type="button">
+                <svg aria-hidden="true"><use href="#i-plus" /></svg>添加示例文字
               </button>
             </div>
-          </div>
-          <div class="composer-hint">
-            <span id="draft-hint">消息与工作分开，随时可以回来</span
-            ><span>Enter 发送 · ⇧ Enter 换行</span>
+            <div class="composer-toolbar">
+              <div class="composer-left">
+                <button
+                  class="icon tool context-toggle"
+                  id="context-toggle"
+                  type="button"
+                  aria-label="对话资料"
+                  aria-expanded="false"
+                  aria-controls="context-panel"
+                  title="对话资料"
+                >
+                  <svg aria-hidden="true"><use href="#i-clip" /></svg
+                  ><span class="context-count" id="context-count">0</span>
+                </button>
+              </div>
+              <div class="composer-right">
+                <label class="model-control">
+                  <span class="sr">当前对话模型</span>
+                  <select
+                    class="model-select"
+                    id="model"
+                    aria-label="当前对话模型（仅预览）"
+                  >
+                    <option>DeepSeek Flash</option>
+                    <option>跟随联系人默认</option>
+                  </select>
+                </label>
+                <button
+                  class="icon primary send-icon"
+                  id="send"
+                  type="button"
+                  aria-label="发送消息"
+                  title="发送"
+                  disabled
+                >
+                  <svg aria-hidden="true"><use href="#i-arrow" /></svg>
+                </button>
+                <button
+                  class="stop-button"
+                  id="stop"
+                  type="button"
+                  title="停止当前对话"
+                  hidden
+                >
+                  <svg aria-hidden="true"><use href="#i-stop" /></svg>停止
+                </button>
+              </div>
+            </div>
+            <div class="composer-hint" id="composer-hint">
+              <span id="draft-hint">消息与工作分开，随时可以回来</span
+              ><span>Enter 发送 · ⇧ Enter 换行</span>
+            </div>
           </div>
         </div>
       </main>
@@ -1939,7 +2369,7 @@
                   <dt>示例诊断</dt>
                   <dd>恢复会话时连接断开，草稿仍保留。</dd>
                   <dt>版本</dt>
-                  <dd>Nagi 工作台 v08</dd>
+                  <dd>Nagi 工作台 v09</dd>
                 </dl>
                 <div class="settings-actions">
                   <button class="soft" type="button" id="settings-advanced-connection">打开连接设置</button>
@@ -1961,7 +2391,7 @@
         aria-valuenow="340"
         hidden
       ></div>
-      <dialog class="work" id="work" aria-labelledby="work-title">
+      <aside class="work" id="work" aria-labelledby="work-title" hidden>
         <header class="work-head">
           <div>
             <h2 id="work-title">Saki 的工作区</h2>
@@ -1977,7 +2407,7 @@
           </button>
         </header>
         <div class="work-body" id="work-body"></div>
-        <footer class="work-foot">
+        <footer class="work-foot" id="work-foot">
           <button class="quiet" id="board">
             <svg aria-hidden="true"><use href="#i-board" /></svg>看板</button
           ><button class="quiet" id="schedule">
@@ -1986,22 +2416,20 @@
             <svg aria-hidden="true"><use href="#i-plus" /></svg>新建事项
           </button>
         </footer>
-      </dialog>
+      </aside>
+      <section class="page-layer" id="page-layer" aria-labelledby="page-title" hidden>
+        <header class="page-head">
+          <button class="soft" id="page-back" type="button">← 返回</button>
+          <h2 id="page-title" tabindex="-1"></h2>
+        </header>
+        <div class="page-content" id="page-content"></div>
+      </section>
     </div>
     <footer class="proto-footer">
       <span
-        >可试：设置 → 分类 → 返回；工作区、阅读与看板仍可用。</span
-      ><span>交互提案 v08 · 不调用模型</span>
+        >可试：复制、统一输入区、三项详情、设置与主区阅读。</span
+      ><span>MyGo 官方文档基线 · 版本由 GUI 主责核定 · HTML 非原生</span>
     </footer>
-    <dialog class="modal" id="modal" aria-labelledby="modal-title">
-      <header class="modal-head">
-        <h2 id="modal-title"></h2>
-        <button class="icon" id="close-modal" aria-label="关闭弹窗">
-          <svg aria-hidden="true"><use href="#i-close" /></svg>
-        </button>
-      </header>
-      <div class="modal-content" id="modal-content"></div>
-    </dialog>
     <div
       id="announcer"
       class="sr"
@@ -2167,8 +2595,19 @@
         scene = "daily",
         leftWidth = 200,
         rightWidth = 340,
-        modalOrigin = null,
+        detailView = null,
+        detailScroll = { work: 0, history: 0, profile: 0 },
+        historyQuery = "",
+        pageOrigin = null,
+        contextOpen = false,
+        conversationRunning = {},
         toastTimer;
+      const contextByContact = {
+        saki: [{ name: "杭州行程笔记", meta: "示例文字资料" }],
+        lin: [],
+        mori: [],
+        archive: [],
+      };
       const defaultConnection = {
         protocol: "openai-chat-completions",
         endpoint: "http://127.0.0.1:8787/v1",
@@ -2263,7 +2702,7 @@
           c.messages
             .map(
               (m, i) =>
-                `<article class="message ${m.role}" aria-label="${m.role === "user" ? "你" : escapeHTML(c.name)}的消息"><div class="bubble">${
+                `<article class="message ${m.role}" data-message-index="${i}" aria-label="${m.role === "user" ? "你" : escapeHTML(c.name)}的消息"><div class="message-line"><div class="bubble">${
                   scene === "rich" &&
                   i === c.messages.length - 1 &&
                   m.role === "assistant"
@@ -2275,7 +2714,7 @@
                             `<p>${escapeHTML(p).replaceAll("\n", "<br>")}</p>`,
                         )
                         .join("")
-                }</div><div class="message-meta"><span>${m.time}</span>${m.role === "assistant" ? `<button data-copy="${i}" aria-label="复制这条消息">${icon("copy")}复制</button>` : ""}</div></article>`,
+                }</div>${m.role === "assistant" ? `<div class="message-tools"><button class="copy-tool" data-copy="${i}" aria-label="复制这条消息" title="复制全文">${icon("copy")}</button></div>` : ""}</div><div class="message-meta"><span>${m.time}</span></div></article>`,
             )
             .join("");
       }
@@ -2293,12 +2732,22 @@
               : active.some((t) => t.run === "waiting")
                 ? "有一件事需要你处理"
                 : c.description;
-        $("work-count").textContent = active.length ? `· ${active.length}` : "";
-        $("work-title").textContent = `${c.name} 的工作区`;
+        $("work-count").textContent = active.length ? String(active.length) : "";
+        $("work-count").hidden = !active.length;
         $("draft").placeholder = `和 ${c.name} 说点什么…`;
         $("connection-error").hidden = scene !== "error";
         $("simulate").disabled = !running;
-        updateSend();
+        for (const [id, view] of [
+          ["work-toggle", "work"],
+          ["history", "history"],
+          ["contact-profile-open", "profile"],
+        ]) {
+          $(id).setAttribute(
+            "aria-expanded",
+            String(detailOpen() && detailView === view),
+          );
+        }
+        updateComposer();
       }
       function taskRow(t) {
         return `<button class="task-row ${t.run === "waiting" ? "attention-row" : ""}" data-task="${t.id}">${icon(taskIcon(t), "task-symbol")}<span class="grow"><strong>${escapeHTML(t.title)}</strong><small>${escapeHTML(t.summary)}</small><span class="status ${t.run === "waiting" ? "warning" : ""}">${escapeHTML(stateLabel(t))}${t.date ? " · " + t.date.slice(5).replace("-", "月") + "日" : ""}</span></span>${icon("chevron", "chevron")}</button>`;
@@ -2395,32 +2844,135 @@
             <p class="small muted" style="margin-top:10px">${escapeHTML(t.updated)} 更新</p>
           </details>`;
       }
+      function detailOpen() {
+        return $("app").classList.contains("work-open");
+      }
+      function renderHistoryResults() {
+        const c = current();
+        const query = historyQuery.trim().toLowerCase();
+        const matches = c.messages
+          .map((message, index) => ({ message, index }))
+          .filter(
+            ({ message }) =>
+              !query || message.text.toLowerCase().includes(query),
+          );
+        $("history-results").innerHTML =
+          matches
+            .map(
+              ({ message, index }) =>
+                `<button class="history-result" data-history-index="${index}"><span class="history-role">${message.role === "user" ? "你" : escapeHTML(c.name)}</span><span class="grow">${escapeHTML(message.text)}</span><span class="small muted">${escapeHTML(message.time)}</span></button>`,
+            )
+            .join("") ||
+          '<p class="view-note">当前对话没有匹配的消息。</p>';
+      }
+      function renderHistory() {
+        const c = current();
+        $("work-title").textContent = "对话历史";
+        $("work-subtitle").textContent = `在 ${c.name} 的对话中查找并回到原消息`;
+        $("work-foot").hidden = true;
+        $("work-body").innerHTML = `
+          <label class="sr" for="history-search">搜索当前对话</label>
+          <input class="field history-search" id="history-search" value="${escapeHTML(historyQuery)}" placeholder="搜索当前对话" autocomplete="off">
+          <div class="history-results" id="history-results"></div>`;
+        renderHistoryResults();
+      }
+      function renderProfile() {
+        const c = current();
+        const active = currentTasks().filter((t) => t.state !== "done");
+        $("work-title").textContent = "联系人资料";
+        $("work-subtitle").textContent = "摘要与入口；完整编辑在设置中";
+        $("work-foot").hidden = true;
+        $("work-body").innerHTML = `
+          <div class="profile-summary">
+            ${avatar(c)}
+            <div><h2>${escapeHTML(c.name)}</h2><p>${escapeHTML(c.description)}</p></div>
+          </div>
+          <dl class="profile-facts">
+            <div><dt>当前事项</dt><dd>${active.length}</dd></div>
+            <div><dt>已保存消息</dt><dd>${c.messages.length}</dd></div>
+            <div><dt>草稿</dt><dd>${c.draft ? "有未发送草稿" : "无"}</dd></div>
+          </dl>
+          <p class="view-note">联系人资料和连接配置只在完整设置页面修改；这里不建立第二套表单或存储。</p>
+          <button class="small-action" id="profile-edit" type="button">编辑完整资料</button>`;
+      }
       function renderWork() {
-        if (selectedTask) renderDetail();
-        else if (workspaceView === "journey") renderJourney();
-        else renderOverview();
-        $("work-body").scrollTop = 0;
+        if (!detailView) return;
+        if (detailView === "history") renderHistory();
+        else if (detailView === "profile") renderProfile();
+        else {
+          $("work-title").textContent = `${current().name} 的工作`;
+          $("work-subtitle").textContent = "交代过的事，都留在这里";
+          $("work-foot").hidden = false;
+          if (selectedTask) renderDetail();
+          else if (workspaceView === "journey") renderJourney();
+          else renderOverview();
+        }
+        $("work-body").scrollTop = detailScroll[detailView] || 0;
       }
-      function closeWork(restore = true) {
-        $("work").close();
-        $("app").classList.remove("work-open");
-        $("work-toggle").setAttribute("aria-expanded", "false");
-        $("right-split").hidden = true;
-        if (restore) $("work-toggle").focus();
-      }
-      function openWork() {
-        if ($("work").open) return;
+      function openDetail(view) {
+        if (detailOpen() && detailView === view) {
+          closeWork();
+          return;
+        }
+        if (detailOpen()) detailScroll[detailView] = $("work-body").scrollTop;
+        const atBottom = $("conversation").scrollHeight - $("conversation").scrollTop - $("conversation").clientHeight < 8;
+        detailView = view;
+        detailScroll[view] = detailScroll[view] || 0;
         $("app").classList.add("work-open");
+        $("work").hidden = false;
         layout();
         renderWork();
-        if ($("app").classList.contains("docked")) $("work").show();
-        else $("work").showModal();
-        $("work-toggle").setAttribute("aria-expanded", "true");
+        renderHeader();
+        if (atBottom) $("conversation").scrollTop = $("conversation").scrollHeight;
         $("close-work").focus();
       }
-      function updateSend() {
+      function closeWork(restore = true) {
+        if (detailOpen()) detailScroll[detailView] = $("work-body").scrollTop;
+        const atBottom = $("conversation").scrollHeight - $("conversation").scrollTop - $("conversation").clientHeight < 8;
+        const lastView = detailView;
+        detailView = null;
+        $("work").hidden = true;
+        $("app").classList.remove("work-open");
+        layout();
+        if (atBottom) $("conversation").scrollTop = $("conversation").scrollHeight;
+        renderHeader();
+        if (restore) {
+          const target =
+            lastView === "history"
+              ? $("history")
+              : lastView === "profile"
+                ? $("contact-profile-open")
+                : $("work-toggle");
+          target.focus();
+        }
+      }
+      function openWork() {
+        openDetail("work");
+      }
+      function updateComposer() {
+        const busy = !!conversationRunning[selected];
+        $("send").hidden = busy;
         $("send").disabled =
-          !$("draft").value.trim() || scene === "error" || current().archived;
+          busy || !$("draft").value.trim() || scene === "error" || current().archived;
+        $("stop").hidden = !busy;
+        $("stop").disabled = !busy;
+        $("composer").classList.toggle("is-busy", busy);
+        renderContext();
+      }
+      function renderContext() {
+        const items = contextByContact[selected] || (contextByContact[selected] = []);
+        $("context-count").textContent = String(items.length);
+        $("context-count").hidden = !items.length;
+        $("context-toggle").setAttribute("aria-expanded", String(contextOpen));
+        $("context-panel").hidden = !contextOpen;
+        $("context-items").innerHTML =
+          items
+            .map(
+              (item, index) =>
+                `<div class="context-item"><span>${escapeHTML(item.name)}<small>${escapeHTML(item.meta)}</small></span><button class="quiet" data-remove-context="${index}" type="button">移除</button></div>`,
+            )
+            .join("") ||
+          '<p class="small muted">还没有对话资料。添加文字资料只影响当前对话。</p>';
       }
       function render() {
         renderContacts();
@@ -2428,30 +2980,33 @@
         renderMessages();
         $("conversation").scrollTop = $("conversation").scrollHeight;
         $("draft").value = current().draft;
-        updateSend();
-        if ($("work").open) renderWork();
+        updateComposer();
+        if (detailOpen()) renderWork();
       }
-      function showModal(
-        title,
-        content,
-        wide = false,
-        origin = document.activeElement,
-      ) {
-        modalOrigin = origin;
-        $("modal-title").textContent = title;
-        $("modal-content").innerHTML = content;
-        $("modal").classList.toggle("wide", wide);
-        $("modal").showModal();
+      function showPage(title, content, wide = false, origin = document.activeElement) {
+        pageOrigin = origin;
+        $("page-title").textContent = title;
+        $("page-content").innerHTML = content;
+        $("page-content").classList.toggle("wide", wide);
+        $("page-layer").hidden = false;
+        $("app").classList.add("page-open");
+        $("page-title").focus();
       }
-      function closeModal() {
-        $("modal").close();
-        if (modalOrigin?.isConnected) modalOrigin.focus();
-        else if ($("work").open) $("close-work").focus();
+      function closePage() {
+        $("page-layer").hidden = true;
+        $("app").classList.remove("page-open");
+        const origin = pageOrigin;
+        pageOrigin = null;
+        if (origin?.isConnected) origin.focus();
+        else if (detailOpen()) $("close-work").focus();
         else $("work-toggle").focus();
+      }
+      function pageOpen() {
+        return $("app").classList.contains("page-open");
       }
       function showReader(id, origin = document.activeElement) {
         const t = tasks.find((t) => t.id === id);
-        showModal(
+        showPage(
           t.result || t.title,
           `<div class="reader"><p class="small muted">${t.state === "done" ? "已交付" : "初稿 · 住宿与总预算尚待核实"} · ${escapeHTML(t.updated)}</p>${id === "reading" ? "<h2>阅读笔记</h2><h3>1. 让目标保持可见</h3><p>先说明需要完成什么，再让过程服务于目标。出处：示例文章第 2 段。</p><h3>2. 把反馈放在行动附近</h3><p>用户完成一个操作后，应能立即辨认结果。出处：示例文章第 4 段。</p><h3>3. 留下可以追溯的依据</h3><p>成果关联原始要求，方便以后重新理解。出处：示例文章第 7 段。</p>" : richContent.replace('<button class="text-action" data-reader="trip">展开阅读完整行程</button>', "")}<blockquote>这是一份用于界面评审的示例内容，没有调用模型或生成真实文件。</blockquote><button class="soft" id="copy-result">${icon("copy")}复制正文</button></div>`,
           true,
@@ -2497,10 +3052,11 @@
             )
             .join("");
         }
-        showModal(
+        showPage(
           `${current().name} 的${mode === "board" ? "事项看板" : "日程"}`,
           content,
           true,
+          $("board") || document.activeElement,
         );
       }
       function connectionProtocolLabel(value) {
@@ -2737,8 +3293,9 @@
         }
         captureChatDraft();
         settings.returnState = {
-          workOpen: $("work").open,
-          workScroll: $("work-body").scrollTop,
+          detailOpen: detailOpen(),
+          detailView,
+          detailScroll: { ...detailScroll },
           conversationScroll: $("conversation").scrollTop,
           selectedTask,
           workspaceView,
@@ -2746,7 +3303,7 @@
         };
         settings.origin = opts.origin || document.activeElement;
         settings.issue = opts.issue || "";
-        if ($("work").open) closeWork(false);
+        if (detailOpen()) closeWork(false);
         settings.open = true;
         $("app").classList.add("settings-open");
         $("settings-page").hidden = false;
@@ -2774,23 +3331,29 @@
           selectedTask = ret.selectedTask;
           workspaceView = ret.workspaceView;
           filter = ret.filter;
-          if (ret.workOpen) {
-            openWork();
-            $("work-body").scrollTop = ret.workScroll;
+          detailScroll = { ...(ret.detailScroll || detailScroll) };
+          if (ret.detailOpen) {
+            detailView = ret.detailView || "work";
+            $("app").classList.add("work-open");
+            $("work").hidden = false;
+            layout();
+            renderWork();
+            $("work-body").scrollTop = detailScroll[detailView] || 0;
           }
           $("conversation").scrollTop = ret.conversationScroll;
         }
         renderHeader();
         renderContacts();
-        if ($("work").open && !$("app").classList.contains("docked"))
-          $("close-work").focus();
+        if (detailOpen()) $("close-work").focus();
         else if (origin?.isConnected) origin.focus();
         else $("settings-entry").focus();
       }
       function newTask() {
-        showModal(
+        showPage(
           "记下一件事",
           `<form id="task-form"><label for="task-title">想做什么</label><input id="task-title" class="field" placeholder="例如：整理一份周末行程" required><label for="task-goal">要求</label><textarea id="task-goal" class="field" rows="3" placeholder="哪些事情做好了，才算完成？" required></textarea><div class="form-actions"><button type="button" class="quiet" data-close>取消</button><button class="primary">记为待办</button></div></form>`,
+          false,
+          $("new-task") || document.activeElement,
         );
       }
       function layout() {
@@ -2804,8 +3367,6 @@
           Math.min(rightWidth, Math.max(280, available)) + "px",
         );
         const docked = width >= leftWidth + 280 + 482;
-        const changed = docked !== app.classList.contains("docked"),
-          wasOpen = $("work").open;
         app.classList.toggle("docked", docked);
         app.classList.toggle("narrow", width < 1000);
         app.classList.toggle("settings-narrow", width < 760);
@@ -2815,11 +3376,6 @@
         $("right-split").hidden = !(
           docked && app.classList.contains("work-open")
         );
-        if (changed && wasOpen) {
-          $("work").close();
-          if (docked) $("work").show();
-          else $("work").showModal();
-        }
         $("left-split").setAttribute("aria-valuenow", leftWidth);
         $("right-split").setAttribute(
           "aria-valuenow",
@@ -2869,7 +3425,7 @@
       $("contact-filter").addEventListener("change", renderContacts);
       $("draft").addEventListener("input", () => {
         current().draft = $("draft").value;
-        updateSend();
+        updateComposer();
       });
       $("draft").addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
@@ -2877,30 +3433,41 @@
           if (!$("send").disabled) $("send").click();
         }
       });
+      $("context-toggle").addEventListener("click", () => {
+        contextOpen = !contextOpen;
+        renderContext();
+        if (contextOpen) $("context-panel").querySelector("button")?.focus();
+      });
+      $("add-context").addEventListener("click", () => {
+        const items = contextByContact[selected] || (contextByContact[selected] = []);
+        items.push({ name: "示例资料 " + (items.length + 1), meta: "仅预览，不发送" });
+        contextOpen = true;
+        renderContext();
+        announce("已加入示例资料，正式发送仍沿用现有资料契约");
+      });
       $("send").addEventListener("click", () => {
         const text = $("draft").value.trim();
-        if (!text) return;
+        if (!text || conversationRunning[selected]) return;
         current().messages.push({ role: "user", text, time: "刚刚" });
         current().draft = "";
         if (scene === "empty") scene = "daily";
         $("scene").value = scene;
+        conversationRunning[selected] = true;
         render();
         $("conversation").scrollTop = $("conversation").scrollHeight;
-        announce("消息已加入预览，未调用模型");
+        announce("消息已加入预览；当前对话显示停止入口，未调用模型");
       });
-      $("work-toggle").addEventListener("click", () =>
-        $("work").open ? closeWork() : openWork(),
-      );
+      $("stop").addEventListener("click", () => {
+        if (!conversationRunning[selected]) return;
+        conversationRunning[selected] = false;
+        updateComposer();
+        announce("已停止当前对话的模拟状态；不会停止事项工作");
+      });
+      $("work-toggle").addEventListener("click", () => openDetail("work"));
+      $("history").addEventListener("click", () => openDetail("history"));
+      $("contact-profile-open").addEventListener("click", () => openDetail("profile"));
       $("close-work").addEventListener("click", () => closeWork());
-      $("work").addEventListener("cancel", (e) => {
-        e.preventDefault();
-        closeWork();
-      });
-      $("close-modal").addEventListener("click", closeModal);
-      $("modal").addEventListener("cancel", (e) => {
-        e.preventDefault();
-        closeModal();
-      });
+      $("page-back").addEventListener("click", closePage);
       document.addEventListener("keydown", (e) => {
         if (settings.open) {
           if (e.key === "Escape") {
@@ -2909,16 +3476,27 @@
           }
           return;
         }
-        if (e.key === "Escape" && !$("modal").open && $("work").open) {
-          e.preventDefault();
-          closeWork();
+        if (e.key === "Escape") {
+          if (pageOpen()) {
+            e.preventDefault();
+            closePage();
+          } else if (detailOpen()) {
+            e.preventDefault();
+            closeWork();
+          }
         }
       });
       document.addEventListener("keydown", (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === ",") {
           e.preventDefault();
-          if ($("modal").open) closeModal();
+          if (pageOpen()) closePage();
           openSettings("appearance", { origin: document.activeElement });
+        }
+      });
+      $("work-body").addEventListener("input", (e) => {
+        if (e.target.id === "history-search") {
+          historyQuery = e.target.value;
+          renderHistoryResults();
         }
       });
       $("work-body").addEventListener("change", (e) => {
@@ -2946,10 +3524,13 @@
             .focus();
         }
         if (b.dataset.task) {
-          if ($("modal").open) closeModal();
+          if (pageOpen()) closePage();
           selectedTask = b.dataset.task;
-          if (!$("work").open) openWork();
-          else renderWork();
+          if (!detailOpen()) openDetail("work");
+          else {
+            detailView = "work";
+            renderWork();
+          }
           $("back-tasks").focus();
         }
         if (b.id === "back-tasks") {
@@ -2965,10 +3546,29 @@
         }
         if (b.dataset.reader) showReader(b.dataset.reader, b);
         if (b.dataset.board) {
-          $("modal").close();
+          if (pageOpen()) closePage();
           showBoard(b.dataset.board);
         }
-        if (b.hasAttribute("data-close")) closeModal();
+        if (b.dataset.removeContext !== undefined) {
+          const items = contextByContact[selected] || [];
+          items.splice(Number(b.dataset.removeContext), 1);
+          renderContext();
+          announce("示例资料已移除");
+        }
+        if (b.id === "profile-edit") {
+          openSettings("contact", { origin: b });
+        }
+        if (b.dataset.historyIndex !== undefined) {
+          const index = Number(b.dataset.historyIndex);
+          closeWork(false);
+          const target = document.querySelector(`[data-message-index="${index}"]`);
+          if (target) {
+            target.scrollIntoView({ block: "center" });
+            target.querySelector(".copy-tool")?.focus();
+          }
+          announce("已定位到原消息");
+        }
+        if (b.hasAttribute("data-close")) closePage();
         if (b.dataset.action) {
           const t = tasks.find((t) => t.id === b.dataset.id);
           if (b.dataset.action === "reply") {
@@ -2976,7 +3576,7 @@
             current().draft = `关于「${t.title}」，${current().draft}`;
             $("draft").value = current().draft;
             $("draft").focus();
-            updateSend();
+            updateComposer();
           }
           if (b.dataset.action === "start") {
             t.state = "doing";
@@ -3011,7 +3611,7 @@
         if (b.id === "copy-result") {
           try {
             await navigator.clipboard.writeText(
-              $("modal-content")
+              $("page-content")
                 .querySelector(".reader")
                 .innerText.replace("复制正文", ""),
             );
@@ -3032,7 +3632,7 @@
         t.updated = "刚刚";
         renderHeader();
         renderContacts();
-        if ($("work").open) renderWork();
+        if (detailOpen()) renderWork();
         announce("本次执行结束，事项仍在进行中；没有新增聊天消息");
       });
       $("scene").addEventListener("change", (e) => {
@@ -3057,9 +3657,6 @@
         }
         openSettings("appearance", { origin: $("settings-entry") });
       });
-      $("contact-profile-open").addEventListener("click", () =>
-        openSettings("contact", { origin: $("contact-profile-open") }),
-      );
       $("diagnostics").addEventListener("click", () =>
         openSettings("connection", {
           origin: $("diagnostics"),
@@ -3189,15 +3786,23 @@
           if (settings.appearance === "system")
             applyAppearanceChoice("system", false);
         });
-      $("modal-content").addEventListener("click", (e) => {
+      $("page-content").addEventListener("click", (e) => {
         const b = e.target.closest("button");
         if (b?.id === "history-jump") {
-          closeModal();
+          closePage();
           $("conversation").scrollTop = 0;
           announce("已回到这段对话的开头");
         }
       });
-      $("modal-content").addEventListener("submit", (e) => {
+      $("add-contact").addEventListener("click", () => {
+        showPage(
+          "添加联系人",
+          `<form id="contact-form"><label for="new-name">名称</label><input class="field" id="new-name" autocomplete="off" placeholder="例如：Saki" required><label for="new-purpose">用途</label><input class="field" id="new-purpose" autocomplete="off" placeholder="例如：写作、研究或日常事务"><div class="form-actions"><button class="quiet" type="button" data-close>取消</button><button class="primary" type="submit">添加</button></div></form>`,
+          false,
+          $("add-contact"),
+        );
+      });
+      $("page-content").addEventListener("submit", (e) => {
         e.preventDefault();
         if (e.target.id === "contact-form") {
           const id = "contact-" + Date.now();
@@ -3214,7 +3819,7 @@
           selectedTask = null;
           $("contact-filter").value = "active";
           $("contact-search").value = "";
-          closeModal();
+          closePage();
           render();
           $("draft").focus();
         }
@@ -3236,9 +3841,10 @@
           filter = "open";
           selectedTask = null;
           workspaceView = "tasks";
-          closeModal();
-          renderHeader();
-          renderWork();
+          detailView = "work";
+          closePage();
+          if (!detailOpen()) openDetail("work");
+          else renderWork();
           announce("已记为待办，尚未启动 Agent");
         }
       });
