@@ -684,6 +684,29 @@
         box-shadow: none;
         border-radius: 0;
       }
+      .work-heading {
+        flex: 1;
+        min-width: 0;
+      }
+      .detail-back {
+        display: none;
+        min-height: 32px;
+        padding: 5px 7px;
+        color: var(--muted);
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .detail-back:hover {
+        color: var(--ink);
+        background: var(--hover);
+      }
+      .app:not(.docked) .detail-back {
+        display: inline-flex;
+        align-items: center;
+      }
+      .app:not(.docked) #close-work {
+        display: none;
+      }
       .work-head {
         height: 76px;
         flex: none;
@@ -1573,14 +1596,19 @@
         align-self: flex-start;
         flex: none;
         margin-top: 2px;
-        opacity: 0;
-        transition: opacity 120ms ease;
+        opacity: 0.55;
+        transition:
+          opacity 120ms ease,
+          background-color 120ms ease;
+      }
+      .message.user .message-tools {
+        order: -1;
       }
       .message:hover .message-tools,
       .message:focus-within .message-tools,
       .message-tools:focus-within,
       .message-tools:has(.copy-tool:focus) {
-        opacity: 1 !important;
+        opacity: 1;
       }
       .copy-tool {
         width: 32px;
@@ -1653,7 +1681,7 @@
         white-space: nowrap;
       }
       .model-select {
-        max-width: 145px;
+        max-width: 220px;
         padding: 6px 5px;
         color: var(--muted);
         background: transparent;
@@ -1700,14 +1728,6 @@
       }
       .composer:focus-within .composer-hint {
         opacity: 1;
-      }
-      .composer-status {
-        margin: 0 14px;
-        padding: 0 0 8px;
-        color: var(--muted);
-        font-size: 12px;
-        line-height: 1.45;
-        overflow-wrap: anywhere;
       }
       .composer .alert-inline {
         margin: 10px 12px 0;
@@ -1859,7 +1879,11 @@
           height: 32px;
         }
         .model-select {
-          max-width: 108px;
+          max-width: 160px;
+        }
+        .app:not(.docked) .work-head {
+          padding-left: 12px;
+          gap: 6px;
         }
         .context-panel {
           margin-inline: 7px;
@@ -2153,11 +2177,11 @@
             ><textarea id="draft" placeholder="和 Saki 说点什么…"></textarea>
             <div class="context-panel" id="context-panel" hidden>
               <div class="context-head">
-                <strong>对话资料</strong><span class="small muted">示例 · 只随本轮发送</span>
+                <strong>对话资料</strong><span class="small muted">只随本轮发送</span>
               </div>
               <div id="context-items"></div>
               <button class="quiet context-add" id="add-context" type="button">
-                <svg aria-hidden="true"><use href="#i-plus" /></svg>添加示例文字
+                <svg aria-hidden="true"><use href="#i-plus" /></svg>添加文字
               </button>
             </div>
             <div class="composer-toolbar">
@@ -2182,11 +2206,9 @@
                   <select
                     class="model-select"
                     id="model"
-                    aria-label="当前对话模型：deepseek-v4.1-flash（仅预览）"
-                    title="当前对话 · deepseek-v4.1-flash"
+                    aria-label="当前对话模型：deepseek-v4.1-flash"
                   >
-                    <option>DeepSeek Flash</option>
-                    <option>跟随联系人默认</option>
+                    <option>DeepSeek Flash · deepseek-v4.1-flash</option>
                   </select>
                 </label>
                 <button
@@ -2206,16 +2228,12 @@
                   title="停止当前对话"
                   hidden
                 >
-                  <svg aria-hidden="true"><use href="#i-stop" /></svg>停止
+                  <svg aria-hidden="true"><use href="#i-stop" /></svg>停止对话
                 </button>
               </div>
             </div>
             <div class="composer-hint" id="composer-hint">
-              <span id="draft-hint">消息与工作分开，随时可以回来</span
-              ><span>Enter 发送 · ⇧ Enter 换行</span>
-            </div>
-            <div class="composer-status" id="composer-status">
-              当前对话 · 模型 deepseek-v4.1-flash · 容量 2 · 停止仅作用于本对话
+              <span>Enter 发送 · ⇧ Enter 换行</span>
             </div>
           </div>
         </div>
@@ -2324,8 +2342,7 @@
                   <input class="field" id="settings-endpoint" autocomplete="off" placeholder="https://provider.example/v1" />
                   <p class="field-error" id="settings-endpoint-error" hidden></p>
                   <label for="settings-api-key">API 密钥</label>
-                  <input class="field" id="settings-api-key" type="password" autocomplete="off" placeholder="本地 dummy 值或留空" />
-                  <small>此预览仅使用 dummy 值；不要输入真实密钥。</small>
+                  <input class="field" id="settings-api-key" type="password" autocomplete="off" placeholder="本地连接凭据" />
                   <label for="settings-model">默认模型</label>
                   <input class="field" id="settings-model" autocomplete="off" placeholder="provider model ID" />
                   <p class="field-error" id="settings-model-error" hidden></p>
@@ -2387,8 +2404,8 @@
                   只读信息。
                 </p>
                 <dl class="settings-diagnostics">
-                  <dt>示例诊断</dt>
-                  <dd>恢复会话时连接断开，草稿仍保留。</dd>
+                  <dt>启动诊断</dt>
+                  <dd>恢复会话时若连接断开，草稿仍保留；请检查连接后重试。</dd>
                   <dt>版本</dt>
                   <dd>Nagi 工作台 v09</dd>
                 </dl>
@@ -2414,7 +2431,8 @@
       ></div>
       <aside class="work" id="work" aria-labelledby="work-title" hidden>
         <header class="work-head">
-          <div>
+          <button class="detail-back" id="detail-back" type="button">← 返回</button>
+          <div class="work-heading">
             <h2 id="work-title">Saki 的工作区</h2>
             <p id="work-subtitle">交代过的事，都留在这里</p>
           </div>
@@ -2624,7 +2642,7 @@
         conversationRunning = {},
         toastTimer;
       const contextByContact = {
-        saki: [{ name: "杭州行程笔记", meta: "示例文字资料" }],
+        saki: [{ name: "杭州行程笔记", meta: "文字资料" }],
         lin: [],
         mori: [],
         archive: [],
@@ -2735,7 +2753,7 @@
                             `<p>${escapeHTML(p).replaceAll("\n", "<br>")}</p>`,
                         )
                         .join("")
-                }</div>${m.role === "assistant" ? `<div class="message-tools"><button class="copy-tool" data-copy="${i}" aria-label="复制这条消息" title="复制全文">${icon("copy")}</button></div>` : ""}</div><div class="message-meta"><span>${m.time}</span></div></article>`,
+                }</div><div class="message-tools"><button class="copy-tool" data-copy="${i}" aria-label="复制这条消息" title="复制全文">${icon("copy")}</button></div></div><div class="message-meta"><span>${m.time}</span></div></article>`,
             )
             .join("");
       }
@@ -2757,10 +2775,6 @@
         $("work-count").hidden = !active.length;
         $("draft").placeholder = `和 ${c.name} 说点什么…`;
         $("connection-error").hidden = scene !== "error";
-        $("composer-status").textContent =
-          scene === "error"
-            ? "连接异常 · 草稿保留 · 未知结果需核对 · 容量与停止入口不隐藏"
-            : "当前对话 · 模型 deepseek-v4.1-flash · 容量 2 · 停止仅作用于本对话";
         $("simulate").disabled = !running;
         for (const [id, view] of [
           ["work-toggle", "work"],
@@ -2917,7 +2931,7 @@
             <div><dt>已保存消息</dt><dd>${c.messages.length}</dd></div>
             <div><dt>草稿</dt><dd>${c.draft ? "有未发送草稿" : "无"}</dd></div>
           </dl>
-          <p class="view-note">联系人资料和连接配置只在完整设置页面修改；这里不建立第二套表单或存储。</p>
+          <p class="view-note">完整编辑在设置中；这里只显示摘要。</p>
           <button class="small-action" id="profile-edit" type="button">编辑完整资料</button>`;
       }
       function renderWork() {
@@ -3033,7 +3047,7 @@
         const t = tasks.find((t) => t.id === id);
         showPage(
           t.result || t.title,
-          `<div class="reader"><p class="small muted">${t.state === "done" ? "已交付" : "初稿 · 住宿与总预算尚待核实"} · ${escapeHTML(t.updated)}</p>${id === "reading" ? "<h2>阅读笔记</h2><h3>1. 让目标保持可见</h3><p>先说明需要完成什么，再让过程服务于目标。出处：示例文章第 2 段。</p><h3>2. 把反馈放在行动附近</h3><p>用户完成一个操作后，应能立即辨认结果。出处：示例文章第 4 段。</p><h3>3. 留下可以追溯的依据</h3><p>成果关联原始要求，方便以后重新理解。出处：示例文章第 7 段。</p>" : richContent.replace('<button class="text-action" data-reader="trip">展开阅读完整行程</button>', "")}<blockquote>这是一份用于界面评审的示例内容，没有调用模型或生成真实文件。</blockquote><button class="soft" id="copy-result">${icon("copy")}复制正文</button></div>`,
+          `<div class="reader"><p class="small muted">${t.state === "done" ? "已交付" : "初稿 · 住宿与总预算尚待核实"} · ${escapeHTML(t.updated)}</p>${id === "reading" ? "<h2>阅读笔记</h2><h3>1. 让目标保持可见</h3><p>先说明需要完成什么，再让过程服务于目标。出处：示例文章第 2 段。</p><h3>2. 把反馈放在行动附近</h3><p>用户完成一个操作后，应能立即辨认结果。出处：示例文章第 4 段。</p><h3>3. 留下可以追溯的依据</h3><p>成果关联原始要求，方便以后重新理解。出处：示例文章第 7 段。</p>" : richContent.replace('<button class="text-action" data-reader="trip">展开阅读完整行程</button>', "")}<blockquote>住宿费用尚待核实；当前文件内容可能与执行结束时不同。</blockquote><button class="soft" id="copy-result">${icon("copy")}复制正文</button></div>`,
           true,
           origin,
         );
@@ -3465,10 +3479,10 @@
       });
       $("add-context").addEventListener("click", () => {
         const items = contextByContact[selected] || (contextByContact[selected] = []);
-        items.push({ name: "示例资料 " + (items.length + 1), meta: "仅预览，不发送" });
+        items.push({ name: "未命名资料 " + (items.length + 1), meta: "本轮资料" });
         contextOpen = true;
         renderContext();
-        announce("已加入示例资料，正式发送仍沿用现有资料契约");
+        announce("已加入本轮资料");
       });
       $("send").addEventListener("click", () => {
         const text = $("draft").value.trim();
@@ -3480,7 +3494,7 @@
         conversationRunning[selected] = true;
         render();
         $("conversation").scrollTop = $("conversation").scrollHeight;
-        announce("消息已加入预览；当前对话显示停止入口，未调用模型");
+        announce("消息已加入当前对话；停止仅作用于本对话");
       });
       $("stop").addEventListener("click", () => {
         if (!conversationRunning[selected]) return;
@@ -3492,6 +3506,7 @@
       $("history").addEventListener("click", () => openDetail("history"));
       $("contact-profile-open").addEventListener("click", () => openDetail("profile"));
       $("close-work").addEventListener("click", () => closeWork());
+      $("detail-back").addEventListener("click", () => closeWork());
       $("page-back").addEventListener("click", closePage);
       document.addEventListener("keydown", (e) => {
         if (settings.open) {
@@ -3578,7 +3593,7 @@
           const items = contextByContact[selected] || [];
           items.splice(Number(b.dataset.removeContext), 1);
           renderContext();
-          announce("示例资料已移除");
+          announce("资料已移除");
         }
         if (b.id === "profile-edit") {
           openSettings("contact", { origin: b });
@@ -3686,7 +3701,7 @@
         openSettings("connection", {
           origin: $("diagnostics"),
           issue:
-            "示例：连接在恢复会话时断开。草稿已保留；请核对协议、地址和模型后重新连接。",
+            "连接在恢复会话时断开。草稿已保留；请核对协议、地址和模型后重新连接。",
         }),
       );
       $("settings-page").addEventListener("click", (e) => {
@@ -3746,8 +3761,8 @@
       });
       $("settings-test").addEventListener("click", () => {
         $("settings-connection-status").textContent =
-          "演示状态：已记录测试操作，未发送模型请求。";
-        announce("演示状态：未发送模型请求");
+          "测试请求已记录；未发送模型请求。";
+        announce("测试请求已记录");
       });
       $("settings-discard").addEventListener("click", () => {
         settings.connection = {
