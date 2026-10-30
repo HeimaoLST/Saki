@@ -73,6 +73,37 @@ func updateModelGUI(t *testing.T, h *guiHarness, model string) {
 	})
 }
 
+func runReleasedIssue(t *testing.T, h *guiHarness) (issueID, workSession string) {
+	t.Helper()
+	h.pump.do(func() {
+		if !h.app.createIssue("Independent work", "Keep this work separate") {
+			t.Error(h.app.issueFormError)
+			return
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		if !h.app.runIssue(issueID) {
+			t.Error(h.app.issueFormError)
+		}
+	})
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted && !issue.Work.HistoryDirty
+	})
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		workSession = issue.WorkSessionID
+		h.app.workspaceOpen = true
+	})
+	h.pump.waitTimeout(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return issue != nil && issue.Work.Released && !issue.Work.Releasing && !issue.Work.ReleasePending
+	}, 10*time.Second)
+	if err := issueResultClick(h, "More issue actions"); err != nil {
+		t.Fatal(err)
+	}
+	return issueID, workSession
+}
+
 func previewModelGUI(t *testing.T, h *guiHarness, name string) {
 	t.Helper()
 	dir := os.Getenv("SAKI_PREVIEW_DIR")
@@ -129,7 +160,8 @@ func TestModelSelectionGUIActualTargetsAndRestart(t *testing.T) {
 			})
 			h.pump.wait(func() bool {
 				issue := h.app.selectedContact().issueByID(issueID)
-				return issue != nil && len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted && !issue.Work.HistoryDirty
+				return issue != nil && len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted &&
+					!issue.Work.HistoryDirty && issue.Work.Released && !issue.Work.Releasing && !issue.Work.ReleasePending
 			})
 			h.pump.do(func() {
 				issue := h.app.selectedContact().issueByID(issueID)
@@ -492,4 +524,203 @@ func TestModelSelectionGUIOlderReadCannotReplaceNewTarget(t *testing.T) {
 			t.Error("older model read overwrote the newly selected target")
 		}
 	})
+}
+
+func TestModelSelectionGUIReleasedIssueUpdateWaitsForRelease(t *testing.T) {
+	proxy, updatePath := modelGUIProxy(t, requireRuntimeBinary(t), "pass")
+	loadPath := filepath.Join(t.TempDir(), "loads")
+	t.Setenv("SAKI_MODEL_PROXY_LOAD_COUNT", loadPath)
+	h := openModelGUI(t, proxy, connectionAPIResponses, &modelProviderFixture{})
+	issueID, _ := runReleasedIssue(t, h)
+	openModelPanel(t, h, "Issue model")
+	updateModelGUI(t, h, "work-model-B")
+	for _, path := range []string{updatePath, loadPath} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	manual := make(chan func(), 16)
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		h.app.setUIHook(func(fn func()) { manual <- fn })
+		h.app.releaseIssueWorkSession(ct, issue)
+		if !issue.Work.Releasing || issue.Work.Released {
+			t.Errorf("actual release did not start: releasing=%v released=%v", issue.Work.Releasing, issue.Work.Released)
+		}
+	})
+	h.pump.do(func() { h.app.modelForm.Draft.Model = "work-model-C" })
+	clickModelAction(t, h, "Update model")
+	h.pump.do(func() {
+		form := h.app.modelForm
+		issue := h.app.selectedContact().issueByID(issueID)
+		if form.Busy || !strings.Contains(form.Error, "busy") || form.Effective.Config.EffectiveConfig.Model != "work-model-B" {
+			t.Errorf("release-in-progress update = busy=%v error=%q effective=%q", form.Busy, form.Error, form.Effective.Config.EffectiveConfig.Model)
+		}
+		if !issue.Work.Releasing || issue.Work.Released || issue.Work.Loaded != true {
+			t.Errorf("actual release state before callback = releasing=%v released=%v loaded=%v", issue.Work.Releasing, issue.Work.Released, issue.Work.Loaded)
+		}
+	})
+	for _, path := range []string{updatePath, loadPath} {
+		if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+			t.Fatalf("release-in-progress dispatched %s: %q", filepath.Base(path), data)
+		} else if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.After(10 * time.Second)
+	releasing := true
+	for releasing {
+		select {
+		case fn := <-manual:
+			h.pump.do(fn)
+			h.pump.do(func() {
+				releasing = h.app.selectedContact().issueByID(issueID).Work.Releasing
+			})
+		case <-deadline:
+			t.Fatal("actual release completion did not arrive")
+		}
+	}
+	h.pump.do(func() {
+		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
+	})
+	drain := true
+	for drain {
+		select {
+		case fn := <-manual:
+			h.pump.do(fn)
+		default:
+			drain = false
+		}
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.selectedContact().issueByID(issueID)
+		return !issue.Work.Releasing
+	})
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		if !issue.Work.Released || issue.Work.SendError != "" {
+			t.Errorf("actual release completion = released=%v error=%q", issue.Work.Released, issue.Work.SendError)
+		}
+	})
+}
+
+func TestModelSelectionGUIReleasedIssueLoadFailureDoesNotUpdate(t *testing.T) {
+	proxy, updatePath := modelGUIProxy(t, requireRuntimeBinary(t), "pass")
+	loadPath := filepath.Join(t.TempDir(), "loads")
+	failMarker := filepath.Join(t.TempDir(), "fail-load")
+	t.Setenv("SAKI_MODEL_PROXY_LOAD_COUNT", loadPath)
+	t.Setenv("SAKI_MODEL_PROXY_FAIL_LOAD_AFTER", failMarker)
+	provider := &modelProviderFixture{}
+	h := openModelGUI(t, proxy, connectionAPIResponses, provider)
+	issueID, _ := runReleasedIssue(t, h)
+	openModelPanel(t, h, "Issue model")
+	for _, path := range []string{updatePath, loadPath} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(failMarker, []byte("fail"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h.pump.do(func() { h.app.modelForm.Draft.Model = "work-model-B" })
+	clickModelAction(t, h, "Update model")
+	h.pump.wait(func() bool { return !h.app.modelForm.Busy })
+	h.pump.do(func() {
+		form := h.app.modelForm
+		issue := h.app.selectedContact().issueByID(issueID)
+		if form.Unconfirmed || !strings.Contains(form.Error, "Could not load this released work session") || form.Effective.Config.EffectiveConfig.Model != "model-A" {
+			t.Errorf("load failure = unknown=%v error=%q effective=%q", form.Unconfirmed, form.Error, form.Effective.Config.EffectiveConfig.Model)
+		}
+		if !issue.Work.Released || issue.Work.Releasing {
+			t.Errorf("load failure lost release state: released=%v releasing=%v", issue.Work.Released, issue.Work.Releasing)
+		}
+	})
+	if data, err := os.ReadFile(loadPath); err != nil || string(data) != "load\n" {
+		t.Fatalf("load attempts = %q, err=%v", data, err)
+	}
+	if data, err := os.ReadFile(updatePath); err == nil && len(data) > 0 {
+		t.Fatalf("load failure dispatched update: %q", data)
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if got := provider.requestedModels(); !reflect.DeepEqual(got, []string{"model-A"}) {
+		t.Fatalf("load failure submitted inference: %v", got)
+	}
+}
+
+func TestModelSelectionGUIReleasedIssueStaleCompletionKeepsBookkeepingAndFormSeparate(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		proxyMode   string
+		unconfirmed bool
+		recovery    modelRecoveryState
+	}{
+		{name: "success"},
+		{name: "commit_unknown", proxyMode: "commit_unknown", unconfirmed: true, recovery: modelRecoveryNeedsReload},
+		{name: "fail_readback", proxyMode: "fail_readback", unconfirmed: true, recovery: modelRecoveryNeedsRefresh},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var h *guiHarness
+			if tc.proxyMode == "" {
+				h = openModelGUI(t, requireRuntimeBinary(t), connectionAPIResponses, &modelProviderFixture{})
+			} else {
+				proxy, _ := modelGUIProxy(t, requireRuntimeBinary(t), tc.proxyMode)
+				h = openModelGUI(t, proxy, connectionAPIResponses, &modelProviderFixture{})
+			}
+			issueID, workSession := runReleasedIssue(t, h)
+			var otherID string
+			h.pump.do(func() {
+				h.app.addDefaultContact()
+				h.app.selectContact(0)
+				other := h.app.contacts[1]
+				otherID = other.ID
+				other.Draft = "keep-other-draft"
+			})
+			openModelPanel(t, h, "Issue model")
+			originalForm := h.app.modelForm
+			h.pump.do(func() {
+				h.app.modelForm.Draft.Model = "work-model-B"
+				request, ok := h.app.modelForm.Request()
+				if !ok {
+					t.Error(h.app.modelForm.Error)
+					return
+				}
+				h.app.updateSessionModel(request)
+				h.app.selectContact(1)
+				if h.app.selectedContact().ID != otherID {
+					t.Errorf("contact switch selected %q, want %q", h.app.selectedContact().ID, otherID)
+				}
+				if h.app.aux != "" {
+					t.Errorf("contact switch kept auxiliary panel %q", h.app.aux)
+				}
+			})
+			timeout := 15 * time.Second
+			if tc.proxyMode != "" {
+				timeout = 30 * time.Second
+			}
+			h.pump.waitTimeout(func() bool { return !originalForm.Busy }, timeout)
+			h.pump.do(func() {
+				ct := h.app.selectedContact()
+				issue := h.app.contacts[0].issueByID(issueID)
+				if ct.ID != otherID || ct.Draft != "keep-other-draft" {
+					t.Errorf("unrelated contact changed: id=%q draft=%q", ct.ID, ct.Draft)
+				}
+				if issue.WorkSessionID != workSession || issue.Work.Released || !issue.Work.Loaded {
+					t.Errorf("original released owner bookkeeping = session=%q released=%v loaded=%v", issue.WorkSessionID, issue.Work.Released, issue.Work.Loaded)
+				}
+				if originalForm.Unconfirmed != tc.unconfirmed {
+					t.Errorf("original form unconfirmed=%v, want %v", originalForm.Unconfirmed, tc.unconfirmed)
+				}
+				if tc.recovery != 0 {
+					if got := h.app.modelRecovery[workSession]; got != tc.recovery {
+						t.Errorf("original recovery=%v, want %v", got, tc.recovery)
+					}
+				}
+				if tc.proxyMode == "" && originalForm.Effective.Config.EffectiveConfig.Model != "work-model-B" {
+					t.Errorf("original form did not apply success: %q", originalForm.Effective.Config.EffectiveConfig.Model)
+				}
+			})
+		})
+	}
 }

@@ -6,6 +6,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -65,7 +66,8 @@ func (a *appModel) modelTargetBusy(sessionID string) bool {
 			return true
 		}
 		for _, issue := range ct.Issues {
-			if issue.WorkSessionID == sessionID && sessionBusy(issue.Work.SendState, issue.Work.ActiveTaskID) {
+			if issue.WorkSessionID == sessionID &&
+				(sessionBusy(issue.Work.SendState, issue.Work.ActiveTaskID) || issue.Work.Releasing || issue.Work.ReleasePending) {
 				return true
 			}
 		}
@@ -233,26 +235,55 @@ func (a *appModel) updateSessionModel(request modelSelectionRequest) {
 		form.SetError("This session is busy. Wait for its current task to finish before changing the model.")
 		return
 	}
+	contactID, issueID := a.modelOwner(sessionID)
+	released := false
+	if issueID != "" {
+		released = a.contactByID(contactID).issueByID(issueID).Work.Released
+	}
 	rt, generation := a.rt, a.connectionGeneration
 	revision := request.Target.Config.ConfigRevision
 	form.SetBusy(true, "Updating the session model…")
 	a.modelOpActive = true
 	a.modelOpSessionID = sessionID
 	go func() {
-		updated, err := rt.updateSessionModel(sessionID, revision, request.Patch)
+		var loaded runtimeSession
+		var loadErr error
+		if released {
+			loaded, loadErr = rt.loadSession(sessionID)
+			if loadErr != nil {
+				loadErr = fmt.Errorf("load released work session: %w", loadErr)
+			}
+		}
+		var updated runtimeConfigUpdated
+		var err error
+		if loadErr == nil {
+			updated, err = rt.updateSessionModel(sessionID, revision, request.Patch)
+		}
 		a.updateUI(func() {
 			if !a.modelOpActive || a.modelOpSessionID != sessionID {
 				return
 			}
 			a.modelOpActive = false
 			a.modelOpSessionID = ""
-			if a.rt != rt || a.connectionGeneration != generation || a.modelForm != form {
+			sameRuntime := a.rt == rt && a.connectionGeneration == generation
+			if !sameRuntime || !a.modelOriginStillCurrent(contactID, issueID, sessionID) {
 				if a.shutdownStarted {
 					a.finishShutdown()
 				}
 				return
 			}
-			if err == nil {
+			if released && loadErr == nil && issueID != "" {
+				issue := a.contactByID(contactID).issueByID(issueID)
+				issue.Work.Released = false
+				issue.Work.Loaded = true
+				if loaded.State != "" {
+					issue.Work.SessionState = loaded.State
+				}
+			}
+			if loadErr != nil {
+				form.SetBusy(false, "")
+				form.SetError("Could not load this released work session before updating the model: " + a.connectionRuntimeMessage(loadErr))
+			} else if err == nil {
 				form.SetResult(updated.runtimeConnectionConfig)
 				form.SetStatus("Model updated. The next task on this session uses it; history is unchanged.")
 				a.updateModelContactDisplay(sessionID, updated.EffectiveConfig.Model)
@@ -264,6 +295,18 @@ func (a *appModel) updateSessionModel(request modelSelectionRequest) {
 			}
 		})
 	}()
+}
+
+func (a *appModel) modelOriginStillCurrent(contactID, issueID, sessionID string) bool {
+	ct := a.contactByID(contactID)
+	if ct == nil {
+		return false
+	}
+	if issueID != "" {
+		issue := ct.issueByID(issueID)
+		return issue != nil && issue.WorkSessionID == sessionID
+	}
+	return ct.SessionID == sessionID
 }
 
 func (a *appModel) applyModelUpdateFailure(form *modelSelection, sessionID string, updated runtimeConfigUpdated, err error) {
