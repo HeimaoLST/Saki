@@ -72,8 +72,15 @@ func TestSettingsPageHeaderAndErrorEntriesRouteToCategories(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
+	if !a.detailIs(detailProfile) || a.settingsOpen {
+		t.Fatalf("header profile route = detail=%v settings=%v", a.activeDetail(), a.settingsOpen)
+	}
+	if err := tr.Click("Edit full profile"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
 	if !a.settingsOpen || a.settingsTab != settingsTabContact {
-		t.Fatalf("header profile route = open=%v tab=%q", a.settingsOpen, a.settingsTab)
+		t.Fatalf("profile edit route = open=%v tab=%q", a.settingsOpen, a.settingsTab)
 	}
 	tr.Click("← Back to workbench")
 	tr.Frame()
@@ -108,7 +115,7 @@ func TestSettingsPageCmdCommaFromWorkbenchHistoryAndResult(t *testing.T) {
 
 	a.openHistory()
 	tr.Frame()
-	tr.Scroll(520, 400, 0, 600)
+	tr.Scroll(850, 400, 0, 600)
 	tr.Frame()
 	historyScrollBefore := a.historyScroll.Y
 	if historyScrollBefore <= 0 {
@@ -116,15 +123,15 @@ func TestSettingsPageCmdCommaFromWorkbenchHistoryAndResult(t *testing.T) {
 	}
 	tr.Key(ui.Cmd, ui.KeyComma)
 	tr.Frame()
-	if !a.settingsOpen || a.screen != viewHistory {
-		t.Fatalf("Cmd+, history = open=%v screen=%v", a.settingsOpen, a.screen)
+	if !a.settingsOpen || !a.detailIs(detailHistory) {
+		t.Fatalf("Cmd+, history = open=%v detail=%v", a.settingsOpen, a.activeDetail())
 	}
 	if err := tr.Click("← Back to workbench"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.screen != viewHistory || a.historyScroll.Y != historyScrollBefore {
-		t.Fatalf("history return = screen=%v scroll=%v want=%v", a.screen, a.historyScroll.Y, historyScrollBefore)
+	if !a.detailIs(detailHistory) || a.historyScroll.Y != historyScrollBefore {
+		t.Fatalf("history return = detail=%v scroll=%v want=%v", a.activeDetail(), a.historyScroll.Y, historyScrollBefore)
 	}
 	if !tr.Focused("Close history") {
 		t.Fatalf("history return did not restore the history close control: %v", tr.Texts())
@@ -217,6 +224,10 @@ func TestSettingsContactPickerFollowsEditingIdentityAfterReturnToA(t *testing.T)
 	a.closeSettings()
 	tr.Frame()
 	if err := tr.Click("Contact profile"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if err := tr.Click("Edit full profile"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
@@ -411,7 +422,7 @@ func TestSettingsPageReturnKeepsChatScrollWorkspaceAndIssueContext(t *testing.T)
 		ct.Messages = append(ct.Messages, &message{ID: i + 1, Kind: msgContact, Text: fmt.Sprintf("message %d with enough text to scroll", i)})
 	}
 	a.workspaceOpen = true
-	a.rightPaneWidth = 388
+	a.rightPaneWidth = 340
 	issue := &productIssue{ID: "issue-keep", ContactID: ct.ID, Goal: "keep context", Status: issueStatusInProgress, RequirementsRevision: 1}
 	for i := 0; i < 30; i++ {
 		issue.Requirements = append(issue.Requirements, &issueRequirement{ID: fmt.Sprintf("r-%d", i), Text: fmt.Sprintf("requirement %d with enough detail to make the issue pane scroll", i), State: requirementUnverified})
@@ -440,7 +451,7 @@ func TestSettingsPageReturnKeepsChatScrollWorkspaceAndIssueContext(t *testing.T)
 	}
 	tr.Frame()
 	afterFirst, _ := ct.list.Visible()
-	if afterFirst != first || a.selectedContact().ID != ct.ID || !a.workspaceOpen || a.rightPaneWidth != 388 || nav.DetailID != issue.ID || nav.DetailScroll.Y != detailScrollBefore {
+	if afterFirst != first || a.selectedContact().ID != ct.ID || !a.workspaceOpen || a.rightPaneWidth != 340 || nav.DetailID != issue.ID || nav.DetailScroll.Y != detailScrollBefore {
 		t.Fatalf("return state changed: list %d->%d selected=%q work=%v width=%v detail=%q scroll=%v", first, afterFirst, a.selectedContact().ID, a.workspaceOpen, a.rightPaneWidth, nav.DetailID, nav.DetailScroll.Y)
 	}
 }
@@ -879,6 +890,10 @@ func TestSettingsReturnKeepsReaderActions(t *testing.T) {
 			a.settingsPage(c, c.Theme())
 			return
 		}
+		if file, ok := issueResultFileByKey(state.Files, state.ReaderKey); state.ReaderKey != "" && ok {
+			issueResultReaderPage(c, c.Theme(), state, actions, file)
+			return
+		}
 		issueResultPanel(c, state, actions)
 	}, 1040, 900)
 	tr.Frame()
@@ -1087,8 +1102,8 @@ func TestSettingsCmdCommaFromHistoryMarkdownLinkReturnsToSameLink(t *testing.T) 
 	tabToFocused(t, tr, "第二历史链接")
 	tr.Key(ui.Cmd, ui.KeyComma)
 	tr.Frame()
-	if !a.settingsOpen || a.screen != viewHistory {
-		t.Fatalf("Cmd+, from history link = open=%v screen=%v", a.settingsOpen, a.screen)
+	if !a.settingsOpen || !a.detailIs(detailHistory) {
+		t.Fatalf("Cmd+, from history link = open=%v detail=%v", a.settingsOpen, a.activeDetail())
 	}
 	if err := tr.Click("← Back to workbench"); err != nil {
 		t.Fatal(err)
@@ -1190,34 +1205,54 @@ func TestSettingsReturnsToExactHistorySummaryAndFullLinkWithSameEntry(t *testing
 		Text: "摘要[摘要链接](" + url + ")。",
 	}}
 	a.windowWidth = 1040
+	a.workspaceOpen = false
+	a.detail = ""
+	a.openHistory()
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.SetFocused(true)
 	tr.Frame()
-	a.openHistory()
+
+	tabToFocused(t, tr, "摘要链接")
+	tr.Key(ui.Cmd, ui.KeyComma)
+	tr.Frame()
+	if !a.settingsOpen {
+		t.Fatal("摘要链接 Cmd+, did not open settings")
+	}
+	if err := tr.Click("← Back to workbench"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.Focused("摘要链接") {
+		t.Fatalf("Back did not return to the summary link: %v", tr.Texts())
+	}
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if got := tr.OpenedURLs(); len(got) != 1 || got[0] != url {
+		t.Fatalf("summary link opened %v, want only its URL", got)
+	}
+
 	a.contactHistoryFull = &contactHistoryFull{
 		SessionID: "s1", EntryID: "history-same", Date: "Oct 1", From: "contact",
 		Text: "完整[完整链接](" + url + ")。",
 	}
 	tr.Frame()
-	for i, label := range []string{"完整链接", "摘要链接"} {
-		tabToFocused(t, tr, label)
-		tr.Key(ui.Cmd, ui.KeyComma)
-		tr.Frame()
-		if !a.settingsOpen {
-			t.Fatalf("%s Cmd+, did not open settings", label)
-		}
-		if err := tr.Click("← Back to workbench"); err != nil {
-			t.Fatal(err)
-		}
-		tr.Frame()
-		if !tr.Focused(label) {
-			t.Fatalf("Back did not return to %q: %v", label, tr.Texts())
-		}
-		tr.Key(0, ui.KeyEnter)
-		tr.Frame()
-		if got := tr.OpenedURLs(); len(got) != i+1 || got[i] != url {
-			t.Fatalf("%s opened %v, want URL occurrence %d", label, got, i+1)
-		}
+	tabToFocused(t, tr, "完整链接")
+	tr.Key(ui.Cmd, ui.KeyComma)
+	tr.Frame()
+	if !a.settingsOpen {
+		t.Fatal("完整链接 Cmd+, did not open settings")
+	}
+	if err := tr.Click("← Back to workbench"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.Focused("完整链接") {
+		t.Fatalf("Back did not return to the full link: %v", tr.Texts())
+	}
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if got := tr.OpenedURLs(); len(got) != 2 || got[1] != url {
+		t.Fatalf("full link opened %v, want second exact URL occurrence", got)
 	}
 }
 
@@ -1276,15 +1311,15 @@ func TestHistoryCloseReopenKeepsCloseFocusAfterLinkFocus(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.screen != viewChat {
-		t.Fatalf("Close history did not return to chat: screen=%v", a.screen)
+	if a.workspaceOpen {
+		t.Fatalf("Close history did not return to chat: open=%v detail=%v", a.workspaceOpen, a.activeDetail())
 	}
 	if err := tr.Click("History"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.screen != viewHistory {
-		t.Fatalf("History did not reopen: screen=%v", a.screen)
+	if !a.detailIs(detailHistory) {
+		t.Fatalf("History did not reopen: detail=%v", a.activeDetail())
 	}
 	if !tr.Focused("Close history") {
 		t.Fatalf("reopened history lost its default close focus: %v", tr.Texts())

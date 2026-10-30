@@ -305,7 +305,6 @@ func TestTaskContextAppModalAndReadOnlyHistoryCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	a.screen = viewChat
 	ct.Messages = []*message{{
 		Key: "live:readonly", Kind: msgUser, Text: "main prompt",
 		Context: []taskContextItem{{Name: "Doc · file /tmp/doc.txt", Text: "read only text"}},

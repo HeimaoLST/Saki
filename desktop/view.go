@@ -32,6 +32,7 @@ func messageReaderOptions(plain bool) markdownReaderOptions {
 }
 
 func (a *appModel) view(c *ui.Context) {
+	a.syncDetailPageMode()
 	if !a.settingsOpen {
 		a.linkReturnSeen = false
 	}
@@ -46,8 +47,11 @@ func (a *appModel) view(c *ui.Context) {
 			source := settingsSourceCommand
 			if c.Focused(a.composerHandle) {
 				source = settingsSourceComposer
-			} else {
-				a.captureLinkSettingsSource(c, &source)
+			} else if !a.captureLinkSettingsSource(c, &source) {
+				source = a.settingsSourceForVisiblePage()
+				if source == settingsSourceAux && a.issueResult.Open {
+					a.issueResult.Panel.FocusReturn = issueResultFocusedHandle(c, &a.issueResult.Panel, a.issueResult.Panel.ReaderKey != "")
+				}
 			}
 			a.openSettingsTab(settingsTabAppearance, source)
 		}
@@ -56,37 +60,69 @@ func (a *appModel) view(c *ui.Context) {
 		a.settingsPage(c, t)
 		return
 	}
-	// Capture the pane/overlay decision before the frame builds. A divider
-	// OnChange can clamp widths during this build; reading workOverlay again
-	// after the split has built must not mount the same workspace twice and
-	// bind one scroll state to two controls.
-	workspaceOverlay := a.workspaceOpen && a.workOverlay()
-	if a.aux == "" && a.screen == viewChat && a.workspaceOpen && !workspaceOverlay {
-		c.OnShortcut(0, ui.KeyEscape, func() { a.escapeWorkspaceLayer() })
-	}
+	c.OnShortcut(0, ui.KeyEscape, func() { a.escapeTopLayer() })
 	ui.Box(c).Fill().Children(func() {
+		if a.mainPageActive() {
+			a.mainPage(c, t)
+			return
+		}
 		ui.Row(c).Fill().Children(func() {
 			a.layoutBody(c, t)
 		})
-		if workspaceOverlay && a.aux == "" {
-			a.workspaceModal(c, t)
-		}
-		if a.aux != "" && !a.composerInlineAux() {
-			a.auxView(c, t)
-		} else if a.aux == "" && a.screen == viewHistory {
-			a.historyView(c, t)
-		}
 	})
 	a.finishMarkdownLinkReturn()
 }
 
-func (a *appModel) captureLinkSettingsSource(c *ui.Context, source *string) {
+func (a *appModel) escapeTopLayer() {
+	if a.issueResult.Open {
+		if a.issueResult.Panel.ReaderKey != "" {
+			a.closeIssueResultReader()
+			return
+		}
+		a.closeIssueResult()
+		return
+	}
+	if a.contactHistoryFull != nil {
+		a.closeContactHistoryFull()
+		return
+	}
+	if a.aux != "" {
+		a.closeAux()
+		return
+	}
+	if a.workspaceOpen {
+		if a.activeDetail() == detailWork {
+			if a.escapeWorkspaceLayer() {
+				return
+			}
+		}
+		a.closeDetail()
+	}
+}
+
+func (a *appModel) captureLinkSettingsSource(c *ui.Context, source *string) bool {
 	link := ui.FocusedValue(c, &a.markdownLinkFocus)
 	if link == (markdownLinkTarget{}) {
-		return
+		return false
 	}
 	a.settingsReturnLink = link
 	*source = settingsSourceLink
+	return true
+}
+
+func (a *appModel) settingsSourceForVisiblePage() string {
+	switch {
+	case a.issueResult.Open, a.aux != "":
+		return settingsSourceAux
+	case a.contactHistoryFull != nil, a.detailIs(detailHistory):
+		return settingsSourceHistory
+	case a.detailIs(detailProfile):
+		return settingsSourceProfile
+	case a.workspaceOpen:
+		return settingsSourceWork
+	default:
+		return settingsSourceCommand
+	}
 }
 
 func (a *appModel) openSettingsFromContext(c *ui.Context, tab, source string) {
@@ -102,8 +138,14 @@ func (a *appModel) armActiveSurfaceFallback() {
 		} else {
 			a.issueResult.Panel.FocusClose = true
 		}
-	case a.screen == viewHistory:
-		a.focusHistoryOpen = true
+	case a.contactHistoryFull != nil:
+		a.focusHistoryFullBack = true
+	case a.detailIs(detailHistory):
+		a.focusDetailClose = true
+	case a.aux == "sources":
+		a.focusSourcesBack = true
+	case a.detailIs(detailProfile):
+		a.focusProfileEdit = true
 	default:
 		a.focusComposer = true
 	}
@@ -367,69 +409,29 @@ func (a *appModel) workEntryStatus(ct *contact) (string, bool) {
 	return "", false
 }
 
-func (a *appModel) workEntryHint(c *ui.Context, t *ui.Theme, ct *contact) {
-	if a.workspaceOpen {
-		return
-	}
-	label, attention := a.workEntryStatus(ct)
-	if label == "" {
-		return
-	}
-	color := t.Success
-	if attention {
-		color = t.Warning
-	}
-	ui.Text(c, label).FontSize(12).TextColor(color)
-}
-
 func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Row(c).Justify(ui.Center).Children(func() {
 		ui.Column(c).WidthPercent(86).MaxWidth(760).Padding(8, 0).Gap(6).Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
+			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(9).Children(func() {
 				a.avatarTile(c, t, 35)
-				ui.Column(c).Gap(1).Children(func() {
-					ui.Text(c, ct.Name).FontSize(typeContactTitle).FontWeight(600).TextColor(t.Text)
+				ui.Column(c).MinWidth(0).Shrink(1).Gap(1).Children(func() {
+					ui.Text(c, ct.Name).FontSize(typeContactTitle).FontWeight(600).TextColor(t.Text).MaxLines(1)
 					ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
 						ui.Text(c, a.statusLabel(ct)).FontSize(12).LineHeight(1.35).TextColor(a.statusColor(t, ct.Status))
 						ui.Text(c, "· "+ct.Role).FontSize(12).LineHeight(1.35).MaxLines(1).TextColor(t.TextMuted)
 					})
 				})
+				ui.Spacer(c)
+				a.navigationToolbar(c, t)
 			})
-			nav := func(label string, active bool, focus *bool, onClick func()) {
-				button := secondaryButton(c, label)
-				if active {
-					button.BorderWidth(1).BorderColor(t.Accent)
+			if status, attention := a.workEntryStatus(ct); status != "" && !a.workspaceOpen {
+				color := t.Success
+				if attention {
+					color = t.Warning
 				}
-				button.OnClick(onClick)
-				if focus != nil && *focus {
-					button.Focus()
-					*focus = false
-				}
+				ui.Text(c, status).FontSize(typeMeta).LineHeight(1.35).TextColor(color)
 			}
-			if a.layoutWidth() < 820 {
-				ui.Row(c).Gap(6).Children(func() {
-					if a.railCollapsed {
-						nav("Contacts", false, &a.focusRail, func() { a.toggleRail() })
-					}
-					nav("Work", a.workspaceOpen, &a.focusWorkspace, func() { a.toggleWorkspace() })
-					a.workEntryHint(c, t, ct)
-					nav("History", a.screen == viewHistory, &a.focusHistory, func() { a.openHistory() })
-				})
-				ui.Row(c).Gap(6).Children(func() {
-					nav("Contact profile", false, &a.focusContactProfile, func() { a.openContactProfile(ct.ID) })
-				})
-				return
-			}
-			ui.Row(c).Gap(6).Children(func() {
-				if a.railCollapsed {
-					nav("Contacts", false, &a.focusRail, func() { a.toggleRail() })
-				}
-				nav("Work", a.workspaceOpen, &a.focusWorkspace, func() { a.toggleWorkspace() })
-				a.workEntryHint(c, t, ct)
-				nav("History", a.screen == viewHistory, &a.focusHistory, func() { a.openHistory() })
-				nav("Contact profile", false, &a.focusContactProfile, func() { a.openContactProfile(ct.ID) })
-			})
 		})
 	})
 }
@@ -577,7 +579,11 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 					}
 					if len(m.Sources) > 0 {
 						ui.Row(c).Children(func() {
-							secondaryButton(c, "Open sources").OnClick(func() { a.openSources(m.ID) })
+							button := secondaryButton(c, "Open sources").OnClick(func() { a.openSources(m.ID) })
+							if a.focusSources && a.auxMessage == m.ID {
+								button.Focus()
+								a.focusSources = false
+							}
 						})
 					}
 				}
@@ -610,7 +616,11 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 				}
 				if len(m.Sources) > 0 {
 					ui.Row(c).Children(func() {
-						secondaryButton(c, fmt.Sprintf("%d earlier messages", len(m.Sources))).OnClick(func() { a.openSources(m.ID) })
+						button := secondaryButton(c, fmt.Sprintf("%d earlier messages", len(m.Sources))).OnClick(func() { a.openSources(m.ID) })
+						if a.focusSources && a.auxMessage == m.ID {
+							button.Focus()
+							a.focusSources = false
+						}
 					})
 				}
 			})
@@ -720,7 +730,7 @@ func (a *appModel) connectionErrorBanner(c *ui.Context, t *ui.Theme, ct *contact
 // ---------- composer ----------
 
 func (a *appModel) composerInlineAux() bool {
-	return a.screen == viewChat && a.aux != "" && a.composerPanel == a.aux &&
+	return a.aux != "" && a.composerPanel == a.aux &&
 		(a.aux == composerPanelModel || a.aux == composerPanelContext)
 }
 
@@ -827,10 +837,13 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				// Send/Stop are outside the Toolbar: the main action must never
 				// disappear into a toolbar overflow menu at narrow widths.
 				if !a.demo && ct.ActiveTaskID != "" {
-					stop := ui.Button(c, "").Label("Stop conversation").Tooltip("Stop conversation").
-						Width(32).Height(32).Padding(0).TextColor(t.Warning)
+					stop := secondaryButton(c, "").Label("Stop conversation").Tooltip("Stop this conversation").
+						Shrink(0).Height(32).Padding(4, 8).TextColor(t.Warning)
 					stop.Children(func() {
-						ui.Icon(c, composerStopIcon).Width(18).Height(18)
+						ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+							ui.Icon(c, composerStopIcon).Width(16).Height(16)
+							ui.Text(c, "Stop conversation").FontSize(typeAction).LineHeight(1.3).TextColor(t.Warning)
+						})
 					})
 					stop.OnClick(func() { a.cancelSelected() })
 				} else {
@@ -894,104 +907,100 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 
 // ---------- history ----------
 
-func (a *appModel) historyView(c *ui.Context, t *ui.Theme) {
+func (a *appModel) historyDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 	ct := a.selectedContact()
-	open := a.screen == viewHistory
-	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
-		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
-		panel.Width(560).FillHeight().Background(a.workTheme.Panel).OnShortcut(ui.Cmd, ui.KeyComma, func() {
-			a.openSettingsFromContext(c, settingsTabAppearance, settingsSourceHistory)
-		}).Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Padding(12, 12).Children(func() {
-				ui.Text(c, "History · "+ct.Name).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
-				ui.Spacer(c)
-				close := secondaryButton(c, "Close history").OnClick(func() {
-					open = false
-					a.backToChat()
-				})
-				if a.focusHistoryOpen {
-					close.Focus()
-					a.focusHistoryOpen = false
+	if ct == nil {
+		return
+	}
+	ui.Column(c).FillHeight().Padding(12).Gap(8).Children(func() {
+		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
+			if narrow {
+				back := detailBackButton(c, t, "Close history", "Back from History").OnClick(func() { a.closeDetail() })
+				a.focusDetailControl(c, back)
+				ui.Text(c, "History · "+ct.Name).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).MaxLines(2).Grow(1)
+				return
+			}
+			ui.Text(c, "History · "+ct.Name).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).MaxLines(2).Grow(1)
+			close := secondaryButton(c, "Close history").Tooltip("Back from History").OnClick(func() { a.closeDetail() })
+			a.focusDetailControl(c, close)
+		})
+		ui.Scroll(c).Grow(1).TrackScroll(&a.historyScroll).Children(func() {
+			ui.Column(c).Gap(10).Children(func() {
+				ui.Text(c, "Searching only "+ct.Name+"'s conversation history. Messages from other contacts are never included.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+				if !a.demo && ct.SessionID != "" && !ct.Loaded {
+					ui.Text(c, "History is not loaded yet; existing records are not shown as absent.").FontSize(14).LineHeight(1.4).TextColor(t.Warning)
 				}
-			})
-			ui.Scroll(c).Grow(1).TrackScroll(&a.historyScroll).Padding(12).Children(func() {
-				ui.Column(c).Gap(10).Children(func() {
-					ui.Text(c, "Searching only "+ct.Name+"'s conversation history. Messages from other contacts are never included.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
-					if !a.demo && ct.SessionID != "" && !ct.Loaded {
-						ui.Text(c, "History is not loaded yet; existing records are not shown as absent.").FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+				ui.TextInput(c, &a.historyQuery).FontSize(14).Placeholder("Search " + ct.Name + "'s history")
+				if !a.demo {
+					secondaryButton(c, "Search saved contexts").TextColor(t.Text).OnClick(func() { a.searchContactHistoryAsync(a.historyQuery) })
+					if a.contactHistoryBusy {
+						ui.Text(c, "Searching saved contexts…").FontSize(14).TextColor(t.TextMuted)
 					}
-					ui.TextInput(c, &a.historyQuery).FontSize(14).Placeholder("Search " + ct.Name + "'s history")
-					if !a.demo {
-						secondaryButton(c, "Search saved contexts").TextColor(t.Text).OnClick(func() { a.searchContactHistoryAsync(a.historyQuery) })
-						if a.contactHistoryBusy {
-							ui.Text(c, "Searching saved contexts…").FontSize(14).TextColor(t.TextMuted)
-						}
-						if a.contactHistoryError != "" {
-							ui.Text(c, a.contactHistoryError).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
-						}
-						if a.contactHistory != nil {
-							ui.Text(c, a.contactHistorySummary()).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
-							if len(a.contactHistory.Failures) > 0 {
-								for _, failure := range a.contactHistory.Failures {
-									ui.Text(c, "Saved context unavailable: "+failure.SessionID).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
-								}
-							}
-							for _, match := range a.contactHistory.Matches {
-								match := match
-								ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
-									ui.Text(c, match.Date+" · saved context "+match.SessionID).FontSize(14).LineHeight(1.4).TextColor(t.Success)
-									ui.Text(c, match.Preview).FontSize(14).LineHeight(1.5).TextColor(t.Text)
-									secondaryButton(c, "View full message").OnClick(func() { a.openContactHistoryMatch(match) })
-								})
+					if a.contactHistoryError != "" {
+						ui.Text(c, a.contactHistoryError).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+					}
+					if a.contactHistory != nil {
+						ui.Text(c, a.contactHistorySummary()).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+						if len(a.contactHistory.Failures) > 0 {
+							for _, failure := range a.contactHistory.Failures {
+								ui.Text(c, "Saved context unavailable: "+failure.SessionID).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
 							}
 						}
-						if a.contactHistoryDetailBusy {
-							ui.Text(c, "Opening the full saved message…").FontSize(14).TextColor(t.TextMuted)
-						}
-						if a.contactHistoryFull != nil {
-							full := a.contactHistoryFull
-							from := "Contact"
-							if full.From == "me" {
-								from = "You"
-							}
+						for _, match := range a.contactHistory.Matches {
+							match := match
+							key := historyOriginKey(historyOriginSaved, match.SessionID, match.EntryID)
 							ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
-								ui.Text(c, "Full saved message · "+from+" · "+full.Date+" · "+full.SessionID).FontSize(14).LineHeight(1.4).TextColor(t.Success)
-								markdownReader(c, full.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy saved message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "full:"+full.SessionID, full.EntryID))).FontSize(15).LineHeight(1.8).TextColor(t.Text)
-								taskContextReadOnlyView(c, a.workTheme, full.Context)
-								secondaryButton(c, "Close full message").OnClick(func() { a.contactHistoryFull = nil })
+								ui.Text(c, match.Date+" · saved context "+match.SessionID).FontSize(14).LineHeight(1.4).TextColor(t.Success)
+								ui.Text(c, match.Preview).FontSize(14).LineHeight(1.5).TextColor(t.Text)
+								button := secondaryButton(c, "View full message").OnClick(func() { a.openContactHistoryMatch(match) })
+								if a.focusHistoryFullID == key {
+									button.Focus()
+									a.focusHistoryFullID = ""
+								}
 							})
 						}
 					}
-					matches := a.historyMatches()
-					if len(matches) == 0 {
-						if strings.TrimSpace(a.historyQuery) == "" {
-							ui.Text(c, "No saved messages in "+ct.Name+"'s loaded history.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
-						} else {
-							ui.Text(c, "No messages in "+ct.Name+"'s loaded history match “"+a.historyQuery+"”.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
-						}
+					if a.contactHistoryDetailBusy {
+						ui.Text(c, "Opening the full saved message…").FontSize(14).TextColor(t.TextMuted)
 					}
-					for _, e := range matches {
-						e := e
-						ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
-							ui.Text(c, e.Date+" · "+speakerLabel(ct, e)).FontSize(14).LineHeight(1.4).TextColor(t.Success)
+				}
+				matches := a.historyMatches()
+				if len(matches) == 0 {
+					if strings.TrimSpace(a.historyQuery) == "" {
+						ui.Text(c, "No saved messages in "+ct.Name+"'s loaded history.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+					} else {
+						ui.Text(c, "No messages in "+ct.Name+"'s loaded history match “"+a.historyQuery+"”.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+					}
+				}
+				for _, e := range matches {
+					e := e
+					ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
+						ui.Text(c, e.Date+" · "+speakerLabel(ct, e)).FontSize(14).LineHeight(1.4).TextColor(t.Success)
+						if len([]rune(e.Text)) <= 180 {
 							if e.From == "me" {
 								markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy history message", Theme: messageMarkdownTheme}).FontSize(15).LineHeight(1.8).TextColor(t.Text)
 							} else {
 								markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy history message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "history", e.ID))).FontSize(15).LineHeight(1.8)
 							}
-							taskContextReadOnlyView(c, a.workTheme, e.Context)
-							ui.Row(c).Children(func() {
-								secondaryButton(c, "View in conversation").OnClick(func() { a.viewInConversation(e.ID) })
-							})
+						} else {
+							ui.Text(c, truncate(e.Text, 150)).FontSize(14).LineHeight(1.45).MaxLines(3).TextColor(t.Text)
+						}
+						if len(e.Context) > 0 {
+							ui.Text(c, fmt.Sprintf("Context · %d items", len(e.Context))).FontSize(13).TextColor(t.TextMuted)
+						}
+						ui.Row(c).Gap(4).Wrap().Children(func() {
+							read := secondaryButton(c, "Read full message").OnClick(func() { a.openHistoryEntryFull(e) })
+							if a.focusHistoryFullID == historyOriginKey(historyOriginLoaded, ct.SessionID, e.ID) {
+								read.Focus()
+								a.focusHistoryFullID = ""
+							}
+							secondaryButton(c, "View in conversation").OnClick(func() { a.viewInConversation(e.ID) })
 						})
-					}
-				})
+					})
+				}
 			})
 		})
 	})
-	if !open && a.screen == viewHistory {
-		a.backToChat()
-	}
 }
 
 func speakerLabel(c *contact, e historyEntry) string {
@@ -1001,65 +1010,11 @@ func speakerLabel(c *contact, e historyEntry) string {
 	return c.Name
 }
 
-// ---------- aux panel ----------
-
-func (a *appModel) auxView(c *ui.Context, t *ui.Theme) {
-	returnAux := a.aux
-	width := float32(340)
-	if returnAux == "model" || returnAux == "task-context" {
-		width = 560
-	}
-	if returnAux == "issue-result" {
-		width = float32(a.issueResultPanelWidth())
-	}
-	open := true
-	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
-		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
-		panel.Width(width).FillHeight().Background(a.workTheme.Panel).OnShortcut(ui.Cmd, ui.KeyComma, func() {
-			a.openSettingsFromContext(c, settingsTabAppearance, settingsSourceAux)
-		}).Children(func() {
-			ui.Scroll(c).Grow(1).TrackScroll(a.auxScrollFor(returnAux)).Padding(12).Children(func() {
-				ui.Column(c).Gap(10).Children(func() {
-					switch returnAux {
-					case "sources":
-						a.sourcesPanel(c, t)
-					case "model":
-						a.modelPanel(c, t)
-					case "task-context":
-						a.taskContextPanel(c, t)
-					case "issue-result":
-						a.issueResultPanelView(c, t)
-					}
-				})
-			})
-		})
-	})
-	if !open {
-		if returnAux == "model" && a.modelOpActive {
-			return
-		}
-		if returnAux == "issue-result" {
-			a.closeIssueResult()
-			return
-		}
-		a.aux = ""
-		if returnAux == "task-context" {
-			a.taskContextIssueID = ""
-		}
-		if returnAux == "sources" {
-			a.focusHistory = false
-		}
-	}
-}
+// ---------- main pages ----------
 
 func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	entries := a.sourceEntries(a.auxMessage)
-	ui.Row(c).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "Sources").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
-		ui.Spacer(c)
-		secondaryButton(c, "Close").OnClick(func() { a.closeAux() })
-	})
 	ui.Text(c, fmt.Sprintf("%d earlier messages from %s's history, cited in this reply.", len(entries), ct.Name)).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 	for _, e := range entries {
 		e := e

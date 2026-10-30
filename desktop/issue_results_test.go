@@ -343,7 +343,26 @@ func TestIssueResultPathRetainsTrailingSpaceFilename(t *testing.T) {
 func issueResultPanelTester(state *issueResultPanelState, actions issueResultPanelActions, width, height int, dark bool) *ui.Tester {
 	return ui.NewTester(func(c *ui.Context) {
 		c.SetTheme(resolveWorkbenchTheme(dark).Theme)
-		issueResultPanel(c, state, actions)
+		closeReader := func() {
+			if state.ReaderKey != "" {
+				state.ReaderReturnKey = state.ReaderKey
+			}
+			state.ReaderKey = ""
+		}
+		c.OnShortcut(0, ui.KeyEscape, closeReader)
+		if state.ReaderKey != "" {
+			if file, ok := issueResultFileByKey(state.Files, state.ReaderKey); ok {
+				issueResultReaderPage(c, c.Theme(), state, actions, file)
+				return
+			}
+			state.ReaderKey = ""
+		}
+		ui.Column(c).FillHeight().Children(func() {
+			issueResultPageHeader(c, c.Theme(), state, actions, true)
+			ui.Scroll(c).Grow(1).Padding(0, 16).Children(func() {
+				issueResultPanel(c, state, actions)
+			})
+		})
 	}, width, height)
 }
 
@@ -669,17 +688,26 @@ func TestIssueResultPanelLongContentWrapsAtNarrowWidth(t *testing.T) {
 	}
 	tr := issueResultPanelTester(state, issueResultPanelActions{Close: func() {}, CheckFile: func(issueResultFile) {}, ToggleSource: func(string) {}}, 340, 900, false)
 	tr.Frame()
+	for _, want := range []string{"Run results", "Close results", state.RunLabel, state.RunStatus, path} {
+		bounds, ok := tr.Find(want)
+		if !ok {
+			t.Fatalf("missing result %q in %q", want, tr.Texts())
+		}
+		if bounds.X < 0 || bounds.X+bounds.W > 340 {
+			t.Fatalf("result %q overflows 340px: %+v", want, bounds)
+		}
+	}
 	if err := tr.Click("Read file 1: " + filepath.Base(path)); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	for _, want := range []string{"Run results", "Close results", state.RunLabel, state.RunStatus, path, "Copy path", "Check again", "Source & raw record", "Hide source & raw record"} {
+	for _, want := range []string{"Close reading", "← Back to results", path, "Copy path", "Check again", "Source & raw record", "Hide source & raw record"} {
 		bounds, ok := tr.Find(want)
 		if !ok {
-			t.Fatalf("missing %q in %q", want, tr.Texts())
+			t.Fatalf("missing reader %q in %q", want, tr.Texts())
 		}
 		if bounds.X < 0 || bounds.X+bounds.W > 340 {
-			t.Fatalf("%q overflows 340px: %+v", want, bounds)
+			t.Fatalf("reader %q overflows 340px: %+v", want, bounds)
 		}
 	}
 }

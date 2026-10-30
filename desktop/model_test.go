@@ -69,7 +69,7 @@ func TestAddDefaultContactIsReadyAndUnique(t *testing.T) {
 	if first.Name != "New contact 1" || first.Role != "Assistant" || first.Status != statusReady {
 		t.Fatalf("default contact = %q role=%q status=%v", first.Name, first.Role, first.Status)
 	}
-	if a.screen != viewChat || !a.focusComposer {
+	if a.workspaceOpen || !a.focusComposer {
 		t.Fatal("default contact should open a chat and request composer focus")
 	}
 	a.addDefaultContact()
@@ -181,7 +181,7 @@ func TestSourceScopeAndReveal(t *testing.T) {
 		}
 	}
 	a.viewInConversation("saki-h2")
-	if a.highlight != "saki-h2" || a.screen != viewChat {
+	if a.highlight != "saki-h2" || a.workspaceOpen {
 		t.Fatal("reveal should highlight the entry in the conversation")
 	}
 	found := false

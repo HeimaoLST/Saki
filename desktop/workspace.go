@@ -208,28 +208,6 @@ func (a *appModel) workStateColor(state workState) ui.Color {
 	}
 }
 
-func (a *appModel) setWorkspaceOpen(open bool) {
-	if a.workspaceOpen == open {
-		if open {
-			a.focusWorkspaceOpen = true
-		} else {
-			a.focusWorkspace = true
-		}
-		return
-	}
-	a.workspaceOpen = open
-	if open {
-		a.focusWorkspaceOpen = true
-	} else {
-		a.focusWorkspace = true
-	}
-	a.persist()
-}
-
-func (a *appModel) toggleWorkspace() { a.setWorkspaceOpen(!a.workspaceOpen) }
-
-func (a *appModel) closeWorkspace() { a.setWorkspaceOpen(false) }
-
 func (a *appModel) toggleRail() {
 	a.railCollapsed = !a.railCollapsed
 	a.focusRail = true
@@ -238,6 +216,10 @@ func (a *appModel) toggleRail() {
 // layoutBody draws the contact rail and the main conversation. A visible
 // work panel nests a second Split so either edge can be resized independently.
 func (a *appModel) layoutBody(c *ui.Context, t *ui.Theme) {
+	if a.detailPageActive() {
+		a.detailPage(c, t)
+		return
+	}
 	if a.railCollapsed {
 		a.layoutMainArea(c, t, 0)
 		return
@@ -254,7 +236,7 @@ func (a *appModel) layoutBody(c *ui.Context, t *ui.Theme) {
 }
 
 func (a *appModel) layoutMainArea(c *ui.Context, t *ui.Theme, left float32) {
-	if !a.workspaceOpen || a.workOverlay() {
+	if !a.workspaceOpen {
 		a.main(c, t)
 		return
 	}
@@ -274,44 +256,34 @@ func (a *appModel) layoutMainArea(c *ui.Context, t *ui.Theme, left float32) {
 	}).Fill()
 }
 
-// workspaceFrame draws the current/recent task view in its own column.
+// workspaceFrame draws the current right detail in its own column.
 func (a *appModel) workspaceFrame(c *ui.Context, t *ui.Theme) {
 	ui.Column(c).FillWidth().FillHeight().Background(a.workTheme.Panel).BorderWidth(0, 0, 0, 1).BorderColor(t.Border).Children(func() {
-		a.workspaceContent(c, t)
+		a.detailContent(c, t, false)
 	})
 }
 
-func (a *appModel) workspaceModal(c *ui.Context, t *ui.Theme) {
-	open := true
-	backdropClicked := false
-	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
-		backdropClicked = backdrop.Clicked()
-		backdrop.Background(ui.RGBA(0, 0, 0, 0.28))
-		width := a.workWidth()
-		if layout := float32(a.layoutWidth()); layout < width {
-			width = layout
-		}
-		panel.Width(width).FillHeight().AlignSelf(ui.End).Background(a.workTheme.Panel).Children(func() {
-			a.workspaceContent(c, t)
-		})
+// detailPage is the non-modal narrow rendering of the same right detail. It
+// replaces the whole workbench body, so the 480px reading column is not
+// squeezed or covered by a backdrop/focus trap.
+func (a *appModel) detailPage(c *ui.Context, t *ui.Theme) {
+	ui.Column(c).Fill().Background(a.workTheme.Panel).Children(func() {
+		a.detailContent(c, t, true)
 	})
-	if !open {
-		if backdropClicked {
-			// A click outside the narrow drawer is an explicit modal close. It
-			// must not act like Escape and unwind detail navigation.
-			a.setWorkspaceOpen(false)
-			a.focusWorkspace = true
-			return
-		}
-		if a.escapeWorkspaceLayer() {
-			return
-		}
-		a.setWorkspaceOpen(false)
-		a.focusWorkspace = true
+}
+
+func (a *appModel) detailContent(c *ui.Context, t *ui.Theme, narrow bool) {
+	switch a.activeDetail() {
+	case detailHistory:
+		a.historyDetail(c, t, narrow)
+	case detailProfile:
+		a.profileDetail(c, t, narrow)
+	case detailWork:
+		a.workspaceContent(c, t, narrow)
 	}
 }
 
-func (a *appModel) workspaceContent(c *ui.Context, t *ui.Theme) {
+func (a *appModel) workspaceContent(c *ui.Context, t *ui.Theme, narrow bool) {
 	ct := a.selectedContact()
 	nav := ct.issueNavigation()
 	issue := ct.issueByID(nav.DetailID)
@@ -324,28 +296,35 @@ func (a *appModel) workspaceContent(c *ui.Context, t *ui.Theme) {
 	} else if nav.ShowConversationWork {
 		title = "Conversation work"
 	}
-	ui.Column(c).Padding(12, 12).Gap(5).Children(func() {
-		ui.Text(c, title).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
-		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-			ui.Spacer(c)
-			if issue == nil && !nav.ShowConversationWork && !a.issueFormOpen {
-				newIssue := secondaryButton(c, "New issue").OnClick(func() {
-					a.issueFormOpen = true
-					a.issueGoal = ""
-					a.issueRequirements = ""
-					a.issueFormError = ""
-					a.focusIssueGoal = true
-				})
-				if a.focusIssueNew {
-					newIssue.Focus()
-					a.focusIssueNew = false
-				}
+	newIssueAction := func() {
+		if issue != nil || nav.ShowConversationWork || a.issueFormOpen {
+			return
+		}
+		newIssue := secondaryButton(c, "New issue").OnClick(func() {
+			a.issueFormOpen = true
+			a.issueGoal = ""
+			a.issueRequirements = ""
+			a.issueFormError = ""
+			a.focusIssueGoal = true
+		})
+		if a.focusIssueNew {
+			newIssue.Focus()
+			a.focusIssueNew = false
+		}
+	}
+	ui.Column(c).FillWidth().Padding(12, 12).Gap(5).Children(func() {
+		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
+			if narrow {
+				back := detailBackButton(c, t, "Close work", "Back from Work").OnClick(func() { a.closeDetail() })
+				a.focusDetailControl(c, back)
+				ui.Text(c, title).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).Grow(1).MaxLines(2)
+				newIssueAction()
+				return
 			}
-			close := secondaryButton(c, "Close work").OnClick(func() { a.closeWorkspace() })
-			if a.focusWorkspaceOpen {
-				close.Focus()
-				a.focusWorkspaceOpen = false
-			}
+			ui.Text(c, title).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).Grow(1)
+			newIssueAction()
+			close := secondaryButton(c, "Close work").Tooltip("Back from Work").OnClick(func() { a.closeDetail() })
+			a.focusDetailControl(c, close)
 		})
 	})
 	switch {
@@ -369,7 +348,7 @@ func (a *appModel) issueOverviewView(c *ui.Context, t *ui.Theme, ct *contact, na
 		a.setIssueFilter(ct, issueFilterFromChoice(a.issueFilterChoice))
 		nav = ct.issueNavigation()
 	}
-	ui.Scroll(c).Grow(1).TrackScroll(&nav.OverviewScroll).Children(func() {
+	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(&nav.OverviewScroll).Children(func() {
 		ui.Column(c).Gap(3).Children(func() {
 			a.issueList(c, t, ct)
 		})
@@ -462,7 +441,7 @@ func (a *appModel) issueDetailView(c *ui.Context, t *ui.Theme, ct *contact, issu
 	work := ct.issueWork(issue)
 	active := work != nil && issue.Work.ActiveTaskID == work.TaskID
 	explicit := work != nil && ct.SelectedWorkTaskID != "" && ct.SelectedWorkTaskID == work.TaskID
-	ui.Scroll(c).Grow(1).TrackScroll(&nav.DetailScroll).Padding(0, 12).Children(func() {
+	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(&nav.DetailScroll).Padding(0, 12).Children(func() {
 		ui.Column(c).Gap(8).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 				back := secondaryButton(c, "Back to issues").OnClick(func() { a.backToIssueOverview() })
@@ -515,7 +494,7 @@ func (a *appModel) issueDetailView(c *ui.Context, t *ui.Theme, ct *contact, issu
 
 func (a *appModel) conversationWorkView(c *ui.Context, t *ui.Theme, ct *contact) {
 	nav := ct.issueNavigation()
-	ui.Scroll(c).Grow(1).Padding(0, 12).Children(func() {
+	ui.Scroll(c).Grow(1).FillWidth().Padding(0, 12).Children(func() {
 		ui.Column(c).Gap(8).Children(func() {
 			ui.Row(c).Children(func() {
 				back := secondaryButton(c, "Back to issues").OnClick(func() { a.backFromConversationWork() })
@@ -689,9 +668,13 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 				secondaryButton(c, "Edit issue").OnClick(func() { a.openEditIssueForm(issue) })
 			}
 			if issue.WorkSessionID != "" {
-				secondaryButton(c, "Issue model").OnClick(func() {
+				modelButton := secondaryButton(c, "Issue model").OnClick(func() {
 					a.openSessionModel(issue.WorkSessionID, "work", issue.Goal)
 				})
+				if a.focusIssueModel {
+					modelButton.Focus()
+					a.focusIssueModel = false
+				}
 			}
 			a.issueActions(c, t, ct, issue, editable)
 			evidence := issueEvidenceText(issue)
@@ -958,7 +941,11 @@ func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *
 			if count := issue.Context.count(); count > 0 {
 				label = fmt.Sprintf("Task context · %d", count)
 			}
-			secondaryButton(c, label).OnClick(func() { a.openIssueTaskContext(issue.ID) })
+			button := secondaryButton(c, label).OnClick(func() { a.openIssueTaskContext(issue.ID) })
+			if a.focusIssueContext {
+				button.Focus()
+				a.focusIssueContext = false
+			}
 		}
 		addSupplementButton := func() {
 			label := "Add supplement"

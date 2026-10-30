@@ -15,6 +15,7 @@ const (
 
 	settingsSourceRail          = "rail"
 	settingsSourceProfile       = "profile"
+	settingsSourceWork          = "work"
 	settingsSourceConnection    = "connection"
 	settingsSourceConfiguration = "configuration"
 	settingsSourceCommand       = "command"
@@ -133,7 +134,17 @@ func (a *appModel) closeSettings() {
 	a.settingsFocusTab = ""
 	switch a.settingsReturnFocus {
 	case settingsSourceProfile:
-		a.focusContactProfile = true
+		if a.detailIs(detailProfile) {
+			a.focusProfileEdit = true
+		} else {
+			a.focusContactProfile = true
+		}
+	case settingsSourceWork:
+		if a.detailPageActive() {
+			a.focusDetailClose = true
+		} else {
+			a.focusWorkspace = true
+		}
 	case settingsSourceConnection:
 		a.focusConnectionEntry = true
 	case settingsSourceConfiguration:
@@ -141,9 +152,12 @@ func (a *appModel) closeSettings() {
 	case settingsSourceComposer:
 		a.focusComposer = true
 	case settingsSourceHistory:
-		if a.screen == viewHistory {
-			a.focusHistoryOpen = true
-		} else {
+		switch {
+		case a.contactHistoryFull != nil:
+			a.focusHistoryFullBack = true
+		case a.detailIs(detailHistory):
+			a.focusDetailClose = true
+		default:
 			a.focusHistory = true
 		}
 	case settingsSourceLink:
@@ -155,7 +169,8 @@ func (a *appModel) closeSettings() {
 		}
 		a.settingsReturnLink = markdownLinkTarget{}
 	case settingsSourceAux:
-		if a.issueResult.Open {
+		switch {
+		case a.issueResult.Open:
 			if a.issueResult.Panel.FocusReturn == nil {
 				if a.issueResult.Panel.ReaderKey != "" {
 					a.issueResult.Panel.FocusReader = true
@@ -163,8 +178,26 @@ func (a *appModel) closeSettings() {
 					a.issueResult.Panel.FocusClose = true
 				}
 			}
-		} else {
-			a.focusWorkspace = true
+		case a.aux == "sources":
+			a.focusSourcesBack = true
+		case a.aux == "model":
+			if a.composerInlineAux() {
+				a.composerFocusModel = true
+			} else {
+				a.focusAuxBack = true
+			}
+		case a.aux == "task-context":
+			if a.composerInlineAux() {
+				a.composerFocusContext = true
+			} else {
+				a.focusAuxBack = true
+			}
+		default:
+			if a.detailPageActive() {
+				a.focusDetailClose = true
+			} else {
+				a.focusWorkspace = true
+			}
 		}
 	default:
 		a.focusSettings = true

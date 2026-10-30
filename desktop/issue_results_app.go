@@ -256,15 +256,26 @@ func (a *appModel) consumeIssueResultReturnFocus() {
 	a.issueResult.ReturnFocusPending = false
 }
 
-func (a *appModel) issueResultPanelWidth() int {
-	width := a.layoutWidth() - 40
-	if width > 760 {
-		width = 760
+func (a *appModel) issueResultMainPage(c *ui.Context, t *ui.Theme) {
+	page := &a.issueResult
+	if !page.Open {
+		return
 	}
-	if width < 320 {
-		width = 320
+	if page.Panel.ReaderKey != "" {
+		if file, ok := issueResultFileByKey(page.Panel.Files, page.Panel.ReaderKey); ok {
+			issueResultReaderPage(c, t, &page.Panel, a.issueResultPanelActions(page.Generation), file)
+			return
+		}
+		page.Panel.ReaderKey = ""
 	}
-	return width
+	ui.Column(c).Fill().Children(func() {
+		issueResultPageHeader(c, t, &page.Panel, a.issueResultPanelActions(page.Generation), !page.Loading)
+		ui.Scroll(c).Grow(1).TrackScroll(&a.issueResultScroll).Padding(0, 16).Children(func() {
+			ui.Column(c).FillWidth().MaxWidth(760).AlignItems(ui.Start).Gap(10).Children(func() {
+				a.issueResultPanelView(c, t)
+			})
+		})
+	})
 }
 
 func (a *appModel) issueResultPanelView(c *ui.Context, t *ui.Theme) {
@@ -274,13 +285,6 @@ func (a *appModel) issueResultPanelView(c *ui.Context, t *ui.Theme) {
 	}
 	hasBody := page.Panel.Response != "" || len(page.Panel.Files) > 0
 	if !hasBody && (page.Loading || page.LoadError != "") {
-		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, "Run results").FontSize(16).FontWeight(600).TextColor(t.Text).Grow(1)
-			if !page.Loading {
-				secondaryButton(c, "Reload result").OnClick(func() { a.reloadIssueResult(page.Generation) })
-			}
-			secondaryButton(c, "Close results").OnClick(func() { a.closeIssueResult() })
-		})
 		if page.Panel.RunLabel != "" {
 			ui.Text(c, page.Panel.RunLabel).FontSize(14).TextColor(t.TextMuted)
 		}
@@ -416,4 +420,21 @@ func (a *appModel) requestIssueResultFileAction(generation int, file issueResult
 			page.Panel.Action = action
 		})
 	}()
+}
+
+func issueResultPageHeader(c *ui.Context, t *ui.Theme, state *issueResultPanelState, actions issueResultPanelActions, showReload bool) {
+	ui.Row(c).Padding(16, 16).AlignItems(ui.Center).Gap(8).Children(func() {
+		if actions.Close != nil {
+			back := secondaryButton(c, "← Back").Label("Close results").Tooltip("Back from results").Bind(&state.CloseHandle).OnClick(actions.Close)
+			if state.FocusClose {
+				back.Focus()
+				state.FocusClose = false
+			}
+		}
+		ui.Text(c, "Run results").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
+		ui.Spacer(c)
+		if showReload && actions.Reload != nil {
+			secondaryButton(c, "Reload result").Bind(&state.ReloadHandle).OnClick(actions.Reload)
+		}
+	})
 }

@@ -8,15 +8,12 @@
 
 ## GUI 设计约束（当前规范）
 
-更新日期：2026-10-27。本节是 GUI 可读性、操作可发现性与布局验收的唯一规范入口；`AGENTS.md` §10 和 PR 模板只链接本节，不重复具体数值。本节替代早期 #90 的 11px 状态/12px 按钮规则；旧记录只作为历史证据保留。
+更新日期：2026-10-30。当前唯一设计规范由 #216 维护：[PR #226 中的 `desktop-workbench.md`（尚未合并）](https://github.com/HeimaoLST/Saki/pull/226)。合并后以 `docs/design/desktop-workbench.md` 为准；本地实现的候选事实见下方 [#219 节](#detail-navigation-219)。本文件不再把旧 #90/#130 的“所有次动作有底面”“右侧覆盖抽屉”等当作当前规范，那些内容只保留为历史实现记录，避免双标准。
 
-- **字号基线**：正文、要求和结果摘要使用 14 逻辑 px；普通动作 13；辅助状态、来源和日期至少 12。已有更大的正文不缩小；重要标题用字号、字重和留白分层。禁止为了装下内容退回 9–11 px；字号只是基线，必须结合实际渲染验证可读性。
-- **主动作与次动作**：真正的下一步使用 `ui.PrimaryButton`；普通次操作复用 `desktop/theme.go` 的 `secondaryButton`，静止态要有可见底面/边界、至少 32 逻辑 px 的有效高度和内边距；状态标签不能伪装成按钮。不要把通用动作做成无底无框灰字，也不要靠 hover 才揭示操作；保留 hover/pressed/focus/disabled 语义。既有 Markdown Copy 的受控实现继续保留，统一相同外观即可。
-- **主题与样式复用**：颜色走现有 theme 语义角色，避免局部散写颜色或重复同值字体/padding 覆盖。优先使用现有控件；不为本规范新增多层 UI 框架。
-- **主次区域与布局偏好**：中间对话是主要交互区域；三栏时中心应保持最宽。右侧工作/详情默认关闭，开合由用户选择并跨重启恢复；切换联系人、收消息或 task start/finish 不自动改变它。两侧可真实调宽；空间不足时右侧改用覆盖抽屉，临时窄布局不得覆盖保存的宽屏偏好。具体宽度、中心下限和持久化值见 [可调三栏具体值](#adjustable-layout-values)。
-- **布局与响应宽度**：用换行、折叠、重排和正常纵向滚动解决空间；不靠缩小文字掩盖溢出，也不用横向滚动访问普通操作。默认 1040×720、紧凑 960×640、最小 720×640 和宽 1380×900；按改动涉及的状态检查，明暗两色分别检查。抽屉 320/360 宽度可独立验证边界，但不能把 320 宽测试称作原生支持窗口。
-- **可交互性验收**：相关按钮要默认可辨、完整可见、点击有效；键盘焦点返回正确且不被裁切。测试必须定位目标本身；必要时检查边界、滚动后点击和业务状态，不用 `HasText`、重复文案或字号字面量充当交互验收。
-- **交付证据**：每次 GUI 变更先查本节和现有样式。交付按受影响流程提供同 SHA 截图与实际交互记录，分别标明 headless/native/未验；不借 CI 绿或旧包绿称产品通过，也不要求无关的全量人工 QA。偏离规范需在当前 PR 说明具体原因、替代方案及证据，由既有评审流程处理，不新增人类审批队列。
+- **规范边界**：内容优先、输入集中在 composer、低频工具可发现、长内容主区阅读、右侧非模态详情、窄窗应用内页面与明确返回，均以 #216 为准；实现只引用该规范，不在本文件另立一套数值或组件规则。
+- **组件与文案**：复用当前固定 MyGo 稳定版和现有 theme 角色；不允许为单个任务另造兼容框架。实际版本、控件 API、palette 与必要偏离以 #98/#218 的实现事实及 #216 规范为准。
+- **Disabled 与原因**：沿 MyGo 官方 disabled 语义和默认 opacity，不为候选 4.5 对比度加 patch，也不改禁用行为。浅色约 2.94:1、深色约 4.33:1 记录为当前适配事实，不列为本轮必过门槛；真实禁用/AX 保留，必要原因、当前有效模型和失败/容量信息必须在相邻可读文字中可见，不能只藏在不可聚焦 tooltip。
+- **历史约束**：本文早期 #90/#130 的字号、覆盖抽屉、所有次动作底面等具体数值和布局仍可作为历史证据，但不再约束当前实现。发现与 #216 冲突时，按 #216 记录偏离并更新对应实现事实。
 
 ## 已确认需求与交付边界
 
@@ -877,3 +874,19 @@ type resolvedTheme struct {
 **实际对比与限制**：本地按 sRGB/alpha 合成的记录在 `/private/tmp/saki-gui-218-palette/contrast-actual-v2.json`。正文/辅助文字、selected、accent 三态、focus、control_border、选择文字、Markdown 链接/代码、tooltip 的已接角色通过目标对比；muted 在 pressed 中性底为 4.61:1（浅）/6.09:1（深），满足实际 copy/attach 状态的 4.5 目标。关键限制是 MyGo v0.7.3 `paint.go:257-260` 对 `flagDisabled` 统一乘 `opacity *= 0.5`，Theme 没有 DisabledText/Bg 配置；按实际合成，浅色 disabled 前景/底色约 2.94:1，深色约 4.33:1，不能拿静态 `disabled_text/disabled_bg` 的 4.60/5.40 写成渲染通过。没有绕过 Disabled 语义、改 framework/patch 或伪造颜色。该限制保留给父/后续框架接缝判断；其余映射不因此回退。
 
 **验证**：`TestSemanticPaletteContrastInvariants` 使用主题字段与 luminance/alpha 关系检查实际阅读底、hover/pressed、focus、control border、selected 的可读性；`TestAppearanceModeResolutionUsesDarkTheme` 保留。`SAKI_PREVIEW_DIR` 下现有 preview/Tester 矩阵生成 68 张默认/最小/设置/宽屏两色图（`/private/tmp/saki-gui-218-palette/previews/`），另生成两色 composer 图。headless 结果不替代原生、IME、全状态或完整包验收；#219 导航源码未改。
+
+
+<a id="detail-navigation-219"></a>
+
+## #219 工作台详情导航与主区阅读（候选实现，2026-10-30）
+
+代码来源：`agent/gui/219-detail-navigation`，基于 `a7751a8c0193ceb95f55b6e91ab0628888e0cdd4`。本节记录当前候选的统一详情/阅读接线；最终完整包、原生与用户验收仍按 #219 交付记录，不表示已集成 dev。
+
+- **单一可见状态**：继续以既有持久化 `workspaceOpen` 表示右侧详情是否可见，`detailKind` 只标记当前内容（Work / History / Contact profile），空 kind 表示 Work；不再新增第二个 `detailOpen` 真源。页头头像/姓名/状态保持一组，右侧使用 MyGo 标准 Toolbar 的 Work / History / Contact profile 图标按钮，带可见选中、可访问名称、tooltip 和键盘焦点；再次点击当前项关闭详情，切换项替换内容。联系人栏收起时，同一 Toolbar 保留明确的 Contacts 重开入口。
+- **宽窄载体**：三栏空间足够时，右侧详情复用既有可调 Split，中心仍执行 480 逻辑 px 下限；不足时详情改为整页应用内页面，联系人栏和聊天不挂载、不进 Tab 顺序，左上为图标 + `Back` 文本，不使用 backdrop、modal 或焦点锁。宽→窄/窄→宽转换会把焦点落到当前实际可见的 Close/Back，而不是已卸载的旧控件；设置页打开期间调整窗口不抢设置页焦点。显式 `openDetail` 只打开/聚焦而不会关闭已开页；同一页头 Toggle 才走同项关闭。`setWorkspaceOpen(false)` 复用唯一 `closeDetail`，不复制另一套关闭/persist 路径。
+- **History**：搜索、匹配列表和当前查看位置在右侧详情；每联系人分别保存 query、结果和 scroll，切换联系人不会把旧回调投到新联系人。列表对较长已加载消息只显示有界预览，完整正文进入复用主区阅读页；saved-context 深读的晚回调只在 History 仍为当前详情且无其他页面/Settings 时展示，切往 Work/Profile 或关闭 History 会取消展示意图但保留搜索结果。完整阅读的返回焦点键携带打开来源（saved search / loaded history），同一 session/entry 同时存在于搜索匹配与已加载列表时，只恢复实际点击的入口，不会落到另一个同 entry 按钮。
+- **Profile**：右侧摘要读取当前 contact 已生效的 Name / Purpose / Instructions / Workspace / session / activity，不读取或展示另一份未保存 Settings draft。`Edit full profile` 进入既有唯一 Settings 的 Contact profile 分类和同一 `settingsProfiles` 草稿；Back 精确回到当前资料摘要的 Edit 入口。
+- **Work / issue model / task context**：Work 仍复用 `issueViewState` 的 filter/detail/scroll；显式执行入口调用 `setWorkspaceOpen(true)` 时保证切到 Work 载体，不依赖调用时原先打开的是 History 还是 Profile；运行事件不因完成/开始自动展开详情。窄页概览仍在同一 header 保留右上的 `New issue`，Back 在左、标题居中收缩，点击继续复用既有 issue form/controller。非 composer 的 Issue model / Task context 改为无遮罩主页面，顶部可见 Back，关闭后回到原 Issue 按钮；composer 内嵌 model/context 的既有 controller、owner、generation 和 Scroll 不变。
+- **成果、文件与 Sources**：结果页和文件阅读都占主内容，不塞右栏或第二层浮层；结果页固定 Back，文件页 `Back to results`，逐层为 file → result → work/issue 入口，保留 owner/issue/execution/session/task、raw/source/error、Copy/Open/Reveal/Reload 及精确焦点 handle。Settings 从当前可见面确定返回 scope（Work / History / Profile / Aux/result/reader/sources/model/context / Link）；reader 页由当前实际页面消费同一 `FocusReturn`，不回隐藏父页的 Close。Sources、非 composer model/context 同样使用主区页面和明确返回入口。
+- **Composer 主操作**：Send / Stop 继续固定在 Toolbar 外；Stop 恢复可见的 “Stop conversation” 文字（图标仍保留），模型短名旁持续显示 Conversation 作用域，完整模型值仍在原面板。主导航与主动作不进入 Toolbar overflow；正常态不增加重复说明，error/unknown/capacity/disabled 原因仍持续可读。
+- **验证边界**：本轮定向覆盖三种详情的真实 `Tester.SetSize` 720×640↔1040×720 焦点/可见 Back/背景 Tab、Toolbar 方向键、per-contact History 状态、晚回调查询、Profile/History/来源/Settings 返回、issue model/context 返回、Stop 可见文字与长模型 480 中心；真实 helper 1040/720 的 result-return、reader 焦点和 Stop 作用域沿用原回归。最终 headless 预览在 `/private/tmp/saki-gui-219-navigation/implementation/previews-fixed/`：Work/History/Profile 与 result/reader 共 20 张，1040×720 与 720×640、明暗两套，均使用新 palette，并断言非空事项、搜索/列表、生效资料、结果正文和 inspected 文件正文；reader 空态对照保留在 `previews-before-fix/`。窄页 Work header 的 `New issue` 保留在右侧，Back 左、标题中；父提供的原 RED 测试在 `parent-narrow-green.log` 中转绿。定向日志为 `followup-targeted-1.log`、`followup-race-1.log`、`followup-vet-1.log`、`previews-219-final2.log`、`model-selection-final-3.log`、`model-rejected-nav-final.log`、`final-vet-3.log`，均 exit 0；模型切换真实进程组（本地受控 provider，非在线模型）必须在既有 62d runtime 之外同时设置已验证 `SAKI_TEST_ISSUE_TOOL_HELPER`（`Saki --issue-tool-helper`），因为 `.test` 不会自动启动工具 helper；补上该测试环境后原 ActualTargets/refused-open 断言全保留并通过，未改 Runtime/issue 执行链。`nav-race-final.log`、`real-race-final.log` 保留上一轮完整结果，其中 `real-race-final.log` 使用已核 62d helper，覆盖 contact history/result reader/Stop scope。New issue 原 RED 由父测试日志 `parent-followup.log` 保留；reader 空态图保存在 `previews-before-fix/`。`issue_results_app.go` 的结果页 header 已收敛为生产页单一入口，旧 component-only `PageMode` 备用 header 与空读 focus 字段已删除；reader 页消费实际 `FocusReturn`。最终 full / 同源包 / native 由组合负责人执行；本节不把局部 headless PASS 写成原生或发布通过。

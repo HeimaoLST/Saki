@@ -375,7 +375,7 @@ func TestIssueStoppingDetailDisablesStopLabel(t *testing.T) {
 	}
 }
 
-func TestIssueBackdropClickClosesOverlayWithoutChangingNavigation(t *testing.T) {
+func TestIssueNarrowPageHasNoBackdropAndBackKeepsNavigation(t *testing.T) {
 	a, ct := workspaceTestApp(t)
 	a.windowWidth = 720
 	a.workspaceOpen = true
@@ -391,13 +391,20 @@ func TestIssueBackdropClickClosesOverlayWithoutChangingNavigation(t *testing.T) 
 	if !a.workOverlay() || !tr.HasText("Back to issues") {
 		t.Fatal("overlay detail did not open")
 	}
-	tr.ClickAt(50, 300) // outside the 340px drawer
+	tr.ClickAt(50, 300) // outside content must not act like a modal backdrop
+	tr.Frame()
+	if !a.workspaceOpen {
+		t.Fatal("a click outside the non-modal page closed it")
+	}
+	if err := tr.Click("Close work"); err != nil {
+		t.Fatal(err)
+	}
 	tr.Frame()
 	if a.workspaceOpen {
-		t.Fatal("backdrop click did not close the drawer")
+		t.Fatal("Back did not close the detail page")
 	}
 	if nav.DetailID != issue.ID || nav.Filter != issueFilterAll || ct.SelectedIssueID != issue.ID || ct.Draft != "draft survives backdrop" {
-		t.Fatalf("backdrop changed navigation/draft: detail=%q filter=%q selected=%q draft=%q",
+		t.Fatalf("Back changed navigation/draft: detail=%q filter=%q selected=%q draft=%q",
 			nav.DetailID, nav.Filter, ct.SelectedIssueID, ct.Draft)
 	}
 }

@@ -116,7 +116,16 @@ func (a *appModel) openSessionModel(sessionID, kind, label string) bool {
 	if a.shutdownStarted || a.connectionApplying || a.modelOpActive {
 		return false
 	}
+	// The accepted target owns the panel from here. A direct work/model open
+	// must not keep the conversation carrier and its inline marker.
+	a.composerPanel = ""
+	a.composerFocusModel = false
+	a.composerFocusContext = false
 	a.aux = "model"
+	a.modelPanelKind = kind
+	if kind == "work" {
+		a.focusAuxBack = true
+	}
 	a.modelPanelMessage = ""
 	a.modelPanelError = ""
 	a.modelForm = nil

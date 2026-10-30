@@ -74,6 +74,9 @@ func (a *appModel) openIssueTaskContext(issueID string) {
 	}
 	a.taskContextIssueID = issueID
 	a.aux = "task-context"
+	a.composerPanel = ""
+	a.contactHistoryFull = nil
+	a.focusAuxBack = true
 }
 
 func (a *appModel) taskContextPanel(c *ui.Context, t *ui.Theme) {

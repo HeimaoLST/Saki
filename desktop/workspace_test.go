@@ -64,8 +64,8 @@ func TestThreePaneBreakpointsAndToggles(t *testing.T) {
 	a.windowWidth = 960
 	tr960 := ui.NewTester(a.view, 960, 640)
 	tr960.Frame()
-	if !a.workOverlay() || !tr960.HasText("Close work") {
-		t.Fatal("960 should use the work overlay when the default columns do not fit")
+	if !a.workOverlay() || !tr960.HasText("Back") {
+		t.Fatal("960 should use the non-modal detail page when the default columns do not fit")
 	}
 	a.windowWidth = 1380
 	trWide := ui.NewTester(a.view, 1380, 900)
@@ -80,15 +80,15 @@ func TestThreePaneBreakpointsAndToggles(t *testing.T) {
 	a.windowWidth = 900
 	trNarrow := ui.NewTester(a.view, 900, 640)
 	trNarrow.Frame()
-	if !trNarrow.HasText("Close work") {
-		t.Fatal("narrow work panel should be present as an overlay")
+	if !trNarrow.HasText("Back") {
+		t.Fatal("narrow work detail should be an application page")
 	}
 	if err := trNarrow.Click("Close work"); err != nil {
 		t.Fatal(err)
 	}
 	trNarrow.Frame()
-	if trNarrow.HasText("No current work") {
-		t.Fatal("narrow overlay did not close")
+	if a.workspaceOpen || !trNarrow.Focused("Work") {
+		t.Fatal("narrow detail page did not close to the Work entry")
 	}
 }
 
@@ -255,13 +255,13 @@ func TestWorkModalEscapeReturnsFocusToEntry(t *testing.T) {
 	a.windowWidth = 900
 	tr := ui.NewTester(a.view, 900, 640)
 	tr.Frame()
-	if !tr.HasText("Close work") {
-		t.Fatal("narrow work overlay missing")
+	if !tr.HasText("Back") {
+		t.Fatal("narrow work page missing")
 	}
 	tr.Key(0, ui.KeyEscape)
 	tr.Frame()
 	if a.workspaceOpen || !tr.Focused("Work") {
-		t.Fatal("Escape did not close/focus-return the work overlay")
+		t.Fatal("Escape did not close/focus-return the work page")
 	}
 }
 
@@ -280,15 +280,15 @@ func TestHistoryModalPreservesWorkAndReturnsFocus(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.screen != viewHistory || !tr.HasText("Close history") || !tr.Focused("Close history") {
+	if !a.detailIs(detailHistory) || !tr.HasText("Close history") || !tr.Focused("Close history") {
 		t.Fatal("history modal did not open/focus")
 	}
 	if err := tr.Click("Close history"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.screen != viewChat || !tr.Focused("History") || !tr.HasText("Issues") {
-		t.Fatal("closing history did not return to three-pane chat/work")
+	if a.workspaceOpen || !tr.Focused("History") || tr.HasText("History · Saki") {
+		t.Fatal("closing history did not return to chat with the History entry focused")
 	}
 	if ct.ActiveTaskID != "t1" || w.State != workRunning || ct.Draft != "later draft" {
 		t.Fatal("history modal changed work or draft")
@@ -300,7 +300,7 @@ func TestHistoryModalPreservesWorkAndReturnsFocus(t *testing.T) {
 	tr.Frame()
 	tr.Key(0, ui.KeyEscape)
 	tr.Frame()
-	if a.screen != viewChat || !tr.Focused("History") {
+	if a.workspaceOpen || !tr.Focused("History") {
 		t.Fatal("Escape did not close history/focus its entry")
 	}
 	if err := tr.Click("History"); err != nil {
@@ -311,7 +311,7 @@ func TestHistoryModalPreservesWorkAndReturnsFocus(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.screen != viewChat || a.highlight != "hist:1" {
+	if a.workspaceOpen || a.highlight != "hist:1" {
 		t.Fatal("view-in-conversation did not close/return to chat")
 	}
 }

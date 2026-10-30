@@ -279,6 +279,10 @@ func TestSettingsFieldsReceiveInputAndDoNotStealComposerFocus(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
+	if err := tr.Click("Edit full profile"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
 	tr.Frame() // a second frame must not re-focus the composer
 	if tr.Focused("Composer for " + ct.Name) {
 		t.Fatal("opening Settings must not keep composer focus")
@@ -739,7 +743,7 @@ func TestComposerModelAndTaskContextStayInlineAndReturnFocus(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.aux != "model" || !a.composerInlineAux() || a.screen != viewChat {
+	if a.aux != "model" || !a.composerInlineAux() || a.mainPageActive() {
 		t.Fatalf("conversation model aux=%q panel=%q inline=%v", a.aux, a.composerPanel, a.composerInlineAux())
 	}
 	if !tr.HasText("This context has no Runtime session yet") {

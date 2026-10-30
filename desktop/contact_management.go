@@ -3,15 +3,27 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/egoist/mygo/ui"
 )
 
 type contactHistoryFull struct {
+	Origin    string
 	SessionID string
 	EntryID   string
 	Date      string
 	From      string
 	Text      string
 	Context   []taskContextItem
+}
+
+const (
+	historyOriginSaved  = "saved"
+	historyOriginLoaded = "loaded"
+)
+
+func historyOriginKey(origin, sessionID, entryID string) string {
+	return origin + "\x00" + sessionID + "\x00" + entryID
 }
 
 func contactProfileDraft(ct *contact) profileDraft {
@@ -21,6 +33,15 @@ func contactProfileDraft(ct *contact) profileDraft {
 func (a *appModel) openContactProfile(contactID string) {
 	ct := a.contactByID(contactID)
 	if ct == nil {
+		return
+	}
+	a.settingsContactID = ct.ID
+	a.openDetail(detailProfile)
+}
+
+func (a *appModel) editContactProfile() {
+	ct := a.selectedContact()
+	if ct == nil || a.activeDetail() != detailProfile {
 		return
 	}
 	a.settingsContactID = ct.ID
@@ -451,7 +472,7 @@ func (a *appModel) openContactHistoryMatch(match contactHistoryMatch) bool {
 			for _, entry := range parseHistoryWithIssueToolScopeFilter(match.SessionID, records, nil, scopeIndex).entries {
 				if entry.ID == match.EntryID {
 					full = &contactHistoryFull{
-						SessionID: match.SessionID, EntryID: match.EntryID, Date: entry.Date,
+						Origin: historyOriginSaved, SessionID: match.SessionID, EntryID: match.EntryID, Date: entry.Date,
 						From: entry.From, Text: entry.Text, Context: entry.Context,
 					}
 					break
@@ -462,25 +483,49 @@ func (a *appModel) openContactHistoryMatch(match contactHistoryMatch) bool {
 			}
 		}
 		a.updateUI(func() {
-			a.historyAsyncFinished()
-			if a.rt != rt || a.connectionGeneration != runtimeGeneration ||
-				a.contactHistoryGen != searchGen || a.contactHistoryDetailGen != detailGen ||
-				a.selectedContact().ID != contactID {
-				return
-			}
-			a.contactHistoryDetailBusy = false
-			if errorText != "" {
-				if err != nil {
-					a.contactHistoryError = errorText + " " + a.connectionRuntimeMessage(err)
-				} else {
-					a.contactHistoryError = errorText
-				}
-				return
-			}
-			a.contactHistoryFull = full
+			defer a.historyAsyncFinished()
+			a.applyContactHistoryFull(rt, runtimeGeneration, contactID, searchGen, detailGen, full, errorText, err)
 		})
 	}()
 	return true
+}
+
+func (a *appModel) applyContactHistoryFull(rt *runtimeClient, runtimeGeneration int, contactID string,
+	searchGen, detailGen int, full *contactHistoryFull, errorText string, readErr error) {
+	if a.rt != rt || a.connectionGeneration != runtimeGeneration ||
+		a.contactHistoryGen != searchGen || a.contactHistoryDetailGen != detailGen ||
+		a.selectedContact().ID != contactID {
+		return
+	}
+	if !a.detailIs(detailHistory) || a.aux != "" || a.settingsOpen {
+		a.contactHistoryDetailBusy = false
+		return
+	}
+	a.contactHistoryDetailBusy = false
+	if errorText != "" {
+		if readErr != nil {
+			a.contactHistoryError = errorText + " " + a.connectionRuntimeMessage(readErr)
+		} else {
+			a.contactHistoryError = errorText
+		}
+		return
+	}
+	a.contactHistoryFull = full
+	a.historyFullScroll = ui.ScrollState{}
+	a.focusHistoryFullBack = full != nil
+}
+
+func (a *appModel) openHistoryEntryFull(e historyEntry) {
+	ct := a.selectedContact()
+	if ct == nil {
+		return
+	}
+	a.contactHistoryFull = &contactHistoryFull{
+		Origin: historyOriginLoaded, SessionID: ct.SessionID, EntryID: e.ID, Date: e.Date, From: e.From,
+		Text: e.Text, Context: cloneTaskContextItems(e.Context),
+	}
+	a.historyFullScroll = ui.ScrollState{}
+	a.focusHistoryFullBack = true
 }
 
 func (a *appModel) contactHistorySummary() string {

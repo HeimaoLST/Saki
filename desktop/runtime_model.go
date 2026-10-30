@@ -2594,11 +2594,12 @@ func (a *appModel) addRuntimeContact() {
 		Workspace: a.workDir,
 	}
 	c.Context.onChange = a.persist
+	a.rememberHistoryView(a.selectedContact().ID)
 	a.contacts = append(a.contacts, c)
 	a.selected = len(a.contacts) - 1
+	a.restoreHistoryView(c.ID)
 	a.contactScope = "active"
 	a.contactSearch = ""
-	a.screen = viewChat
 	a.aux = ""
 	a.focusComposer = true
 	a.persist()

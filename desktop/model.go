@@ -142,13 +142,6 @@ type contact struct {
 	pendingEvents     []runtimeEventEnvelope
 }
 
-type viewMode int
-
-const (
-	viewChat viewMode = iota
-	viewHistory
-)
-
 type profileDraft struct {
 	Name         string
 	Purpose      string
@@ -159,8 +152,11 @@ type profileDraft struct {
 type appModel struct {
 	contacts []*contact
 	selected int
-	screen   viewMode
 	aux      string // "", "sources", "settings"
+
+	detail           detailKind
+	historyByContact map[string]historyViewMemory
+	profileScrolls   map[string]*ui.ScrollState
 
 	auxMessage           int
 	defaultContactN      int
@@ -188,6 +184,7 @@ type appModel struct {
 	taskContextScroll    ui.ScrollState
 	issueResultScroll    ui.ScrollState
 	historyScroll        ui.ScrollState
+	historyFullScroll    ui.ScrollState
 
 	contactProfile           *contactProfileEditor
 	contactProfileID         string
@@ -294,6 +291,7 @@ type appModel struct {
 	issueToolReleaseInFlight int
 
 	modelForm         *modelSelection
+	modelPanelKind    string
 	modelOpenToken    int
 	modelPanelMessage string
 	modelPanelError   string
@@ -311,12 +309,20 @@ type appModel struct {
 	workspaceOpen        bool
 	railCollapsed        bool
 	focusWorkspace       bool
-	focusWorkspaceOpen   bool
+	focusDetailClose     bool
 	focusRail            bool
 	focusHistory         bool
-	focusHistoryOpen     bool
 	focusSettings        bool
 	focusContactProfile  bool
+	focusProfileEdit     bool
+	focusSources         bool
+	focusSourcesBack     bool
+	focusAuxBack         bool
+	focusIssueModel      bool
+	focusIssueContext    bool
+	focusHistoryFullID   string
+	focusHistoryFullBack bool
+	detailPageMode       bool
 	focusConnectionEntry bool
 	focusConfiguration   bool
 	workTheme            workbenchTheme
@@ -415,7 +421,6 @@ func seededApp() *appModel {
 			},
 		},
 		selected:       0,
-		screen:         viewChat,
 		workspaceOpen:  false,
 		appearanceMode: appearanceSystem,
 		seq:            100,
@@ -462,15 +467,17 @@ func (a *appModel) selectContact(i int) {
 	if !a.leaveIssueFormForSwitch() {
 		return
 	}
+	a.rememberHistoryView(a.selectedContact().ID)
 	a.contacts[i].Unread = 0
 	a.selected = i
+	a.restoreHistoryView(a.contacts[i].ID)
 	if !a.demo {
 		a.persist()
 	}
-	a.screen = viewChat
 	if a.issueResult.Open {
 		a.cancelIssueResultView()
 	}
+	a.contactHistoryFull = nil
 	a.aux = ""
 	a.composerPanel = ""
 	a.composerFocusModel = false
@@ -543,11 +550,12 @@ func (a *appModel) addDefaultContact() {
 		Status:    statusReady,
 		WorkLabel: "Preparing a reply",
 	}
+	a.rememberHistoryView(a.selectedContact().ID)
 	a.contacts = append(a.contacts, c)
 	a.selected = len(a.contacts) - 1
+	a.restoreHistoryView(c.ID)
 	a.contactScope = "active"
 	a.contactSearch = ""
-	a.screen = viewChat
 	a.aux = ""
 	a.composerPanel = ""
 	a.composerFocusModel = false
@@ -574,6 +582,9 @@ func (a *appModel) closeAux() {
 	if a.aux == "model" && a.modelOpActive {
 		return
 	}
+	was := a.aux
+	wasModelKind := a.modelPanelKind
+	wasContextIssue := a.taskContextIssueID
 	switch a.composerPanel {
 	case composerPanelModel:
 		a.composerFocusModel = true
@@ -581,46 +592,57 @@ func (a *appModel) closeAux() {
 		a.composerFocusContext = true
 	}
 	a.composerPanel = ""
-	switch a.aux {
+	a.modelPanelKind = ""
+	switch was {
 	case "sources":
-		a.focusHistory = false
+		a.focusSources = true
 	case "model":
 		a.modelForm = nil
 		a.modelPanelMessage = ""
 		a.modelPanelError = ""
+		if wasModelKind == "work" {
+			a.focusIssueModel = true
+		}
+	case "task-context":
+		if wasContextIssue != "" {
+			a.focusIssueContext = true
+		}
 	case "issue-result":
 		a.closeIssueResult()
 		return
 	}
 	a.aux = ""
+	a.taskContextIssueID = ""
 }
 
 func (a *appModel) openSources(messageID int) {
 	a.aux = "sources"
 	a.composerPanel = ""
+	a.contactHistoryFull = nil
 	a.auxMessage = messageID
+	a.focusSources = false
 }
 
 func (a *appModel) openHistory() {
-	a.screen = viewHistory
 	a.aux = ""
 	a.composerPanel = ""
-	a.historyQuery = ""
-	a.contactHistory = nil
 	a.contactHistoryFull = nil
-	a.contactHistoryBusy = false
-	a.contactHistoryDetailBusy = false
-	a.contactHistoryError = ""
-	a.contactHistoryGen++
-	a.contactHistoryDetailGen++
-	a.focusHistoryOpen = true
+	a.openDetail(detailHistory)
 }
 
 func (a *appModel) backToChat() {
 	if a.linkReturnTarget == (markdownLinkTarget{}) {
 		a.markdownLinkFocus = markdownLinkTarget{}
 	}
-	a.screen = viewChat
+	if a.contactHistoryFull != nil {
+		a.contactHistoryFull = nil
+	}
+	if a.aux != "" {
+		a.closeAux()
+	}
+	if a.workspaceOpen {
+		a.closeDetail()
+	}
 	a.highlight = ""
 	a.focusHistory = true
 }
@@ -683,7 +705,15 @@ func (a *appModel) viewInConversation(entryID string) {
 			continue
 		}
 		a.highlight = entryID
-		a.screen = viewChat
+		if a.contactHistoryFull != nil {
+			a.contactHistoryFull = nil
+		}
+		if a.aux != "" {
+			a.closeAux()
+		}
+		if a.workspaceOpen {
+			a.closeDetail()
+		}
 		a.scrollTo = len(a.revealedEntries()) + i
 		return
 	}
@@ -698,7 +728,15 @@ func (a *appModel) viewInConversation(entryID string) {
 		c.Revealed = append(c.Revealed, entryID)
 	}
 	a.highlight = entryID
-	a.screen = viewChat
+	if a.contactHistoryFull != nil {
+		a.contactHistoryFull = nil
+	}
+	if a.aux != "" {
+		a.closeAux()
+	}
+	if a.workspaceOpen {
+		a.closeDetail()
+	}
 	a.scrollTo = a.revealIndex()
 }
 
