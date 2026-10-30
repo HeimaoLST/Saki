@@ -118,7 +118,7 @@ func issueToolDefinitions() []issueToolDefinition {
 			},
 		},
 		{
-			Name: "issue_get", Description: "Read one authorized issue's goal, structured requirements, bounded executions and pending supplement count. Read-only; never infer an issue from GUI selection.",
+			Name: "issue_get", Description: "Read one authorized issue's goal, structured requirements, bounded executions, pending supplement count, and recorded result excerpt/files when available. Read-only; use this to inspect delegated work instead of repeating it; never infer an issue from GUI selection.",
 			InputSchema: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
@@ -140,7 +140,7 @@ func issueToolDefinitions() []issueToolDefinition {
 			},
 		},
 		{
-			Name: "issue_action", Description: "Apply one explicit user-authorized issue action through Nagi's existing issue path, including wait for missing information and resume. Do not use for ordinary discussion. Ambiguous/missing targets return candidates; no operation is accepted without real Runtime IDs.",
+			Name: "issue_action", Description: "Apply one explicit user-authorized issue action through Nagi's existing issue path, including wait for missing information and resume. Do not use for ordinary discussion. A run action's accepted receipt means the issue work started, not completed; use issue_get for progress/results and do not duplicate the delegated work in conversation. Ambiguous/missing targets return candidates; no operation is accepted without real Runtime IDs.",
 			InputSchema: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
