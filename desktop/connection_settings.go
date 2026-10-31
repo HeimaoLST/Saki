@@ -116,7 +116,9 @@ func (s *connectionSettings) validated() (connectionConfig, bool) {
 // and editing this form never starts a model request or writes configuration.
 func (s *connectionSettings) view(c *ui.Context, t *ui.Theme, actions connectionSettingsActions) {
 	ui.Column(c).Gap(10).Children(func() {
-		ui.Text(c, "Connect a model to start working with your contacts.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		if strings.TrimSpace(s.EffectiveSummary) == "" {
+			ui.Text(c, "Connect a model to start working with your contacts.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		}
 		if s.Error != "" {
 			ui.Text(c, s.Error).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
 		}
@@ -152,7 +154,7 @@ func (s *connectionSettings) view(c *ui.Context, t *ui.Theme, actions connection
 		s.field(c, t, "WorkingDirectory", "Default working directory", "/absolute/path/to/project", &s.Draft.WorkingDirectory, false)
 		ui.Text(c, "Defaults apply to new work. Existing sessions keep their model, limits and working directory.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 		ui.Row(c).Gap(8).Children(func() {
-			ui.PrimaryButton(c, "Save configuration").Label("Save configuration").FontSize(13).MinHeight(32).Disabled(s.Busy).OnClick(func() {
+			ui.PrimaryButton(c, "Save configuration").Label("Save configuration").FontSize(typeAction).MinHeight(32).Disabled(s.Busy).OnClick(func() {
 				if config, ok := s.validated(); ok && actions.Save != nil {
 					actions.Save(config)
 				}

@@ -15,6 +15,15 @@
 - **Disabled 与原因**：沿 MyGo 官方 disabled 语义和默认 opacity，不为候选 4.5 对比度加 patch，也不改禁用行为。浅色约 2.94:1、深色约 4.33:1 记录为当前适配事实，不列为本轮必过门槛；真实禁用/AX 保留，必要原因、当前有效模型和失败/容量信息必须在相邻可读文字中可见，不能只藏在不可聚焦 tooltip。
 - **历史约束**：本文早期 #90/#130 的字号、覆盖抽屉、所有次动作底面等具体数值和布局仍可作为历史证据，但不再约束当前实现。发现与 #216 冲突时，按 #216 记录偏离并更新对应实现事实。
 
+### UI 硬约束首切片（候选实现，2026-10-31）
+
+代码来源为 `6956d30` 之上的候选实现事实；最终以父审固定的 source SHA 与合入记录为准，不依赖瞬时 Git 状态。规范与 HTML 逐字取自 PM `5e9a5546f6368c641819daebc1a77cd5feeb77f5`：`desktop-workbench.md` blob `a69e29bb9239342def1e3e2bcff3378159223f3d`、`desktop-workbench.html` blob `4bdb9c3432f30c9f5c517972dc279e9d519436f3`；未 merge PM 分支，也未改两份权威文字/HTML。
+
+- **字号**：应用常量为 20/16/14/12 四档；页面标题 20，主要正文与局部分组 16，控件/列表 14，辅助 12。Markdown H1 为 20，H2–H6 为 16，用字重、留白和语义层级区分；代码/标签为 14/12。normalizer 以完整 override copy 起点，只覆盖字号与派生倍率，保留 CodeBlockBackground/Border/Radius/Padding、CodeFont、链接等原 override 语义；用户原始 Markdown 不改写。产品 tooltip 走官方 `TooltipBase` 共同入口，采用 12 辅助字号；平台 OS 菜单不受应用控制。
+- **选择器**：三个下拉（Contact scope、Issue filter、Edit contact）使用固定 MyGo `SelectBase`，显示当前值，不绘制 chevron；保留 32 高、Hovered/Pressed/Focused 反馈、当前值和长列表 `Scroll`。键盘/AX 在源码与 Tester 契约中保留，End/Enter 与实际滚动由 Tester 回归验证；真实 native/AX 仍未验证。composer model 按钮的自绘 chevron 也移除；没有修改 framework patch 或另造 controller。
+- **文案与容器**：产品可见模板不再使用“·”作为分隔符；用户/Agent 原文、文件内容、历史 caller Name 与 raw tool 内容原样保留。`taskContextItem.inputName()` 继续使用既有 canonical wire/identity `Name · file Source`，UI read-only 改按 Name 与 Source 分行，不改变 wire。移除 reader “File reading” 与 Table 独占说明（表格改用既有 RoleTable accessibility label）及五条纯分组 Divider；Appearance 只保留 System/Light/Dark 名称、唯一选中边框、System 实际明暗与保存失败；Connection 的 Save/Apply/Test 说明收敛到表单一处。装饰 card/table 边界用 0.5，输入/focus boundary 保留语义 1。
+- **证据**：静态 audit 在 `/private/tmp/saki-gui-218-ui-constraints-20261031/audit-before.txt` 与 `audit-after.txt`；父审的 d046 key 图 12 对保留在 `.../reviews/d046…/`，本轮进一步只保留 Appearance/reader 四个受影响 key 在唯一 source-diff review 目录；适用行为/几何/clipboard/作用域/草稿/焦点回归见 receipt；尚未执行 full/race/同源包/native/IME/online，不将 headless 证据写成原生通过。
+
 ## 已确认需求与交付边界
 
 需求／产品决定（用户确认，#44）：首次使用无需先定义 agent。添加联系人即得到可输入的默认通用助手；name／purpose／instructions／workspace 为可选设置。联系人 profile 与宿主连接分开；#116 在 GUI 提供宿主模型连接的首用配置。
@@ -869,7 +878,7 @@ type resolvedTheme struct {
 | `warning_bg` | 仅既有 `workbenchTheme.WorkWarningBg`，本切片没有当前消费者 |
 | `disabled_text` / `disabled_bg` | `ui.Theme` 没有禁用前景/背景接口，不能静态接入 4.5 表值 |
 
-`SurfacePressed` 使用 `disabled_bg` 的中性不透明值；`Scrollbar` 使用不透明 muted（不再叠加项目自定义透明层）。Markdown 的链接取 `Theme.Accent`；代码 span/块沿用框架默认的 `Theme.Text` alpha 底色与 `Theme.Border` 边界；tooltip 继续使用 `ui.Theme.inverse` 的默认 `Text`/`Background` 反转。普通工具不额外设 `Background` 覆盖 Button 的既有 hover/pressed。
+`SurfacePressed` 使用 `disabled_bg` 的中性不透明值；`Scrollbar` 使用不透明 muted（不再叠加项目自定义透明层）。Markdown 的链接取 `Theme.Accent`；代码 span/块沿用框架默认的 `Theme.Text` alpha 底色与 `Theme.Border` 边界；产品 tooltip 由 `appTooltip`/官方 `TooltipBase` 使用 Text/Background 反转并固定 12 辅助字号；未改框架或 palette 角色。普通工具不额外设 `Background` 覆盖 Button 的既有 hover/pressed。
 
 **实际对比与限制**：本地按 sRGB/alpha 合成的记录在 `/private/tmp/saki-gui-218-palette/contrast-actual-v2.json`。正文/辅助文字、selected、accent 三态、focus、control_border、选择文字、Markdown 链接/代码、tooltip 的已接角色通过目标对比；muted 在 pressed 中性底为 4.61:1（浅）/6.09:1（深），满足实际 copy/attach 状态的 4.5 目标。关键限制是 MyGo v0.7.3 `paint.go:257-260` 对 `flagDisabled` 统一乘 `opacity *= 0.5`，Theme 没有 DisabledText/Bg 配置；按实际合成，浅色 disabled 前景/底色约 2.94:1，深色约 4.33:1，不能拿静态 `disabled_text/disabled_bg` 的 4.60/5.40 写成渲染通过。没有绕过 Disabled 语义、改 framework/patch 或伪造颜色。该限制保留给父/后续框架接缝判断；其余映射不因此回退。
 

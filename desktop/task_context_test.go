@@ -369,7 +369,7 @@ func exerciseTaskContextView(t *testing.T, dark bool) {
 	if len(tc.snapshot()) != 2 || tc.snapshot()[1].Source != path || tc.snapshot()[1].Name != "notes.txt" {
 		t.Fatalf("UI file import = %+v", tc.snapshot())
 	}
-	if !tr.HasText("Source · "+path) || !tr.HasText("old file text") {
+	if !tr.HasText("Source: "+path) || !tr.HasText("old file text") {
 		t.Fatalf("file card or preview missing: %v", tr.Texts())
 	}
 	if err := os.WriteFile(path, []byte("new file text"), 0o600); err != nil {
@@ -449,7 +449,7 @@ func TestTaskContextEmptyFilePreviewCopyAndRefresh(t *testing.T) {
 	tc.previewID = item.ID
 	tr := taskContextTester(tc, false)
 	tr.Frame()
-	if !tr.HasText("Preview · Empty brief") || !tr.HasText("Source · "+path) {
+	if !tr.HasText("Preview: Empty brief") || !tr.HasText("Source: "+path) {
 		t.Fatalf("empty snapshot preview missing: %v", tr.Texts())
 	}
 	if err := tr.Click("Copy context text"); err != nil {

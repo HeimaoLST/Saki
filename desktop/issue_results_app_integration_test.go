@@ -310,7 +310,7 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 	if err := issueResultClick(h, "More issue actions"); err != nil {
 		t.Fatal(err)
 	}
-	if err := issueResultClick(h, "Open result · run 1"); err != nil {
+	if err := issueResultClick(h, "Open result: run 1"); err != nil {
 		t.Fatal(err)
 	}
 	h.pump.wait(func() bool {
@@ -324,7 +324,7 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 	if files[0].ToolName != "write" || files[0].CallID != "call-write" {
 		t.Fatalf("first run source = %+v", files[0])
 	}
-	issueResultRequireTexts(t, h, "Run 1 · Ship visible results", "result.txt", "Reported by write")
+	issueResultRequireTexts(t, h, "Run 1: Ship visible results", "result.txt", "Reported by write")
 
 	if got, err := issueResultClickCopy(h, "Copy result"); err != nil {
 		t.Fatal(err)
@@ -511,7 +511,7 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 	if files[0].ToolName != "edit" || files[0].CallID != "call-edit" {
 		t.Fatalf("second run source = %+v", files[0])
 	}
-	issueResultRequireTexts(t, h, "Run 2 · Ship visible results", "modified result", "Reported by edit")
+	issueResultRequireTexts(t, h, "Run 2: Ship visible results", "modified result", "Reported by edit")
 	if err := issueResultClick(h, "Read file 1: result.txt"); err != nil {
 		t.Fatal(err)
 	}
@@ -568,7 +568,7 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 	if provider.count() != beforeRestart {
 		t.Fatalf("result page issued provider requests: %d -> %d", beforeRestart, provider.count())
 	}
-	issueResultRequireTexts(t, restarted, "Run 2 · Ship visible results", "Reported by edit")
+	issueResultRequireTexts(t, restarted, "Run 2: Ship visible results", "Reported by edit")
 	var selectedID string
 	restarted.pump.do(func() { selectedID = restarted.app.selectedContact().ID })
 	if selectedID != contactID {
@@ -1008,7 +1008,7 @@ func TestIssueResultNavigationEntryAndReturnWideNarrow(t *testing.T) {
 				t.Fatalf("width %d expand run records: %v", width, err)
 			}
 		}
-		if err := issueResultClickAt(h, width, 720, "View execution · run 1"); err != nil {
+		if err := issueResultClickAt(h, width, 720, "View execution: run 1"); err != nil {
 			t.Fatalf("width %d select run for observable work identity: %v", width, err)
 		}
 		if err := issueResultTesterRunAt(h, width, 720, func(tr *ui.Tester) error {
@@ -1100,14 +1100,14 @@ func TestIssueResultNavigationEntryAndReturnWideNarrow(t *testing.T) {
 		// below the explicit work section, so this exercises actual scrolling and
 		// then returns to that exact row without closing the work drawer.
 		if err := issueResultTesterRunAt(h, width, 720, func(tr *ui.Tester) error {
-			return scrollIssueResultActionIntoView(tr, "Open result · run 1", width, 720)
+			return scrollIssueResultActionIntoView(tr, "Open result: run 1", width, 720)
 		}); err != nil {
 			t.Fatalf("width %d prepare run row: %v", width, err)
 		}
 		var runVisible bool
 		var runRect ui.Rect
 		if err := issueResultTesterRunAt(h, width, 720, func(tr *ui.Tester) error {
-			runRect, runVisible = tr.Find("Open result · run 1")
+			runRect, runVisible = tr.Find("Open result: run 1")
 			runVisible = runVisible && runRect.W > 0 && runRect.H > 0 && runRect.Y >= 0 && runRect.Y+runRect.H <= 720
 			return nil
 		}); err != nil {
@@ -1118,7 +1118,7 @@ func TestIssueResultNavigationEntryAndReturnWideNarrow(t *testing.T) {
 		if !runVisible || runBeforeScrollY <= 0 {
 			t.Fatalf("width %d run entry not reached with nonzero detail scroll: visible=%v rect=%+v scrollY=%v", width, runVisible, runRect, runBeforeScrollY)
 		}
-		if err := issueResultClickAt(h, width, 720, "Open result · run 1"); err != nil {
+		if err := issueResultClickAt(h, width, 720, "Open result: run 1"); err != nil {
 			t.Fatalf("width %d run entry: %v", width, err)
 		}
 		h.pump.wait(func() bool {
@@ -1130,7 +1130,7 @@ func TestIssueResultNavigationEntryAndReturnWideNarrow(t *testing.T) {
 			tr.Key(0, ui.KeyEscape)
 			tr.Frame()
 			runClosed = !tr.HasText("Run results")
-			runFocused = tr.Focused("Open result · run 1")
+			runFocused = tr.Focused("Open result: run 1")
 			return nil
 		}); err != nil {
 			t.Fatal(err)
@@ -1337,7 +1337,7 @@ func TestIssueResultPageReloadErrorKeepsReadableBody(t *testing.T) {
 		LoadError: "Execution history is unavailable: injected",
 		Notice:    "Runtime session working directory is unavailable; file paths are shown as reported.",
 		Panel: issueResultPanelState{
-			RunLabel: "Run 2 · Reload error", RunStatus: "Completed",
+			RunLabel: "Run 2: Reload error", RunStatus: "Completed",
 			Response: "previous readable body\n", Files: []issueResultFile{file},
 		},
 	}
@@ -1361,7 +1361,7 @@ func issueResultAppPreview(scene string, width int) *appModel {
 		Open: true, OwnerContactID: ct.ID, IssueID: ct.SelectedIssueID, ExecutionID: "exec-preview",
 		SessionID: "session-preview", TaskID: "task-preview", MessageID: "msg-preview", Generation: 1,
 		Panel: issueResultPanelState{
-			RunLabel: "Run 2 · Ship visible results", RunStatus: "Completed",
+			RunLabel: "Run 2: Ship visible results", RunStatus: "Completed",
 			Response: "# Recorded output\n\nResult body with `code`.\n\n```go\nfunc main() {}\n```\n",
 			Files:    []issueResultFile{file},
 		},
@@ -1429,7 +1429,7 @@ func issueResultAppPreview(scene string, width int) *appModel {
 		})
 	case "multiple":
 		second := issueResultPanelFixtureFile("preview-two", file.Path, `{"path":"/Users/you/Workspace/Saki/report.txt","applied":1}`)
-		page.Panel.RunLabel = "Run 3 · Ship visible results"
+		page.Panel.RunLabel = "Run 3: Ship visible results"
 		page.Panel.Files = []issueResultFile{file, second}
 	}
 	a.issueResult = page
@@ -1488,13 +1488,13 @@ func TestIssueResultAppPreviewsAlwaysWriteHeadlessPNGs(t *testing.T) {
 			}
 		}
 		readerWant := map[string][]string{
-			"markdown":   {"File reading", "Markdown", "中文结果", "名称", "完成"},
-			"plain":      {"File reading", "Plain text", "# 这不是标题", "| 不是 | 表格 |"},
-			"missing":    {"File reading", "No file exists at the reported path"},
-			"readerror":  {"File reading", "permission denied"},
-			"source":     {"File reading", "Source & raw record"},
-			"long":       {"File reading", "Markdown", "很长的中文结果文件名"},
-			"navigation": {"Issue", "Read latest result", "Open result · run 1"},
+			"markdown":   {"中文结果", "名称", "完成"},
+			"plain":      {"# 这不是标题", "| 不是 | 表格 |"},
+			"missing":    {"No file exists at the reported path"},
+			"readerror":  {"permission denied"},
+			"source":     {"Source & raw record"},
+			"long":       {"很长的中文结果文件名"},
+			"navigation": {"Issue", "Read latest result", "Open result: run 1"},
 		}
 		for _, want := range readerWant[scene.name] {
 			if !tr.HasText(want) {
@@ -1533,7 +1533,7 @@ func TestIssueResultPageReloadDuringCheckDrainsStaleCallback(t *testing.T) {
 		Open: true, OwnerContactID: ct.ID, IssueID: issue.ID, ExecutionID: execution.ID,
 		SessionID: "old-session", TaskID: "old-task", MessageID: "old-message", Generation: 1,
 		Panel: issueResultPanelState{
-			RunLabel: "Run 1 · old label", RunStatus: "Running",
+			RunLabel: "Run 1: old label", RunStatus: "Running",
 			Files: []issueResultFile{file}, Selected: key, InspectFor: key,
 		},
 	}
@@ -1565,7 +1565,7 @@ func TestIssueResultPageReloadDuringCheckDrainsStaleCallback(t *testing.T) {
 	if sessionID != "new-session" || taskID != "new-task" || messageID != "new-message" {
 		t.Fatalf("reload kept stale execution identity: %s/%s/%s", sessionID, taskID, messageID)
 	}
-	if status != issueExecutionLabel(execution) || runLabel != "Run 1 · reload while checking" {
+	if status != issueExecutionLabel(execution) || runLabel != "Run 1: reload while checking" {
 		t.Fatalf("reload kept stale run label/status: %q / %q", runLabel, status)
 	}
 	if loadError == "" {

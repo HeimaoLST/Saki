@@ -7,16 +7,17 @@ import "github.com/egoist/mygo/ui"
 // app-only set names reading surfaces that must not be reused as button faces.
 // Composer and workbench type roles are shared by the existing render paths
 // rather than a second design system. Body and metadata sizes keep the
-// pre-existing 15px reading text and 12px supporting text.
+// 16px reading/local groups and 12px supporting text.
 const (
+	// Four app text sizes: supporting 12, controls 14, reading/local groups 16, page 20.
 	typeContactTitle float32 = 20
-	typePageTitle    float32 = 18
-	typeGroupTitle   float32 = 14
-	typeBody         float32 = 15
-	typeAction       float32 = 13
+	typePageTitle    float32 = 20
+	typeGroupTitle   float32 = 16
+	typeBody         float32 = 16
+	typeAction       float32 = 14
 	typeMeta         float32 = 12
 	typeRailName     float32 = 14
-	typeRailSummary  float32 = 13
+	typeRailSummary  float32 = 12
 )
 
 type workbenchTheme struct {
@@ -100,9 +101,67 @@ func resolveWorkbenchTheme(dark bool) workbenchTheme {
 	}
 }
 
+// selectWithoutChevron uses MyGo's official SelectBase so dropdown triggers
+// show the current value and keep keyboard/a11y behavior without the framework's
+// decorative chevron or elevated popup shadow.
+func selectWithoutChevron(c *ui.Context, selected *string, options []string, label string) ui.Element {
+	t := c.Theme()
+	sel := ui.SelectBase(c, selected)
+	trigger := sel.Trigger.Label(label).FontSize(typeAction).MinHeight(32).FillWidth().
+		Justify(ui.Start).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius).
+		Background(t.Surface).Border(1, t.Border).TextColor(t.Text)
+	if trigger.Pressed() {
+		trigger.Background(t.SurfacePressed)
+	} else if trigger.Hovered() {
+		trigger.Background(t.SurfaceHover)
+	}
+	if trigger.Focused() {
+		trigger.BorderColor(t.Focus)
+	}
+	trigger.Children(func() {
+		ui.Text(c, *selected).FontSize(typeAction).SingleLine().TextColor(t.Text)
+	})
+	sel.Popup(func(panel ui.Element) {
+		panel.Padding(t.Space(1)).Radius(t.Radius).Background(t.Background).Border(0.5, t.Border)
+		ui.Scroll(c).MaxHeight(t.Space(80)).Children(func() {
+			for _, option := range options {
+				item := sel.Item(option).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Space(1))
+				switch {
+				case item.Highlighted():
+					item.Background(t.Accent).TextColor(t.AccentText)
+				case option == *selected:
+					item.Background(t.Surface)
+				}
+				item.Children(func() { ui.Text(c, option).FontSize(typeAction).SingleLine() })
+			}
+		})
+	})
+	trigger.OnChange(func() { trigger.Focus() })
+	return trigger
+}
+
+// appTooltip keeps MyGo's official tooltip controller but gives product tips
+// the app's supporting size and flat semantic colors. The anchor's Description
+// remains the accessible source; TooltipBase owns hover, keyboard, press and
+// Escape dismissal.
+func appTooltip(c *ui.Context, anchor ui.Element, text string) ui.Element {
+	if text == "" {
+		return anchor
+	}
+	anchor.Description(text)
+	t := c.Theme()
+	ui.TooltipBase(c, anchor, func(tip ui.Element) {
+		tip.MaxWidth(t.Space(80)).Padding(t.Space(1.25), t.Space(2)).Radius(t.Space(1.25)).
+			Background(t.Text).TextColor(t.Background).FontSize(typeMeta)
+		tip.Children(func() { ui.Text(c, text).FontSize(typeMeta) })
+		tip.AttachTo(anchor, ui.AnchorTop, ui.AnchorBottom)
+	})
+	return anchor
+}
+
 // secondaryButton is the visible secondary-action face; PrimaryButton stays
 // reserved for the main action. Do not set Background on this control: MyGo's
 // styleButton only supplies hover/pressed while its default face is intact.
 func secondaryButton(c *ui.Context, label string) ui.Element {
-	return ui.Button(c, label).FontSize(13).FontWeight(500).MinHeight(32).Padding(6, 10)
+	return ui.Button(c, label).FontSize(typeAction).FontWeight(500).MinHeight(32).Padding(6, 10)
 }

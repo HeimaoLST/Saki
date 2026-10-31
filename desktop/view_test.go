@@ -759,19 +759,19 @@ func TestComposerModelAndTaskContextStayInlineAndReturnFocus(t *testing.T) {
 		t.Fatalf("model close = aux=%q panel=%q focused=%v", a.aux, a.composerPanel, tr.Focused("Conversation model"))
 	}
 
-	if err := tr.Click("Task context · 2"); err != nil {
+	if err := tr.Click("Task context: 2"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.aux != "task-context" || !a.composerInlineAux() || !tr.HasText("Conversation · Saki") || !tr.HasText("资料一") {
+	if a.aux != "task-context" || !a.composerInlineAux() || !tr.HasText("Conversation: Saki") || !tr.HasText("资料一") {
 		t.Fatalf("inline context = aux=%q panel=%q texts=%v", a.aux, a.composerPanel, tr.Texts())
 	}
 	if err := tr.Click("Close task context"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.aux != "" || a.composerPanel != "" || !tr.Focused("Task context · 2") {
-		t.Fatalf("context close = aux=%q panel=%q focused=%v", a.aux, a.composerPanel, tr.Focused("Task context · 2"))
+	if a.aux != "" || a.composerPanel != "" || !tr.Focused("Task context: 2") {
+		t.Fatalf("context close = aux=%q panel=%q focused=%v", a.aux, a.composerPanel, tr.Focused("Task context: 2"))
 	}
 
 	// A model open request refused by an active model transaction must not
@@ -790,7 +790,7 @@ func TestComposerModelAndTaskContextStayInlineAndReturnFocus(t *testing.T) {
 			ct.Context.items = []taskContextItem{{ID: "reject-1", Name: "资料", Text: "保留"}}
 			tr := ui.NewTester(a.view, 1040, 720)
 			tr.Frame()
-			if err := tr.Click("Task context · 1"); err != nil {
+			if err := tr.Click("Task context: 1"); err != nil {
 				t.Fatal(err)
 			}
 			tr.Frame()
@@ -1019,7 +1019,7 @@ func TestPreviewComposerTypography(t *testing.T) {
 
 func contextLabelForTest(count int) string {
 	if count > 0 {
-		return fmt.Sprintf("Task context · %d", count)
+		return fmt.Sprintf("Task context: %d", count)
 	}
 	return "Task context"
 }

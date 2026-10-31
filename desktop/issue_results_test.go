@@ -16,7 +16,7 @@ func TestDeriveIssueResultFilesOnlyFromSuccessfulWriteEditResults(t *testing.T) 
 	root := t.TempDir()
 	writePath := filepath.Join(root, "created.txt")
 	editPath := filepath.Join(root, "edited.txt")
-	writeResult := fmt.Sprintf(`{ "path" : %q, "bytes_written" : 7 }`, writePath)
+	writeResult := fmt.Sprintf(`{ "path": %q, "bytes_written": 7 }`, writePath)
 	editResult := fmt.Sprintf(`{"path":%q,"applied":1}`, editPath)
 	source := issueResultSource{
 		ExecutionID: "exec-1", SessionID: "session-1", TaskID: "task-1", MessageID: "msg-1",
@@ -376,7 +376,7 @@ func issueResultPanelFixtureFile(key, path, raw string) issueResultFile {
 func TestIssueResultPanelCopiesExactResultMarkdownAndCode(t *testing.T) {
 	source := "# Result\n\nExact **raw** source.\n\n```go\nfunc main() {\n  println(\"hi\")\n}\n```\n"
 	state := &issueResultPanelState{
-		RunLabel:  "Run 2 · result · Ship the issue result panel",
+		RunLabel:  "Run 2: result: Ship the issue result panel",
 		RunStatus: "Completed",
 		Response:  source,
 		Files: []issueResultFile{
@@ -385,7 +385,7 @@ func TestIssueResultPanelCopiesExactResultMarkdownAndCode(t *testing.T) {
 	}
 	tr := issueResultPanelTester(state, issueResultPanelActions{SelectFile: func(string) {}}, 600, 900, false)
 	tr.Frame()
-	for _, want := range []string{"Run results", "Run 2 · result · Ship the issue result panel", "Completed", "Result", "Reported files", "report.md", "Reported by write", "Read file 1: report.md", "Read file →"} {
+	for _, want := range []string{"Run results", "Run 2: result: Ship the issue result panel", "Completed", "Result", "Reported files", "report.md", "Reported by write", "Read file 1: report.md", "Read file →"} {
 		if !tr.HasText(want) {
 			t.Fatalf("missing %q in %q", want, tr.Texts())
 		}
@@ -410,7 +410,7 @@ func TestIssueResultPanelCopiesExactResultMarkdownAndCode(t *testing.T) {
 func TestIssueResultPanelNoResponseStillShowsReportedFilesAndClose(t *testing.T) {
 	file := issueResultPanelFixtureFile("one", "/tmp/workspace/created.txt", `{"path":"/tmp/workspace/created.txt","bytes_written":1}`)
 	state := &issueResultPanelState{
-		RunLabel:  "Run 1 · result · No response case",
+		RunLabel:  "Run 1: result: No response case",
 		RunStatus: "Completed",
 		Files:     []issueResultFile{file},
 	}
@@ -438,7 +438,7 @@ func TestIssueResultPanelPreviewReadsCurrentFileAndCopiesExactPath(t *testing.T)
 	}
 	file := issueResultPanelFixtureFile("one", path, fmt.Sprintf(`{"path":%q,"bytes_written":14}`, path))
 	state := &issueResultPanelState{
-		RunLabel: "Run 1 · result · Current file", RunStatus: "Completed", Response: "Result body.",
+		RunLabel: "Run 1: result: Current file", RunStatus: "Completed", Response: "Result body.",
 		Files: []issueResultFile{file}, Selected: issueResultFileKey(file),
 	}
 	inspection := inspectIssueResultFile(file)
@@ -449,7 +449,7 @@ func TestIssueResultPanelPreviewReadsCurrentFileAndCopiesExactPath(t *testing.T)
 		t.Fatal(err)
 	}
 	tr.Frame()
-	for _, want := range []string{"File reading", "Current file", "alpha-current", "Copy current file", "Copy path", "Check again"} {
+	for _, want := range []string{"Current file", "alpha-current", "Copy current file", "Copy path", "Check again"} {
 		if !tr.HasText(want) {
 			t.Fatalf("missing %q in %q", want, tr.Texts())
 		}
@@ -485,7 +485,7 @@ func TestIssueResultPanelMissingFileKeepsPathAndRecordCopyAndRetries(t *testing.
 	key := issueResultFileKey(file)
 	inspection := inspectIssueResultFile(file)
 	state := &issueResultPanelState{
-		RunLabel: "Run 1 · result · Missing file", RunStatus: "Completed", Response: "Created a file.",
+		RunLabel: "Run 1: result: Missing file", RunStatus: "Completed", Response: "Created a file.",
 		Files: []issueResultFile{file}, Selected: key, Inspection: &inspection, InspectFor: key, Checking: true,
 		ActionFor: key, Action: issueResultFileAction{Path: path, Err: "Could not open the current file: no handler"},
 	}
@@ -508,7 +508,7 @@ func TestIssueResultPanelMissingFileKeepsPathAndRecordCopyAndRetries(t *testing.
 		t.Fatal(err)
 	}
 	tr.Frame()
-	for _, want := range []string{"File reading", "Checking the current file…", "Current file", "No file exists at the reported path", "Could not open the current file: no handler", "Copy path", "Check again", "Source & raw record"} {
+	for _, want := range []string{"Checking the current file…", "Current file", "No file exists at the reported path", "Could not open the current file: no handler", "Copy path", "Check again", "Source & raw record"} {
 		if !tr.HasText(want) {
 			t.Fatalf("missing %q in %q", want, tr.Texts())
 		}
@@ -566,7 +566,7 @@ func TestIssueResultPanelUnsupportedAndOversizeOfferExternalOpen(t *testing.T) {
 			file := issueResultPanelFixtureFile(tc.name, tc.path, fmt.Sprintf(`{"path":%q,"bytes_written":1}`, tc.path))
 			inspection := inspectIssueResultFile(file)
 			state := &issueResultPanelState{
-				RunLabel: "Run 1 · result · " + tc.name, RunStatus: "Completed", Files: []issueResultFile{file},
+				RunLabel: "Run 1: result: " + tc.name, RunStatus: "Completed", Files: []issueResultFile{file},
 				Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
 			}
 			opened, revealed := 0, 0
@@ -611,7 +611,7 @@ func TestIssueResultPanelEmptyFilePreviewAndCopyAreValid(t *testing.T) {
 		t.Fatalf("empty inspection = %+v", inspection)
 	}
 	state := &issueResultPanelState{
-		RunLabel: "Run 1 · result · Empty file", RunStatus: "Completed", Files: []issueResultFile{file},
+		RunLabel: "Run 1: result: Empty file", RunStatus: "Completed", Files: []issueResultFile{file},
 		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
 	}
 	tr := issueResultPanelTester(state, issueResultPanelActions{}, 600, 700, false)
@@ -620,7 +620,7 @@ func TestIssueResultPanelEmptyFilePreviewAndCopyAreValid(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if !tr.HasText("File reading") || !tr.HasText("This file is empty (0 bytes).") || !tr.HasText("Copy current file") {
+	if !tr.HasText("Empty file (0 bytes).") || !tr.HasText("Copy current file") {
 		t.Fatalf("empty file preview missing: %q", tr.Texts())
 	}
 	tr.SetClipboard("sentinel")
@@ -637,7 +637,7 @@ func TestIssueResultPanelRepeatedPathKeepsCallIdentity(t *testing.T) {
 	first := issueResultPanelFixtureFile("one", path, `{"path":"/tmp/workspace/shared.txt","bytes_written":1}`)
 	second := issueResultPanelFixtureFile("two", path, `{"path":"/tmp/workspace/shared.txt","bytes_written":2}`)
 	state := &issueResultPanelState{
-		RunLabel: "Run 1 · result · Repeated path", RunStatus: "Completed",
+		RunLabel: "Run 1: result: Repeated path", RunStatus: "Completed",
 		Files: []issueResultFile{first, second},
 	}
 	tr := issueResultPanelTester(state, issueResultPanelActions{
@@ -681,7 +681,7 @@ func TestIssueResultPanelLongContentWrapsAtNarrowWidth(t *testing.T) {
 		Preview: longToken + "\n",
 	}
 	state := &issueResultPanelState{
-		RunLabel:  "Run 1 · result · " + strings.Repeat("A long run label that must wrap. ", 6),
+		RunLabel:  "Run 1: result: " + strings.Repeat("A long run label that must wrap. ", 6),
 		RunStatus: "Completed with a long status line that still wraps quietly", Response: longToken,
 		Files: []issueResultFile{file}, Selected: issueResultFileKey(file),
 		Inspection: &inspection, InspectFor: issueResultFileKey(file), SourceFor: issueResultFileKey(file),
@@ -724,7 +724,7 @@ func TestIssueResultPanelPreviewsAlwaysWriteHeadlessPNGs(t *testing.T) {
 	file := issueResultPanelFixtureFile("preview", path, fmt.Sprintf(`{"path":%q,"bytes_written":1}`, path))
 	inspection := issueResultFileInspection{Path: path, WorkingDirectory: file.WorkingDirectory, Exists: true, Regular: true, Preview: "current preview\n"}
 	state := &issueResultPanelState{
-		RunLabel: "Run 1 · result · Preview", RunStatus: "Completed",
+		RunLabel: "Run 1: result: Preview", RunStatus: "Completed",
 		Response: "# Result\n\nPreview body with `code`.\n\n```go\nfunc main() {}\n```\n",
 		Files:    []issueResultFile{file}, Selected: issueResultFileKey(file),
 		Inspection: &inspection, InspectFor: issueResultFileKey(file),
@@ -753,7 +753,7 @@ func TestIssueResultPanelCopyPathShowsReaderFailureFeedback(t *testing.T) {
 	file := issueResultPanelFixtureFile("copy", path, fmt.Sprintf(`{"path":%q,"bytes_written":8}`, path))
 	inspection := inspectIssueResultFile(file)
 	state := &issueResultPanelState{
-		RunLabel: "Run 1 · result · Copy failure", RunStatus: "Completed", Files: []issueResultFile{file},
+		RunLabel: "Run 1: result: Copy failure", RunStatus: "Completed", Files: []issueResultFile{file},
 		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
 	}
 	copyErr := errors.New("clipboard unavailable")
@@ -815,7 +815,7 @@ func TestIssueResultReaderRendersMarkdownAndCopiesOriginalBytes(t *testing.T) {
 	file := issueResultPanelFixtureFile("md", path, fmt.Sprintf(`{"path":%q,"bytes_written":%d}`, path, len(source)))
 	inspection := inspectIssueResultFile(file)
 	state := &issueResultPanelState{
-		RunLabel: "Run 1 · result · Markdown", RunStatus: "Completed", Files: []issueResultFile{file},
+		RunLabel: "Run 1: result: Markdown", RunStatus: "Completed", Files: []issueResultFile{file},
 		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
 	}
 	tr := issueResultPanelTester(state, issueResultPanelActions{SelectFile: func(string) {}}, 600, 900, false)
@@ -824,7 +824,7 @@ func TestIssueResultReaderRendersMarkdownAndCopiesOriginalBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	for _, want := range []string{"File reading", "Markdown", "中文标题", "这是中文段落", "第一项", "名称", "语言", "完成", "func main() {", "保留缩进"} {
+	for _, want := range []string{"中文标题", "这是中文段落", "第一项", "名称", "语言", "完成", "func main() {", "保留缩进"} {
 		if !tr.HasText(want) {
 			t.Fatalf("Markdown reader missing %q in %q", want, tr.Texts())
 		}
@@ -847,7 +847,7 @@ func TestIssueResultReaderKeepsOrdinaryTextPlain(t *testing.T) {
 	file := issueResultPanelFixtureFile("txt", path, fmt.Sprintf(`{"path":%q,"bytes_written":%d}`, path, len(source)))
 	inspection := inspectIssueResultFile(file)
 	state := &issueResultPanelState{
-		RunLabel: "Run 1 · result · Plain text", RunStatus: "Completed", Files: []issueResultFile{file},
+		RunLabel: "Run 1: result: Plain text", RunStatus: "Completed", Files: []issueResultFile{file},
 		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
 	}
 	tr := issueResultPanelTester(state, issueResultPanelActions{}, 600, 800, false)
@@ -856,15 +856,12 @@ func TestIssueResultReaderKeepsOrdinaryTextPlain(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if !tr.HasText("Plain text") {
-		t.Fatalf("plain-text reader label missing: %q", tr.Texts())
-	}
 	for _, want := range []string{"# 这不是标题", "`这不是 inline code`", "| 不是 | 表格 |"} {
 		if !tr.HasText(want) {
 			t.Fatalf("ordinary text was parsed as Markdown, missing %q in %q", want, tr.Texts())
 		}
 	}
-	if tr.HasText("Table · plain text") {
+	if _, ok := tr.Find("Table, wrapped plain text"); ok {
 		t.Fatalf("ordinary .txt was rendered as a Markdown table: %q", tr.Texts())
 	}
 }
@@ -879,7 +876,7 @@ func TestIssueResultReaderEscapeAndCloseReturnToFileRow(t *testing.T) {
 	file := issueResultPanelFixtureFile("return", path, fmt.Sprintf(`{"path":%q,"bytes_written":%d}`, path, len(source)))
 	inspection := inspectIssueResultFile(file)
 	state := &issueResultPanelState{
-		RunLabel: "Run 1 · result · Return", RunStatus: "Completed", Files: []issueResultFile{file},
+		RunLabel: "Run 1: result: Return", RunStatus: "Completed", Files: []issueResultFile{file},
 		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
 	}
 	tr := issueResultPanelTester(state, issueResultPanelActions{SelectFile: func(string) {}}, 600, 900, false)
@@ -889,12 +886,12 @@ func TestIssueResultReaderEscapeAndCloseReturnToFileRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if !tr.HasText("File reading") {
+	if !tr.HasText("reader return check") || !tr.Focused("Close reading") {
 		t.Fatalf("reader did not open: %q", tr.Texts())
 	}
 	tr.Key(0, ui.KeyEscape)
 	tr.Frame()
-	if tr.HasText("File reading") || !tr.HasText("Run results") || !tr.HasText(rowLabel) {
+	if tr.HasText("reader return check") || !tr.HasText("Run results") || !tr.HasText(rowLabel) {
 		t.Fatalf("Escape did not close only the reader: %q", tr.Texts())
 	}
 	if !tr.Focused(rowLabel) {
@@ -921,7 +918,7 @@ func TestIssueResultReaderShowsReadErrorWithCurrentPath(t *testing.T) {
 		ReadError: "Could not read the current file: permission denied",
 	}
 	state := &issueResultPanelState{
-		RunLabel: "Run 1 · result · Read error", RunStatus: "Completed", Files: []issueResultFile{file},
+		RunLabel: "Run 1: result: Read error", RunStatus: "Completed", Files: []issueResultFile{file},
 		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
 	}
 	tr := issueResultPanelTester(state, issueResultPanelActions{CheckFile: func(issueResultFile) {}}, 600, 800, false)
@@ -945,7 +942,7 @@ func TestIssueResultReaderLongChineseNameWrapsAtNarrowWidth(t *testing.T) {
 		Path: path, WorkingDirectory: file.WorkingDirectory, Exists: true, Regular: true, Preview: "# 中文\n",
 	}
 	state := &issueResultPanelState{
-		RunLabel: "Run 1 · result · 中文长名称", RunStatus: "Completed", Files: []issueResultFile{file},
+		RunLabel: "Run 1: result: 中文长名称", RunStatus: "Completed", Files: []issueResultFile{file},
 		Selected: issueResultFileKey(file), Inspection: &inspection, InspectFor: issueResultFileKey(file),
 	}
 	tr := issueResultPanelTester(state, issueResultPanelActions{}, 340, 900, false)

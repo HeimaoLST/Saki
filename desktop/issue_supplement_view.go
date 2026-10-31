@@ -27,10 +27,9 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 	if pending == 0 && len(batches) == 0 && !formOpen {
 		return
 	}
-	ui.Divider(c)
 	title := "Supplements"
 	if pending > 0 {
-		title = fmt.Sprintf("Supplements · %d pending", pending)
+		title = fmt.Sprintf("Supplements: %d pending", pending)
 	}
 	ui.Text(c, title).FontSize(14).FontWeight(600).TextColor(t.Text)
 	if auto {
@@ -38,7 +37,7 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 	} else {
 		ui.Text(c, "Automatic continuation stopped").FontSize(14).TextColor(t.Warning)
 	}
-	ui.Text(c, fmt.Sprintf("Current target · revision %d · %s", issue.RequirementsRevision, truncate(issue.Goal, 100))).
+	ui.Text(c, fmt.Sprintf("Current target: revision %d. %s", issue.RequirementsRevision, truncate(issue.Goal, 100))).
 		FontSize(14).LineHeight(1.35).TextColor(t.TextMuted)
 	if ledger != nil {
 		if active := ledger.activeBatch(target); active != nil {
@@ -76,7 +75,7 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 			for _, item := range pendingItems {
 				item := item
 				ui.Column(c).Padding(6).Radius(6).Background(t.Surface).Gap(2).Children(func() {
-					ui.Text(c, fmt.Sprintf("received r%d · %s", item.RequirementsRevision, truncate(item.Text, 180))).
+					ui.Text(c, fmt.Sprintf("received r%d: %s", item.RequirementsRevision, truncate(item.Text, 180))).
 						FontSize(14).LineHeight(1.35).TextColor(t.Text)
 					if a.issueSupplementPreviewID == item.ID {
 						ui.Row(c).Children(func() {
@@ -110,7 +109,7 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 			ui.TextArea(c, draft).Label("Add supplement to this issue").FontSize(14).Height(56).
 				Placeholder("Supplementary target, requirement, or correction")
 			ui.Row(c).Gap(6).Children(func() {
-				ui.PrimaryButton(c, "Save supplement").FontSize(13).OnClick(func() {
+				ui.PrimaryButton(c, "Save supplement").FontSize(typeAction).OnClick(func() {
 					if !a.saveIssueSupplement(ct, issue.ID, *draft) {
 						return
 					}
@@ -161,7 +160,7 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 				for _, item := range batch.Snapshot {
 					item := item
 					ui.Column(c).Gap(1).Children(func() {
-						ui.Text(c, fmt.Sprintf("received r%d · %s", item.RequirementsRevision, truncate(item.Text, 180))).
+						ui.Text(c, fmt.Sprintf("received r%d: %s", item.RequirementsRevision, truncate(item.Text, 180))).
 							FontSize(14).LineHeight(1.35).TextColor(t.Text)
 						if a.issueSupplementPreviewID == item.ID {
 							secondaryButton(c, "Close preview").OnClick(func() { a.issueSupplementPreviewID = "" })
@@ -176,7 +175,7 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 					ui.Text(c, "Local receipt save failed: "+batch.SaveError).FontSize(14).LineHeight(1.35).TextColor(t.Warning)
 				}
 				if batch.State == supplementBatchAccepted {
-					ui.Text(c, "Submitted to Runtime execution · "+shortExecutionID(batch.ExecutionID)+" · task "+batch.TaskID).
+					ui.Text(c, "Submitted to Runtime execution "+shortExecutionID(batch.ExecutionID)+", task "+batch.TaskID).
 						FontSize(14).TextColor(t.TextMuted)
 				}
 				if editable && (batch.State == supplementBatchRejected || batch.State == supplementBatchNotDispatched) {
@@ -221,7 +220,7 @@ func shortExecutionID(id string) string {
 func issueSupplementBatchLabel(batch *issueSupplementBatch) string {
 	switch batch.State {
 	case supplementBatchDispatching:
-		return "Batch dispatching · receipt pending"
+		return "Batch dispatching: receipt pending"
 	case supplementBatchAccepted:
 		return "Batch accepted by execution"
 	case supplementBatchRejected:
@@ -229,7 +228,7 @@ func issueSupplementBatchLabel(batch *issueSupplementBatch) string {
 	case supplementBatchNotDispatched:
 		return "Batch not dispatched"
 	case supplementBatchUnknown:
-		return "Batch unknown · check execution"
+		return "Batch unknown: check execution"
 	case supplementBatchCanceled:
 		return "Batch canceled / superseded"
 	default:

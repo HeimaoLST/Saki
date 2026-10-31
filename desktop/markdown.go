@@ -123,7 +123,7 @@ func markdownReader(c *ui.Context, source string, options markdownReaderOptions)
 			return true
 		}
 	}
-	st.opts.Theme = options.Theme
+	st.opts.Theme = normalizedMarkdownTheme(options.Theme)
 	st.opts.LinkElement = nil
 	if !options.PlainText && options.LinkScope != "" && options.LinkFocus != nil {
 		scope, focus, returnTarget, returnSeen := options.LinkScope, options.LinkFocus, options.LinkReturn, options.LinkReturnSeen
@@ -179,7 +179,7 @@ func markdownReaderCodeBlock(c *ui.Context, b *markdown.CodeBlockView, st *markd
 		head := ui.Row(c).AlignItems(ui.Center).Padding(em(0.35), em(0.4), 0, em(th.CodeBlockPadding)).Key("code-head")
 		head.Children(func() {
 			if b.Language != "" {
-				ui.Text(c, b.Language).FontSize(max(12, em(0.8))).TextColor(th.Muted).Unselectable()
+				ui.Text(c, b.Language).FontSize(typeMeta).TextColor(th.Muted).Unselectable()
 			}
 			ui.Spacer(c)
 			accessible := "Copy code"
@@ -206,15 +206,14 @@ func markdownReaderCodeBlock(c *ui.Context, b *markdown.CodeBlockView, st *markd
 // markdownReaderTable wraps a parsed table into the available width instead of
 // the pinned renderer's horizontal scroll. Rows, headers, alignment and every
 // cell stay, with raw cell source so Markdown syntax and link destinations are
-// still inspectable. The visible label says plain text: the pinned inline
-// renderer is unexported, and reimplementing it here would be a second
-// renderer.
+// still inspectable. The table role carries the plain-text description; the
+// pinned inline renderer is unexported, and reimplementing it here would be a
+// second renderer.
 func markdownReaderTable(c *ui.Context, d *parser.Document, i int, th markdown.Theme) {
 	b := d.Block(i)
 	padX, padY := th.TableCellPadding[0]*th.FontSize, th.TableCellPadding[1]*th.FontSize
 	wrap := ui.Column(c).AlignSelf(ui.Stretch)
 	wrap.Children(func() {
-		ui.Text(c, "Table · plain text").FontSize(max(12, th.FontSize*0.8)).TextColor(th.Muted).Unselectable()
 		table := ui.Column(c).AlignSelf(ui.Stretch).Border(1, th.TableBorder).Radius(th.FontSize * 0.3).Clip().Role(ui.RoleTable).Label("Table, wrapped plain text")
 		table.Children(func() {
 			n := 0
@@ -227,7 +226,7 @@ func markdownReaderTable(c *ui.Context, d *parser.Document, i int, th markdown.T
 					rowEl.Background(th.TableStripe)
 				}
 				if n > 0 {
-					rowEl.BorderWidth(1, 0, 0, 0).BorderColor(th.TableBorder)
+					rowEl.BorderWidth(0.5, 0, 0, 0).BorderColor(th.TableBorder)
 				}
 				header := row.Header
 				rowEl.Children(func() {
@@ -241,7 +240,7 @@ func markdownReaderTable(c *ui.Context, d *parser.Document, i int, th markdown.T
 						}
 						box := ui.Column(c).Grow(1).Basis(0).Shrink(1).MinWidth(0).Padding(padY, padX).Role(role)
 						if index > 0 {
-							box.BorderWidth(0, 0, 0, 1).BorderColor(th.TableBorder)
+							box.BorderWidth(0, 0, 0, 0.5).BorderColor(th.TableBorder)
 						}
 						cellBlock := d.Block(cell)
 						text := d.Source()[cellBlock.Start:cellBlock.End]
@@ -278,7 +277,7 @@ func (st *markdownReaderState) codeFeedbackFor(index int) *readerCopyFeedback {
 
 func (st *markdownReaderState) sourceCopyButton(c *ui.Context, now time.Time, accessible string, text func() string, fb *readerCopyFeedback, handle *ui.Handle) ui.Element {
 	feedbackVisible, failed := fb.show(now)
-	btn := ui.Button(c, "").Label(accessible).Tooltip(accessible)
+	btn := ui.Button(c, "").Label(accessible)
 	if handle != nil {
 		btn.Bind(handle)
 	}
@@ -292,15 +291,17 @@ func (st *markdownReaderState) sourceCopyButton(c *ui.Context, now time.Time, ac
 	}
 	color := markdownReaderTheme(c, st.opts.Theme).Muted
 	icon := markdownCopyIcon
+	tooltip := accessible
 	if feedbackVisible {
 		if failed {
 			color, icon = theme.Danger, markdownCopyFailedIcon
-			btn.Tooltip(fb.err.Error())
+			tooltip = fb.err.Error()
 		} else {
 			color, icon = theme.Success, markdownCopiedIcon
-			btn.Tooltip("Copied")
+			tooltip = "Copied"
 		}
 	}
+	appTooltip(c, btn, tooltip)
 	btn.Children(func() {
 		ui.Icon(c, icon).Size(16, 16).TextColor(color)
 	})
@@ -322,15 +323,12 @@ func (st *markdownReaderState) sourceCopyButton(c *ui.Context, now time.Time, ac
 func (st *markdownReaderState) copyButton(c *ui.Context, now time.Time, accessible, idle string, text func() string, fb *readerCopyFeedback, th markdown.Theme, handle *ui.Handle) ui.Element {
 	row := ui.Row(c).Shrink(0).Key("copy-button")
 	row.Children(func() {
-		visible := idle
-		color := th.Muted
+		color, icon := th.Muted, markdownCopyIcon
 		if visibleNow, failed := fb.show(now); visibleNow {
 			if failed {
-				visible = "Copy failed"
-				color = c.Theme().Danger
+				color, icon = c.Theme().Danger, markdownCopyFailedIcon
 			} else {
-				visible = "Copied"
-				color = c.Theme().Success
+				color, icon = c.Theme().Success, markdownCopiedIcon
 			}
 		}
 		btn := ui.ButtonBase(c).Label(accessible)
@@ -338,19 +336,21 @@ func (st *markdownReaderState) copyButton(c *ui.Context, now time.Time, accessib
 			btn.Bind(handle)
 		}
 		theme := c.Theme()
-		btn.Height(32).Padding(6, 10).Radius(6).Border(1, theme.Border).Background(theme.Surface)
+		btn.Size(32, 32).Padding(0).Radius(6).BorderWidth(0).Background(ui.Transparent)
 		if btn.Pressed() {
 			btn.Background(theme.SurfacePressed)
 		} else if btn.Hovered() {
 			btn.Background(theme.SurfaceHover)
 		}
+		tooltip := idle
 		if fb.err != nil {
 			if visibleNow, failed := fb.show(now); visibleNow && failed {
-				btn.Tooltip(fb.err.Error())
+				tooltip = fb.err.Error()
 			}
 		}
+		appTooltip(c, btn, tooltip)
 		btn.Children(func() {
-			ui.Text(c, visible).FontSize(13).TextColor(color)
+			ui.Icon(c, icon).Size(16, 16).TextColor(color)
 		})
 		if btn.Clicked() {
 			fb.at = now
@@ -381,6 +381,26 @@ func writeClipboardText(text string, write func(string), read func() string) err
 		return errClipboardReadback
 	}
 	return nil
+}
+
+// normalizedMarkdownTheme keeps rendered Markdown inside the app's four-size
+// scale. H1 maps to 20; H2-H6 map to 16 and use weight/spacing; code labels use 12.
+// Source text
+// and user-provided Markdown are never rewritten.
+func normalizedMarkdownTheme(override *markdown.Theme) *markdown.Theme {
+	// Start with the complete caller override and let the framework resolve all
+	// fields it left zero. Only constrain the app-controlled size scale here.
+	th := markdown.Theme{}
+	if override != nil {
+		th = *override
+	}
+	th.FontSize = typeBody
+	headingSizes := [6]float32{20, 16, 16, 16, 16, 16}
+	for i := range th.Headings {
+		th.Headings[i].Size = headingSizes[i] / th.FontSize
+	}
+	th.CodeSize = typeAction / th.FontSize
+	return &th
 }
 
 // markdownReaderTheme resolves only the roles this reader draws itself:

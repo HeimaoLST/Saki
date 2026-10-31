@@ -296,7 +296,7 @@ func TestManualCompleteShowsUserSourceAndKeepsUnverified(t *testing.T) {
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
 	if issue.Status != issueStatusCompleted || issue.Requirements[0].State != requirementUnverified ||
-		!tr.HasText("Marked by user · reviewed by the user") || !tr.HasText("Unverified") {
+		!tr.HasText("Marked by user: reviewed by the user") || !tr.HasText("Unverified") {
 		t.Fatalf("manual completion = status=%q req=%q texts=%v", issue.Status, issue.Requirements[0].State, tr.Texts())
 	}
 }

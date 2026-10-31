@@ -167,7 +167,7 @@ func (e *contactProfileEditor) view(c *ui.Context, t *ui.Theme, actions contactP
 
 		ui.Column(c).Gap(6).Children(func() {
 			ui.Row(c).Gap(8).Wrap().Children(func() {
-				ui.PrimaryButton(c, "Save changes").Label("Save changes").FontSize(13).MinHeight(32).Disabled(!editable).OnClick(func() {
+				ui.PrimaryButton(c, "Save changes").Label("Save changes").FontSize(typeAction).MinHeight(32).Disabled(!editable).OnClick(func() {
 					if draft, ok := e.Request(false); ok && actions.Save != nil {
 						actions.Save(draft)
 					}
@@ -183,8 +183,7 @@ func (e *contactProfileEditor) view(c *ui.Context, t *ui.Theme, actions contactP
 					secondaryButton(c, "Discard changes").OnClick(actions.Discard)
 				}
 			})
-			ui.Divider(c)
-			ui.Text(c, "Contact management").FontSize(13).FontWeight(600).TextColor(t.TextMuted)
+			ui.Text(c, "Contact management").FontSize(typeAction).FontWeight(600).TextColor(t.TextMuted)
 			ui.Row(c).Gap(8).Wrap().Children(func() {
 				if e.Archived {
 					secondaryButton(c, "Restore").Disabled(e.Busy).OnClick(func() {

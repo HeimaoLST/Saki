@@ -860,7 +860,7 @@ func (a *appModel) failRun(ct *contact) {
 	ct.Messages = append(ct.Messages, &message{
 		ID: a.seq, Kind: msgContact, Time: nowTime(),
 		Text:        "Two failures in parser_roundtrip: expected eof, got newline. The trailing-newline change is the likely cause.",
-		AlertTitle:  "Run failed · 2 failing tests",
+		AlertTitle:  "Run failed: 2 failing tests",
 		AlertDetail: "cargo test — parser_roundtrip",
 		Retry:       true,
 	})

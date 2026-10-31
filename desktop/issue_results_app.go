@@ -69,7 +69,7 @@ func (a *appModel) openIssueResultEntry(issueID, executionID string, latest bool
 		Generation:   a.issueResult.Generation,
 		ReturnLatest: latest,
 		Panel: issueResultPanelState{
-			RunLabel:       fmt.Sprintf("Run %d · %s", runIndex+1, issue.Goal),
+			RunLabel:       fmt.Sprintf("Run %d: %s", runIndex+1, issue.Goal),
 			RunStatus:      issueExecutionLabel(execution),
 			LinkScope:      "contact:" + ct.ID + "/issue:" + issue.ID + "/execution:" + execution.ID,
 			LinkFocus:      &a.markdownLinkFocus,
@@ -127,7 +127,7 @@ func (a *appModel) reloadIssueResult(generation int) {
 	page.SessionID = execution.SessionID
 	page.TaskID = execution.TaskID
 	page.MessageID = execution.MessageID
-	page.Panel.RunLabel = fmt.Sprintf("Run %d · %s", runIndex+1, issue.Goal)
+	page.Panel.RunLabel = fmt.Sprintf("Run %d: %s", runIndex+1, issue.Goal)
 	page.Panel.RunStatus = issueExecutionLabel(execution)
 	page.Panel.Checking = false
 	page.Panel.ActionFor = ""
@@ -425,7 +425,7 @@ func (a *appModel) requestIssueResultFileAction(generation int, file issueResult
 func issueResultPageHeader(c *ui.Context, t *ui.Theme, state *issueResultPanelState, actions issueResultPanelActions, showReload bool) {
 	ui.Row(c).Padding(16, 16).AlignItems(ui.Center).Gap(8).Children(func() {
 		if actions.Close != nil {
-			back := secondaryButton(c, "← Back").Label("Close results").Tooltip("Back from results").Bind(&state.CloseHandle).OnClick(actions.Close)
+			back := appTooltip(c, secondaryButton(c, "← Back").Label("Close results"), "Back from results").Bind(&state.CloseHandle).OnClick(actions.Close)
 			if state.FocusClose {
 				back.Focus()
 				state.FocusClose = false

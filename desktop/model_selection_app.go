@@ -433,11 +433,11 @@ func (a *appModel) modelPanel(c *ui.Context, t *ui.Theme) {
 			Cancel:  a.closeAux,
 		})
 	} else if a.modelPanelError != "" {
-		ui.Text(c, "Session model").FontSize(17).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, "Session model").FontSize(16).FontWeight(600).TextColor(t.Text)
 		ui.Text(c, a.modelPanelError).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
 		secondaryButton(c, "Close").OnClick(func() { a.closeAux() })
 	} else {
-		ui.Text(c, "Session model").FontSize(17).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, "Session model").FontSize(16).FontWeight(600).TextColor(t.Text)
 		ui.Text(c, valueOr(a.modelPanelMessage, "Reading session model…")).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 		secondaryButton(c, "Close").OnClick(func() { a.closeAux() })
 	}

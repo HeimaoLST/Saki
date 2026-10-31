@@ -33,7 +33,7 @@ func TestSettingsPageReplacesWorkbenchAndRoutesEntries(t *testing.T) {
 			t.Fatalf("settings page still rendered workbench text %q: %v", forbidden, tr.Texts())
 		}
 	}
-	for _, want := range []string{"Settings", "Appearance", "Connection & model", "Contact profile", "Advanced", "Selected"} {
+	for _, want := range []string{"Settings", "Appearance", "Connection & model", "Contact profile", "Advanced"} {
 		if !tr.HasText(want) {
 			t.Fatalf("settings page missing %q: %v", want, tr.Texts())
 		}
@@ -235,7 +235,7 @@ func TestSettingsContactPickerFollowsEditingIdentityAfterReturnToA(t *testing.T)
 		t.Fatalf("A profile entry kept B picker: id=%q choice=%q want=%q", a.settingsContactID, a.settingsPickerChoice, a.settingsContactChoice(aContact))
 	}
 	texts := strings.Join(tr.Texts(), "\n")
-	if !strings.Contains(texts, "Contact profile · "+a.settingsContactChoice(aContact)) {
+	if !strings.Contains(texts, "Contact profile: "+a.settingsContactChoice(aContact)) {
 		t.Fatalf("A profile title/picker mismatch: %v", tr.Texts())
 	}
 	if a.settingsContactChoice(aContact) == a.settingsContactChoice(bContact) {
@@ -264,7 +264,7 @@ func TestSettingsPageCmdCommaFromIssueResultAndNestedReader(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	if !tr.HasText("File reading") || !tr.Focused("Close reading") {
+	if !tr.Focused("Close reading") {
 		t.Fatalf("nested reader did not receive focus: %v", tr.Texts())
 	}
 	tr.Key(ui.Cmd, ui.KeyComma)
@@ -315,6 +315,48 @@ func TestSettingsPageCmdCommaReturnsToFocusedComposer(t *testing.T) {
 	}
 }
 
+func TestSettingsContactPickerLongListReachesSelectedLastOption(t *testing.T) {
+	a, _ := workspaceTestApp(t)
+	a.contacts = nil
+	for i := 0; i < 20; i++ {
+		a.contacts = append(a.contacts, &contact{ID: fmt.Sprintf("contact-long-%02d", i), Name: fmt.Sprintf("Person %02d", i), Role: "Assistant", Status: statusReady})
+	}
+	first, last := a.contacts[0], a.contacts[len(a.contacts)-1]
+	a.openSettingsTab(settingsTabContact, settingsSourceRail)
+	a.settingsContactID = first.ID
+	a.settingsPickerChoice = a.settingsContactChoice(first)
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if a.settingsContactID != first.ID {
+		t.Fatalf("picker fixture started at %q, want first %q", a.settingsContactID, first.ID)
+	}
+	if err := tr.Click("Edit contact"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	// SelectBase owns the open popup; End highlights the last option, Enter
+	// chooses it. This exercises the real long-list keyboard path rather than
+	// clicking the already-selected trigger text.
+	tr.Key(0, ui.KeyEnd)
+	tr.Frame()
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if a.settingsContactID != last.ID || a.settingsPickerChoice != a.settingsContactChoice(last) {
+		t.Fatalf("long picker keyboard chose %q/%q, want last %q", a.settingsContactID, a.settingsPickerChoice, last.ID)
+	}
+	if tr.HasText(a.settingsContactChoice(a.contacts[len(a.contacts)-2])) {
+		t.Fatalf("picker popup remained open after Enter: %v", tr.Texts())
+	}
+	// Down from the closed trigger proves the trigger kept focus; it must
+	// reopen the real popup rather than being lost after Enter.
+	tr.Key(0, ui.KeyDown)
+	tr.Frame()
+	if !tr.HasText(a.settingsContactChoice(a.contacts[len(a.contacts)-2])) {
+		t.Fatalf("picker trigger did not retain keyboard focus after Enter: %v", tr.Texts())
+	}
+	tr.Key(0, ui.KeyEscape)
+	tr.Frame()
+}
 func TestSettingsContactPickerDisambiguatesSameLastIDDigitsAndSavesB(t *testing.T) {
 	store, err := openContactStore(filepath.Join(t.TempDir(), "contacts.json"), t.TempDir())
 	if err != nil {
@@ -525,8 +567,8 @@ func TestPreviewSettingsPage(t *testing.T) {
 					if a.settingsScroll.Y != 0 {
 						t.Fatalf("connection preview scrolled at %dx%d: %v", size.width, size.height, a.settingsScroll.Y)
 					}
-					if r, ok := tr.Find("Save, apply and test are separate actions. Applying never interrupts current work."); !ok || r.Y < 0 || r.Y+r.H > float32(size.height) {
-						t.Fatalf("connection content start not visible at %dx%d: %+v ok=%v", size.width, size.height, r, ok)
+					if !tr.HasText("Current:") {
+						t.Fatalf("connection current state missing at %dx%d: %v", size.width, size.height, tr.Texts())
 					}
 					if r, ok := tr.Find("Protocol"); !ok || r.X < 0 || r.X+r.W > float32(size.width) || r.Y < 0 || r.Y+r.H > float32(size.height) {
 						t.Fatalf("connection first field not visible at %dx%d: %+v ok=%v", size.width, size.height, r, ok)
@@ -723,7 +765,7 @@ func TestSettingsCmdCommaFromDynamicFileRowReturnsToSameRowAndReopens(t *testing
 	pump.wait(func() bool { return !a.issueResult.Panel.Checking })
 	pump.do(func() { tr.Frame() })
 	var readingOpen bool
-	pump.do(func() { readingOpen = tr.HasText("File reading") })
+	pump.do(func() { readingOpen = tr.Focused("Close reading") || tr.HasText("Copy path") })
 	if !readingOpen {
 		t.Fatal("reader did not open")
 	}
@@ -767,7 +809,7 @@ func TestSettingsCmdCommaFromDynamicFileRowReturnsToSameRowAndReopens(t *testing
 	var texts []string
 	pump.do(func() {
 		readerKey = a.issueResult.Panel.ReaderKey
-		readerOpen = tr.HasText("File reading")
+		readerOpen = tr.Focused("Close reading")
 		resultOpen = a.issueResult.Open
 		texts = append([]string(nil), tr.Texts()...)
 	})

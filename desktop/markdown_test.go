@@ -353,8 +353,8 @@ func TestMarkdownReaderFourColumnTableWrapsWithoutHorizontalScroll(t *testing.T)
 
 		checkCells := func(when string) {
 			t.Helper()
-			if !tr.HasText("Table · plain text") {
-				t.Fatalf("%dx%d %s: plain-text table label is missing: %q", width, 760, when, tr.Texts())
+			if _, ok := tr.Find("Table, wrapped plain text"); !ok {
+				t.Fatalf("%dx%d %s: table role/accessibility label is missing: %q", width, 760, when, tr.Texts())
 			}
 			for _, want := range cells {
 				bounds, ok := tr.Find(want)

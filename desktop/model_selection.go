@@ -352,7 +352,7 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 		if catalogID := s.effectiveCatalogID(); catalogID != "" {
 			source += " (" + catalogID + ")"
 		}
-		ui.Text(c, fmt.Sprintf("%scontext %d / output %d · %s · revision %d",
+		ui.Text(c, fmt.Sprintf("%scontext %d / output %d, %s, revision %d",
 			limitsLabel, compaction.ContextTokens, compaction.OutputTokens, source, s.Target.Config.ConfigRevision)).
 			FontSize(14).TextColor(t.TextMuted)
 		if s.Unconfirmed {
@@ -393,7 +393,7 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 					actions.Refresh(s.Target)
 				}
 			})
-			ui.PrimaryButton(c, "Update model").FontSize(13).Disabled(s.Busy || s.Unconfirmed).OnClick(func() {
+			ui.PrimaryButton(c, "Update model").FontSize(typeAction).Disabled(s.Busy || s.Unconfirmed).OnClick(func() {
 				if request, ok := s.Request(); ok && actions.Update != nil {
 					actions.Update(request)
 				}
@@ -413,7 +413,7 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 			ui.Text(c, "Host-provided declarations, not verified availability.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 			for _, entry := range configured {
 				entry := entry
-				button := secondaryButton(c, entry.Model+" · context "+strconv.Itoa(entry.Compaction.ContextTokens)).Disabled(s.Busy).OnClick(func() { s.SelectConfiguredModel(entry.Model) })
+				button := secondaryButton(c, entry.Model+": context "+strconv.Itoa(entry.Compaction.ContextTokens)).Disabled(s.Busy).OnClick(func() { s.SelectConfiguredModel(entry.Model) })
 				if s.Draft.Model == entry.Model && s.Draft.CapacityMode == modelCapacityExplicit {
 					button.BorderWidth(2).BorderColor(t.Accent)
 				}
@@ -431,7 +431,7 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 				if label == "" {
 					label = entry.CatalogID
 				}
-				button := secondaryButton(c, label+" · context "+strconv.Itoa(entry.Limits.Context)).Disabled(s.Busy).OnClick(func() { s.SelectCatalogID(entry.CatalogID) })
+				button := secondaryButton(c, label+": context "+strconv.Itoa(entry.Limits.Context)).Disabled(s.Busy).OnClick(func() { s.SelectCatalogID(entry.CatalogID) })
 				if s.Draft.CatalogID != "" && s.Draft.CatalogID == entry.CatalogID {
 					button.BorderWidth(2).BorderColor(t.Accent)
 				}
@@ -455,7 +455,7 @@ func (s *modelSelection) targetLabel() string {
 	default:
 		kind = valueOr(kind, "Session")
 	}
-	return kind + " · " + valueOr(s.Target.Label, s.Target.Config.SessionID)
+	return kind + ": " + valueOr(s.Target.Label, s.Target.Config.SessionID)
 }
 
 func capacitySourceLabel(target modelSelectionTarget) string {

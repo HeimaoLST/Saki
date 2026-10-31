@@ -287,7 +287,7 @@ func TestHistoryModalPreservesWorkAndReturnsFocus(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.workspaceOpen || !tr.Focused("History") || tr.HasText("History · Saki") {
+	if a.workspaceOpen || !tr.Focused("History") || tr.HasText("History: Saki") {
 		t.Fatal("closing history did not return to chat with the History entry focused")
 	}
 	if ct.ActiveTaskID != "t1" || w.State != workRunning || ct.Draft != "later draft" {

@@ -257,7 +257,7 @@ func TestIssueExecutionContextExpandsAndCopiesAt720(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	clickAfterBoundedScroll(t, tr, "Sent task context · 1", 1040, 720)
+	clickAfterBoundedScroll(t, tr, "Sent task context: 1", 1040, 720)
 	tr.Frame()
 	if !tr.HasText("exact context text") {
 		t.Fatalf("folded snapshot context did not expand: %v", tr.Texts())
@@ -499,10 +499,10 @@ func TestIssueExecutionHistoryLayoutKeepsHeaderRevisionAndActionsDistinct(t *tes
 				t.Errorf("Execution history bounds=%+v panelX=%.1f width=%d", history, panelX, tc.width)
 			}
 			for index, execution := range issue.Executions {
-				headerText := "Execution " + fmt.Sprint(index+1) + " · " + issueExecutionLabel(execution)
+				headerText := "Execution " + fmt.Sprint(index+1) + ": " + issueExecutionLabel(execution)
 				revisionText := "revision " + fmt.Sprint(execution.RequirementsRevision)
-				openText := "Open result · run " + fmt.Sprint(index+1)
-				viewText := "View execution · run " + fmt.Sprint(index+1)
+				openText := "Open result: run " + fmt.Sprint(index+1)
+				viewText := "View execution: run " + fmt.Sprint(index+1)
 				header, revision, open, view := issueHistoryFindCard(t, tr, headerText, revisionText, openText, viewText,
 					panelX, float32(tc.width), float32(tc.height))
 				if dir := os.Getenv("SAKI_PREVIEW_DIR"); dir != "" {

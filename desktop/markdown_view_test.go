@@ -92,10 +92,10 @@ func TestAppAssistantMarkdownStreamsFinalRestoresAndCopies(t *testing.T) {
 			}
 			tr.Frame()
 		}
-		if !scrollToVisibleControl(tr, "Copy", 160) {
+		if !scrollToVisibleControl(tr, "Copy code", 160) {
 			t.Fatalf("%dx%d code copy control is not visible after returning to latest: %v", size.width, size.height, tr.Texts())
 		}
-		if err := tr.Click("Copy"); err != nil {
+		if err := tr.Click("Copy code"); err != nil {
 			t.Fatal(err)
 		}
 		if got, want := tr.Clipboard(), "\tfmt.Println(\"x\")\n"; got != want {
@@ -138,8 +138,11 @@ func TestAppUserMessageStaysLiteralAndCopiesRaw(t *testing.T) {
 	if !tr.HasText("# 不是标题") || !tr.HasText("not code") {
 		t.Fatalf("literal user text missing: %q", tr.Texts())
 	}
-	if tr.HasText("Copy code") || tr.HasText("Table · plain text") {
-		t.Fatalf("user text was parsed as Markdown: %q", tr.Texts())
+	if tr.HasText("Copy code") {
+		t.Fatalf("user text was parsed as code Markdown: %q", tr.Texts())
+	}
+	if _, ok := tr.Find("Table, wrapped plain text"); ok {
+		t.Fatalf("user text was parsed as a Markdown table: %q", tr.Texts())
 	}
 	if err := tr.Click("Copy message"); err != nil {
 		t.Fatal(err)
@@ -220,7 +223,7 @@ func TestAppToolDetailsShowAndCopyCompleteReceivedOutput(t *testing.T) {
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
 	openConversationWorkPanel(t, tr)
-	if !tr.HasText("Preview ·") {
+	if !tr.HasText("Preview: ") {
 		t.Fatalf("collapsed tool summary is not labeled as a preview: %q", tr.Texts())
 	}
 	if err := tr.Click("Copy received output"); err != nil {

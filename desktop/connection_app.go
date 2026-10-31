@@ -132,7 +132,7 @@ func connectionSummary(config *connectionConfig) string {
 	if config == nil {
 		return ""
 	}
-	return fmt.Sprintf("%s · %s · cwd %s · context %d / output %d · %d slots",
+	return fmt.Sprintf("%s, %s, cwd %s, context %d / output %d, %d slots",
 		config.Model, config.API, config.WorkingDirectory, config.ContextTokens, config.OutputTokens, config.MaxActiveTasks)
 }
 
@@ -363,7 +363,7 @@ func (a *appModel) applyConnectionWorker(gen int, path, sessionDir, helperHint s
 	observed, observedErr := probeRuntimeConfig(binary, config, os.Environ(), os.TempDir())
 	effectiveSummary := observedConnectionSummary(connections[0], observed, capabilities.MaxActiveTasks)
 	if observedErr != nil {
-		effectiveSummary = connections[0].DefaultModel + " · " + connections[0].Endpoint
+		effectiveSummary = connections[0].DefaultModel + ": " + connections[0].Endpoint
 	}
 	installed := false
 	a.runOnUI(func() {
@@ -477,7 +477,7 @@ func (a *appModel) testConnection(config connectionConfig) {
 				form.Error = "Connection test failed: " + a.connectionSafeMessage(err)
 				return
 			}
-			form.Status = fmt.Sprintf("Connection test completed: %s · %s · context %d / output %d",
+			form.Status = fmt.Sprintf("Connection test completed: %s, %s, context %d / output %d",
 				result.Config.EffectiveConfig.Model, result.Connection.Endpoint,
 				result.Config.EffectiveConfig.Compaction.ContextTokens,
 				result.Config.EffectiveConfig.Compaction.OutputTokens)
@@ -612,11 +612,11 @@ func (a *appModel) configuredWorkCreate(rt *runtimeClient, configured bool, work
 
 func observedConnectionSummary(connection runtimeConnection, config runtimeConnectionConfig, maxActiveTasks int) string {
 	effective := config.EffectiveConfig
-	summary := fmt.Sprintf("%s · %s · cwd %s · context %d / output %d",
+	summary := fmt.Sprintf("%s, %s, cwd %s, context %d / output %d",
 		effective.Model, connection.Endpoint, effective.WorkingDirectory,
 		effective.Compaction.ContextTokens, effective.Compaction.OutputTokens)
 	if maxActiveTasks > 0 {
-		summary += fmt.Sprintf(" · %d slots", maxActiveTasks)
+		summary += fmt.Sprintf(", %d slots", maxActiveTasks)
 	}
 	return summary
 }

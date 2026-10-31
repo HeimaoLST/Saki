@@ -314,7 +314,7 @@ func TestAppearancePanelSwitchesModeAndKeepsCurrentDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if !a.settingsOpen || a.settingsTab != settingsTabAppearance || !tr.HasText("Appearance") || !tr.HasText("Effective:") {
+	if !a.settingsOpen || a.settingsTab != settingsTabAppearance || !tr.HasText("Appearance") || !tr.HasText("System is currently") {
 		t.Fatalf("appearance panel missing: %q", tr.Texts())
 	}
 	if err := tr.Click("System"); err != nil {

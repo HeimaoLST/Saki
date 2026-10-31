@@ -707,7 +707,7 @@ func TestTaskContextIssueSentSnapshotPageCopyBeforeAndAfterRestart(t *testing.T)
 			return
 		}
 		tr.Frame()
-		if clickErr = clickAfterBoundedScrollInPump(tr, "Sent task context · 1", 1040, 720); clickErr != nil {
+		if clickErr = clickAfterBoundedScrollInPump(tr, "Sent task context: 1", 1040, 720); clickErr != nil {
 			return
 		}
 		tr.Frame()
@@ -756,7 +756,7 @@ func TestTaskContextIssueSentSnapshotPageCopyBeforeAndAfterRestart(t *testing.T)
 			return
 		}
 		tr2.Frame()
-		if restartClickErr = clickAfterBoundedScrollInPump(tr2, "Sent task context · 1", 1040, 720); restartClickErr != nil {
+		if restartClickErr = clickAfterBoundedScrollInPump(tr2, "Sent task context: 1", 1040, 720); restartClickErr != nil {
 			return
 		}
 		tr2.Frame()

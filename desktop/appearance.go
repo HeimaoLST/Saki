@@ -119,22 +119,6 @@ func (a *appModel) ensureAppearanceStore() error {
 	return nil
 }
 
-func (a *appModel) effectiveAppearanceLabel() string {
-	dark := a.workTheme.Theme != nil && a.workTheme.Theme.Dark
-	appearance := "Paper"
-	if dark {
-		appearance = "Night"
-	}
-	if normalizeAppearanceMode(a.appearanceMode) == appearanceSystem {
-		system := "Light"
-		if a.systemDark {
-			system = "Dark"
-		}
-		return "System (" + system + ") · " + appearance
-	}
-	return appearanceModeLabel(a.appearanceMode) + " · " + appearance
-}
-
 func (a *appModel) connectionDefaultModel() string {
 	for _, config := range []*connectionConfig{a.connectionEffective, a.connectionSaved} {
 		if config != nil && strings.TrimSpace(config.Model) != "" {
@@ -165,12 +149,12 @@ func (a *appModel) conversationModelSummary(ct *contact) string {
 	}
 	if ct.SessionID != "" {
 		if strings.TrimSpace(ct.SessionModel) != "" {
-			return "Session · " + truncate(ct.SessionModel, 42)
+			return "Session: " + truncate(ct.SessionModel, 42)
 		}
 		return "Session model not loaded"
 	}
 	if model := a.connectionDefaultModel(); model != "" {
-		return "Connection default · " + truncate(model, 42)
+		return "Connection default: " + truncate(model, 42)
 	}
 	return "Connection default not configured"
 }

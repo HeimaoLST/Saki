@@ -11,7 +11,7 @@ import (
 
 // Message typography is supplied at the view call site so the reader's
 // parser, clipboard and file behavior stay untouched (#187 owns those files).
-var messageMarkdownTheme = &markdown.Theme{FontSize: 15, LineHeight: 1.8}
+var messageMarkdownTheme = &markdown.Theme{FontSize: typeBody, LineHeight: 1.8}
 
 const (
 	composerPanelModel   = "model"
@@ -21,10 +21,9 @@ const (
 // Small, deliberately understated composer glyphs. MyGo's Icon inherits the
 // button's text color, so these stay in the same semantic color path as UI text.
 var (
-	composerAttachIcon  = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a6 6 0 0 1-8.5-8.5l9.3-9.3a4 4 0 0 1 5.7 5.7l-9.3 9.3a2 2 0 0 1-2.8-2.8l8.6-8.6"/></svg>`))
-	composerChevronIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`))
-	composerSendIcon    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>`))
-	composerStopIcon    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>`))
+	composerAttachIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a6 6 0 0 1-8.5-8.5l9.3-9.3a4 4 0 0 1 5.7 5.7l-9.3 9.3a2 2 0 0 1-2.8-2.8l8.6-8.6"/></svg>`))
+	composerSendIcon   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>`))
+	composerStopIcon   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>`))
 )
 
 func messageReaderOptions(plain bool) markdownReaderOptions {
@@ -211,12 +210,12 @@ func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
 		})
 		ui.Text(c, "Contacts").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
 		secondaryButton(c, "Add contact").FillWidth().Radius(999).OnClick(func() { a.addDefaultContact() })
-		ui.TextInput(c, &a.contactSearch).Label("Search contacts").FontSize(13).Placeholder("Name or purpose")
+		ui.TextInput(c, &a.contactSearch).Label("Search contacts").FontSize(typeAction).Placeholder("Name or purpose")
 		ui.Text(c, "Contact scope").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
 		a.contactScopeSelect(c)
 		visible := a.visibleContactIndices()
 		if len(visible) == 0 {
-			ui.Text(c, "No contacts match this scope and search.").FontSize(13).LineHeight(1.35).TextColor(t.TextMuted)
+			ui.Text(c, "No contacts match this scope and search.").FontSize(typeAction).LineHeight(1.35).TextColor(t.TextMuted)
 			ui.Spacer(c).Grow(1)
 		} else {
 			ui.Scroll(c).Grow(1).Children(func() {
@@ -257,8 +256,7 @@ func contactScopeFromChoice(label string) string {
 
 func (a *appModel) contactScopeSelect(c *ui.Context) {
 	a.contactScopeChoice = contactScopeChoiceLabel(a.contactScope)
-	choice := ui.Select(c, &a.contactScopeChoice, []string{"Active", "Archived", "All"}).
-		Label("Contact scope").FontSize(13).FillWidth()
+	choice := selectWithoutChevron(c, &a.contactScopeChoice, []string{"Active", "Archived", "All"}, "Contact scope")
 	if choice.Changed() {
 		a.setContactScope(contactScopeFromChoice(a.contactScopeChoice))
 	}
@@ -308,11 +306,11 @@ func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
 				if detail == "" {
 					line = status
 				} else {
-					line = status + " · " + detail
+					line = status + ": " + detail
 				}
 				color = a.statusColor(t, ct.Status)
 			}
-			ui.Text(c, line).FontSize(13).LineHeight(1.35).MaxLines(1).TextColor(color)
+			ui.Text(c, line).FontSize(typeAction).LineHeight(1.35).MaxLines(1).TextColor(color)
 		})
 	})
 }
@@ -379,7 +377,7 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 		}
 		if ct.Archived {
 			ui.Row(c).AlignItems(ui.Center).Gap(8).Padding(6, 16).Background(t.SurfaceHover).Children(func() {
-				ui.Text(c, "Archived contact · sending and new issue runs are disabled. History, drafts and issue data are retained.").FontSize(14).TextColor(t.Warning)
+				ui.Text(c, "Archived contact: sending and new issue runs are disabled. History, drafts and issue data are retained.").FontSize(14).TextColor(t.Warning)
 				ui.Spacer(c)
 				secondaryButton(c, "Restore contact").TextColor(t.Text).OnClick(func() { a.restoreContact(ct.ID) })
 				secondaryButton(c, "Contact profile").OnClick(func() { a.openContactProfile(ct.ID) })
@@ -419,7 +417,7 @@ func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 					ui.Text(c, ct.Name).FontSize(typeContactTitle).FontWeight(600).TextColor(t.Text).MaxLines(1)
 					ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
 						ui.Text(c, a.statusLabel(ct)).FontSize(12).LineHeight(1.35).TextColor(a.statusColor(t, ct.Status))
-						ui.Text(c, "· "+ct.Role).FontSize(12).LineHeight(1.35).MaxLines(1).TextColor(t.TextMuted)
+						ui.Text(c, ct.Role).FontSize(12).LineHeight(1.35).MaxLines(1).TextColor(t.TextMuted)
 					})
 				})
 				ui.Spacer(c)
@@ -515,7 +513,7 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 			ui.Column(c).MaxWidth(460).MinWidth(0).Gap(4).Children(func() {
 				if e.Text != "" {
 					markdownReader(c, e.Text, messageReaderOptions(true)).
-						FontSize(15).LineHeight(1.8).Padding(8, 12).Radius(12).Background(bg).TextColor(t.Text)
+						FontSize(typeBody).LineHeight(1.8).Padding(8, 12).Radius(12).Background(bg).TextColor(t.Text)
 				}
 				taskContextReadOnlyView(c, a.workTheme, e.Context)
 			})
@@ -527,7 +525,7 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 		ui.Column(c).MaxWidth(680).MinWidth(0).Shrink(1).Padding(10, 14).Radius(14).Background(bg).Gap(4).Children(func() {
 			ui.Text(c, a.selectedContact().Name+"  "+e.Date).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 			markdownReader(c, e.Text, a.readerOptions(messageReaderOptions(false), historyLinkScope(a.selectedContact().ID, "conversation", e.ID))).
-				FontSize(15).LineHeight(1.8)
+				FontSize(typeBody).LineHeight(1.8)
 		})
 	})
 }
@@ -575,7 +573,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 				})
 				if m.Expanded {
 					for _, step := range m.Steps {
-						ui.Text(c, "· "+step).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+						ui.Text(c, step).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 					}
 					if len(m.Sources) > 0 {
 						ui.Row(c).Children(func() {
@@ -597,7 +595,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 				}
 				if m.Text != "" {
 					markdownReader(c, m.Text, messageReaderOptions(true)).
-						FontSize(15).LineHeight(1.8).Padding(10, 14).Radius(14).Background(a.workTheme.BubbleUser).TextColor(t.Text)
+						FontSize(typeBody).LineHeight(1.8).Padding(10, 14).Radius(14).Background(a.workTheme.BubbleUser).TextColor(t.Text)
 				}
 				taskContextReadOnlyView(c, a.workTheme, m.Context)
 			})
@@ -610,7 +608,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 					ui.Text(c, "Located in history").FontSize(14).TextColor(t.TextMuted)
 				}
 				markdownReader(c, m.Text, a.readerOptions(markdownReaderOptions{Streaming: m.Streaming, CopyLabel: "Copy message", Theme: messageMarkdownTheme}, messageLinkScope(ct.ID, m))).
-					FontSize(15).LineHeight(1.8)
+					FontSize(typeBody).LineHeight(1.8)
 				if m.AlertTitle != "" {
 					a.alert(c, t, m)
 				}
@@ -736,16 +734,15 @@ func (a *appModel) composerInlineAux() bool {
 
 func (a *appModel) composerModelButton(c *ui.Context, t *ui.Theme, ct *contact) ui.Element {
 	summary := a.conversationModelSummary(ct)
-	button := ui.Button(c, "").Label("Conversation model").
-		MinHeight(32).Height(32).MinWidth(0).MaxWidth(230).Shrink(1).Padding(4, 8).
-		Tooltip("Conversation model · " + summary)
+	button := appTooltip(c, ui.Button(c, "").Label("Conversation model").
+		MinHeight(32).Height(32).MinWidth(0).MaxWidth(230).Shrink(1).Padding(4, 8),
+		"Conversation model: "+summary)
 	button.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(3).Children(func() {
 			ui.Text(c, "Conversation").FontSize(typeMeta).LineHeight(1.3).
 				MaxLines(1).TextColor(t.TextMuted)
 			ui.Text(c, a.conversationModelShortName(ct)).FontSize(typeAction).FontWeight(500).
 				MaxLines(1).TextColor(t.Text)
-			ui.Icon(c, composerChevronIcon).Width(16).Height(16).TextColor(t.TextMuted)
 		})
 	})
 	return button
@@ -803,7 +800,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 			contextCount := ct.Context.count()
 			contextLabel := "Task context"
 			if contextCount > 0 {
-				contextLabel = fmt.Sprintf("Task context · %d", contextCount)
+				contextLabel = fmt.Sprintf("Task context: %d", contextCount)
 			}
 			sendDisabled := strings.TrimSpace(ct.Draft) == "" || ct.Status == statusWorking
 			sendReason := ""
@@ -813,7 +810,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 			}
 			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(2).Children(func() {
 				ui.Toolbar(c, func() {
-					contextButton := ui.Button(c, "").Label(contextLabel).Tooltip(contextLabel).
+					contextButton := appTooltip(c, ui.Button(c, "").Label(contextLabel), contextLabel).
 						MinWidth(32).Height(32).Padding(2, 6)
 					contextButton.Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(2).Children(func() {
@@ -837,7 +834,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				// Send/Stop are outside the Toolbar: the main action must never
 				// disappear into a toolbar overflow menu at narrow widths.
 				if !a.demo && ct.ActiveTaskID != "" {
-					stop := secondaryButton(c, "").Label("Stop conversation").Tooltip("Stop this conversation").
+					stop := appTooltip(c, secondaryButton(c, "").Label("Stop conversation"), "Stop this conversation").
 						Shrink(0).Height(32).Padding(4, 8).TextColor(t.Warning)
 					stop.Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
@@ -847,7 +844,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 					})
 					stop.OnClick(func() { a.cancelSelected() })
 				} else {
-					send := ui.PrimaryButton(c, "").Label("Send").Tooltip("Send message").
+					send := appTooltip(c, ui.PrimaryButton(c, "").Label("Send"), "Send message").
 						Width(32).Height(32).Padding(0).Disabled(sendDisabled)
 					send.Children(func() {
 						ui.Icon(c, composerSendIcon).Width(18).Height(18)
@@ -857,7 +854,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 					}
 				}
 			})
-			ui.Text(c, "Enter to send · Shift + Enter for a new line").FontSize(typeMeta).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "Enter to send. Shift + Enter for a new line.").FontSize(typeMeta).LineHeight(1.4).TextColor(t.TextMuted)
 			if !a.demo {
 				if a.rt != nil && a.runtimeStatus == runtimeStateReady && !a.capacityKnown() {
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
@@ -917,11 +914,11 @@ func (a *appModel) historyDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 			if narrow {
 				back := detailBackButton(c, t, "Close history", "Back from History").OnClick(func() { a.closeDetail() })
 				a.focusDetailControl(c, back)
-				ui.Text(c, "History · "+ct.Name).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).MaxLines(2).Grow(1)
+				ui.Text(c, "History: "+ct.Name).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).MaxLines(2).Grow(1)
 				return
 			}
-			ui.Text(c, "History · "+ct.Name).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).MaxLines(2).Grow(1)
-			close := secondaryButton(c, "Close history").Tooltip("Back from History").OnClick(func() { a.closeDetail() })
+			ui.Text(c, "History: "+ct.Name).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).MaxLines(2).Grow(1)
+			close := appTooltip(c, secondaryButton(c, "Close history"), "Back from History").OnClick(func() { a.closeDetail() })
 			a.focusDetailControl(c, close)
 		})
 		ui.Scroll(c).Grow(1).TrackScroll(&a.historyScroll).Children(func() {
@@ -950,7 +947,7 @@ func (a *appModel) historyDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 							match := match
 							key := historyOriginKey(historyOriginSaved, match.SessionID, match.EntryID)
 							ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
-								ui.Text(c, match.Date+" · saved context "+match.SessionID).FontSize(14).LineHeight(1.4).TextColor(t.Success)
+								ui.Text(c, match.Date+": saved context "+match.SessionID).FontSize(14).LineHeight(1.4).TextColor(t.Success)
 								ui.Text(c, match.Preview).FontSize(14).LineHeight(1.5).TextColor(t.Text)
 								button := secondaryButton(c, "View full message").OnClick(func() { a.openContactHistoryMatch(match) })
 								if a.focusHistoryFullID == key {
@@ -975,18 +972,18 @@ func (a *appModel) historyDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 				for _, e := range matches {
 					e := e
 					ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
-						ui.Text(c, e.Date+" · "+speakerLabel(ct, e)).FontSize(14).LineHeight(1.4).TextColor(t.Success)
+						ui.Text(c, e.Date+". "+speakerLabel(ct, e)).FontSize(14).LineHeight(1.4).TextColor(t.Success)
 						if len([]rune(e.Text)) <= 180 {
 							if e.From == "me" {
-								markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy history message", Theme: messageMarkdownTheme}).FontSize(15).LineHeight(1.8).TextColor(t.Text)
+								markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy history message", Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.8).TextColor(t.Text)
 							} else {
-								markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy history message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "history", e.ID))).FontSize(15).LineHeight(1.8)
+								markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy history message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "history", e.ID))).FontSize(typeBody).LineHeight(1.8)
 							}
 						} else {
 							ui.Text(c, truncate(e.Text, 150)).FontSize(14).LineHeight(1.45).MaxLines(3).TextColor(t.Text)
 						}
 						if len(e.Context) > 0 {
-							ui.Text(c, fmt.Sprintf("Context · %d items", len(e.Context))).FontSize(13).TextColor(t.TextMuted)
+							ui.Text(c, fmt.Sprintf("Context: %d items", len(e.Context))).FontSize(typeAction).TextColor(t.TextMuted)
 						}
 						ui.Row(c).Gap(4).Wrap().Children(func() {
 							read := secondaryButton(c, "Read full message").OnClick(func() { a.openHistoryEntryFull(e) })
@@ -1019,11 +1016,11 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 	for _, e := range entries {
 		e := e
 		ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
-			ui.Text(c, e.Date+" · "+speakerLabel(ct, e)).FontSize(14).LineHeight(1.4).TextColor(t.Success)
+			ui.Text(c, e.Date+". "+speakerLabel(ct, e)).FontSize(14).LineHeight(1.4).TextColor(t.Success)
 			if e.From == "me" {
-				markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy source message", Theme: messageMarkdownTheme}).FontSize(15).LineHeight(1.8).TextColor(t.Text)
+				markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy source message", Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.8).TextColor(t.Text)
 			} else {
-				markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy source message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "sources", e.ID))).FontSize(15).LineHeight(1.8)
+				markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy source message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "sources", e.ID))).FontSize(typeBody).LineHeight(1.8)
 			}
 			ui.Row(c).Children(func() {
 				secondaryButton(c, "View in conversation").OnClick(func() { a.viewInConversation(e.ID) })
@@ -1092,7 +1089,7 @@ func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 	if state == "" {
 		state = "unknown"
 	}
-	ui.Text(c, "Session: "+session+" · state: "+state).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Session: "+session+": state: "+state).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 	switch {
 	case ct.SessionAPI != "":
 		ui.Text(c, "Session API: "+ct.SessionAPI).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)

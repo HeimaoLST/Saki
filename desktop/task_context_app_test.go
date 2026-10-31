@@ -278,7 +278,7 @@ func TestTaskContextAppModalAndReadOnlyHistoryCopy(t *testing.T) {
 	a.openConversationTaskContext()
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	for _, want := range []string{"Task context", "Conversation · Saki", "Conversation notes", "Close task context"} {
+	for _, want := range []string{"Task context", "Conversation: Saki", "Conversation notes", "Close task context"} {
 		if !tr.HasText(want) {
 			t.Fatalf("conversation modal missing %q: %v", want, tr.Texts())
 		}
@@ -478,7 +478,7 @@ func TestTaskContextIssueDetailsOpenOwnEditor(t *testing.T) {
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
 	expandIssueDetails(t, tr)
-	if err := tr.Click("Task context · 1"); err != nil {
+	if err := tr.Click("Task context: 1"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()

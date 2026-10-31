@@ -487,15 +487,18 @@ func taskContextReadOnlyView(c *ui.Context, theme workbenchTheme, items []taskCo
 	}
 	t := theme.Theme
 	ui.Column(c).Gap(4).Children(func() {
-		ui.Text(c, fmt.Sprintf("Task context · %d %s", len(items), taskContextItemWord(len(items)))).FontSize(14).FontWeight(500).TextColor(t.TextMuted)
+		ui.Text(c, fmt.Sprintf("Task context: %d %s", len(items), taskContextItemWord(len(items)))).FontSize(14).FontWeight(500).TextColor(t.TextMuted)
 		for index, item := range items {
 			item := item
 			key := item.ID
 			if key == "" {
 				key = fmt.Sprintf("readonly-context-%d", index)
 			}
-			ui.Column(c).Key(key).Padding(7).Radius(7).Background(t.Surface).Gap(3).Children(func() {
-				ui.Text(c, item.inputName()).FontSize(14).LineHeight(1.3).TextColor(t.TextMuted)
+			ui.Column(c).Key(key).Padding(7).Radius(t.Radius).Background(t.Surface).Gap(3).Children(func() {
+				ui.Text(c, item.Name).FontSize(14).LineHeight(1.3).TextColor(t.TextMuted)
+				if item.Source != "" {
+					ui.Text(c, "File: "+item.Source).FontSize(typeMeta).LineHeight(1.35).TextColor(t.TextMuted)
+				}
 				ui.Scroll(c).Height(96).Padding(6).Radius(5).Background(t.SurfaceHover).Children(func() {
 					markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy context text"}).
 						FontSize(14).LineHeight(1.4).TextColor(t.Text)
@@ -513,7 +516,7 @@ func (tc *taskContext) view(c *ui.Context, theme workbenchTheme) {
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Task context").FontSize(14).FontWeight(600).TextColor(t.Text)
 			ui.Spacer(c)
-			ui.Text(c, fmt.Sprintf("%d %s · %s / 1 MiB", len(tc.items), taskContextItemWord(len(tc.items)), taskContextSizeLabel(tc))).FontSize(14).TextColor(t.TextMuted)
+			ui.Text(c, fmt.Sprintf("%d %s: %s / 1 MiB", len(tc.items), taskContextItemWord(len(tc.items)), taskContextSizeLabel(tc))).FontSize(14).TextColor(t.TextMuted)
 		})
 		ui.Text(c, "Saved text is sent as caller-provided context with the next send. A file snapshot changes only when you refresh it.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
 
@@ -541,7 +544,7 @@ func (tc *taskContext) view(c *ui.Context, theme workbenchTheme) {
 					ui.Text(c, taskContextSourceLabel(item)).FontSize(14).TextColor(t.TextMuted)
 				})
 				if item.Source != "" {
-					ui.Text(c, "Source · "+item.Source).FontSize(14).LineHeight(1.35).TextColor(t.TextMuted)
+					ui.Text(c, "Source: "+item.Source).FontSize(14).LineHeight(1.35).TextColor(t.TextMuted)
 				}
 				ui.Row(c).Gap(8).Children(func() {
 					secondaryButton(c, "Preview").OnClick(func() { tc.previewID = item.ID })
@@ -598,7 +601,7 @@ func (tc *taskContext) formView(c *ui.Context, theme workbenchTheme) {
 		} else if tc.formMode == "edit" {
 			label = "Save changes"
 		}
-		ui.PrimaryButton(c, label).FontSize(13).OnClick(func() { tc.saveForm() })
+		ui.PrimaryButton(c, label).FontSize(typeAction).OnClick(func() { tc.saveForm() })
 	})
 }
 
@@ -606,7 +609,7 @@ func (tc *taskContext) previewView(c *ui.Context, theme workbenchTheme, item tas
 	t := theme.Theme
 	ui.Column(c).Gap(4).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Preview · "+item.Name).FontSize(14).FontWeight(600).TextColor(t.Text)
+			ui.Text(c, "Preview: "+item.Name).FontSize(14).FontWeight(600).TextColor(t.Text)
 			ui.Spacer(c)
 			secondaryButton(c, "Close preview").OnClick(func() { tc.previewID = "" })
 		})
@@ -631,7 +634,7 @@ func taskContextSourceLabel(item taskContextItem) string {
 	if item.Source == "" {
 		return "Named snippet"
 	}
-	return "File snapshot · revision " + fmt.Sprint(item.Revision)
+	return "File snapshot: revision " + fmt.Sprint(item.Revision)
 }
 
 func taskContextSizeLabel(tc *taskContext) string {

@@ -83,7 +83,7 @@ func (a *appModel) openIssueTaskContext(issueID string) {
 
 func (a *appModel) taskContextPanel(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
-	owner := "Conversation · " + ct.Name
+	owner := "Conversation: " + ct.Name
 	target := &ct.Context
 	if a.taskContextIssueID != "" {
 		issue := ct.issueByID(a.taskContextIssueID)
@@ -92,7 +92,7 @@ func (a *appModel) taskContextPanel(c *ui.Context, t *ui.Theme) {
 			ui.Button(c, "Close task context").FontSize(12).OnClick(func() { a.closeAux() })
 			return
 		}
-		owner = "Issue · " + issue.Goal
+		owner = "Issue: " + issue.Goal
 		target = &issue.Context
 	}
 	ui.Row(c).AlignItems(ui.Center).Children(func() {

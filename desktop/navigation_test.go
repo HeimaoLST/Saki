@@ -34,7 +34,7 @@ func TestNavigationSurfacesStayMutuallyExclusiveAndKeepState(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if !a.detailIs(detailHistory) || !tr.HasText("History · Saki") {
+	if !a.detailIs(detailHistory) || !tr.HasText("History: Saki") {
 		t.Fatalf("History replaced Work = detail=%q", a.activeDetail())
 	}
 	a.historyQuery = "history marker"
@@ -571,7 +571,7 @@ func TestPreviewNavigation219(t *testing.T) {
 						t.Fatalf("narrow work preview lost creation/overview content: %v", tr.Texts())
 					}
 				case detailHistory:
-					if !tr.HasText("History · Saki") || !tr.HasText("预算与发布证据") {
+					if !tr.HasText("History: Saki") || !tr.HasText("预算与发布证据") {
 						t.Fatalf("history preview lacks real search/list content: %v", tr.Texts())
 					}
 				case detailProfile:
@@ -594,7 +594,7 @@ func TestPreviewNavigation219(t *testing.T) {
 			a.issueResult = issueResultPage{
 				Open: true, OwnerContactID: ct.ID, IssueID: "preview-issue", ExecutionID: "preview-exec",
 				Panel: issueResultPanelState{
-					RunLabel: "Run 1 · 整理发布证据与未完成事项", RunStatus: "Completed",
+					RunLabel: "Run 1: 整理发布证据与未完成事项", RunStatus: "Completed",
 					Response: "# 发布检查结果\n\n内容优先的主区阅读页保留完整中文正文，**不挤进 340px 右侧详情**。\n\n- file → result → work 逐层返回\n- Settings 返回到当前入口\n\n```text\ncurrent-file-preview\n```",
 					Files:    []issueResultFile{file},
 				},
@@ -621,7 +621,7 @@ func TestPreviewNavigation219(t *testing.T) {
 			a.issueResult.Panel.ReaderKey = key
 			a.issueResult.Panel.FocusReader = true
 			tr.Frame()
-			if !tr.HasText("File reading") || !tr.HasText("当前文件预览") || !tr.HasText("完整正文在主区阅读") {
+			if !tr.HasText("当前文件预览") || !tr.HasText("完整正文在主区阅读") || !tr.Focused("Close reading") {
 				t.Fatalf("reader preview lacks inspected file body: %v", tr.Texts())
 			}
 			if width == 720 && (tr.HasText("Composer for Saki") || tr.HasText("Add contact")) {

@@ -144,7 +144,7 @@ func (a *appModel) focusDetailControl(c *ui.Context, button ui.Element) {
 func (a *appModel) navigationToolbar(c *ui.Context, t *ui.Theme) {
 	ui.Toolbar(c, func() {
 		if a.railCollapsed {
-			contacts := ui.Button(c, "").Label("Contacts").Tooltip("Show contacts").
+			contacts := appTooltip(c, ui.Button(c, "").Label("Contacts"), "Show contacts").
 				MinHeight(32).Height(32).Padding(4, 8)
 			contacts.Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
@@ -169,7 +169,7 @@ func (a *appModel) navigationToolbar(c *ui.Context, t *ui.Theme) {
 func (a *appModel) navigationToggle(c *ui.Context, t *ui.Theme, kind detailKind, label, tooltip string, icon *ui.SVG, focus *bool) {
 	active := a.detailIs(kind)
 	on := active
-	toggle := ui.Toggle(c, &on, "").Label(label).Tooltip(tooltip).
+	toggle := appTooltip(c, ui.Toggle(c, &on, "").Label(label), tooltip).
 		MinWidth(32).Width(32).Height(32).Padding(0)
 	toggle.Children(func() {
 		color := t.TextMuted
@@ -267,7 +267,7 @@ func (a *appModel) profileDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 				return
 			}
 			ui.Text(c, "Contact profile").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).Grow(1)
-			close := secondaryButton(c, "Close profile").Tooltip("Back from Contact profile").OnClick(func() { a.closeDetail() })
+			close := appTooltip(c, secondaryButton(c, "Close profile"), "Back from Contact profile").OnClick(func() { a.closeDetail() })
 			a.focusDetailControl(c, close)
 		})
 		ui.Scroll(c).Grow(1).TrackScroll(a.profileScrollFor(ct.ID)).Children(func() {
@@ -276,11 +276,11 @@ func (a *appModel) profileDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 					a.avatarTile(c, t, 42)
 					ui.Column(c).MinWidth(0).Shrink(1).Gap(1).Children(func() {
 						ui.Text(c, ct.Name).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).MaxLines(2)
-						ui.Text(c, a.statusLabel(ct)+" · "+ct.Role).FontSize(typeMeta).LineHeight(1.4).TextColor(a.statusColor(t, ct.Status))
+						ui.Text(c, a.statusLabel(ct)+": "+ct.Role).FontSize(typeMeta).LineHeight(1.4).TextColor(a.statusColor(t, ct.Status))
 					})
 				})
 				if ct.Archived {
-					ui.Text(c, "Archived contact. Existing history, drafts and issue data remain available.").FontSize(13).LineHeight(1.4).TextColor(t.Warning)
+					ui.Text(c, "Archived contact. Existing history, drafts and issue data remain available.").FontSize(typeAction).LineHeight(1.4).TextColor(t.Warning)
 				}
 				a.profileSummaryField(c, t, "Purpose", valueOr(ct.Purpose, "No purpose recorded."))
 				instructions := strings.TrimSpace(ct.Instructions)
@@ -297,7 +297,7 @@ func (a *appModel) profileDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 				if ct.SessionID != "" {
 					session = "Conversation session " + ct.SessionID
 					if !ct.Loaded {
-						session += " · history not loaded"
+						session += ": history not loaded"
 					}
 				}
 				a.profileSummaryField(c, t, "Conversation", session)
@@ -358,7 +358,7 @@ func (a *appModel) historyFullPage(c *ui.Context, t *ui.Theme) {
 	}
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(16, 16).AlignItems(ui.Center).Gap(8).Children(func() {
-			back := secondaryButton(c, "← Back to history").Label("Close full message").Tooltip("Back to History").OnClick(func() { a.closeContactHistoryFull() })
+			back := appTooltip(c, secondaryButton(c, "← Back to history").Label("Close full message"), "Back to History").OnClick(func() { a.closeContactHistoryFull() })
 			if a.focusHistoryFullBack {
 				back.Focus()
 				a.focusHistoryFullBack = false
@@ -367,8 +367,8 @@ func (a *appModel) historyFullPage(c *ui.Context, t *ui.Theme) {
 		})
 		ui.Scroll(c).Grow(1).TrackScroll(&a.historyFullScroll).Padding(0, 16).Children(func() {
 			ui.Column(c).FillWidth().MaxWidth(760).AlignItems(ui.Start).Gap(10).Children(func() {
-				ui.Text(c, from+" · "+full.Date+" · "+full.SessionID).FontSize(typeMeta).LineHeight(1.4).TextColor(t.TextMuted)
-				markdownReader(c, full.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy saved message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "full:"+full.SessionID, full.EntryID))).FontSize(15).LineHeight(1.8).TextColor(t.Text)
+				ui.Text(c, from+". "+full.Date+". "+full.SessionID).FontSize(typeMeta).LineHeight(1.4).TextColor(t.TextMuted)
+				markdownReader(c, full.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy saved message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "full:"+full.SessionID, full.EntryID))).FontSize(typeBody).LineHeight(1.8).TextColor(t.Text)
 				taskContextReadOnlyView(c, a.workTheme, full.Context)
 			})
 		})
@@ -378,7 +378,7 @@ func (a *appModel) historyFullPage(c *ui.Context, t *ui.Theme) {
 func (a *appModel) sourcesPage(c *ui.Context, t *ui.Theme) {
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(16, 16).AlignItems(ui.Center).Gap(8).Children(func() {
-			back := secondaryButton(c, "← Back").Label("Close sources").Tooltip("Back from sources").OnClick(func() { a.closeAux() })
+			back := appTooltip(c, secondaryButton(c, "← Back").Label("Close sources"), "Back from sources").OnClick(func() { a.closeAux() })
 			if a.focusSourcesBack {
 				back.Focus()
 				a.focusSourcesBack = false
@@ -402,7 +402,7 @@ func (a *appModel) auxPage(c *ui.Context, t *ui.Theme) {
 	}
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(16, 16).AlignItems(ui.Center).Gap(8).Children(func() {
-			back := secondaryButton(c, "← Back").Label(closeLabel).Tooltip("Back from " + title).OnClick(func() { a.closeAux() })
+			back := appTooltip(c, secondaryButton(c, "← Back").Label(closeLabel), "Back from "+title).OnClick(func() { a.closeAux() })
 			if a.focusAuxBack {
 				back.Focus()
 				a.focusAuxBack = false
@@ -439,7 +439,7 @@ func (a *appModel) syncDetailPageMode() {
 }
 
 func detailBackButton(c *ui.Context, t *ui.Theme, accessible, tooltip string) ui.Element {
-	button := secondaryButton(c, "").Label(accessible).Tooltip(tooltip).Padding(4, 8)
+	button := appTooltip(c, secondaryButton(c, "").Label(accessible), tooltip).Padding(4, 8)
 	button.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
 			ui.Icon(c, navBackIcon).Width(16).Height(16).TextColor(t.TextMuted)
