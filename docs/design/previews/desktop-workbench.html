@@ -87,6 +87,11 @@
         font: inherit;
         color: inherit;
       }
+      select {
+        appearance: none;
+        -webkit-appearance: none;
+        cursor: pointer;
+      }
       button {
         cursor: pointer;
         border: 0;
@@ -601,12 +606,6 @@
         width: 52px;
         height: 52px;
         margin: 0 auto 16px;
-      }
-      .empty p {
-        margin-top: 8px;
-        font-size: 16px;
-        color: var(--muted);
-        line-height: 1.8;
       }
       .composer-wrap {
         flex: none;
@@ -1184,18 +1183,8 @@
       .appearance-preview.system {
         background: linear-gradient(90deg, #ffffff 0 50%, #1d2520 50% 100%);
       }
-      .appearance-preview span {
-        display: block;
-        margin: 12px 10px;
-        font-size: 12px;
-        font-weight: 600;
-      }
       .appearance-card strong {
         font-size: 14px;
-      }
-      .appearance-card small {
-        color: var(--muted);
-        font-size: 12px;
       }
       .appearance-check {
         color: var(--accent);
@@ -2283,11 +2272,8 @@
                     data-appearance-choice="system"
                     aria-pressed="false"
                   >
-                    <span class="appearance-preview system" aria-hidden="true"
-                      ><span>系统</span></span
-                    >
+                    <span class="appearance-preview system" aria-hidden="true"></span>
                     <strong>跟随系统</strong>
-                    <small>随 macOS 外观变化</small>
                     <span class="appearance-check"></span>
                   </button>
                   <button
@@ -2296,11 +2282,8 @@
                     data-appearance-choice="paper"
                     aria-pressed="false"
                   >
-                    <span class="appearance-preview" aria-hidden="true"
-                      ><span>浅色</span></span
-                    >
+                    <span class="appearance-preview" aria-hidden="true"></span>
                     <strong>浅色</strong>
-                    <small>浅色，语义适配</small>
                     <span class="appearance-check"></span>
                   </button>
                   <button
@@ -2309,11 +2292,8 @@
                     data-appearance-choice="night"
                     aria-pressed="false"
                   >
-                    <span class="appearance-preview night" aria-hidden="true"
-                      ><span>深色</span></span
-                    >
+                    <span class="appearance-preview night" aria-hidden="true"></span>
                     <strong>深色</strong>
-                    <small>深色，语义适配</small>
                     <span class="appearance-check"></span>
                   </button>
                 </div>
@@ -2733,7 +2713,7 @@
         const c = current();
         if (scene === "empty" || !c.messages.length) {
           $("messages").innerHTML =
-            `<div class="empty">${avatar(c)}<h2>和 ${escapeHTML(c.name)} 开始聊聊</h2><p>一个想法、一段资料，或者一件想交给它的事。</p></div>`;
+            `<div class="empty">${avatar(c)}<h2>和 ${escapeHTML(c.name)} 开始聊聊</h2></div>`;
           return;
         }
         $("messages").innerHTML =
@@ -2822,13 +2802,13 @@
                   )
                   .map(taskRow)
                   .join("")}</div>`
-              : '<p class="view-note">这里还没有事项。新建一件事，把目标和要求记下来。</p>'
+              : '<p class="view-note">还没有事项。</p>'
           }${filter === "open" && all.some((t) => t.state === "done") ? `<div class="section-heading"><span>最近完成</span><button class="quiet" data-filter="done">查看全部 ${icon("chevron", "chevron")}</button></div><div class="group">${taskRow(all.find((t) => t.state === "done"))}</div>` : ""}`;
       }
       function renderJourney() {
         const all = currentTasks();
         $("work-body").innerHTML =
-          `<div class="tabs" aria-label="工作区视图"><button data-view="tasks" aria-pressed="false">事项</button><button data-view="journey" aria-pressed="true">轨迹</button></div><ol class="timeline">${all.map((t) => `<li><time>${escapeHTML(t.updated)}</time><strong>${t.state === "done" ? "留下了成果" : t.run === "waiting" ? "等待你的补充" : t.state === "todo" ? "记下了一件事" : "继续处理事项"}</strong><p>${escapeHTML(t.title)}，${escapeHTML(t.summary)}</p><button data-task="${t.id}">查看事项${icon("chevron", "chevron")}</button></li>`).join("") || "<li><strong>从这里开始</strong><p>有新的交办或成果时，会留在这条轨迹里。</p></li>"}</ol>`;
+          `<div class="tabs" aria-label="工作区视图"><button data-view="tasks" aria-pressed="false">事项</button><button data-view="journey" aria-pressed="true">轨迹</button></div><ol class="timeline">${all.map((t) => `<li><time>${escapeHTML(t.updated)}</time><strong>${t.state === "done" ? "已完成" : t.run === "waiting" ? "等待补充" : t.state === "todo" ? "已创建" : t.run === "stopped" ? "已暂停" : t.run === "completed" ? "已结束" : "进行中"}</strong><p>${escapeHTML(t.title)}，${escapeHTML(t.summary)}</p><button data-task="${t.id}">查看事项${icon("chevron", "chevron")}</button></li>`).join("") || "<li><strong>还没有事项</strong></li>"}</ol>`;
       }
       function renderDetail() {
         const t = tasks.find((t) => t.id === selectedTask);
