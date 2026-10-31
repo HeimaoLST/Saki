@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Nagi · 工作台设计预览 v09</title>
+    <title>Nagi 工作台设计预览 v09</title>
     <style>
       :root {
         color-scheme: light;
@@ -34,7 +34,6 @@
         --disabled-text: #5e6b61;
         --disabled-bg: #e5eae6;
         --focus: #3c7155;
-        --shadow: 0 18px 60px #20302814;
       }
       [data-theme="night"] {
         color-scheme: dark;
@@ -65,7 +64,6 @@
         --disabled-text: #a6b4a9;
         --disabled-bg: #303b33;
         --focus: #a7d6b8;
-        --shadow: 0 18px 60px #0004;
       }
       * {
         box-sizing: border-box;
@@ -146,7 +144,7 @@
         font-weight: 600;
       }
       h2 {
-        font-size: 17px;
+        font-size: 16px;
         font-weight: 600;
         line-height: 1.5;
       }
@@ -197,7 +195,7 @@
         gap: 7px;
         min-height: 32px;
         padding: 6px 10px;
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 500;
       }
       .quiet {
@@ -252,7 +250,6 @@
       }
       .proto-bar strong {
         font-size: 14px;
-        letter-spacing: 0.2px;
         color: var(--ink);
         margin-right: 10px;
       }
@@ -263,12 +260,12 @@
         flex-wrap: wrap;
       }
       .proto-tools select {
-        border: 1px solid var(--line);
+        border: 0.5px solid var(--line);
         border-radius: 6px;
         background: var(--surface);
         padding: 5px 8px;
         min-height: 30px;
-        font-size: 12px;
+        font-size: 14px;
       }
       .proto-footer {
         max-width: 1380px;
@@ -301,10 +298,9 @@
         display: grid;
         grid-template-columns: var(--left) 1px minmax(0, 1fr);
         background: var(--surface);
-        border: 1px solid var(--line);
+        border: 0.5px solid var(--line);
         border-radius: 13px;
         overflow: hidden;
-        box-shadow: var(--shadow);
       }
       .app.docked.work-open {
         grid-template-columns: var(--left) 1px minmax(480px, 1fr) 1px var(
@@ -327,8 +323,7 @@
         justify-content: space-between;
       }
       .brand strong {
-        font-size: 19px;
-        letter-spacing: -0.5px;
+        font-size: 20px;
       }
       .brand-mark {
         width: 22px;
@@ -353,7 +348,7 @@
         outline: none;
         min-width: 0;
         width: 100%;
-        font-size: 13px;
+        font-size: 14px;
       }
       .search:focus-within {
         outline: 2px solid var(--focus);
@@ -369,7 +364,7 @@
         border: 0;
         background: none;
         max-width: 120px;
-        font-size: 12px;
+        font-size: 14px;
         color: var(--muted);
       }
       .contacts {
@@ -425,7 +420,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        border-top: 1px solid var(--line);
+        border-top: 0.5px solid var(--line);
         color: var(--muted);
       }
       .splitter {
@@ -462,7 +457,7 @@
         display: flex;
         align-items: center;
         gap: 12px;
-        border-bottom: 1px solid var(--line);
+        border-bottom: 0.5px solid var(--line);
       }
       .main-head .avatar {
         width: 35px;
@@ -517,7 +512,7 @@
         padding: 13px 16px;
         border-radius: 4px 15px 15px 15px;
         background: var(--bubble);
-        font-size: 15px;
+        font-size: 16px;
         line-height: 1.8;
         overflow-wrap: anywhere;
       }
@@ -551,20 +546,20 @@
       }
       .bubble h3 {
         margin-bottom: 8px;
-        font-size: 15px;
+        font-size: 16px;
       }
       .bubble table {
         border-collapse: collapse;
         width: 100%;
         table-layout: fixed;
-        font-size: 13px;
+        font-size: 14px;
         margin: 12px 0;
       }
       .bubble th,
       .bubble td {
         padding: 7px 8px;
         text-align: left;
-        border-bottom: 1px solid var(--line);
+        border-bottom: 0.5px solid var(--line);
         overflow-wrap: anywhere;
       }
       .bubble th {
@@ -609,7 +604,7 @@
       }
       .empty p {
         margin-top: 8px;
-        font-size: 14px;
+        font-size: 16px;
         color: var(--muted);
         line-height: 1.8;
       }
@@ -623,11 +618,11 @@
         background: var(--surface);
         border: 1px solid var(--control-border);
         border-radius: 13px;
-        box-shadow: 0 3px 12px #20302806;
       }
       .composer:focus-within {
         border-color: var(--focus);
-        box-shadow: 0 0 0 1px var(--focus);
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
       }
       .composer textarea {
         border: 0;
@@ -637,7 +632,7 @@
         height: 82px;
         padding: 15px 16px 6px;
         outline: none;
-        font-size: 15px;
+        font-size: 16px;
         line-height: 1.6;
       }
       .composer textarea::placeholder {
@@ -655,7 +650,7 @@
         border: 0;
         border-radius: 7px;
         padding: 6px 8px;
-        font-size: 12px;
+        font-size: 14px;
         max-width: 220px;
         min-width: 0;
       }
@@ -675,7 +670,7 @@
         border-radius: 8px;
         background: var(--warning-bg);
         color: var(--warning);
-        font-size: 13px;
+        font-size: 14px;
         display: flex;
         justify-content: space-between;
         gap: 10px;
@@ -697,7 +692,6 @@
         position: relative;
         height: 100%;
         width: var(--right, 340px);
-        animation: enter 140ms ease-out;
       }
       .app:not(.docked) .work {
         position: absolute;
@@ -706,7 +700,6 @@
         height: 100%;
         z-index: 18;
         background: var(--surface);
-        box-shadow: none;
         border-radius: 0;
       }
       .work-heading {
@@ -718,7 +711,7 @@
         min-height: 32px;
         padding: 5px 7px;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 14px;
         white-space: nowrap;
       }
       .detail-back:hover {
@@ -739,10 +732,10 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        border-bottom: 1px solid var(--line);
+        border-bottom: 0.5px solid var(--line);
       }
       .work-head h2 {
-        font-size: 15px;
+        font-size: 16px;
       }
       .work-head p {
         font-size: 12px;
@@ -766,13 +759,12 @@
       .tabs button {
         flex: 1;
         padding: 5px 8px;
-        font-size: 13px;
+        font-size: 14px;
         color: var(--muted);
       }
       .tabs button[aria-pressed="true"] {
         background: var(--surface);
         color: var(--ink);
-        box-shadow: 0 1px 3px #0001;
       }
       .section-heading {
         margin: 23px 0 9px;
@@ -787,7 +779,7 @@
         margin-top: 0;
       }
       .group {
-        border: 1px solid var(--line);
+        border: 0.5px solid var(--line);
         border-radius: 10px;
         overflow: hidden;
         background: var(--surface);
@@ -802,7 +794,7 @@
         border-radius: 0;
       }
       .task-row + .task-row {
-        border-top: 1px solid var(--line);
+        border-top: 0.5px solid var(--line);
       }
       .task-row > .task-symbol {
         margin-top: 3px;
@@ -846,14 +838,14 @@
       .work-toolbar select {
         background: none;
         border: 0;
-        font-size: 12px;
+        font-size: 14px;
         color: var(--muted);
         max-width: 160px;
         padding: 5px 0;
       }
       .work-foot {
         padding: 10px 15px;
-        border-top: 1px solid var(--line);
+        border-top: 0.5px solid var(--line);
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -864,7 +856,7 @@
         gap: 5px;
         align-items: center;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 14px;
         margin: -4px 0 20px;
         padding: 5px 0;
         min-height: 30px;
@@ -872,11 +864,10 @@
       .detail-title {
         font-size: 20px;
         line-height: 1.5;
-        letter-spacing: -0.3px;
         margin: 10px 0;
       }
       .description {
-        font-size: 14px;
+        font-size: 16px;
         color: var(--muted);
         line-height: 1.75;
       }
@@ -885,7 +876,7 @@
         padding: 13px 14px;
         background: var(--warning-bg);
         border-radius: 8px;
-        font-size: 13px;
+        font-size: 14px;
         color: var(--warning);
         line-height: 1.7;
       }
@@ -906,7 +897,7 @@
         padding: 13px 11px;
         text-align: left;
         background: var(--surface);
-        border: 1px solid var(--line);
+        border: 0.5px solid var(--line);
         border-radius: 8px;
       }
       .result-file > svg {
@@ -916,7 +907,7 @@
       }
       .result-file strong {
         display: block;
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 550;
       }
       .result-file small {
@@ -926,7 +917,7 @@
         margin-top: 3px;
       }
       .disclosure {
-        border-top: 1px solid var(--line);
+        border-top: 0.5px solid var(--line);
         margin-top: 18px;
         padding-top: 3px;
       }
@@ -937,7 +928,7 @@
         align-items: center;
         justify-content: space-between;
         padding: 13px 0;
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 500;
       }
       .disclosure summary::-webkit-details-marker {
@@ -956,7 +947,7 @@
         align-items: flex-start;
         gap: 8px;
         padding: 9px 0;
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.6;
       }
       .requirements svg {
@@ -976,7 +967,7 @@
       }
       .run-line {
         padding: 10px 0;
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.6;
       }
       .run-line p {
@@ -988,7 +979,7 @@
         padding-left: 16px;
         margin: 0;
         list-style: none;
-        border-left: 1px solid var(--line);
+        border-left: 0.5px solid var(--line);
       }
       .timeline li {
         position: relative;
@@ -1016,21 +1007,21 @@
         font-weight: 550;
       }
       .timeline p {
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.7;
         color: var(--muted);
         margin: 5px 0;
       }
       .timeline button {
         padding: 4px 0;
-        font-size: 13px;
+        font-size: 14px;
         color: var(--accent);
         display: flex;
         align-items: center;
         gap: 4px;
       }
       .view-note {
-        font-size: 13px;
+        font-size: 12px;
         line-height: 1.7;
         color: var(--muted);
         margin-bottom: 24px;
@@ -1042,7 +1033,7 @@
         min-height: 34px;
         padding: 6px 9px;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 500;
       }
       .settings-entry:hover {
@@ -1088,7 +1079,7 @@
         gap: 16px;
         min-height: 0;
         padding: 20px 14px;
-        border-right: 1px solid var(--line);
+        border-right: 0.5px solid var(--line);
         background: var(--rail);
       }
       .settings-back {
@@ -1096,14 +1087,20 @@
       }
       .settings-sidebar h1 {
         padding: 0 10px;
-        font-size: 24px;
+        font-size: 20px;
         line-height: 1.3;
         font-weight: 600;
       }
       .settings-purpose {
         padding: 0 10px;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .settings-help {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 12px;
         line-height: 1.5;
       }
       .settings-leave-note {
@@ -1112,7 +1109,7 @@
         border-radius: 8px;
         background: var(--warning-bg);
         color: var(--warning);
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.6;
       }
       .settings-nav {
@@ -1159,7 +1156,7 @@
         gap: 7px;
         min-height: 142px;
         padding: 10px;
-        border: 1px solid var(--line);
+        border: 0.5px solid var(--line);
         border-radius: 10px;
         background: var(--panel);
         text-align: left;
@@ -1170,20 +1167,19 @@
       }
       .appearance-card[aria-pressed="true"] {
         border-color: var(--accent);
-        box-shadow: inset 0 0 0 1px var(--accent);
+        outline: 1px solid var(--accent);
+        outline-offset: -1px;
       }
       .appearance-preview {
         display: block;
         height: 64px;
-        border: 1px solid #0002;
-        border-radius: 7px;
+        border-radius: 0;
         background: #ffffff;
         color: #252e28;
       }
       .appearance-preview.night {
         background: #1d2520;
         color: #edf3ee;
-        border-color: #0006;
       }
       .appearance-preview.system {
         background: linear-gradient(90deg, #ffffff 0 50%, #1d2520 50% 100%);
@@ -1191,11 +1187,11 @@
       .appearance-preview span {
         display: block;
         margin: 12px 10px;
-        font-size: 11px;
+        font-size: 12px;
         font-weight: 600;
       }
       .appearance-card strong {
-        font-size: 13px;
+        font-size: 14px;
       }
       .appearance-card small {
         color: var(--muted);
@@ -1203,7 +1199,7 @@
       }
       .appearance-check {
         color: var(--accent);
-        font-size: 11px;
+        font-size: 12px;
         font-weight: 600;
         min-height: 16px;
       }
@@ -1215,10 +1211,10 @@
         flex-direction: column;
         gap: 3px;
         padding: 12px 14px;
-        border: 1px solid var(--line);
+        border: 0.5px solid var(--line);
         border-radius: 9px;
         background: var(--panel);
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.5;
       }
       .connection-summary strong {
@@ -1231,13 +1227,13 @@
         border-radius: 8px;
         background: var(--warning-bg);
         color: var(--warning);
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.6;
       }
       .settings-form label {
         display: block;
         margin: 14px 0 6px;
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 500;
       }
       .settings-form .field {
@@ -1247,13 +1243,13 @@
         display: block;
         margin-top: 6px;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 12px;
         line-height: 1.5;
       }
       .field-error {
         margin-top: 5px;
         color: var(--warning);
-        font-size: 13px;
+        font-size: 14px;
       }
       .settings-grid {
         display: grid;
@@ -1266,12 +1262,12 @@
       .settings-advanced {
         margin-top: 18px;
         padding-top: 12px;
-        border-top: 1px solid var(--line);
+        border-top: 0.5px solid var(--line);
       }
       .settings-advanced summary {
         cursor: pointer;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 600;
       }
       .settings-advanced .settings-grid {
@@ -1287,7 +1283,7 @@
         min-height: 44px;
         padding: 9px 0 0;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.6;
       }
       .settings-status:empty {
@@ -1297,7 +1293,7 @@
         display: grid;
         grid-template-columns: max-content minmax(0, 1fr);
         gap: 10px 18px;
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.6;
       }
       .settings-diagnostics dt {
@@ -1338,16 +1334,16 @@
       .board-column h3 {
         margin: 0 0 12px;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 14px;
       }
       .board-column .task-row {
         background: var(--surface);
-        border: 1px solid var(--line);
-        border-radius: 8px;
+        border: 0.5px solid var(--line);
+        border-radius: 0;
         margin-bottom: 8px;
       }
       .reader {
-        font-size: 15px;
+        font-size: 16px;
         line-height: 1.8;
         max-width: 680px;
         margin: auto;
@@ -1362,12 +1358,12 @@
       .reader th,
       .reader td {
         padding: 10px 12px;
-        border-bottom: 1px solid var(--line);
+        border-bottom: 0.5px solid var(--line);
         text-align: left;
         overflow-wrap: anywhere;
       }
       .reader blockquote {
-        border-left: 2px solid var(--line);
+        border-left: 0.5px solid var(--line);
         margin: 20px 0;
         padding-left: 16px;
         color: var(--muted);
@@ -1382,8 +1378,7 @@
         padding: 10px 16px;
         border-radius: 9px;
         z-index: 100;
-        font-size: 13px;
-        box-shadow: var(--shadow);
+        font-size: 14px;
         max-width: 90vw;
       }
       .run-actions {
@@ -1394,7 +1389,7 @@
       }
       .text-action {
         color: var(--accent);
-        font-size: 13px;
+        font-size: 14px;
         padding: 5px 0;
         text-decoration: underline;
         text-underline-offset: 3px;
@@ -1408,14 +1403,6 @@
       .app.narrow .composer-wrap {
         padding-inline: 20px;
       }
-      @keyframes enter {
-        from {
-          transform: translateX(6px);
-        }
-        to {
-          transform: none;
-        }
-      }
       .app.settings-open.settings-narrow .settings-shell {
         grid-template-columns: minmax(0, 1fr);
         grid-template-rows: auto minmax(0, 1fr);
@@ -1424,7 +1411,7 @@
         gap: 8px;
         padding: 12px 16px;
         border-right: 0;
-        border-bottom: 1px solid var(--line);
+        border-bottom: 0.5px solid var(--line);
       }
       .app.settings-open.settings-narrow .settings-back {
         align-self: flex-start;
@@ -1434,7 +1421,7 @@
         padding: 0;
       }
       .app.settings-open.settings-narrow .settings-sidebar h1 {
-        font-size: 22px;
+        font-size: 20px;
       }
       .app.settings-open.settings-narrow .settings-nav {
         flex-direction: row;
@@ -1527,7 +1514,7 @@
         }
         .bubble {
           max-width: 100%;
-          font-size: 15px;
+          font-size: 16px;
         }
         .user .bubble {
           max-width: 95%;
@@ -1554,11 +1541,11 @@
         line-height: 1.25;
       }
       .detail-title {
-        font-size: 18px;
+        font-size: 20px;
         font-weight: 600;
       }
       .settings-sidebar h1 {
-        font-size: 18px;
+        font-size: 20px;
         font-weight: 600;
       }
       .contact strong {
@@ -1566,7 +1553,7 @@
         font-weight: 500;
       }
       .contact small {
-        font-size: 13px;
+        font-size: 12px;
         font-weight: 400;
       }
       .head-actions .tool {
@@ -1592,14 +1579,14 @@
         position: absolute;
         top: -2px;
         right: -2px;
-        min-width: 15px;
-        height: 15px;
+        min-width: 16px;
+        height: 16px;
         padding: 0 3px;
         border-radius: 999px;
         background: var(--accent);
         color: var(--on-accent);
-        font-size: 9px;
-        line-height: 15px;
+        font-size: 12px;
+        line-height: 16px;
         text-align: center;
       }
       .message-line {
@@ -1699,7 +1686,7 @@
         padding: 6px 5px;
         color: var(--muted);
         background: transparent;
-        font-size: 12px;
+        font-size: 14px;
       }
       .send-icon {
         width: 32px;
@@ -1730,7 +1717,7 @@
         gap: 5px;
         background: var(--warning-bg);
         color: var(--warning);
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 500;
       }
       .stop-button svg {
@@ -1750,7 +1737,7 @@
       .context-panel {
         margin: 2px 10px 4px;
         padding: 9px 10px;
-        border: 1px solid var(--line);
+        border: 0.5px solid var(--line);
         border-radius: 8px;
         background: var(--panel);
       }
@@ -1767,7 +1754,7 @@
         align-items: center;
         gap: 8px;
         padding: 4px 0;
-        font-size: 13px;
+        font-size: 14px;
       }
       .context-item small {
         display: block;
@@ -1801,7 +1788,6 @@
         position: relative;
         height: 100%;
         width: var(--right, 340px);
-        animation: enter 140ms ease-out;
       }
       .app:not(.docked) .work {
         position: absolute;
@@ -1810,7 +1796,6 @@
         height: 100%;
         z-index: 18;
         background: var(--surface);
-        box-shadow: none;
         border-radius: 0;
       }
       .app:not(.docked) .work-head {
@@ -1820,7 +1805,7 @@
         display: none;
       }
       .work-head h2 {
-        font-size: 18px;
+        font-size: 20px;
         font-weight: 600;
       }
       .work-head p {
@@ -1847,10 +1832,10 @@
         display: flex;
         align-items: center;
         gap: 12px;
-        border-bottom: 1px solid var(--line);
+        border-bottom: 0.5px solid var(--line);
       }
       .page-head h2 {
-        font-size: 18px;
+        font-size: 20px;
         font-weight: 600;
         line-height: 1.3;
       }
@@ -1861,6 +1846,7 @@
         padding: 22px;
       }
       .page-content p {
+        font-size: 16px;
         line-height: 1.75;
         margin: 0 0 14px;
       }
@@ -1871,7 +1857,7 @@
       }
       .page-content label {
         display: block;
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 500;
         margin: 14px 0 6px;
       }
@@ -1914,9 +1900,9 @@
         gap: 8px;
         align-items: start;
         padding: 10px 0;
-        border-top: 1px solid var(--line);
+        border-top: 0.5px solid var(--line);
         text-align: left;
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.55;
       }
       .history-result:first-child {
@@ -1936,12 +1922,12 @@
         margin-bottom: 18px;
       }
       .profile-summary h2 {
-        font-size: 18px;
+        font-size: 20px;
         font-weight: 600;
       }
       .profile-summary p {
         color: var(--muted);
-        font-size: 13px;
+        font-size: 14px;
         margin-top: 3px;
       }
       .profile-facts {
@@ -1952,7 +1938,7 @@
       }
       .profile-facts div {
         padding: 10px;
-        border: 1px solid var(--line);
+        border: 0.5px solid var(--line);
         border-radius: 8px;
       }
       .profile-facts dt {
@@ -1966,9 +1952,9 @@
       .small-action {
         min-height: 32px;
         padding: 6px 10px;
-        border: 1px solid var(--line);
+        border: 0.5px solid var(--line);
         border-radius: 8px;
-        font-size: 13px;
+        font-size: 14px;
       }
       .history-result:hover {
         background: var(--hover);
@@ -2067,15 +2053,15 @@
     </svg>
     <header class="proto-bar">
       <div>
-        <strong>Nagi</strong> 工作台 / 设计预览 09
-        <span class="muted"> · 示例数据</span>
+        <strong>Nagi</strong> 工作台设计预览 09
+        <span class="muted">，示例数据</span>
       </div>
       <div class="proto-tools">
         <label for="frame">窗口</label
         ><select id="frame">
-          <option value="1380">1380 · 宽屏</option>
-          <option value="1040">1040 · 标准</option>
-          <option value="720">720 · 紧凑</option></select
+          <option value="1380">1380，宽屏</option>
+          <option value="1040">1040，标准</option>
+          <option value="720">720，紧凑</option></select
         ><label for="theme">外观</label
         ><select id="theme">
           <option value="paper">浅色</option>
@@ -2214,7 +2200,7 @@
                 </button>
               </div>
               <div class="composer-right">
-                <label class="model-control" title="当前对话 · deepseek-v4.1-flash">
+                <label class="model-control" title="当前对话，deepseek-v4.1-flash">
                   <span class="model-scope">对话</span>
                   <span class="sr">当前对话模型</span>
                   <select
@@ -2222,7 +2208,7 @@
                     id="model"
                     aria-label="当前对话模型：deepseek-v4.1-flash"
                   >
-                    <option>DeepSeek Flash · deepseek-v4.1-flash</option>
+                    <option>DeepSeek Flash，deepseek-v4.1-flash</option>
                   </select>
                 </label>
                 <button
@@ -2247,7 +2233,7 @@
               </div>
             </div>
             <div class="composer-hint" id="composer-hint">
-              <span>Enter 发送 · ⇧ Enter 换行</span>
+              <span>Enter 发送，Shift+Enter 换行</span>
             </div>
           </div>
         </div>
@@ -2314,7 +2300,7 @@
                       ><span>浅色</span></span
                     >
                     <strong>浅色</strong>
-                    <small>浅色 · 语义适配</small>
+                    <small>浅色，语义适配</small>
                     <span class="appearance-check"></span>
                   </button>
                   <button
@@ -2327,7 +2313,7 @@
                       ><span>深色</span></span
                     >
                     <strong>深色</strong>
-                    <small>深色 · 语义适配</small>
+                    <small>深色，语义适配</small>
                     <span class="appearance-check"></span>
                   </button>
                 </div>
@@ -2481,7 +2467,7 @@
     <footer class="proto-footer">
       <span
         >可试：复制、统一输入区、三项详情、设置与主区阅读。</span
-      ><span>MyGo 官方 v0.7.3 基线 · 实际版本由 GUI 核定 · 配色 #221 语义适配 · HTML 非原生</span>
+      ><span>MyGo 官方 v0.7.3 基线，实际版本由 GUI 核定，配色 #221 语义适配，HTML 非原生</span>
     </footer>
     <div
       id="announcer"
@@ -2580,14 +2566,14 @@
           goal: "安排轻松的两日旅行，总预算不超过 1500 元。住宿优先西湖附近。",
           date: "2026-10-31",
           updated: "今天 10:29",
-          result: "杭州两日行程 · 初稿",
+          result: "杭州两日行程，初稿",
           requirements: [
             ["行程节奏轻松，保留自由时间", true, "路线初稿已预留两个自由时段"],
             ["总预算不超过 1500 元", false, "交通与住宿价格尚未核实"],
             ["住宿靠近西湖", false, "10:28 补充，正在查找"],
             ["列出交通方式", true, "初稿列出城际与市内交通"],
           ],
-          events: ["10:29 · 已读入旅行偏好", "10:30 · 正在核对交通资料"],
+          events: ["10:29，已读入旅行偏好", "10:30，正在核对交通资料"],
         },
         {
           id: "article",
@@ -2604,7 +2590,7 @@
             ["介绍控制在 200 字以内", true, "已整理素材"],
             ["确定正式还是轻松的语气", false, "等待你的选择"],
           ],
-          events: ["昨天 · 已整理现有素材", "昨天 · 等待语气偏好"],
+          events: ["昨天，已整理现有素材", "昨天，等待语气偏好"],
         },
         {
           id: "photos",
@@ -2621,7 +2607,7 @@
             ["按地点归类", false, "尚未开始"],
             ["挑选 12 张照片", false, "尚未开始"],
           ],
-          events: ["昨天 · 记下这件事"],
+          events: ["昨天，记下这件事"],
         },
         {
           id: "reading",
@@ -2633,12 +2619,12 @@
           goal: "提取文章的三个重点，并为每个观点保留对应出处。",
           date: "",
           updated: "今天 09:42",
-          result: "阅读笔记 · 三个重点",
+          result: "阅读笔记，三个重点",
           requirements: [
             ["整理三个重点", true, "笔记中包含三节"],
             ["保留每个重点的出处", true, "已列出原文段落"],
           ],
-          events: ["昨天 · 收到阅读任务", "今天 09:42 · 笔记与出处已保存"],
+          events: ["昨天，收到阅读任务", "今天 09:42，笔记与出处已保存"],
         },
       ];
       let selected = "saki",
@@ -2737,7 +2723,7 @@
               const running = tasks.find(
                 (t) => t.contact === c.id && t.run === "running",
               );
-              return `<button class="contact" data-contact="${c.id}" aria-current="${c.id === selected}" aria-label="${escapeHTML(c.name)}，${running ? "正在工作" : escapeHTML(c.description)}">${avatar(c)}<span class="grow"><strong>${escapeHTML(c.name)}</strong><small>${running ? escapeHTML("正在处理 · " + running.title) : escapeHTML(c.description)}</small></span>${running ? '<span class="dot status" aria-hidden="true"></span>' : ""}</button>`;
+              return `<button class="contact" data-contact="${c.id}" aria-current="${c.id === selected}" aria-label="${escapeHTML(c.name)}，${running ? "正在工作" : escapeHTML(c.description)}">${avatar(c)}<span class="grow"><strong>${escapeHTML(c.name)}</strong><small>${running ? escapeHTML("正在处理，" + running.title) : escapeHTML(c.description)}</small></span>${running ? '<span class="dot status" aria-hidden="true"></span>' : ""}</button>`;
             })
             .join("") ||
           '<p class="muted small" style="padding:12px">没有符合条件的联系人</p>';
@@ -2751,7 +2737,7 @@
           return;
         }
         $("messages").innerHTML =
-          '<p class="date">今天 · 10 月 28 日</p>' +
+          '<p class="date">今天，10 月 28 日</p>' +
           c.messages
             .map(
               (m, i) =>
@@ -2779,9 +2765,9 @@
         $("contact-name").textContent = c.name;
         $("contact-status").textContent =
           scene === "error"
-            ? "连接异常 · 草稿已保留"
+            ? "连接异常，草稿已保留"
             : running
-              ? "正在处理 · " + running.title
+              ? "正在处理，" + running.title
               : active.some((t) => t.run === "waiting")
                 ? "有一件事需要你处理"
                 : c.description;
@@ -2803,7 +2789,7 @@
         updateComposer();
       }
       function taskRow(t) {
-        return `<button class="task-row ${t.run === "waiting" ? "attention-row" : ""}" data-task="${t.id}">${icon(taskIcon(t), "task-symbol")}<span class="grow"><strong>${escapeHTML(t.title)}</strong><small>${escapeHTML(t.summary)}</small><span class="status ${t.run === "waiting" ? "warning" : ""}">${escapeHTML(stateLabel(t))}${t.date ? " · " + t.date.slice(5).replace("-", "月") + "日" : ""}</span></span>${icon("chevron", "chevron")}</button>`;
+        return `<button class="task-row ${t.run === "waiting" ? "attention-row" : ""}" data-task="${t.id}">${icon(taskIcon(t), "task-symbol")}<span class="grow"><strong>${escapeHTML(t.title)}</strong><small>${escapeHTML(t.summary)}</small><span class="status ${t.run === "waiting" ? "warning" : ""}">${escapeHTML(stateLabel(t))}${t.date ? "，" + t.date.slice(5).replace("-", "月") + "日" : ""}</span></span>${icon("chevron", "chevron")}</button>`;
       }
       function renderOverview() {
         const all = currentTasks();
@@ -2813,7 +2799,7 @@
             (filter === "done" ? t.state === "done" : t.state !== "done"),
         );
         $("work-body").innerHTML =
-          `<div class="tabs" aria-label="工作区视图"><button data-view="tasks" aria-pressed="true">事项</button><button data-view="journey" aria-pressed="false">轨迹</button></div><div class="work-toolbar"><select id="task-filter" aria-label="筛选事项"><option value="open" ${filter === "open" ? "selected" : ""}>未结束 · ${all.filter((t) => t.state !== "done").length}</option><option value="done" ${filter === "done" ? "selected" : ""}>已完成 · ${all.filter((t) => t.state === "done").length}</option><option value="all" ${filter === "all" ? "selected" : ""}>全部事项 · ${all.length}</option></select><span class="muted small">${all.length ? "正在处理优先" : "还没有事项"}</span></div>${
+          `<div class="tabs" aria-label="工作区视图"><button data-view="tasks" aria-pressed="true">事项</button><button data-view="journey" aria-pressed="false">轨迹</button></div><div class="work-toolbar"><select id="task-filter" aria-label="筛选事项"><option value="open" ${filter === "open" ? "selected" : ""}>未结束（${all.filter((t) => t.state !== "done").length}）</option><option value="done" ${filter === "done" ? "selected" : ""}>已完成（${all.filter((t) => t.state === "done").length}）</option><option value="all" ${filter === "all" ? "selected" : ""}>全部事项（${all.length}）</option></select><span class="muted small">${all.length ? "正在处理优先" : "还没有事项"}</span></div>${
             visible.length
               ? `<div class="group">${visible
                   .slice()
@@ -2842,7 +2828,7 @@
       function renderJourney() {
         const all = currentTasks();
         $("work-body").innerHTML =
-          `<div class="tabs" aria-label="工作区视图"><button data-view="tasks" aria-pressed="false">事项</button><button data-view="journey" aria-pressed="true">轨迹</button></div><p class="view-note">留下重要的交办、补充和成果，找回每件事的来龙去脉。</p><ol class="timeline">${all.map((t) => `<li><time>${escapeHTML(t.updated)}</time><strong>${t.state === "done" ? "留下了成果" : t.run === "waiting" ? "等待你的补充" : t.state === "todo" ? "记下了一件事" : "继续处理事项"}</strong><p>${escapeHTML(t.title)} · ${escapeHTML(t.summary)}</p><button data-task="${t.id}">查看事项${icon("chevron", "chevron")}</button></li>`).join("") || "<li><strong>从这里开始</strong><p>有新的交办或成果时，会留在这条轨迹里。</p></li>"}</ol>`;
+          `<div class="tabs" aria-label="工作区视图"><button data-view="tasks" aria-pressed="false">事项</button><button data-view="journey" aria-pressed="true">轨迹</button></div><ol class="timeline">${all.map((t) => `<li><time>${escapeHTML(t.updated)}</time><strong>${t.state === "done" ? "留下了成果" : t.run === "waiting" ? "等待你的补充" : t.state === "todo" ? "记下了一件事" : "继续处理事项"}</strong><p>${escapeHTML(t.title)}，${escapeHTML(t.summary)}</p><button data-task="${t.id}">查看事项${icon("chevron", "chevron")}</button></li>`).join("") || "<li><strong>从这里开始</strong><p>有新的交办或成果时，会留在这条轨迹里。</p></li>"}</ol>`;
       }
       function renderDetail() {
         const t = tasks.find((t) => t.id === selectedTask);
@@ -2866,9 +2852,9 @@
           ${
             t.result
               ? `
-            <div class="section-heading">${t.state === "done" ? "交付成果" : "已有成果 · 初稿"}</div>
+            <div class="section-heading">${t.state === "done" ? "交付成果" : "已有成果，初稿"}</div>
             <button class="result-file" data-reader="${t.id}">${icon("file")}
-              <span class="grow"><strong>${escapeHTML(t.result)}</strong><small>打开阅读 · ${t.state === "done" ? "已交付" : "尚待补全"}</small></span>
+              <span class="grow"><strong>${escapeHTML(t.result)}</strong><small>打开阅读，${t.state === "done" ? "已交付" : "尚待补全"}</small></span>
               ${icon("chevron", "chevron")}
             </button>`
               : ""
@@ -2880,7 +2866,7 @@
               .map(
                 (r) => `
               <li class="${r[1] ? "met" : ""}">${icon(r[1] ? "check" : "circle")}
-                <div>${escapeHTML(r[0])}<small>${r[1] ? "已满足" : "未核实"} · ${escapeHTML(r[2])}</small></div>
+                <div>${escapeHTML(r[0])}<small>${r[1] ? "已满足" : "未核实"}，${escapeHTML(r[2])}</small></div>
               </li>`,
               )
               .join("")}
@@ -3093,7 +3079,7 @@
         const t = tasks.find((t) => t.id === id);
         showPage(
           t.result || t.title,
-          `<div class="reader"><p class="small muted">${t.state === "done" ? "已交付" : "初稿 · 住宿与总预算尚待核实"} · ${escapeHTML(t.updated)}</p>${id === "reading" ? "<h2>阅读笔记</h2><h3>1. 让目标保持可见</h3><p>先说明需要完成什么，再让过程服务于目标。出处：示例文章第 2 段。</p><h3>2. 把反馈放在行动附近</h3><p>用户完成一个操作后，应能立即辨认结果。出处：示例文章第 4 段。</p><h3>3. 留下可以追溯的依据</h3><p>成果关联原始要求，方便以后重新理解。出处：示例文章第 7 段。</p>" : richContent.replace('<button class="text-action" data-reader="trip">展开阅读完整行程</button>', "")}<blockquote>住宿费用尚待核实；当前文件内容可能与执行结束时不同。</blockquote><button class="soft" id="copy-result">${icon("copy")}复制正文</button></div>`,
+          `<div class="reader"><p class="small muted">${t.state === "done" ? "已交付" : "初稿，住宿与总预算尚待核实"}，${escapeHTML(t.updated)}</p>${id === "reading" ? "<h2>阅读笔记</h2><h3>1. 让目标保持可见</h3><p>先说明需要完成什么，再让过程服务于目标。出处：示例文章第 2 段。</p><h3>2. 把反馈放在行动附近</h3><p>用户完成一个操作后，应能立即辨认结果。出处：示例文章第 4 段。</p><h3>3. 留下可以追溯的依据</h3><p>成果关联原始要求，方便以后重新理解。出处：示例文章第 7 段。</p>" : richContent.replace('<button class="text-action" data-reader="trip">展开阅读完整行程</button>', "")}<blockquote>住宿费用尚待核实；当前文件内容可能与执行结束时不同。</blockquote><button class="soft" id="copy-result">${icon("copy")}复制正文</button></div>`,
           true,
           origin,
         );
@@ -3111,7 +3097,7 @@
             ]
               .map(
                 ([state, label]) =>
-                  `<section class="board-column"><h3>${label} · ${all.filter((t) => t.state === state).length}</h3>${
+                  `<section class="board-column"><h3>${label}（${all.filter((t) => t.state === state).length}）</h3>${
                     all
                       .filter((t) => t.state === state)
                       .map(taskRow)
@@ -3225,8 +3211,8 @@
       function renderConnectionSummary() {
         const c = settings.connectionApplied;
         $("settings-connection-summary").innerHTML =
-          `<strong>当前应用</strong><span>${escapeHTML(connectionProtocolLabel(c.protocol))} · ${escapeHTML(c.model)} · ${escapeHTML(c.workingDirectory)}</span>` +
-          `<span class="small muted">地址 ${escapeHTML(c.endpoint)} · 容量与执行可在下方展开调整</span>`;
+          `<strong>当前应用</strong><span>${escapeHTML(connectionProtocolLabel(c.protocol))}，${escapeHTML(c.model)}，${escapeHTML(c.workingDirectory)}</span>` +
+          `<span class="small muted">地址 ${escapeHTML(c.endpoint)}，容量与执行可在下方展开调整</span>`;
       }
       function renderAppearanceCards() {
         document
@@ -3695,7 +3681,7 @@
           if (b.dataset.action === "stop") {
             t.run = "stopped";
             t.summary = "已暂停，已有内容保留";
-            t.events.push("刚刚 · 已停止（模拟终态）");
+            t.events.push("刚刚，已停止（模拟终态）");
             renderHeader();
             renderContacts();
             renderWork();
@@ -3732,7 +3718,7 @@
         t.summary = t.result
           ? "初稿已保存，仍有要求待满足"
           : "本次执行已结束，要求仍需核实";
-        t.events.push("刚刚 · 本次执行结束（模拟）");
+        t.events.push("刚刚，本次执行结束（模拟）");
         t.updated = "刚刚";
         renderHeader();
         renderContacts();
@@ -3940,7 +3926,7 @@
             updated: "刚刚",
             result: "",
             requirements: [[$("task-goal").value.trim(), false, "尚未开始"]],
-            events: ["刚刚 · 记下这件事"],
+            events: ["刚刚，记下这件事"],
           });
           filter = "open";
           selectedTask = null;
