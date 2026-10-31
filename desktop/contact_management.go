@@ -497,7 +497,13 @@ func (a *appModel) applyContactHistoryFull(rt *runtimeClient, runtimeGeneration 
 		a.selectedContact().ID != contactID {
 		return
 	}
-	if !a.detailIs(detailHistory) || a.aux != "" || a.settingsOpen {
+	// A saved-message click is allowed to keep an inline model/task-context
+	// carrier that was already open when the request started. Any accepted
+	// model/context entry after the request cancels through
+	// cancelHistoryFullDisplay and invalidates detailGen; a refused entry does
+	// not.
+	carrierOK := a.aux == "" || a.composerInlineAux()
+	if !a.detailIs(detailHistory) || !carrierOK || a.settingsOpen {
 		a.contactHistoryDetailBusy = false
 		return
 	}

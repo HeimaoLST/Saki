@@ -713,6 +713,8 @@ func TestToolFailureIsVisibleBeforeDetails(t *testing.T) {
 
 func TestContactRailControlsStayVisibleAtNarrowWidths(t *testing.T) {
 	a, _ := workspaceTestApp(t)
+	a.workspaceOpen = false
+	a.detail = ""
 	for _, width := range []int{1040, 960} {
 		a.windowWidth = width
 		tr := ui.NewTester(a.view, width, 720)
@@ -980,6 +982,29 @@ func TestPreviewComposerTypography(t *testing.T) {
 			}
 			if !tr.HasText("deepseek/deepseek-chat") {
 				t.Fatalf("%s: actual model label missing: %v", sc.name, tr.Texts())
+			}
+			if sc.active && sc.width == 720 {
+				composer := visible("Composer for Saki")
+				context := visible(contextLabelForTest(sc.context))
+				model := visible("Conversation model")
+				stop := visible("Stop conversation")
+				if !tr.HasText("Stop conversation") {
+					t.Fatalf("%s: Stop text was hidden: %v", sc.name, tr.Texts())
+				}
+				if context.X+context.W > model.X || model.X+model.W > stop.X ||
+					stop.X+stop.W > composer.X+composer.W ||
+					context.X < composer.X || model.X < composer.X || stop.X < composer.X {
+					t.Fatalf("%s: composer controls overlap/overflow composer=%+v context=%+v model=%+v stop=%+v",
+						sc.name, composer, context, model, stop)
+				}
+				scope, ok := tr.Find("Conversation")
+				if !ok || scope.X < model.X || scope.X+scope.W > model.X+model.W {
+					t.Fatalf("%s: model scope outside model button: scope=%+v ok=%v model=%+v", sc.name, scope, ok, model)
+				}
+				actual, ok := tr.Find(a.conversationModelShortName(ct))
+				if !ok || actual.X < model.X || actual.X+actual.W > model.X+model.W {
+					t.Fatalf("%s: model text outside model button: actual=%+v ok=%v model=%+v", sc.name, actual, ok, model)
+				}
 			}
 			if dir != "" {
 				theme := "light"

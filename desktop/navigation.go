@@ -47,7 +47,8 @@ func (a *appModel) detailIs(kind detailKind) bool {
 }
 
 func (a *appModel) openDetail(kind detailKind) {
-	if a.workspaceOpen && a.activeDetail() == kind {
+	wasOpen := a.workspaceOpen
+	if wasOpen && a.activeDetail() == kind {
 		a.focusDetailClose = true
 		return
 	}
@@ -57,7 +58,9 @@ func (a *appModel) openDetail(kind detailKind) {
 	a.workspaceOpen = true
 	a.detail = kind
 	a.focusDetailClose = true
-	a.persist()
+	if !wasOpen {
+		a.persist()
+	}
 }
 
 func (a *appModel) toggleDetail(kind detailKind) {
@@ -94,13 +97,16 @@ func (a *appModel) setWorkspaceOpen(open bool) {
 		}
 		return
 	}
+	wasOpen := a.workspaceOpen
 	if a.detailIs(detailHistory) {
 		a.cancelHistoryFullDisplay()
 	}
 	a.workspaceOpen = true
 	a.detail = detailWork
 	a.focusDetailClose = true
-	a.persist()
+	if !wasOpen {
+		a.persist()
+	}
 }
 
 func (a *appModel) toggleWorkspace() { a.toggleDetail(detailWork) }

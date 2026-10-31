@@ -211,6 +211,71 @@ func TestHistoryFullLateResultCannotOpenAfterHistoryClosed(t *testing.T) {
 	}
 }
 
+func TestHistoryFullActiveRequestPreservesInlineCarrier(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.windowWidth = 1040
+	a.openDetail(detailHistory)
+	a.aux = "task-context"
+	a.composerPanel = composerPanelContext
+	a.taskContextIssueID = ""
+	a.contactHistoryDetailBusy = true
+	a.applyContactHistoryFull(nil, a.connectionGeneration, ct.ID, a.contactHistoryGen, a.contactHistoryDetailGen,
+		&contactHistoryFull{SessionID: "s1", EntryID: "h1", Text: "full with inline context"}, "", nil)
+	if a.contactHistoryFull == nil || a.aux != "task-context" || !a.composerInlineAux() {
+		t.Fatalf("inline carrier was lost: full=%+v aux=%q panel=%q", a.contactHistoryFull, a.aux, a.composerPanel)
+	}
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if !tr.HasText("full with inline context") || !tr.Focused("Close full message") {
+		t.Fatalf("inline full reading page = focused=%v texts=%v", tr.Focused("Close full message"), tr.Texts())
+	}
+	if err := tr.Click("← Back to history"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.contactHistoryFull != nil || !a.detailIs(detailHistory) || a.aux != "task-context" || !a.composerInlineAux() {
+		t.Fatalf("Back lost inline carrier: full=%+v detail=%q aux=%q panel=%q",
+			a.contactHistoryFull, a.activeDetail(), a.aux, a.composerPanel)
+	}
+}
+
+func TestHistoryFullLateResultCannotHijackReopenedInlineKind(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.windowWidth = 1040
+	a.openDetail(detailHistory)
+	a.aux = "model"
+	a.composerPanel = composerPanelModel
+	searchGen := a.contactHistoryGen
+	detailGen := a.contactHistoryDetailGen
+	a.contactHistoryDetailBusy = true
+	a.openComposerModel()
+	a.applyContactHistoryFull(nil, a.connectionGeneration, ct.ID, searchGen, detailGen,
+		&contactHistoryFull{SessionID: "s1", EntryID: "h1", Text: "late same kind"}, "", nil)
+	if a.contactHistoryFull != nil || !a.composerInlineAux() || a.contactHistoryDetailBusy {
+		t.Fatalf("late result stole reopened inline kind: full=%+v aux=%q panel=%q busy=%v",
+			a.contactHistoryFull, a.aux, a.composerPanel, a.contactHistoryDetailBusy)
+	}
+}
+
+func TestHistoryFullRefusedInlineOpenDoesNotInvalidatePendingRead(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.windowWidth = 1040
+	a.openDetail(detailHistory)
+	a.aux = "model"
+	a.composerPanel = composerPanelModel
+	searchGen := a.contactHistoryGen
+	detailGen := a.contactHistoryDetailGen
+	a.contactHistoryDetailBusy = true
+	a.modelOpActive = true
+	a.openComposerModel()
+	a.applyContactHistoryFull(nil, a.connectionGeneration, ct.ID, searchGen, detailGen,
+		&contactHistoryFull{SessionID: "s1", EntryID: "h1", Text: "accepted after refusal"}, "", nil)
+	if a.contactHistoryFull == nil || a.contactHistoryFull.Text != "accepted after refusal" || !a.composerInlineAux() {
+		t.Fatalf("refused inline open invalidated pending read: full=%+v aux=%q panel=%q",
+			a.contactHistoryFull, a.aux, a.composerPanel)
+	}
+}
+
 func TestHistoryFullActiveRequestUsesMainReadingPage(t *testing.T) {
 	a, ct := workspaceTestApp(t)
 	a.windowWidth = 1040

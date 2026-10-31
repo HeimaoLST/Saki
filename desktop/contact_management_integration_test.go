@@ -176,6 +176,11 @@ func TestContactManagementGUIProfileNewConversationHistoryAndRestart(t *testing.
 	if len(matches) != 1 || matches[0].SessionID != oldSession {
 		t.Fatalf("saved-history search lost the old conversation or included a different contact: %+v", matches)
 	}
+	// Open an inline task-context carrier before the saved-message request so
+	// this existing real-runtime regression covers the silent-drop boundary.
+	restarted.pump.do(func() {
+		restarted.app.openComposerTaskContext()
+	})
 	clickContactManagementAction(t, restarted, "View full message")
 	restarted.pump.wait(func() bool { return restarted.app.contactHistoryFull != nil && !restarted.app.contactHistoryDetailBusy })
 	restarted.pump.do(func() {
@@ -184,6 +189,11 @@ func TestContactManagementGUIProfileNewConversationHistoryAndRestart(t *testing.
 		}
 		if context := restarted.app.contactHistoryFull.Context; len(context) != 1 || context[0].Text != "old-material-152" {
 			t.Errorf("full saved message lost its submitted Context: %+v", context)
+		}
+		if restarted.app.selectedContact().ID != contactID || !restarted.app.composerInlineAux() ||
+			restarted.app.aux != composerPanelContext || restarted.app.composerPanel != composerPanelContext {
+			t.Errorf("saved-message read lost the inline task-context owner: contact=%q aux=%q panel=%q",
+				restarted.app.selectedContact().ID, restarted.app.aux, restarted.app.composerPanel)
 		}
 	})
 	if provider.count() != 5 {

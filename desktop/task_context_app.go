@@ -66,12 +66,14 @@ func (a *appModel) openComposerTaskContext() {
 func (a *appModel) openConversationTaskContext() {
 	a.taskContextIssueID = ""
 	a.aux = "task-context"
+	a.cancelHistoryFullDisplay()
 }
 
 func (a *appModel) openIssueTaskContext(issueID string) {
 	if a.selectedContact().issueByID(issueID) == nil {
 		return
 	}
+	a.cancelHistoryFullDisplay()
 	a.taskContextIssueID = issueID
 	a.aux = "task-context"
 	a.composerPanel = ""

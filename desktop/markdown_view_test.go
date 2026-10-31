@@ -20,17 +20,19 @@ func appReadingTestApp(t *testing.T) (*appModel, *contact) {
 
 func scrollToVisibleControl(tr *ui.Tester, label string, dy float32) bool {
 	composer, composerOK := tr.Find("Composer for Saki")
-	settings, settingsOK := tr.Find("Contact profile")
-	if !composerOK || !settingsOK || composer.W <= 0 || composer.H <= 0 {
+	messages, messagesOK := tr.Find("Conversation messages")
+	if !composerOK || !messagesOK || composer.W <= 0 || composer.H <= 0 ||
+		messages.W <= 0 || messages.H <= 0 {
 		return false
 	}
-	// Scroll over the reading column itself, not a nested code/table widget.
-	x := composer.X + composer.W/2
-	y := settings.Y + settings.H + 20
+	// Scroll inside the real message viewport. The old Contact-profile
+	// coordinate was a guess and no longer identifies the reading column.
+	x := messages.X + messages.W/2
+	y := messages.Y + messages.H/2
 	for i := 0; i < 40; i++ {
 		r, ok := tr.Find(label)
 		if ok && r.W > 0 && r.H > 0 &&
-			r.Y >= settings.Y+settings.H && r.Y+r.H <= composer.Y {
+			r.Y >= messages.Y && r.Y+r.H <= messages.Y+messages.H {
 			return true
 		}
 		tr.Scroll(x, y, 0, dy)

@@ -1376,7 +1376,6 @@ func issueResultAppPreview(scene string, width int) *appModel {
 	}
 	switch scene {
 	case "navigation":
-		a.aux = ""
 		ct.issueNavigation().DetailID = ct.SelectedIssueID
 		ct.issueNavigation().Filter = issueFilterUnfinished
 		a.issueDetailOpen = map[string]bool{ct.SelectedIssueID: true}
@@ -1465,14 +1464,29 @@ func TestIssueResultAppPreviewsAlwaysWriteHeadlessPNGs(t *testing.T) {
 		{"empty", 720, true},
 		{"multiple", 1280, true},
 	} {
-		cases = append(cases, sceneCase{"navigation", 720, false}, sceneCase{"navigation", 720, true}, sceneCase{"navigation", 1040, false}, sceneCase{"navigation", 1040, true}, sceneCase{"navigation", 1280, false}, sceneCase{"navigation", 1280, true})
 		cases = append(cases, scene)
+	}
+	for _, width := range []int{720, 1040, 1280} {
+		for _, dark := range []bool{false, true} {
+			cases = append(cases, sceneCase{"navigation", width, dark})
+		}
 	}
 	for _, scene := range cases {
 		app := issueResultAppPreview(scene.name, scene.width)
 		tr := ui.NewTester(app.view, scene.width, 900)
 		tr.SetDark(scene.dark)
 		tr.Frame()
+		if scene.name == "navigation" {
+			// The navigation preview must exercise the real result-page Back
+			// path, not only clear issueResult.Open in the fixture.
+			if err := tr.Click("Close results"); err != nil {
+				t.Fatalf("preview scene %s could not close Run results: %v", scene.name, err)
+			}
+			tr.Frame()
+			if app.issueResult.Open || app.aux != "" {
+				t.Fatalf("preview scene %s did not return to the issue: open=%v aux=%q", scene.name, app.issueResult.Open, app.aux)
+			}
+		}
 		readerWant := map[string][]string{
 			"markdown":   {"File reading", "Markdown", "中文结果", "名称", "完成"},
 			"plain":      {"File reading", "Plain text", "# 这不是标题", "| 不是 | 表格 |"},

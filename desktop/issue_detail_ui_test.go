@@ -491,6 +491,9 @@ func TestIssueExecutionHistoryLayoutKeepsHeaderRevisionAndActionsDistinct(t *tes
 			tr.SetDark(tc.dark)
 			tr.Frame()
 			panelX := float32(tc.width) - a.workWidth()
+			if a.detailPageActive() {
+				panelX = 0
+			}
 			history := issueHistoryFindVisible(t, tr, "Execution history", panelX, float32(tc.width), float32(tc.height))
 			if history.X < panelX || history.X+history.W > float32(tc.width) {
 				t.Errorf("Execution history bounds=%+v panelX=%.1f width=%d", history, panelX, tc.width)

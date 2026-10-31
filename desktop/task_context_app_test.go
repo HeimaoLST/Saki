@@ -289,17 +289,36 @@ func TestTaskContextAppModalAndReadOnlyHistoryCopy(t *testing.T) {
 		ID: "hist:readonly", From: "me", Text: "history prompt",
 		Context: []taskContextItem{{Name: "Doc · file /tmp/doc.txt", Text: "history exact"}},
 	}}
+	ct.Draft = "draft remains local"
+	ownerID := a.selectedContact().ID
 	a.aux = ""
 	a.openHistory()
 	tr.Frame()
-	if !tr.HasText("history prompt") || !tr.HasText("history exact") || !tr.HasText("Doc · file /tmp/doc.txt") {
-		t.Fatalf("history context missing: %v", tr.Texts())
+	if !tr.HasText("history prompt") || !tr.HasText("Read full message") {
+		t.Fatalf("history summary/list entry missing: %v", tr.Texts())
+	}
+	if err := tr.Click("Read full message"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.HasText("history exact") || !tr.HasText("Doc · file /tmp/doc.txt") || a.contactHistoryFull == nil {
+		t.Fatalf("history full message/context missing: full=%+v texts=%v", a.contactHistoryFull, tr.Texts())
 	}
 	if err := tr.Click("Copy context text"); err != nil {
 		t.Fatal(err)
 	}
 	if got := tr.Clipboard(); got != "history exact" {
 		t.Fatalf("history context copy = %q", got)
+	}
+	if err := tr.Click("← Back to history"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.contactHistoryFull != nil || !a.detailIs(detailHistory) {
+		t.Fatalf("history Back lost the list: full=%+v detail=%q", a.contactHistoryFull, a.activeDetail())
+	}
+	if ct.Draft != "draft remains local" || a.selectedContact().ID != ownerID {
+		t.Fatalf("history reading changed draft/owner: draft=%q owner=%q", ct.Draft, a.selectedContact().ID)
 	}
 	if err := tr.Click("Close history"); err != nil {
 		t.Fatal(err)

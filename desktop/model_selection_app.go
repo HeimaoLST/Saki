@@ -116,8 +116,9 @@ func (a *appModel) openSessionModel(sessionID, kind, label string) bool {
 	if a.shutdownStarted || a.connectionApplying || a.modelOpActive {
 		return false
 	}
-	// The accepted target owns the panel from here. A direct work/model open
-	// must not keep the conversation carrier and its inline marker.
+	// The accepted target owns the panel from here. A saved-message request
+	// that started before it must not revive after this surface closes.
+	a.cancelHistoryFullDisplay()
 	a.composerPanel = ""
 	a.composerFocusModel = false
 	a.composerFocusContext = false

@@ -483,7 +483,7 @@ func (a *appModel) chat(c *ui.Context, t *ui.Theme) {
 					default:
 						a.message(c, t, ct, it.msg)
 					}
-				}).FillHeight().WidthPercent(86).MaxWidth(760).Padding(16, 0).Gap(18)
+				}).Label("Conversation messages").FillHeight().WidthPercent(86).MaxWidth(760).Padding(16, 0).Gap(18)
 			})
 		}
 		if len(items) > 0 && !ct.list.AtEnd() {
@@ -826,7 +826,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 						contextButton.Focus()
 						a.composerFocusContext = false
 					}
-				}).Label("Composer tools")
+				}).Label("Composer tools").Shrink(0)
 				ui.Spacer(c)
 				modelButton := a.composerModelButton(c, t, ct)
 				modelButton.OnClick(func() { a.openComposerModel() })
