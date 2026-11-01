@@ -177,8 +177,38 @@ grep -q 'vcs.modified=false' "$OUT/gui-buildinfo.txt"
 test -x "$APP/Contents/MacOS/Saki"
 test -x "$APP/Contents/MacOS/Saki-runtime"
 
+echo "== sign helper, then app (ad-hoc) =="
+: > "$CODESIGN_LOG"
+echo "helper:" >> "$CODESIGN_LOG"
+codesign --force --sign - "$APP/Contents/MacOS/Saki-runtime" >> "$CODESIGN_LOG" 2>&1
+codesign --verify --strict "$APP/Contents/MacOS/Saki-runtime" >> "$CODESIGN_LOG" 2>&1
+echo "app:" >> "$CODESIGN_LOG"
+codesign --force --deep --sign - "$APP" >> "$CODESIGN_LOG" 2>&1
+codesign --verify --strict "$APP" >> "$CODESIGN_LOG" 2>&1
+codesign --verify --deep --strict "$APP" >> "$CODESIGN_LOG" 2>&1
+codesign --verify --strict "$APP/Contents/MacOS/Saki-runtime" >> "$CODESIGN_LOG" 2>&1
+{
+  echo "app details:"; codesign -dv --verbose=4 "$APP" 2>&1
+  echo "helper details:"; codesign -dv --verbose=4 "$APP/Contents/MacOS/Saki-runtime" 2>&1
+} >> "$CODESIGN_LOG"
+
+echo "== run existing stdio self-test against signed bundle helper =="
+python3 examples/runtime_stdio.py --self-test --binary "$APP/Contents/MacOS/Saki-runtime" 2>&1 | tee "$SMOKE_LOG"
+codesign --verify --strict "$APP/Contents/MacOS/Saki-runtime" >> "$CODESIGN_LOG" 2>&1
+
+echo "== archive and manifest =="
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+
+APP_SHA=$(shasum -a 256 "$APP/Contents/MacOS/Saki" | awk '{print $1}')
+HELPER_SHA=$(shasum -a 256 "$APP/Contents/MacOS/Saki-runtime" | awk '{print $1}')
+PLIST_SHA=$(shasum -a 256 "$APP/Contents/Info.plist" | awk '{print $1}')
+ZIP_SHA=$(shasum -a 256 "$ZIP" | awk '{print $1}')
+
+find "$APP" -type f -print | sed "s|^$OUT/||" | sort > "$OUT/files.txt"
+
 SOURCE_SHA="$SOURCE_SHA" CI_EVENT_SHA="$CI_EVENT_SHA" REF="$REF" RUN_URL="$RUN_URL" \
-OUT="$OUT" APP_VERSION="$APP_VERSION" GUI_MIN_OS="$GUI_MIN_OS" \
+OUT="$OUT" APP_VERSION="$APP_VERSION" APP_SHA="$APP_SHA" HELPER_SHA="$HELPER_SHA" \
+PLIST_SHA="$PLIST_SHA" ZIP_SHA="$ZIP_SHA" GUI_MIN_OS="$GUI_MIN_OS" \
 HELPER_MIN_OS="$HELPER_MIN_OS" BUNDLE_MINIMUM_OS="$BUNDLE_MINIMUM_OS" \
 python3 - "$MANIFEST" <<'PY'
 import datetime
@@ -230,10 +260,10 @@ manifest = {
         "info_plist": "Saki.app/Contents/Info.plist",
     },
     "sha256": {
-        "app": "",
-        "helper": "",
-        "info_plist": "",
-        "zip": "",
+        "app": os.environ["APP_SHA"],
+        "helper": os.environ["HELPER_SHA"],
+        "info_plist": os.environ["PLIST_SHA"],
+        "zip": os.environ["ZIP_SHA"],
     },
     "signing": {
         "mode": "adhoc",
@@ -242,7 +272,7 @@ manifest = {
         "identifier": "dev.saki.desktop",
     },
     "artifact": "Saki.app.zip",
-    "files": [],
+    "files": [line for line in open(os.path.join(out, "files.txt"), encoding="utf-8").read().splitlines() if line],
     "logs": ["build.log", "codesign.log", "validation.log", "helper-smoke.log"],
     "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
 }
@@ -251,55 +281,15 @@ with open(sys.argv[1], "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
 
-python3 "$ROOT/scripts/macos_minimum.py" validate-manifest "$MANIFEST" "$GUI_MIN_OS" "$HELPER_MIN_OS" "$BUNDLE_MINIMUM_OS" || {
-  echo "preflight manifest minimum fields are invalid; refusing to sign" >&2
+
+FINAL_PLIST_MIN=$(plutil -extract LSMinimumSystemVersion raw "$APP/Contents/Info.plist") || {
+  echo "could not read final plist minimum; refusing candidate" >&2
   exit 5
 }
-
-echo "== sign helper, then app (ad-hoc) =="
-: > "$CODESIGN_LOG"
-echo "helper:" >> "$CODESIGN_LOG"
-codesign --force --sign - "$APP/Contents/MacOS/Saki-runtime" >> "$CODESIGN_LOG" 2>&1
-codesign --verify --strict "$APP/Contents/MacOS/Saki-runtime" >> "$CODESIGN_LOG" 2>&1
-echo "app:" >> "$CODESIGN_LOG"
-codesign --force --deep --sign - "$APP" >> "$CODESIGN_LOG" 2>&1
-codesign --verify --strict "$APP" >> "$CODESIGN_LOG" 2>&1
-codesign --verify --deep --strict "$APP" >> "$CODESIGN_LOG" 2>&1
-codesign --verify --strict "$APP/Contents/MacOS/Saki-runtime" >> "$CODESIGN_LOG" 2>&1
-{
-  echo "app details:"; codesign -dv --verbose=4 "$APP" 2>&1
-  echo "helper details:"; codesign -dv --verbose=4 "$APP/Contents/MacOS/Saki-runtime" 2>&1
-} >> "$CODESIGN_LOG"
-
-echo "== run existing stdio self-test against signed bundle helper =="
-python3 examples/runtime_stdio.py --self-test --binary "$APP/Contents/MacOS/Saki-runtime" 2>&1 | tee "$SMOKE_LOG"
-codesign --verify --strict "$APP/Contents/MacOS/Saki-runtime" >> "$CODESIGN_LOG" 2>&1
-
-echo "== archive and manifest =="
-ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
-
-APP_SHA=$(shasum -a 256 "$APP/Contents/MacOS/Saki" | awk '{print $1}')
-HELPER_SHA=$(shasum -a 256 "$APP/Contents/MacOS/Saki-runtime" | awk '{print $1}')
-PLIST_SHA=$(shasum -a 256 "$APP/Contents/Info.plist" | awk '{print $1}')
-ZIP_SHA=$(shasum -a 256 "$ZIP" | awk '{print $1}')
-
-find "$APP" -type f -print | sed "s|^$OUT/||" | sort > "$OUT/files.txt"
-
-python3 - "$MANIFEST" "$OUT" "$APP_SHA" "$HELPER_SHA" "$PLIST_SHA" "$ZIP_SHA" <<'PY'
-import json
-import os
-import sys
-
-manifest_path, out, app_sha, helper_sha, plist_sha, zip_sha = sys.argv[1:7]
-with open(manifest_path, encoding="utf-8") as handle:
-    manifest = json.load(handle)
-manifest["sha256"] = {"app": app_sha, "helper": helper_sha, "info_plist": plist_sha, "zip": zip_sha}
-manifest["files"] = [line for line in open(os.path.join(out, "files.txt"), encoding="utf-8").read().splitlines() if line]
-with open(manifest_path, "w", encoding="utf-8") as handle:
-    json.dump(manifest, handle, indent=2, sort_keys=True)
-    handle.write("\n")
-PY
-
+test "$FINAL_PLIST_MIN" = "$BUNDLE_MINIMUM_OS" || {
+  echo "final plist minimum $FINAL_PLIST_MIN does not match selected $BUNDLE_MINIMUM_OS; refusing candidate" >&2
+  exit 5
+}
 python3 "$ROOT/scripts/macos_minimum.py" validate-manifest "$MANIFEST" "$GUI_MIN_OS" "$HELPER_MIN_OS" "$BUNDLE_MINIMUM_OS" || {
   echo "manifest minimum fields do not match bundle/binary minima; refusing candidate" >&2
   exit 5
