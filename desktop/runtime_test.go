@@ -49,6 +49,8 @@ func helperMain() int {
 	}
 
 	gateMode := os.Getenv("RUNTIME_HELPER_GATE") == "1"
+	capabilitiesFailFirst := os.Getenv("RUNTIME_CAPABILITIES_FAIL_FIRST") == "1"
+	capabilityCalls := 0
 	accepted := false
 	completed := make(chan struct{})
 	var completeOnce sync.Once
@@ -83,6 +85,24 @@ func helperMain() int {
 			write(map[string]any{"version": 1, "type": "response", "id": request.ID, "result": result})
 		}
 		switch request.Method {
+		case "runtime.capabilities":
+			capabilityCalls++
+			if capabilitiesFailFirst && capabilityCalls == 1 {
+				writeStderr("runtime.capabilities:1:error")
+				write(map[string]any{
+					"version": 1, "type": "response", "id": request.ID,
+					"error": map[string]any{"code": "fixture_failure", "message": "initial capabilities read failed"},
+				})
+				continue
+			}
+			writeStderr(fmt.Sprintf("runtime.capabilities:%d:ok", capabilityCalls))
+			respond(map[string]any{
+				"protocol_version": 1,
+				"storage_schemas":  []int{1, 2},
+				"methods":          []string{"session.create", "runtime.capabilities"},
+				"max_active_tasks": 3,
+				"automatic_titles": false,
+			})
 		case "session.create", "session.load", "session.status":
 			respond(map[string]any{
 				"session_id": "s1", "loaded": true, "state": "idle", "status": "unknown",
@@ -148,6 +168,9 @@ func helperMain() int {
 		case "test.exit":
 			return 0
 		case "runtime.shutdown":
+			if capabilitiesFailFirst {
+				writeStderr(fmt.Sprintf("runtime.capabilities:final:%d", capabilityCalls))
+			}
 			respond(map[string]any{"state": "draining"})
 			writeStderr("draining")
 			if !gateMode {
