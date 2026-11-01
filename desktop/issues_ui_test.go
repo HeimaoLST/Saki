@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -256,4 +257,74 @@ func TestIssueConfirmNotDispatchedTargetsSelectedExecution(t *testing.T) {
 	if other.Status != issueExecutionCompleted || other.TaskID != "task-other" {
 		t.Fatalf("confirm changed another execution: %+v", other)
 	}
+}
+
+func TestCapacityRetryButtonRecoversThroughRuntimeClient(t *testing.T) {
+	a, _ := workspaceTestApp(t)
+	callbacks := make(chan func(), 8)
+	a.setUIHook(func(fn func()) { callbacks <- fn })
+	runtime := startTestRuntime(t, "RUNTIME_CAPABILITIES_FAIL_FIRST=1")
+	a.rt = runtime.client
+	a.runtimeStatus = runtimeStateReady
+	a.runtimeCapabilitiesLoaded = false
+	a.runtimeCapabilitiesErr = ""
+	a.connectionGeneration = 0
+
+	awaitStderr := func(want string) {
+		t.Helper()
+		select {
+		case got := <-runtime.stderr:
+			if got != want {
+				t.Fatalf("runtime stderr = %q, want %q", got, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for runtime stderr %q", want)
+		}
+	}
+	consumeCallback := func(label string) {
+		t.Helper()
+		select {
+		case fn := <-callbacks:
+			fn()
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for %s UI callback", label)
+		}
+	}
+
+	a.loadCapabilities(runtime.client, a.connectionGeneration)
+	consumeCallback("initial capability failure")
+	awaitStderr("runtime.capabilities:1:error")
+	if a.runtimeCapabilitiesLoaded || !strings.Contains(a.runtimeCapabilitiesErr, "Runtime capacity is not loaded") {
+		t.Fatalf("initial failure state = loaded=%v err=%q", a.runtimeCapabilitiesLoaded, a.runtimeCapabilitiesErr)
+	}
+	if a.capacityKnown() || a.maxActiveTasks() != 1 {
+		t.Fatalf("initial failure capacity = known=%v max=%d, want unknown/1", a.capacityKnown(), a.maxActiveTasks())
+	}
+
+	tester := ui.NewTester(a.view, 1040, 720)
+	tester.Frame()
+	if !tester.HasText("capacity is not loaded") || !tester.HasText("Retry capacity") {
+		t.Fatalf("initial failed capability did not render unknown/retry: %v", tester.Texts())
+	}
+	if err := tester.Click("Retry capacity"); err != nil {
+		t.Fatal(err)
+	}
+
+	consumeCallback("retry success")
+	awaitStderr("runtime.capabilities:2:ok")
+	if !a.runtimeCapabilitiesLoaded || a.runtimeCapabilitiesErr != "" || a.runtimeMaxActiveTasks != 3 {
+		t.Fatalf("retry state = loaded=%v err=%q max=%d", a.runtimeCapabilitiesLoaded, a.runtimeCapabilitiesErr, a.runtimeMaxActiveTasks)
+	}
+	tester.Frame()
+	if !a.capacityKnown() || a.maxActiveTasks() != 3 {
+		t.Fatalf("retry did not restore known capacity: known=%v max=%d", a.capacityKnown(), a.maxActiveTasks())
+	}
+	if tester.HasText("capacity is not loaded") || tester.HasText("Retry capacity") {
+		t.Fatalf("successful retry left unknown capacity UI: %v", tester.Texts())
+	}
+
+	if err := runtime.client.shutdown(); err != nil {
+		t.Fatalf("runtime shutdown: %v", err)
+	}
+	awaitStderr("runtime.capabilities:final:2")
 }
