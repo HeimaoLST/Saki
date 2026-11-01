@@ -313,10 +313,12 @@ func (p *uiPump) do(fn func()) {
 }
 
 func (p *uiPump) wait(cond func() bool) {
+	p.t.Helper()
 	p.waitTimeout(cond, 15*time.Second)
 }
 
 func (p *uiPump) waitTimeout(cond func() bool, timeout time.Duration) {
+	p.t.Helper()
 	waiter := &uiWaiter{cond: cond, ch: make(chan struct{})}
 	p.mu.Lock()
 	p.waiters = append(p.waiters, waiter)
