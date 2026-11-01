@@ -162,7 +162,6 @@ class Runtime:
     @staticmethod
     def _frame_counts(received):
         ready = response = event = other = 0
-        events = 0
         for message in received:
             if not isinstance(message, dict):
                 other += 1
@@ -174,16 +173,15 @@ class Runtime:
                 response += 1
             elif kind == "event":
                 event += 1
-                events += 1
             else:
                 other += 1
-        return ready, response, event, other, events
+        return ready, response, event, other
 
     def _report_failure(self, stage, error, cleanup, before):
         # Keep this bounded and payload-free. A diagnostic failure must never
         # replace the original exception.
         try:
-            ready, response, event, other, events = self._frame_counts(self.received)
+            ready, response, event, other = self._frame_counts(self.received)
             failure_poll, failure_stdin, failure_reader = before
             print(
                 "runtime cleanup failure"
@@ -195,7 +193,6 @@ class Runtime:
                 f" frame_response={response}"
                 f" frame_event={event}"
                 f" frame_other={other}"
-                f" event_total={events}"
                 f" pid={self.process.pid}"
                 f" failure_poll={failure_poll}"
                 f" failure_stdin_closed={failure_stdin}"

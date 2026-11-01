@@ -158,18 +158,14 @@ class RuntimeLifecycleTests(unittest.TestCase):
         """Test-owned last-resort cleanup; never required for a passing close."""
         process = runtime.process
         try:
-            if process.stdin is not None and not process.stdin.closed:
-                process.stdin.close()
-        except Exception:
-            pass
-        try:
             if process.poll() is None:
                 process.kill()
             process.wait(timeout=5)
         except Exception:
             pass
         try:
-            process.stdout.close()
+            if process.poll() is not None:
+                process.stdin.close()
         except Exception:
             pass
         try:
@@ -177,6 +173,11 @@ class RuntimeLifecycleTests(unittest.TestCase):
                 runtime.reader.join(timeout=5)
         except Exception:
             pass
+        if not runtime.reader.is_alive():
+            try:
+                process.stdout.close()
+            except Exception:
+                pass
 
     def run_wrapper(self, action: str, mode: str) -> tuple[int, bytes, bytes]:
         env = dict(
@@ -198,7 +199,8 @@ class RuntimeLifecycleTests(unittest.TestCase):
         timed_out = False
         try:
             try:
-                stdout, stderr = process.communicate(timeout=5)
+                # Cover the client's 10s failure cleanup plus process startup.
+                stdout, stderr = process.communicate(timeout=15)
             except subprocess.TimeoutExpired:
                 timed_out = True
                 stdout, stderr = b"", b""
