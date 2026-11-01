@@ -139,10 +139,10 @@ cargo build --locked --release --bin Saki
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 python3 "$ROOT/scripts/gui-go.py" build -trimpath -mod=readonly -buildvcs=true -o <app>/Contents/MacOS/Saki .
 ```
 
-产物为 `Saki.app`，其中 `Contents/MacOS/Saki` 为 GUI、`Saki-runtime` 为 Rust helper；Info.plist 使用既有 `dev.saki.desktop` / `Saki` / `0.1.0` / build `1` / minimum 11.0 契约。脚本校验 `uname -m`、`go env GOOS/GOARCH`、`rustc` host、`file`/`lipo` 为 arm64，`plutil` 字段，先签 helper 再签 app，分别 `codesign --verify --strict`，app 再 `--deep --strict`；对已签名 bundle 内 helper 调用现有 `examples/runtime_stdio.py --self-test`。`ditto` 生成保留权限/签名的 `Saki.app.zip`；`manifest.json`、`SHA256SUMS`、`codesign.log`、`validation.log`、`helper-smoke.log` 与 `build.log` 一并上传，artifact 名含实际 source SHA，保留 14 天，`if-no-files-found: error`。
+产物为 `Saki.app`，其中 `Contents/MacOS/Saki` 为 GUI、`Saki-runtime` 为 Rust helper；Info.plist 使用既有 `dev.saki.desktop` / `Saki` / `0.1.0` / build `1` 契约。bundle 的 `LSMinimumSystemVersion` 与 manifest 的 `minimum_os` 不再写固定版本：打包脚本用 `scripts/macos_minimum.py` 从 GUI 和 helper 的真实 arm64 Mach-O `LC_BUILD_VERSION minos` 读取两者，取最大值作为唯一 bundle minimum，并在 manifest 记录 `minimum_os.gui`、`minimum_os.helper`、`minimum_os.bundle`。签名/归档前先生成并校验 plist 与 manifest 的 minimum 元数据（此时不填 hash），确认声明一致且不低于任一 binary；归档后只补 hash/files，再对最终 manifest 实际 JSON 字段做同一校验。缺少/无效 minos 明确失败，不静默回退 11.0；当前 549 基线读得 GUI 13.0、helper 11.0、bundle 13.0。脚本仍校验 `uname -m`、`go env GOOS/GOARCH`、`rustc` host、`file`/`lipo` 为 arm64，`plutil` 字段，先签 helper 再签 app，分别 `codesign --verify --strict`，app 再 `--deep --strict`；对已签名 bundle 内 helper 调用现有 `examples/runtime_stdio.py --self-test`。`ditto` 生成保留权限/签名的 `Saki.app.zip`；`manifest.json`、`SHA256SUMS`、`codesign.log`、`validation.log`、`helper-smoke.log` 与 `build.log` 一并上传，artifact 名含实际 source SHA，保留 14 天，`if-no-files-found: error`。
 
 - artifact 只含 `Saki.app.zip`、`manifest.json`、`SHA256SUMS` 与日志；下载后先在**新目录**执行 `ditto -x -k Saki.app.zip .` 解包，再 `shasum -a 256 -c SHA256SUMS`（此时 app/helper/plist/zip/manifest 的相对路径均存在）。manifest 记录 actual checkout/source SHA、CI event SHA、run URL、`uname`/macOS/runner image、Go/Rust/cargo/Xcode/SDK、app/helper/Info.plist/zip SHA256、签名与文件清单；build log 在脚本结束后由 CI 完整保存，不作为“写入中”的 hash 对象。
-- ad-hoc only；不做证书/公证/Gatekeeper 承诺；minimumOS 字段不表示已在旧 OS 或真实 Finder/IME 实测。
+- ad-hoc only；不做证书/公证/Gatekeeper 承诺；`minimumOS` 是实际 Mach-O 的静态最低版本，不表示已在对应旧 OS、真实 Finder 或 IME 实测；当前 hosted 验证环境是 macOS 15。
 - 该 artifact 是固定源码与工具链的工程构建产物，工程构建通过不等于 Nagi MVP 验收；真实窗口/IME、外部 provider、用户试用由对应 owner/PM 负责。
 - 本地构建与下载核验命令（macOS arm64）：
 
