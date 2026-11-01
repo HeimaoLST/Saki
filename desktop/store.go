@@ -33,6 +33,7 @@ type storedContact struct {
 	Purpose          string            `json:"purpose,omitempty"`
 	Instructions     string            `json:"instructions,omitempty"`
 	Workspace        string            `json:"workspace,omitempty"`
+	BuiltinTools     *[]string         `json:"builtin_tools,omitempty"`
 	SessionID        string            `json:"session_id,omitempty"`
 	Draft            string            `json:"draft,omitempty"`
 	TaskContext      []taskContextItem `json:"task_context,omitempty"`
@@ -269,6 +270,7 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 			Purpose:          c.Purpose,
 			Instructions:     c.Instructions,
 			Workspace:        c.Workspace,
+			BuiltinTools:     cloneBuiltinTools(c.BuiltinTools),
 			SessionID:        c.SessionID,
 			Draft:            c.Draft,
 			TaskContext:      c.Context.snapshot(),

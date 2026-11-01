@@ -415,15 +415,31 @@ func (a *appModel) settingsContactContent(c *ui.Context, t *ui.Theme) {
 	ct = a.contactByID(a.settingsContactID)
 	editor = a.settingsContactEditor()
 	ui.Text(c, "Contact profile: "+a.settingsContactChoice(ct)).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
-	if editor.Draft != editor.initial {
+	if !profileDraftEqual(editor.Draft, editor.initial) {
 		ui.Text(c, "Unsaved changes.").FontSize(typeMeta).LineHeight(1.5).TextColor(t.Warning)
 	}
+	editor.BuiltinTools = append([]runtimeBuiltinTool(nil), a.runtimeBuiltinTools...)
+	editor.BuiltinToolsLoaded = a.runtimeBuiltinToolsLoaded
+	editor.BuiltinToolsLoading = a.runtimeBuiltinToolsLoading
+	editor.BuiltinToolsError = a.runtimeBuiltinToolsErr
+	editor.BuiltinToolsSupported = a.connectionManaged
+	editor.CanRetryBuiltinTools = editor.BuiltinToolsSupported && a.rt != nil && a.runtimeStatus == runtimeStateReady
+	if !editor.BuiltinToolsSupported {
+		if a.connectionLegacy {
+			editor.BuiltinToolsError = "Built-in tool selection requires a managed Nagi connection; this Runtime uses legacy environment configuration."
+		} else {
+			editor.BuiltinToolsError = "Save and Apply a managed Nagi connection before customizing built-in tools."
+		}
+	} else if !editor.BuiltinToolsLoaded && !editor.BuiltinToolsLoading && editor.BuiltinToolsError == "" && !editor.CanRetryBuiltinTools {
+		editor.BuiltinToolsError = "Built-in tools are available after Runtime is ready."
+	}
 	editor.view(c, t, contactProfileActions{
-		Save:       func(draft profileDraft) { a.saveContactProfileDraftFor(ct.ID, draft, false) },
-		SaveAndNew: func(draft profileDraft) { a.saveContactProfileDraftFor(ct.ID, draft, true) },
-		Archive:    func() { a.archiveContact(ct.ID) },
-		Restore:    func() { a.restoreContact(ct.ID) },
-		Discard:    func() { editor.ResetDraft() },
+		Save:              func(draft profileDraft) { a.saveContactProfileDraftFor(ct.ID, draft, false) },
+		SaveAndNew:        func(draft profileDraft) { a.saveContactProfileDraftFor(ct.ID, draft, true) },
+		Archive:           func() { a.archiveContact(ct.ID) },
+		Restore:           func() { a.restoreContact(ct.ID) },
+		Discard:           func() { editor.ResetDraft() },
+		RetryBuiltinTools: func() { a.retryBuiltinTools() },
 	})
 }
 
