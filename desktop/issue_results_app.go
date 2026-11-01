@@ -115,12 +115,15 @@ func (a *appModel) startIssueResultLoad() {
 
 func (a *appModel) reloadIssueResult(generation int) {
 	page := &a.issueResult
-	if !page.Open || page.Generation != generation {
+	if !page.Open || page.Generation != generation || a.aux != "issue-result" || a.settingsOpen || page.Panel.ReaderKey != "" {
 		return
 	}
 	ct := a.contactByID(page.OwnerContactID)
 	if ct == nil {
 		page.LoadError = "The issue owner is no longer available; reload cannot continue."
+		return
+	}
+	if ct != a.selectedContact() {
 		return
 	}
 	issue, execution := ct.executionByID(page.ExecutionID)
@@ -154,6 +157,9 @@ func (a *appModel) reloadIssueResult(generation int) {
 	page.LoadError = ""
 	page.Notice = ""
 	a.startIssueResultLoad()
+	if issueExecutionNeedsAttention(execution.Status) {
+		a.confirmIssueExecutionSeen(ct, issue, execution)
+	}
 }
 
 func (a *appModel) loadIssueResult(rt *runtimeClient, runtimeGeneration, generation int,

@@ -377,31 +377,85 @@ func TestIssueAttentionResultPageConfirmsNoTaskNoDetailExecution(t *testing.T) {
 		t.Fatalf("no-task result entry changed retained facts: %+v status=%q unread=%d", issue.Executions[0], issue.Status, ct.Unread)
 	}
 
-	// Reload only updates the displayed data; a new status is not confirmed by
-	// reload or by closing the result page.
+	// A user-requested Reload displays the new status/reason and confirms it.
+	// Background reads and closing remain non-confirming.
 	issue.Executions[0].Status = issueExecutionFailed
 	issue.Executions[0].Detail = "new no-task failure"
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issue.ID {
+		t.Fatalf("new failed status did not raise attention before reload: %+v", notice)
+	}
 	generation := a.issueResult.Generation
 	if err := tr.Click("Reload result"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.issueResult.Generation <= generation || a.issueResult.Panel.RunDetail != "new no-task failure" {
-		t.Fatalf("reload did not update the result page: generation=%d detail=%q",
-			a.issueResult.Generation, a.issueResult.Panel.RunDetail)
+	if a.issueResult.Generation <= generation || a.issueResult.Panel.RunDetail != "new no-task failure" ||
+		!tr.HasText("new no-task failure") {
+		t.Fatalf("reload did not display the new status/reason: generation=%d detail=%q texts=%v",
+			a.issueResult.Generation, a.issueResult.Panel.RunDetail, tr.Texts())
 	}
-	if issue.Executions[0].AttentionSeenStatus != issueExecutionUnknown {
-		t.Fatalf("reload confirmed the new status: %+v", issue.Executions[0])
+	if issue.Executions[0].AttentionSeenStatus != issueExecutionFailed {
+		t.Fatalf("active reload did not confirm the displayed failed status: %+v", issue.Executions[0])
 	}
+	if notice := a.issueWorkNotice(ct); notice.Attention || notice.Text != "" {
+		t.Fatalf("active reload left the displayed failure in attention: %+v", notice)
+	}
+	if issue.Status != issueStatusNeedsAttention || issue.Executions[0].Status != issueExecutionFailed ||
+		issue.Executions[0].Detail != "new no-task failure" || ct.Unread != 2 {
+		t.Fatalf("active reload changed retained facts: %+v status=%q unread=%d",
+			issue.Executions[0], issue.Status, ct.Unread)
+	}
+
+	// A later unseen interrupted state is not confirmed by hidden/stale/other
+	// owner reload attempts or by merely closing the result page.
+	issue.Executions[0].Status = issueExecutionInterrupted
+	issue.Executions[0].Detail = "later interrupted"
+	tr.Frame()
 	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issue.ID {
-		t.Fatalf("reload did not retain the new unseen status: %+v", notice)
+		t.Fatalf("new interrupted status did not raise attention before close: %+v", notice)
 	}
+	visibleGeneration := a.issueResult.Generation
+	a.issueResult.Panel.ReaderKey = "stale-reader-page"
+	a.reloadIssueResult(visibleGeneration)
+	a.issueResult.Panel.ReaderKey = ""
+	if issue.Executions[0].AttentionSeenStatus != issueExecutionFailed {
+		t.Fatalf("reader page reload confirmed the unseen status: %+v", issue.Executions[0])
+	}
+	a.settingsOpen = true
+	a.reloadIssueResult(visibleGeneration)
+	a.settingsOpen = false
+	if issue.Executions[0].AttentionSeenStatus != issueExecutionFailed {
+		t.Fatalf("hidden Settings reload confirmed the unseen status: %+v", issue.Executions[0])
+	}
+	a.aux = "model"
+	a.reloadIssueResult(visibleGeneration)
+	a.aux = "issue-result"
+	if issue.Executions[0].AttentionSeenStatus != issueExecutionFailed {
+		t.Fatalf("other aux reload confirmed the unseen status: %+v", issue.Executions[0])
+	}
+	a.reloadIssueResult(visibleGeneration - 1)
+	if issue.Executions[0].AttentionSeenStatus != issueExecutionFailed {
+		t.Fatalf("stale generation reload confirmed the unseen status: %+v", issue.Executions[0])
+	}
+	other := &contact{ID: "reload-other-owner", Name: "Other", Loaded: true}
+	a.contacts = append(a.contacts, other)
+	selected := a.selected
+	a.selected = len(a.contacts) - 1
+	a.reloadIssueResult(visibleGeneration)
+	a.selected = selected
+	if issue.Executions[0].AttentionSeenStatus != issueExecutionFailed {
+		t.Fatalf("other contact reload confirmed the unseen status: %+v", issue.Executions[0])
+	}
+	tr.Frame()
 	if err := tr.Click("Close results"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if issue.Executions[0].AttentionSeenStatus != issueExecutionUnknown {
-		t.Fatalf("closing the result page confirmed the new status: %+v", issue.Executions[0])
+	if issue.Executions[0].AttentionSeenStatus != issueExecutionFailed {
+		t.Fatalf("closing the result page confirmed the unseen status: %+v", issue.Executions[0])
+	}
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issue.ID {
+		t.Fatalf("closing the result page cleared the unseen status: %+v", notice)
 	}
 }
 
@@ -658,6 +712,17 @@ func TestIssueAttentionSeenPersistsAndSaveFailureStaysUnseen(t *testing.T) {
 	}
 	if issue2.Executions[0].AttentionSeenStatus != "" {
 		t.Fatalf("background load confirmed the exception after save failure: %+v", issue2.Executions[0])
+	}
+	if err := tr2.Click("Reload result"); err != nil {
+		t.Fatal(err)
+	}
+	tr2.Frame()
+	if issue2.Executions[0].AttentionSeenStatus != "" || issue2.Executions[0].Status != issueExecutionFailed ||
+		issue2.Executions[0].Detail != badDetail || issue2.Status != issueStatusNeedsAttention {
+		t.Fatalf("reload after save failure did not preserve rollback/facts: %+v", issue2)
+	}
+	if a2.localSaveErr == "" || !strings.Contains(strings.Join(tr2.Texts(), "\n"), a2.localSaveErr) {
+		t.Fatalf("reload after save failure cleared/hid localSaveErr: %q texts=%v", a2.localSaveErr, tr2.Texts())
 	}
 	if dir := os.Getenv("SAKI_PREVIEW_DIR"); dir != "" {
 		tr2.SetDark(false)
