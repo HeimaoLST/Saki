@@ -1,6 +1,6 @@
 # CI governance（Runtime／TUI／GUI）
 
-更新日期：2026-10-20。状态：**实现事实**（workflow、本地验证、真实 GitHub Actions 运行结果；`dev`／`master` 分支保护已于 2026-10-17 启用）。当前 workflow 基线为 `dev@50d6b9c`（2026-10-20，含 [PR #80](https://github.com/HeimaoLST/Saki/pull/80) 的 Python 门禁、[PR #82](https://github.com/HeimaoLST/Saki/pull/82) 的 Runtime stdio driver、[PR #86](https://github.com/HeimaoLST/Saki/pull/86) 的 stdio required 接线与 [PR #88](https://github.com/HeimaoLST/Saki/pull/88) 的 GUI→Runtime 五个离线测试）。本文职责调整本身不修改 workflow 或分支保护。
+更新日期：2026-11-01。状态：**实现事实（固定 dev 基线的 workflow 变更与本地验证；hosted run 待组合后记录）**；`dev`／`master` 分支保护已于 2026-10-17 启用。当前固定基线为 `dev@fd58ec25`，保留既有四个 job 的 Rust／GUI／Python／聚合门禁；本轮仅把现有 job 明确到 macOS runner，并扩展 Python stdlib discovery。本文不把后续产品候选的门禁或打包链写入固定 dev 基线。
 
 ## 目的与范围
 
@@ -34,11 +34,13 @@
 | GUI→Runtime（五个离线测试） | `rust` | 见下方「GUI→Runtime 进程集成」权威命令（与 workflow 使用同一命令） | Go 客户端→真实 Saki `--stdio`、本地 httptest provider、真实 read、事件/工具关联、应用层流程、profile snapshot、mapping 保存顺序/失败边界、跨进程恢复零重放与继续；逐项断言 PASS（非 Skip/空跑）；线上 smoke 不接入 |
 | GUI（独立 Go module） | `gui` | `gofmt -l .`（必须为空）、`CGO_ENABLED=0 go vet ./...`、`go test ./... -count=1`、`go build` | 格式、vet、测试、构建 |
 | GUI（可复现图像） | `gui` | `SAKI_PREVIEW_DIR=... go test -run TestPreviewImages -count=1 .` | headless `ui.Tester` 生成 light/dark add／settings 等场景 PNG，作为 artifact 保留 14 天 |
-| 协作检查 | `python` | `python3 scripts/test_collaboration_check.py`；断言运行测试数非零 | 既有协作检查回归；pipefail 保留失败，空套件不能静默通过 |
+| Python 回归 | `python` | 现有 step 内 `unittest.TestLoader.discover("scripts", pattern="test_*.py")`；`result.testsRun > 0` 且 `wasSuccessful()` | 执行 `scripts/test_*.py` 全部 stdlib unittest；发现/导入失败、测试失败、空 suite 均非零；不依赖文件数或新框架 |
 
 聚合检查：`ci-required`（`if: always()`，依赖 `rust`、`gui` 与 `python`）只在三者结果都为 `success` 时通过。`cancelled`／`failed`／`skipped` 都不算成功。若未来新增 job，必须同时更新 `ci-required` 的 `needs` 与判定。
 
 稳定检查名：`rust`、`gui`、`python`、`ci-required`。分支保护只需要引用聚合检查 `ci-required`，避免逐个维护子 job 名称。
+
+固定 dev 基线只有这四个 job，全部明确 `runs-on: macos-15`，不新增 Linux／Windows 矩阵。`rust` 保留 Rustfmt、clippy、all-targets、真实 PTY 与 stdio；`gui` 保留 Go format／vet／test／build／previews；`rust` 中的 GUI→Runtime 仍是既有五个真实 Runtime、非 Skip 的离线测试。`ci-required` 的依赖与失败语义不变。
 
 Python 门禁的真实失败传播：临时探针 `9480847` 的 [run 39381934207](https://github.com/HeimaoLST/Saki/actions/runs/39381934207) 中 Python 与聚合均失败，Rust／Go 成功；恢复探针并同步后的最终候选 `96ad987` 的 [run 39384000031](https://github.com/HeimaoLST/Saki/actions/runs/39384000031) 四个 job 均成功。探针已用追加提交撤回，不在最终树中。
 
@@ -63,17 +65,17 @@ SAKI_TEST_RUNTIME_BIN="$GITHUB_WORKSPACE/target/debug/Saki" CGO_ENABLED=0 \
   go test -run '^(TestRuntimeProcessIntegration|TestGUIAppRuntimeFlow|TestGUIFirstCreateUsesProfileSnapshot|TestGUIAppPersistsMappingBeforeSend|TestGUIAppSaveFailureStopsBeforeSend)$' -count=1 -v .
 ```
 
-覆盖：真实 `Saki --stdio` 双进程、真实 read、事件/工具关联、应用层 UI 流程、首建 profile snapshot、session mapping 持久化顺序/保存失败边界、跨进程恢复/history 零重放与继续。五个测试都通过 `requireRuntimeBinary`：未设置 `SAKI_TEST_RUNTIME_BIN` 会 Skip，设置但 binary 不存在会失败；测试自带本地 httptest provider，不需要真实凭据/外部 provider。Go 由 `actions/setup-go@v7` 按 `desktop/go.mod` 提供并缓存 `desktop/go.sum`；`-count=1` 禁止缓存替代新 binary。step 使用 `pipefail`+`tee`，并逐项检查 `--- PASS: <test> `；任何一项 Skip、未匹配/空跑或失败都会失败。`TestGUIOnlineSmoke` 保持 opt-in（`SAKI_TEST_ONLINE=1` + 宿主凭据），不进入本 CI。超时 5 分钟；Linux/headless，不覆盖真实窗口/IME。失败留在既有 `rust` job，沿 `rust` → `ci-required` 传播；无 if-file-exists、continue-on-error 或 skip。
+覆盖：真实 `Saki --stdio` 双进程、真实 read、事件/工具关联、应用层 UI 流程、首建 profile snapshot、session mapping 持久化顺序/保存失败边界、跨进程恢复/history 零重放与继续。五个测试都通过 `requireRuntimeBinary`：未设置 `SAKI_TEST_RUNTIME_BIN` 会 Skip，设置但 binary 不存在会失败；测试自带本地 httptest provider，不需要真实凭据/外部 provider。Go 由 `actions/setup-go@v7` 按 `desktop/go.mod` 提供并缓存 `desktop/go.sum`；`-count=1` 禁止缓存替代新 binary。step 使用 `pipefail`+`tee`，并逐项检查 `--- PASS: <test> `；任何一项 Skip、未匹配/空跑或失败都会失败。`TestGUIOnlineSmoke` 保持 opt-in（`SAKI_TEST_ONLINE=1` + 宿主凭据），不进入本 CI。超时 5 分钟；macOS arm64/headless，不覆盖真实窗口/IME。失败留在既有 `rust` job，沿 `rust` → `ci-required` 传播；无 if-file-exists、continue-on-error 或 skip。
 
 ## 触发、并发与权限
 
 - 触发：所有 `pull_request`；`push` 到 `dev`／`master`；`workflow_dispatch`。发布 PR（`dev` → `master`）、hotfix PR（→ `master`）与回流 PR（`master` → `dev`）因此都跑全量检查。
 - 并发：同一 workflow + ref 分组；`pull_request` 的新推送取消旧运行，`dev`／`master` 的 push 不取消，保留最终集成证据。
 - 权限：workflow 顶层 `permissions: contents: read`；不使用任何 secret、模型密钥、新付费服务。
-- 运行平台：`ubuntu-24.04`（GitHub 官方 `ubuntu-latest` 当前指向的镜像；显式固定避免标签漂移）。
+- 运行平台：现有四个 job 全部固定 `macos-15`（arm64）；不新增 Linux／Windows runner 或矩阵。
 - 工具链：Rust 固定 `1.99.0`（rustfmt + clippy，官方 rustup 安装，已验证该版本可从 static.rust-lang.org 下载）；Go 由 `desktop/go.mod`（当前 `1.27.1`）通过 `actions/setup-go` 的 `go-version-file` 决定，不使用本机未来版本随意钉死不可下载版本。
 - 缓存：Cargo registry／git／`target` 以 `runner.os + Rust 版本 + Cargo.lock` 为 key；Go 使用 `actions/setup-go` 内置缓存（`desktop/go.sum`）。缓存只加速，不改变 `--locked` 校验。
-- Python：`actions/setup-python@v7` 显式提供 3.12；协作检查 job 运行现有 stdlib unittest，rust job 的 stdio self-test 使用同一版本，不依赖 runner 偶然环境。
+- Python：`actions/setup-python@v7` 显式提供 3.12；Python job 在现有 step 内用 stdlib `unittest` discovery 执行全部 `scripts/test_*.py`，以实际 `testsRun` 非零和 `wasSuccessful()` 作为门禁；rust job 的 stdio self-test 使用同一版本。
 - 超时：Rust 30 分钟（含 stdio self-test step 的 5 分钟上限），GUI 20 分钟，Python 10 分钟，聚合 5 分钟。
 
 ## 失败处理与责任
@@ -83,7 +85,7 @@ SAKI_TEST_RUNTIME_BIN="$GITHUB_WORKSPACE/target/debug/Saki" CGO_ENABLED=0 \
 | 实现作者（runtime／tui／gui） | 维护受影响测试与命令，提供功能与有价值的回归；PR 前在本地执行同一组命令；CI 失败先定位并修复，不以 skip、`continue-on-error` 或放宽 lint 掩盖真实失败。 |
 | QA | 维护现有 workflow、CI 支撑脚本与自动检查运行可靠性；核对 PR 的实际 run URL、SHA 与退出码；区分“本次改动失败”与“基线失败”，把真实失败反馈给对应 owner。不接产品人工验收或独立 `APPROVE` 队列，不代替作者修产品代码。 |
 | PM | 维护需求边界、验收标准、协作规范与文档结构；确认 CI 约定与仓库流程一致；真实试用与用户体验判断由 PM／用户负责。 |
-| 主责／合并者 | 主 agent 代码评审与适用验收通过、required CI 真实通过、无未解决阻塞且属非 breaking change 后，按 AGENTS.md §0.2 预授权合并；CI 绿不替代评审或用户试用，也不授权 breaking migration。 |
+| 主责／合并者 | 主 agent 代码评审与适用验收通过、required CI 真实通过、无未解决阻塞后，按 AGENTS.md §0.2 的 PM 集成处置权执行；PM 统筹集成顺序与收尾，业务主责不脱离 PM 安排自行合并。CI 绿不替代评审或用户试用，也不授权 breaking migration。 |
 
 真实失败的处理顺序：
 
@@ -151,8 +153,22 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
 cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1
 
-# Python（协作检查回归）
-python3 scripts/test_collaboration_check.py
+# Python（全部 scripts/test_*.py；与 workflow 相同的 stdlib discovery）
+python3 - <<'PY'
+import sys
+import unittest
+
+loader = unittest.TestLoader()
+suite = loader.discover("scripts", pattern="test_*.py")
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+print(f"DISCOVERED {result.testsRun} tests")
+if result.testsRun == 0:
+    print("python unittest discovery found zero tests", file=sys.stderr)
+    sys.exit(1)
+if not result.wasSuccessful():
+    print("python unittest suite failed", file=sys.stderr)
+    sys.exit(1)
+PY
 
 # Runtime stdio 跨进程 smoke（dev@4001fd4 起）
 cargo build --locked --bin Saki
@@ -179,7 +195,7 @@ SAKI_PREVIEW_DIR=/tmp/saki-desktop-previews go test -run TestPreviewImages -coun
 - GitHub Actions workflow 语法、并发与权限：<https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax>
 - 必需状态检查（rulesets）：<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#require-status-checks-to-pass-before-merging>
 - 分支保护 REST API：<https://docs.github.com/en/rest/branches/branch-protection>
-- Runner 镜像与 `ubuntu-latest` 对应版本：<https://github.com/actions/runner-images>
+- Runner 镜像与 `macos-15` 对应版本：<https://github.com/actions/runner-images>
 - Rust 工具链安装：<https://rust-lang.github.io/rustup/concepts/toolchains.html>；版本清单：<https://static.rust-lang.org/dist/channel-rust-stable.toml>
 - Go 官方下载与版本：<https://go.dev/dl/>
 - `actions/checkout`、`actions/cache`、`actions/upload-artifact`、`actions/setup-go` 官方仓库与 releases：<https://github.com/actions>

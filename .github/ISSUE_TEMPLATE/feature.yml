@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        > 协作协议见根目录 `AGENTS.md`。可验证的验收标准是进入 `status:ready` 的前提。
+        > 协作协议见根目录 `AGENTS.md`。创建时允许 Spec 版本/评论/base 暂空，不要伪造尚不存在的评论；PM 在 `triage`→`ready` 前补齐固定快照、R/AC、路径与依赖。`r1` 可作候选名称，不因默认名称跳过接收。
 
   - type: dropdown
     id: from_agent
@@ -54,6 +54,33 @@ body:
     validations:
       required: false
 
+  - type: input
+    id: spec_version
+    attributes:
+      label: Spec 版本（可暂空）
+      description: PM 固定评论的精确版本；创建时可先写 r1 候选，PM 在 ready 前确认
+      placeholder: r1
+    validations:
+      required: false
+
+  - type: input
+    id: spec_comment
+    attributes:
+      label: Spec 固定评论 URL（可暂空）
+      description: 创建 issue 后通常才有评论 URL；PM 在 ready 前补当前顶层快照，后续实质变更升版本，不复用旧 ACK
+      placeholder: https://github.com/HeimaoLST/Saki/issues/236#issuecomment-...
+    validations:
+      required: false
+
+  - type: input
+    id: base_ref
+    attributes:
+      label: base / 目标分支
+      description: PM 登记 base（普通从 origin/dev）与最终目标；创建时可暂空，ready 前补齐；stacked 必须写直接依赖
+      placeholder: origin/dev -> dev
+    validations:
+      required: false
+
   - type: textarea
     id: problem
     attributes:
@@ -65,19 +92,18 @@ body:
   - type: textarea
     id: behavior
     attributes:
-      label: 期望行为（可验证）
-      description: 用可观察的行为描述，而不是实现方案
+      label: 可观察需求（R）
+      description: 逐条编号 R1/R2，写用户可观察行为、失败边界与非目标；不写实现方案
     validations:
       required: true
 
   - type: textarea
     id: acceptance
     attributes:
-      label: 验收标准
-      description: 逐条列出，每条都要能判定通过与否
+      label: 验收 AC（可执行映射）
+      description: 逐条编号 AC；每条写输入、步骤、预期、失败边界、证据方式与适用 owner
       placeholder: |
-        - [ ] 当 ... 时，系统 ...
-        - [ ] ...
+        - AC-01：给定 ...，当 ...，预期 ...；失败边界 ...；证据 ...
     validations:
       required: true
 
@@ -102,6 +128,17 @@ body:
         - 跨层（新增跨业务线公共契约或不兼容变更先开 type:decision；局部维护按普通流程）
     validations:
       required: true
+
+  - type: textarea
+    id: paths
+    attributes:
+      label: 可写路径与交付物（可暂空）
+      description: PM 在 ready 前补本 Spec 允许修改的路径、预期 PR/文档/测试产物；只读任务可写 N/A
+      placeholder: |
+        AGENTS.md, scripts/agent_notify.py
+        scripts/test_agent_notify.py
+    validations:
+      required: false
 
   - type: checkboxes
     id: evidence

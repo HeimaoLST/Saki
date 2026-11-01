@@ -33,7 +33,7 @@ labels=(
   # 类型 type:* —— 分诊完成后恰好 1 个
   "type:bug|d73a4a|行为与预期不符，需要修复"
   "type:feature|a2eeef|新能力或行为增强"
-  "type:test|0e8a16|需要补充/修复的测试或验收"
+  "type:test|0e8a16|需要补充/修复测试或 CI 自动检查"
   "type:refactor|c5def5|不改变外部行为的重构"
   "type:docs|0075ca|文档新增或修正"
   "type:research|7057ff|调研、实验、证据核对"
@@ -52,7 +52,7 @@ labels=(
   "agent:runtime|006b75|Agent Runtime 开发：执行循环/模型/工具/会话/协议"
   "agent:tui|6f42c1|TUI 开发：TUI/console/本地命令"
   "agent:gui|00add8|GUI 开发：desktop Go contacts 预览"
-  "agent:qa|0e8a16|测试：测试策略/端到端验收/CI"
+  "agent:qa|0e8a16|CI 工程与自动检查运行可靠性，不承担产品人工验收"
   "agent:pm|fbca04|产品经理：需求/优先级/文档分类/协作配置与验收标准"
 
   # 优先级 priority:* —— triage 时确定
@@ -64,7 +64,7 @@ labels=(
   # 协作需求 needs:* —— 可叠加，表示「等对方产出」
   "needs:design|d4c5f9|需要设计或决策产出"
   "needs:review|5319e7|需要代码/文档评审"
-  "needs:test|0e8a16|需要补充或执行测试验证"
+  "needs:test|0e8a16|需要补充/修复测试或 CI 检查，由实现线或 CI 工程处理"
   "needs:info|d876e3|需要补充信息"
   "needs:repro|e99695|需要最小复现"
   "needs:human|b60205|需要人类决策/介入"
