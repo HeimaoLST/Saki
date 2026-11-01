@@ -945,33 +945,53 @@ func TestGUIAppIssueSaveFailureStopsBeforeDispatch(t *testing.T) {
 		}
 	}()
 	var issueID string
+	var createOK bool
+	var createErr string
 	h.pump.do(func() {
-		if !h.app.createIssue("Implement login", "Must use SMS.") {
-			t.Fatalf("createIssue failed: %s", h.app.issueFormError)
+		createOK = h.app.createIssue("Implement login", "Must use SMS.")
+		createErr = h.app.issueFormError
+		if !createOK {
+			return
 		}
 		issueID = h.app.selectedContact().SelectedIssueID
 		ct := h.app.selectedContact()
 		ct.Draft = "ordinary draft"
 	})
+	if !createOK {
+		t.Fatalf("createIssue failed: %s", createErr)
+	}
 	badParent := filepath.Join(h.root, "not-a-directory")
 	if err := os.WriteFile(badParent, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h.app.store.path = filepath.Join(badParent, "contacts.json")
 	h.pump.do(func() {
-		if h.app.runIssue(issueID) {
-			t.Fatal("runIssue unexpectedly dispatched with failing store")
-		}
+		h.app.store.path = filepath.Join(badParent, "contacts.json")
 	})
-	ct := h.app.selectedContact()
-	if len(ct.Issues[0].Executions) != 0 || ct.Issues[0].Status != issueStatusNotStarted {
-		t.Fatalf("failed pre-save issue state = %+v", ct.Issues[0])
+	var runOK bool
+	var runErr string
+	h.pump.do(func() {
+		runOK = h.app.runIssue(issueID)
+		runErr = h.app.issueFormError
+	})
+	if runOK {
+		t.Fatal("runIssue unexpectedly dispatched with failing store")
 	}
-	if ct.Draft != "ordinary draft" || provider.count() != 0 {
-		t.Fatalf("pre-save failure draft/requests = %q/%d", ct.Draft, provider.count())
+	var executions int
+	var status, draft string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		executions = len(ct.Issues[0].Executions)
+		status = ct.Issues[0].Status
+		draft = ct.Draft
+	})
+	if executions != 0 || status != issueStatusNotStarted {
+		t.Fatalf("failed pre-save issue state = executions:%d status:%q", executions, status)
 	}
-	if !strings.Contains(h.app.issueFormError, "save") {
-		t.Fatalf("issue save error = %q", h.app.issueFormError)
+	if draft != "ordinary draft" || provider.count() != 0 {
+		t.Fatalf("pre-save failure draft/requests = %q/%d", draft, provider.count())
+	}
+	if !strings.Contains(runErr, "save") {
+		t.Fatalf("issue save error = %q", runErr)
 	}
 }
 
