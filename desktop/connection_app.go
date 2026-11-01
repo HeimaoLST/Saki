@@ -695,10 +695,11 @@ func (c *runtimeClient) createConfiguredSessionWithTools(workingDir, systemPromp
 	return session, nil
 }
 
-// finishShutdown drains Runtime only after in-flight history reads have
-// delivered their final UI callback; those callbacks re-enter this function.
+// finishShutdown drains Runtime only after in-flight history reads and
+// admitted issue/conversation submissions have delivered their final UI
+// callbacks; those callbacks re-enter this function.
 func (a *appModel) finishShutdown() {
-	if a.quitReady || a.shutdownDrainStarted || a.connectionSaveInFlight || a.connectionApplying || a.connectionTesting || a.modelOpActive || a.contactHistoryInFlight > 0 || a.resultInFlight > 0 || a.issueToolReleaseInFlight > 0 {
+	if a.quitReady || a.shutdownDrainStarted || a.connectionSaveInFlight || a.connectionApplying || a.connectionTesting || a.modelOpActive || a.contactHistoryInFlight > 0 || a.resultInFlight > 0 || a.submissionInFlight > 0 || a.issueToolReleaseInFlight > 0 {
 		return
 	}
 	if a.rt == nil {

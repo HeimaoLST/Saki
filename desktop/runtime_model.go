@@ -1825,8 +1825,26 @@ func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *i
 	context := cloneTaskContextItems(execution.Context)
 	rt, configured := a.rt, a.connectionManaged
 	released := issue.Work.Released
+	a.submissionAsyncStarted()
 	go a.submitIssueTask(rt, configured, ct.ID, issue.ID, execution.ID, sessionID, workspace, system, prompt, context, released)
 	return true
+}
+
+// submissionAsyncStarted/Finished keep the submission owner visible to the
+// shutdown drain until the final accepted/rejected/unknown callback has run.
+// Both submit paths start after their admission state is saved and finish only
+// inside their final UI callback, including early-return paths.
+func (a *appModel) submissionAsyncStarted() {
+	a.submissionInFlight++
+}
+
+func (a *appModel) submissionAsyncFinished() {
+	if a.submissionInFlight > 0 {
+		a.submissionInFlight--
+	}
+	if a.shutdownStarted && !a.quitReady {
+		a.finishShutdown()
+	}
 }
 
 func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID, issueID, executionID, sessionID, workspace, system, prompt string, context []taskContextItem, released bool) {
@@ -1943,6 +1961,7 @@ func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID
 		return
 	}
 	a.updateUI(func() {
+		defer a.submissionAsyncFinished()
 		if a.rt != rt {
 			return
 		}
@@ -2080,6 +2099,7 @@ func executionIDOf(execution *issueExecution) string {
 
 func (a *appModel) failIssueSubmit(contactID, issueID string, err error, submitted bool) {
 	a.updateUI(func() {
+		defer a.submissionAsyncFinished()
 		ct := a.contactByID(contactID)
 		if ct == nil {
 			return
@@ -2217,6 +2237,7 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 	}
 	rt, configured := a.rt, a.connectionManaged
 	issueTools := a.issueToolEnabled() && a.connectionManaged
+	a.submissionAsyncStarted()
 	go a.submitTask(rt, configured, contactID, sessionID, text, workspace, system, submittedContext, newIssueToolTurnID(), issueTools)
 	return true
 }
@@ -2305,6 +2326,7 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 		return
 	}
 	a.updateUI(func() {
+		defer a.submissionAsyncFinished()
 		if a.rt != rt {
 			return
 		}
@@ -2386,6 +2408,7 @@ func (a *appModel) acceptTask(ct *contact, text string, result runtimeSendResult
 
 func (a *appModel) failSubmit(contactID string, err error, submitted bool) {
 	a.updateUI(func() {
+		defer a.submissionAsyncFinished()
 		ct := a.contactByID(contactID)
 		if ct == nil {
 			return
