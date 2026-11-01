@@ -127,7 +127,7 @@ tmux paste-buffer -p -b "$dispatch_buffer" -t "$child_pane"
 tmux send-keys -t "$child_pane" Enter
 ```
 
-**通知与接收闭环**：PM 用 `python3 scripts/agent_notify.py inspect --agent-id <id>` 动态发现唯一主 pane；`send` 只接受已核指纹、稳定 agent ID 与固定 GitHub 评论 URL，重新核验目标后用独立 buffer 粘贴、核对、单独 Enter，失败不重试 Enter。目标收到后必须在 GitHub 顶层评论回 `KIND: ack`、`ACK: <固定评论 URL>`、`SPEC: <精确版本>`、`SCOPE`、`NEXT`；`status` 只在精确来源/目标/版本/链接的完整 ACK 上通过。运输成功不等于接收，引用/代码块中的 ACK 不算，GitHub 读取失败不是空待办。缺失、重复、child、shell、指纹变化或目标进程不支持时零发送；不新增常驻通知服务。
+**通知与接收闭环**：PM 用 `python3 scripts/agent_notify.py inspect --agent-id <id>` 动态发现唯一主 pane；`send` 只接受已核指纹、稳定 agent ID 与固定 GitHub 评论 URL，重新核验目标后用独立 buffer 粘贴、等待有限渲染、核对、单独 Enter，失败不重试 Enter。目标收到后必须在 GitHub 顶层评论回 `KIND: ack`、`ACK: <固定评论 URL>`、`SPEC: <精确版本>`、`SCOPE`、`NEXT`；`status` 只在精确来源/目标/版本/链接的完整 ACK 上通过。运输成功不等于接收，引用/代码块中的 ACK 不算，GitHub 读取失败不是空待办；共享 GitHub 账号只验证 FROM 声明，不认证实际发帖者身份，也绝不代表产品 APPROVE。缺失、重复、child、未知 shell/进程、指纹变化或目标进程不支持时零发送；不新增常驻监控服务。
 
 **GitHub 和长期文档使用稳定 agent ID、issue、分支与 commit 识别任务；不保存固定 session／pane 编号来指挥后续操作。** 旧日志中的地址只是当时快照。tmux 命令语义见[官方手册](https://man.openbsd.org/tmux)，执行时以本机版本为准。
 
