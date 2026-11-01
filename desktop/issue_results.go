@@ -613,7 +613,7 @@ func issueResultReaderPreview(c *ui.Context, th *ui.Theme, state *issueResultPan
 		return
 	}
 	if inspection.Preview == "" {
-		ui.Text(c, "Empty file (0 bytes). Copy the current file to verify its empty content.").FontSize(14).LineHeight(1.5).TextColor(th.TextMuted)
+		ui.Text(c, "Empty file (0 bytes).").FontSize(14).LineHeight(1.5).TextColor(th.TextMuted)
 	}
 	markdownReader(c, inspection.Preview, markdownReaderOptions{
 		PlainText:       !issueResultMarkdownFile(file.Path),
@@ -633,7 +633,6 @@ func issueResultSourceView(c *ui.Context, th *ui.Theme, state *issueResultPanelS
 	source.Children(func() {
 		ui.Text(c, "Source & raw record").FontSize(typeAction).FontWeight(500).TextColor(th.Text)
 		ui.Text(c, "Working directory: "+file.WorkingDirectory).FontSize(typeAction).TextColor(th.TextMuted).MaxLines(2)
-		ui.Text(c, "The reader shows the current file at the reported path. Its content may have changed since the execution; it is not an execution-time snapshot.").FontSize(typeAction).LineHeight(1.5).TextColor(th.TextMuted)
 		ui.Text(c, "Session: "+file.SessionID).FontSize(typeAction).TextColor(th.TextMuted).MaxLines(2)
 		ui.Text(c, "Task: "+file.TaskID).FontSize(typeAction).TextColor(th.TextMuted).MaxLines(2)
 		ui.Text(c, "Message: "+file.MessageID).FontSize(typeAction).TextColor(th.TextMuted).MaxLines(2)
