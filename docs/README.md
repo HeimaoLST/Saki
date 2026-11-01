@@ -8,9 +8,9 @@
 
 ## Spec 驱动的协作
 
-GitHub issue 正文承载当前 Spec，PM 以固定评论快照分发精确版本；`docs/` 保存已采用的长期需求、设计、接口和实验事实，不重复维护同一任务 delta。Spec 至少写问题/价值、范围与非目标、可观察 R 编号、可执行 AC（输入、步骤、预期、失败边界、证据）、依赖、唯一 owner、可写路径、base/目标分支和交付物；实质变化升版本并说明差异与接续动作。
+GitHub issue 承载当前 Spec、任务过程与证据；PM 以固定评论快照分发精确版本，`docs/` 只保存已采用的长期需求、设计、接口和实验事实，不重复维护同一任务 delta。Spec 的完整字段、接收 ACK 与合并授权规则见 [AGENTS.md](../AGENTS.md)；本索引不复制流程。
 
-协作入口以 [AGENTS.md](../AGENTS.md) 为准：PM 统筹 Spec、分派、分支/PR 顺序和收尾，业务主 agent 组织实施并交逐条 AC 证据，子 agent 只走 tmux；跨线通知使用 `scripts/agent_notify.py`，目标必须在 GitHub 顶层回 ACK，通知运输成功不等于已接收；工具不后台监控、不判断产品 APPROVE，共享 GitHub 账号的 FROM 声明不是身份认证。PR 必须记录 Spec 版本/评论、AC→证据/SHA/限制；合并仍需该 PR 的明确授权，CI 绿、Ready 或 ACK 都不等于完成。`scripts/agent-worktree.sh` 只保留 add/list/path/安全 remove，自动 finish/prune/force 清理已移除。
+协作入口、角色、Spec/AC、通知 ACK、逐 PR 合并授权、分支与清理均以 [AGENTS.md](../AGENTS.md) 为唯一规则来源。`docs/` 只记录已采用的长期契约和可复核事实；`scripts/agent_notify.py` 不后台监控、不判断产品 APPROVE，共享 GitHub 账号的 FROM 不是身份认证。
 
 ## 源码结构
 

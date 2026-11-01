@@ -5,7 +5,7 @@
 > 本文件对在本仓库工作的所有 agent（AI 或人类协作者）生效。
 > **本仓库由多条业务线共同维护，采用两层协作。** 独立业务线／独立任务之间通过 GitHub 分派、交接与交付；同一任务内的主 agent／子 agent 通过 tmux 直接协作。
 > **GitHub Spec 管任务 delta 与版本，docs 管已采用长期契约；tmux 管主子执行。** Issue／PR／Label／Milestone 保存共享任务、跨线依赖与正式证据；主 agent 使用 pane split、send-keys／paste-buffer、capture-pane 分派、指导和监督子 agent，由主 agent 汇总关键结论到 GitHub。
-> **用户明确指令优先于本协议默认流程**（§0）；Spec 与授权以固定 GitHub 评论快照为准，执行后如实补记。
+> **用户明确指令优先于本协议默认流程**（§0）；Spec 固定评论是执行基线，不限制用户直接授权；用户指令无需先写 issue 才生效，执行后补记。
 > 本文件只定义协作规则。**任务列表以 GitHub issue 为准，不要在本文件维护 TODO。**
 
 给没时间读完的 agent，八条底线：
@@ -16,7 +16,7 @@
 4. 标准开发任务由主 agent 负责 commit／push 闭环，可明确分派执行；只读、用户要求不提交或操作受阻时按 §5 记录，不丢弃现场。
 5. 行为变化必须带确定性测试与证据，证据贴在 issue／PR 里。
 6. 每个 issue 同一时间只有一个主责实例，归属由唯一 `agent:*` 路由；主 agent 可在该范围内通过 tmux 分派子任务，子 agent 不重复认领。
-7. 长期事实（需求、设计、决策、实验结论）写回 `docs/`；issue 只承载过程，不散落临时笔记。
+7. GitHub issue 承载当前 Spec、任务过程与证据；长期事实（需求、设计、决策、实验结论）写回 `docs/`，不散落临时笔记。
 8. 开发在独立 `git worktree` 中进行，主检出固定在 `master`；合并后回收自己已合并且无依赖的临时工作分支与 worktree，保留 `master`／`dev`。
 
 ---
@@ -39,6 +39,7 @@
 - **合并必须逐 PR 明确授权**：当前用户级规则要求具体 PR 获得明确 merge 授权；主 agent 组织集成、评审或确认 CI 不代表获得合并授权。PM 在完成逐条 AC 验收、required CI 对应 SHA 通过、真实适用验证与评审后，另行取得该 PR 的明确授权；授权前不得 merge/auto-merge，也不得把 Ready、ACK、CI 绿或本协议当作授权。breaking change 仍须人类明确批准影响、迁移与回滚。
 - **测试与验收职责**：实现 agent 负责功能与有价值的回归测试；PM/业务主 agent 负责逐条 Spec/AC 验收、代码评审与适用实际运行；QA 负责 CI 工程与自动检查运行可靠性，不承担产品人工验收或独立 `APPROVE` 队列。主 agent 可评审自己或子 agent 的产物，但必须如实记录作者／评审者，不冒充独立评审或人类结论。
 - **不默认授权**：打 tag／发 GitHub Release／部署、修改他人分支或 worktree、跳过仓库必需门禁、删除他人资源。合并授权不取消评审、范围控制、发布协调与生产稳定要求；§8 中需人类拍板的事项仍按其处理。
+- **breaking change 的定义**：不兼容的公共 API／协议／配置变更、已有持久化数据无法继续使用的破坏性迁移、或移除已承诺能力。内部脚本／入口退役若已由当前用户范围明确授权，不自动升级为新的 breaking 审批；影响、迁移与回滚仍须记录。
 ### 0.3 快速开工（复制给新 agent）
 
 不同 agent 工具（pi／Claude Code／Codex 等）对 `AGENTS.md` 的加载方式不一致，**不要假设它已自动进入上下文**：启动时应主动完整读取所在工作区版本的本文件，并核对该 worktree／主检出实际所在的分支与路径，避免套用旧的或别处的快照。启动时给它下面这段，显式指定业务线与实例名：
@@ -46,7 +47,7 @@
 ```text
 你是 agent:<line>#<name>。先完整阅读所在工作区的 AGENTS.md，并核对当前 Spec 固定评论、版本、owner、可写路径、base 与目标分支。
 PM 负责写 Spec、分派、验收、集成顺序与收尾；业务主 agent 接受精确 Spec 后组织实施；
-子 agent 只执行主 agent 的 tmux 分派，不另巡检/认领/通过 GitHub 对话。
+子 agent 只执行主 agent 的 tmux 分派，不另巡检/认领/通过 GitHub 对话；inspect/ACK 只针对独立主责。
 开始前用 scripts/agent_notify.py inspect 动态确认唯一主 pane；收到通知后以 GitHub 顶层 ACK
 （FROM/KIND: ack/ACK/SPEC/SCOPE/NEXT）作为接收，不以 Enter 或通知运输成功代替。
 按 Spec 交付实现、测试与逐条 AC 证据；commit/push 署实际实例 ID。
@@ -171,7 +172,7 @@ REFS: #42, 1a2b3c4, src/frontend/tui/view.rs:120
 
 ## 3. 文档与事实记录：`docs/` 是唯一长期事实来源
 
-Issue 和 PR 是**过程与沟通**的载体，`docs/` 是**长期事实**的载体。两者不能互相替代。
+Issue 和 PR 承载**当前 Spec、过程与沟通**，`docs/` 是**已采用长期事实**的载体。两者不能互相替代。
 
 ### 3.1 什么内容写到哪里
 
@@ -323,10 +324,13 @@ Issue 和 PR 是**过程与沟通**的载体，`docs/` 是**长期事实**的载
    gh issue edit 42 --remove-label status:ready --add-label status:in-progress
    gh issue comment 42 --body "TO: agent:runtime
    FROM: agent:runtime#kira
-   KIND: status
-   REFS: #42
+   KIND: ack
+   ACK: <PM 固定 Spec 评论 URL>
+   SPEC: r1
+   SCOPE: src/session/mod.rs
+   NEXT: 读取固定 Spec 并开始实施
 
-   已接受 Spec r1（评论链接：…）。文件范围：src/session/mod.rs。计划：…；预计…"
+   已接受 Spec r1；文件范围：src/session/mod.rs。"
    ```
 
    认领后读回状态，确认无其他独立实例占用同一范围。一个 issue 有唯一主责，可分派子 agent 实施；子 agent 在 tmux 确认范围，不重复改标签或发认领评论。文件写入不得重叠，评审与只读核查可并行。
@@ -334,11 +338,11 @@ Issue 和 PR 是**过程与沟通**的载体，`docs/` 是**长期事实**的载
 3. **开 worktree 与分支**：`./scripts/agent-worktree.sh add agent/<line>/<issue>-<slug> [base]`（base 默认 `origin/dev`；默认根目录 `$HOME/Workspace/worktrees/Saki`，可用 `SAKI_WORKTREE_ROOT` 覆盖），例如 `agent/tui/142-scroll-fix`；hotfix 用 `origin/master` 作 base，stacked 用直接父分支。**不要在主检出 `git switch`**；主检出固定 `master`。只读任务不需要 worktree。
 4. **实施与监督**：主 agent 在 tmux 给出范围并持续检查子 agent 的进展／结果，子 agent 直接回报；每个可解释的小步骤及时落盘，Git 提交按下一步分工执行。跨线影响、阶段成果或真实阻塞由主 agent 汇总到 issue，内部指导不逐条发评论。
 5. **提交**：主 agent 对 commit／push 闭环负责，可明确分派给子 agent；提交署实际执行身份，记录实现分工与 SHA。交接／阻塞前保存可复核的阶段成果。只读或用户要求不提交时不执行；操作受阻报告并保留现场，不丢弃改动或夹带他人文件。
-6. **交付**：有文件改动时按 `.github/pull_request_template.md` 开 PR，base 与 `Closes`／`Refs` 按 §7 选择；将对应 issue 置 `status:review`、加 `needs:review`，记录评审责任（主 agent 可评审自己或子 agent 产物；需要时再邀请 peer review）。只读任务交付报告。未完成或自身检查失败的改动可开 draft PR，明确剩余工作；merge/auto-merge 必须取得该 PR 的明确授权并满足步骤 9 的门槛。
-7. **评审**：主 agent 负责代码评审和适用实际运行／验收，可用 `KIND: review` 记录结论、理由与所审 SHA。主 agent 可评审自己或子 agent 的产物，但必须如实记录作者／评审者，不能冒充独立评审或人类结论。需要额外独立 peer review 时按需发起，不设为每项交付的强制前置。required CI 与仓库门禁单独记录，不能把局部通过写成所有门禁通过；CI 绿不替代主 agent／PM／用户的实际试用判断。评审须注明兼容性判断；合并按 §0.2 逐 PR 授权，breaking change 升级人类。
+6. **交付**：有文件改动时按 `.github/pull_request_template.md` 开 PR，base 与 `Closes`／`Refs` 按 §7 选择；将对应 issue 置 `status:review`、加 `needs:review`，记录评审责任（主 agent 可评审自己或子 agent 产物；需要时再邀请 peer review）。只读任务交付报告。未完成或自身检查失败的改动可开 draft PR，明确剩余工作；merge/auto-merge 仅按 §0.2 的逐 PR 授权与步骤 9 门槛执行。
+7. **评审**：主 agent 负责代码评审和适用实际运行／验收，可用 `KIND: review` 记录结论、理由与所审 SHA。主 agent 可评审自己或子 agent 的产物，但必须如实记录作者／评审者，不能冒充独立评审或人类结论。需要额外独立 peer review 时按需发起，不设为每项交付的强制前置。required CI 与仓库门禁单独记录，不能把局部通过写成所有门禁通过；CI 绿不替代主 agent／PM／用户的实际试用判断。评审须注明兼容性判断；合并授权见 §0.2；breaking change 升级人类。
 8. **测试与 CI**：实现 agent 提供功能与有价值的回归测试；`needs:test` 表示仍需补充／修复测试或 CI 检查，由实现线或 CI 工程负责，不是独立 QA 验收前置。QA 维护 CI／自动检查运行可靠性，并把真实失败反馈给对应 owner。主 agent 在合并前核对 required CI 真实通过与适用验收；没有额外 QA 检查不等于免测试或免主责验收。
 9. **合并与清理**（PM 统筹集成，业务主责配合）：
-   - **审批与责任**：主 agent 完成代码评审（可含 peer review）、逐条 Spec/AC 验收、required CI 真实通过、无未解决阻塞后，仍需取得该 PR 的明确 merge 授权；PM 组织集成、Ready、CI、ACK 或任何旧规则都不能代替。授权可来自用户／maintainer 或当前明确授权规则，记录在 PR；授权前不得使用 auto-merge。breaking change 或 §8 的待决事项需人类确认；不得伪造独立评审或人类结论。合并方法见 §7；tag／GitHub Release／部署仍按另行授权的范围执行。
+   - **审批与责任**：按 §0.2 的逐 PR 授权执行；PR 记录授权来源、实际评审/逐条 AC/CI 的 SHA 与合并结果。PM 组织集成、Ready、ACK、CI 绿都不替代授权；授权前不得 auto-merge。breaking change 或 §8 的待决事项需人类确认；不得伪造独立评审或人类结论。合并方法见 §7；tag／GitHub Release／部署仍按另行授权的范围执行。
    - **集成顺序**：合并前核对依赖与其他活跃发布。正在验证限定范围的 `dev` → `master` 发布时，由主责与发布负责人协调合入顺序或冻结范围，避免未经验证的改动进入生产；发布完成后继续推进，不能把协调等待误写成缺少用户授权。
    - **同步**：合并前把 PR 同步到最新 base——未发布的本地分支可以 rebase；已推送／开 PR 的共享分支用 merge commit 合入 base（不 force-push、不覆盖远端）。同步后重新跑门禁，并在证据／评审评论注明验证 SHA。
    - **stacked**：从底层向上合并；底层合并后核对上层 PR 的实际 base，必要时改到下一个目标（通常为 `dev`）。改 base 或删除父分支不保证上层 diff 正确，尤其底层使用 squash 时；作者需同步并核对 diff、重新验证后继续按本节条件合并。中间层用 `Refs`，进入最终目标分支才可 `done`。
@@ -369,7 +373,7 @@ Issue 和 PR 是**过程与沟通**的载体，`docs/` 是**长期事实**的载
 
 **Definition of Ready**（满足后才能进 `status:ready`）：
 
-- Spec 固定评论/版本、目标单一且可验收；目标不是「优化一下」，每个 R/AC 有输入、步骤、预期、失败边界与证据方式。
+- Spec 固定评论/版本、目标单一且可验收；R 写可观察行为，AC 写可执行验证。小任务按比例保留必要字段，不复制无关步骤；只读任务的 base/写路径可写 N/A。
 - 已确定唯一 `type:*`／`agent:*`／`priority:*`，并挂当前迭代 Milestone（里程碑尚未建立时由 `agent:pm` 先建立或说明例外）。
 - 写明唯一 owner、可写路径、base/目标分支与交付物；有子 agent 时由主 agent 明确各自范围。主子内部步骤不单独建 issue，能独立交付／验收或跨独立业务线的任务再拆分。
 - 写明证据要求（离线确定性测试／真实模型运行／PTY／截图／报告或决策结论）。
@@ -432,7 +436,7 @@ scope 建议：`agent`、`tools`、`tui`、`console`、`command`、`session`、`
 - **资源回收**：待评审／待合并保留分支与干净 worktree；合并后的临时资源按 §9 条件回收，长期分支永久保留。
 - 改动共享文件（`Cargo.toml`、`AGENTS.md`、`README.md`、`.github/`）必须在正文显式列出。
 - 评审按 §5 步骤 7 由主 agent 完成，可评审自己或子 agent 的产物；共享账号以带实例 ID 的 `KIND: review` 评论记录真实结论，如实标注作者／评审者，不伪造他人或人类评审。需要额外独立 peer review 时按需发起，不是强制 QA 队列。共享账号评论不替代 GitHub 分支保护要求的原生审批；遇到该限制报告，由 maintainer 处理。
-- **合并授权**：每个 PR 必须在评审、逐条 AC 验收和 required CI 对应 SHA 通过后，取得该 PR 的明确 merge 授权；PM 组织集成不等于授权，Ready／ACK／CI 绿也不等于授权。PR 记录授权来源、实际评审/验证 SHA 与合并结果；breaking change 与 §8 的人类决策事项按对应边界升级。
+- **合并授权**：只按 §0.2 执行；PR 记录授权来源、实际评审/验证 SHA 与合并结果。Ready／ACK／CI 绿或 PM 组织集成都不构成授权。
 - 禁止直推 `master`／`dev`（用户当次明确授权除外）、禁止 force-push 他人分支、禁止在无主责评审、未满足必需门槛或超出 §0.2 授权边界时合并 PR。
 
 ## 8. 交接、阻塞与升级
@@ -464,7 +468,7 @@ REFS: #42, 1a2b3c4
 
 - 同一任务在**原 issue** 评论交接，保留类型、历史与验收标准。目标不同则开独立任务并引用来源，按新目标确定类型与归属；分诊未完成保持 `triage`，DoR 完整才可 `ready`。
 - 交接清单必须包含证据（commit／命令输出）、依赖关系、已知坑与验收标准复述。
-- 接收方评论必须包含 `实例 ID + 责任／文件范围 + 第一步动作`，三者齐全才算完成接收；发送方追踪到该接收评论为止，超时未接收由 `agent:pm` 兜底提醒对应业务线。接收只表示接单，不等于对设计的 `ACK`；设计或契约变更仍按 §9 公共契约决策。
+- 接收方必须用 `KIND: ack` 顶层评论回 `ACK`（通知/交接固定评论 URL）、`SPEC`、`SCOPE`、`NEXT`，字段完整才算接收；发送方追踪到该评论为止，超时由 `agent:pm` 兜底。`KIND: ack` 只表示接单，不等于设计批准；设计/契约结论用 `KIND: review`（`APPROVE`/`REQUEST-CHANGES`）或 `KIND: decision`，不得把设计结论写成 ack。
 - 交接确认后移除 `handoff` 并置合适阶段；不以固定 session／pane 编号指定接收方。内部子任务的回执只需回到主 agent 的 tmux pane。移交方按 §5 保存和记录成果及接手方式。
 
 ### 阻塞（Blocked）
