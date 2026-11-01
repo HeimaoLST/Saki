@@ -658,16 +658,6 @@
         max-width: 220px;
         min-width: 0;
       }
-      .composer-hint {
-        max-width: 710px;
-        margin: 4px 14px 0;
-        display: flex;
-        justify-content: space-between;
-        gap: 8px;
-        color: var(--muted);
-        font-size: 12px;
-        padding: 0 0 6px;
-      }
       .alert-inline {
         max-width: 710px;
         margin: 0 auto 12px;
@@ -1334,10 +1324,9 @@
         padding: 8px;
       }
       .board-column h3 {
-        margin: 0 0 12px;
         color: var(--muted);
         font-size: 13px;
-        margin-bottom: 8px;
+        margin: 0 0 8px;
       }
       .board-column .task-row {
         background: var(--surface);
@@ -1531,9 +1520,6 @@
         }
         .model-select {
           max-width: 165px;
-        }
-        .composer-hint span:last-child {
-          display: none;
         }
         .proto-footer span:last-child {
           display: none;
@@ -1742,12 +1728,6 @@
         width: 15px;
         height: 15px;
       }
-      .composer-hint {
-        margin: 4px 14px 0;
-        padding: 0 0 6px;
-        color: var(--muted);
-        font-size: 12px;
-      }
       .composer .alert-inline {
         margin: 10px 12px 0;
         padding: 9px 10px;
@@ -1951,11 +1931,10 @@
         margin-top: 2px;
       }
       .profile-facts {
-        margin: 0 0 18px;
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 4px;
-        margin-bottom: 12px;
+        margin: 0 0 12px;
       }
       .profile-facts div {
         padding: 8px;
@@ -1967,9 +1946,8 @@
         font-size: 12px;
       }
       .profile-facts dd {
-        margin: 3px 0 0;
         font-size: 13px;
-        margin-top: 2px;
+        margin: 2px 0 0;
       }
       .small-action {
         min-height: 32px;
@@ -2239,7 +2217,8 @@
                   id="send"
                   type="button"
                   aria-label="发送消息"
-                  title="发送"
+                  aria-description="Enter 发送，Shift+Enter 换行"
+                  title="发送消息；Enter 发送，Shift+Enter 换行"
                   disabled
                 >
                   <svg aria-hidden="true"><use href="#i-arrow" /></svg>
@@ -2254,9 +2233,6 @@
                   <svg aria-hidden="true"><use href="#i-stop" /></svg>停止对话
                 </button>
               </div>
-            </div>
-            <div class="composer-hint" id="composer-hint">
-              <span>Enter 发送，Shift+Enter 换行</span>
             </div>
           </div>
         </div>
