@@ -1335,3 +1335,279 @@ func TestIssueWorkStopButtonStopsIssueNotConversation(t *testing.T) {
 	})
 	h.shutdown(t)
 }
+
+func TestConversationSubmitFailureCallbackPendingBlocksShutdown(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	h := startGUIHarness(t, binary, &providerFixture{ToolFirst: false}, "shutdown-conversation-submit-failure")
+	h.pump.wait(func() bool { return h.app.runtimeStatus == runtimeStateReady && h.app.runtimeCapabilitiesLoaded })
+	callbacks := make(chan func(), 8)
+	var failure func()
+	var storePath string
+	var storePathSaved bool
+	var setupErr string
+	cleaned := false
+	cleanup := func() {
+		if cleaned {
+			return
+		}
+		cleaned = true
+		if storePathSaved {
+			h.pump.do(func() { h.app.store.path = storePath })
+			storePathSaved = false
+		}
+		h.pump.do(func() { h.app.setUIHook(func(fn func()) { h.pump.q <- fn }) })
+		if failure != nil {
+			callback := failure
+			failure = nil
+			h.pump.do(callback)
+		}
+	}
+	defer func() {
+		if !h.closed {
+			cleanup()
+		}
+	}()
+	h.pump.do(func() {
+		h.app.setUIHook(func(fn func()) { callbacks <- fn })
+		ct := h.app.selectedContact()
+		ct.Draft = "conversation admission survives the submit callback"
+		if !h.app.sendCurrent() {
+			setupErr = "sendCurrent: " + ct.SendError
+		}
+	})
+	if setupErr != "" {
+		t.Fatal(setupErr)
+	}
+	var mapping func()
+	select {
+	case mapping = <-callbacks:
+	case <-time.After(15 * time.Second):
+		t.Fatal("conversation submit mapping callback did not arrive")
+	}
+	h.pump.do(func() {
+		storePath = h.app.store.path
+		storePathSaved = true
+		h.app.store.path = t.TempDir() // force the mapping save to fail
+	})
+	h.pump.do(mapping)
+	select {
+	case failure = <-callbacks:
+	case <-time.After(15 * time.Second):
+		t.Fatal("conversation submit failure callback did not arrive")
+	}
+	var state sendState
+	var active string
+	var pending bool
+	h.pump.do(func() {
+		h.app.store.path = storePath
+		ct := h.app.selectedContact()
+		state, active, pending = ct.SendState, ct.ActiveTaskID, ct.pendingSend != nil
+	})
+	if state != sendSubmitting || active != "" || !pending {
+		t.Fatalf("unexpected pending conversation submit state: state=%v active=%q pending=%v", state, active, pending)
+	}
+	var quitCount int
+	var status string
+	var draining, ready bool
+	var snapshotQuit int
+	h.pump.do(func() {
+		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
+		h.app.requestQuit = func() { quitCount++ }
+		h.app.beginShutdown()
+		status = h.app.runtimeStatus
+		draining, ready = h.app.shutdownDrainStarted, h.app.quitReady
+		snapshotQuit = quitCount
+	})
+	t.Logf("pending-submit stage: state=%v active=%q pending=%v status=%q draining=%v quitReady=%v quitCount=%d",
+		state, active, pending, status, draining, ready, snapshotQuit)
+	early := draining || status == runtimeStateDraining || ready || snapshotQuit != 0
+	if early {
+		t.Errorf("shutdown began while conversation submit failure callback was pending: status=%q draining=%v quitReady=%v quitCount=%d",
+			status, draining, ready, snapshotQuit)
+		h.pump.wait(func() bool { return h.app.quitReady })
+		var finalStatus string
+		var finalReady, stillHeld bool
+		var finalQuit int
+		h.pump.do(func() {
+			finalStatus, finalReady = h.app.runtimeStatus, h.app.quitReady
+			finalQuit = quitCount
+			stillHeld = failure != nil
+		})
+		t.Logf("PREMATURE QUIT FACT: status=%q quitReady=%v quitCount=%d callbackStillHeld=%v",
+			finalStatus, finalReady, finalQuit, stillHeld)
+	}
+	cleanup()
+	h.shutdown(t)
+}
+
+func TestConversationSubmitMappingHeldAllowsShutdownToWaitForAccept(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startGUIHarness(t, binary, provider, "shutdown-conversation-accept")
+	h.pump.wait(func() bool { return h.app.runtimeStatus == runtimeStateReady && h.app.runtimeCapabilitiesLoaded })
+	callbacks := make(chan func(), 16)
+	var setupErr string
+	var mapping func()
+	var storePath string
+	cleanup := func() {
+		h.pump.do(func() { h.app.setUIHook(func(fn func()) { h.pump.q <- fn }) })
+		if mapping != nil {
+			callback := mapping
+			mapping = nil
+			h.pump.do(callback)
+		}
+	}
+	defer func() {
+		if !h.closed {
+			cleanup()
+		}
+	}()
+	h.pump.do(func() {
+		h.app.setUIHook(func(fn func()) { callbacks <- fn })
+		ct := h.app.selectedContact()
+		ct.Draft = "ship this conversation after the final callback"
+		storePath = h.app.storePath
+		if !h.app.sendCurrent() {
+			setupErr = "sendCurrent: " + ct.SendError
+		}
+	})
+	if setupErr != "" {
+		t.Fatal(setupErr)
+	}
+	select {
+	case mapping = <-callbacks:
+	case <-time.After(15 * time.Second):
+		t.Fatal("conversation submit mapping callback did not arrive")
+	}
+	var state sendState
+	var active string
+	var pendingSend bool
+	var pendingInFlight int
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		state, active = ct.SendState, ct.ActiveTaskID
+		pendingSend, pendingInFlight = ct.pendingSend != nil, h.app.submissionInFlight
+	})
+	if state != sendSubmitting || active != "" || !pendingSend || pendingInFlight != 1 {
+		t.Fatalf("unexpected held mapping state: state=%v active=%q pendingSend=%v inFlight=%d",
+			state, active, pendingSend, pendingInFlight)
+	}
+	var quitCount int
+	var status string
+	var draining, ready bool
+	var snapshotQuit, snapshotInFlight int
+	h.pump.do(func() {
+		h.app.requestQuit = func() { quitCount++ }
+		h.app.beginShutdown()
+		h.app.beginShutdown()
+		status = h.app.runtimeStatus
+		draining, ready = h.app.shutdownDrainStarted, h.app.quitReady
+		snapshotQuit = quitCount
+		snapshotInFlight = h.app.submissionInFlight
+	})
+	if draining || status == runtimeStateDraining || ready || snapshotQuit != 0 || snapshotInFlight != 1 {
+		t.Fatalf("shutdown began while conversation mapping was held: status=%q draining=%v quitReady=%v quitCount=%d inFlight=%d",
+			status, draining, ready, snapshotQuit, snapshotInFlight)
+	}
+	var lateErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "must be rejected after shutdown starts"
+		if h.app.sendCurrent() {
+			lateErr = "conversation submit was admitted after shutdown began"
+		}
+	})
+	if lateErr != "" {
+		t.Fatal(lateErr)
+	}
+	mappingMissing := false
+	h.pump.do(func() {
+		if mapping == nil {
+			mappingMissing = true
+			return
+		}
+		callback := mapping
+		mapping = nil
+		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
+		callback()
+	})
+	if mappingMissing {
+		t.Fatal("conversation mapping callback disappeared")
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		return ct != nil && ct.LastTaskID != "" && len(ct.Messages) > 0
+	})
+	var acceptedSession, acceptedTask string
+	var acceptedPending bool
+	var acceptedInFlight int
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		acceptedSession, acceptedTask = ct.SessionID, ct.LastTaskID
+		acceptedPending, acceptedInFlight = ct.pendingSend != nil, h.app.submissionInFlight
+	})
+	if acceptedPending || acceptedInFlight != 0 {
+		t.Fatalf("accepted conversation retained a pending send or submission: pending=%v inFlight=%d",
+			acceptedPending, acceptedInFlight)
+	}
+	saved, err := openContactStore(storePath, h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.state.Contacts) == 0 || saved.state.Contacts[0].SessionID != acceptedSession || saved.state.Contacts[0].PendingSend != nil {
+		t.Fatalf("accepted conversation association was not durable: %+v", saved.state.Contacts)
+	}
+	h.pump.wait(func() bool { return h.app.quitReady })
+	var finalStatus string
+	var finalReady bool
+	var finalQuit int
+	h.pump.do(func() {
+		finalStatus, finalReady = h.app.runtimeStatus, h.app.quitReady
+		finalQuit = quitCount
+	})
+	if finalStatus != runtimeStateExited || !finalReady || finalQuit != 1 || provider.count() != 1 || acceptedTask == "" {
+		t.Fatalf("accepted conversation did not finish with one quit: status=%q ready=%v quitCount=%d provider=%d task=%q",
+			finalStatus, finalReady, finalQuit, provider.count(), acceptedTask)
+	}
+	h.shutdown(t)
+}
+
+func TestConversationSubmitFinishesBeforeShutdown(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startGUIHarness(t, binary, provider, "shutdown-conversation-callback-first")
+	h.pump.wait(func() bool { return h.app.runtimeStatus == runtimeStateReady && h.app.runtimeCapabilitiesLoaded })
+	var setupErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "complete before shutdown begins"
+		if !h.app.sendCurrent() {
+			setupErr = "sendCurrent: " + ct.SendError
+		}
+	})
+	if setupErr != "" {
+		t.Fatal(setupErr)
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		return ct != nil && ct.LastTaskID != "" && ct.SendState == sendIdle && len(ct.Messages) > 0
+	})
+	var quitCount int
+	h.pump.do(func() {
+		h.app.requestQuit = func() { quitCount++ }
+		h.app.beginShutdown()
+	})
+	h.pump.wait(func() bool { return h.app.quitReady })
+	var status string
+	var ready bool
+	var inFlight, snapshotQuit int
+	h.pump.do(func() {
+		status, ready = h.app.runtimeStatus, h.app.quitReady
+		inFlight, snapshotQuit = h.app.submissionInFlight, quitCount
+	})
+	if status != runtimeStateExited || !ready || inFlight != 0 || snapshotQuit != 1 || provider.count() != 1 {
+		t.Fatalf("callback-first conversation shutdown = status=%q ready=%v inFlight=%d quitCount=%d provider=%d",
+			status, ready, inFlight, snapshotQuit, provider.count())
+	}
+	h.shutdown(t)
+}

@@ -713,3 +713,381 @@ func TestIssueRuntimeCompletedBeforeLateCancelStaysCompleted(t *testing.T) {
 		t.Fatalf("late cancel changed a completed task: status=%q active=%q", completedStatus, activeTask)
 	}
 }
+
+func TestIssueSubmitFailureCallbackPendingBlocksShutdown(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	h := startGUIHarness(t, binary, &providerFixture{ToolFirst: false}, "shutdown-submit-failure")
+	h.pump.wait(func() bool { return h.app.runtimeStatus == runtimeStateReady && h.app.runtimeCapabilitiesLoaded })
+	callbacks := make(chan func(), 8)
+	var issueID string
+	var setupErr string
+	var failure func()
+	var storePath string
+	var storePathSaved bool
+	cleaned := false
+	cleanup := func() {
+		if cleaned {
+			return
+		}
+		cleaned = true
+		if storePathSaved {
+			h.pump.do(func() { h.app.store.path = storePath })
+			storePathSaved = false
+		}
+		h.pump.do(func() { h.app.setUIHook(func(fn func()) { h.pump.q <- fn }) })
+		if failure != nil {
+			callback := failure
+			failure = nil
+			h.pump.do(callback)
+		}
+	}
+	defer func() {
+		if !h.closed {
+			cleanup()
+		}
+	}()
+	h.pump.do(func() {
+		h.app.setUIHook(func(fn func()) { callbacks <- fn })
+		if !h.app.createIssue("shutdown submit failure", "Do not admit the task after the store failure.") {
+			setupErr = "createIssue: " + h.app.issueFormError
+			return
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		storePath = h.app.storePath
+		if !h.app.runIssue(issueID) {
+			setupErr = "runIssue: " + h.app.issueFormError
+		}
+	})
+	if setupErr != "" {
+		t.Fatal(setupErr)
+	}
+	var mapping func()
+	select {
+	case mapping = <-callbacks:
+	case <-time.After(15 * time.Second):
+		t.Fatal("issue submit mapping callback did not arrive")
+	}
+	h.pump.do(func() {
+		storePath = h.app.store.path
+		h.app.store.path = t.TempDir() // force the mapping save to fail
+	})
+	h.pump.do(mapping)
+	select {
+	case failure = <-callbacks:
+	case <-time.After(15 * time.Second):
+		t.Fatal("issue submit failure callback did not arrive")
+	}
+	var state sendState
+	var active, pending string
+	h.pump.do(func() {
+		h.app.store.path = storePath
+		issue := h.app.contactByID(h.app.contacts[0].ID).issueByID(issueID)
+		state, active, pending = issue.Work.SendState, issue.Work.ActiveTaskID, issue.Work.pendingExecutionID
+	})
+	if state != sendSubmitting || active != "" || pending == "" {
+		t.Fatalf("unexpected pending submit state: state=%v active=%q pending=%q", state, active, pending)
+	}
+	var quitCount int
+	var status string
+	var draining, ready bool
+	var snapshotQuit int
+	h.pump.do(func() {
+		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
+		h.app.requestQuit = func() { quitCount++ }
+		h.app.beginShutdown()
+		status = h.app.runtimeStatus
+		draining, ready = h.app.shutdownDrainStarted, h.app.quitReady
+		snapshotQuit = quitCount
+	})
+	t.Logf("pending-submit stage: state=%v active=%q pending=%q status=%q draining=%v quitReady=%v quitCount=%d",
+		state, active, pending, status, draining, ready, snapshotQuit)
+	early := draining || status == runtimeStateDraining || ready || snapshotQuit != 0
+	if early {
+		// This is the baseline bug: shutdown starts before the final submit
+		// failure callback has run. Mark the failure immediately; the held
+		// callback remains in `failure` for the controlled quit observation below.
+		t.Errorf("shutdown began while issue submit failure callback was pending: status=%q draining=%v quitReady=%v quitCount=%d",
+			status, draining, ready, snapshotQuit)
+		h.pump.wait(func() bool { return h.app.quitReady })
+		var finalStatus string
+		var finalReady, stillHeld bool
+		var finalQuit int
+		h.pump.do(func() {
+			finalStatus, finalReady = h.app.runtimeStatus, h.app.quitReady
+			finalQuit = quitCount
+			stillHeld = failure != nil
+		})
+		t.Logf("PREMATURE QUIT FACT: status=%q quitReady=%v quitCount=%d callbackStillHeld=%v",
+			finalStatus, finalReady, finalQuit, stillHeld)
+	}
+	// Fixed behavior: the pending callback must be delivered before shutdown
+	// can start. Exercise it and let the existing harness complete normally.
+	cleanup()
+	h.shutdown(t)
+}
+
+func TestIssueSubmitMappingHeldAllowsShutdownToWaitForAccept(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startGUIHarness(t, binary, provider, "shutdown-issue-accept")
+	h.pump.wait(func() bool { return h.app.runtimeStatus == runtimeStateReady && h.app.runtimeCapabilitiesLoaded })
+	callbacks := make(chan func(), 16)
+	var issueID string
+	var setupErr string
+	var mapping func()
+	var storePath string
+	cleanup := func() {
+		h.pump.do(func() { h.app.setUIHook(func(fn func()) { h.pump.q <- fn }) })
+		if mapping != nil {
+			callback := mapping
+			mapping = nil
+			h.pump.do(callback)
+		}
+	}
+	defer func() {
+		if !h.closed {
+			cleanup()
+		}
+	}()
+	h.pump.do(func() {
+		h.app.setUIHook(func(fn func()) { callbacks <- fn })
+		if !h.app.createIssue("shutdown issue accept", "Ship this after the final callback.") {
+			setupErr = "createIssue: " + h.app.issueFormError
+			return
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		storePath = h.app.storePath
+		if !h.app.runIssue(issueID) {
+			setupErr = "runIssue: " + h.app.issueFormError
+		}
+	})
+	if setupErr != "" {
+		t.Fatal(setupErr)
+	}
+	select {
+	case mapping = <-callbacks:
+	case <-time.After(15 * time.Second):
+		t.Fatal("issue submit mapping callback did not arrive")
+	}
+	var state sendState
+	var active string
+	var pendingInFlight int
+	h.pump.do(func() {
+		issue := h.app.contactByID(h.app.contacts[0].ID).issueByID(issueID)
+		state, active, pendingInFlight = issue.Work.SendState, issue.Work.ActiveTaskID, h.app.submissionInFlight
+	})
+	if state != sendSubmitting || active != "" || pendingInFlight != 1 {
+		t.Fatalf("unexpected held mapping state: state=%v active=%q inFlight=%d", state, active, pendingInFlight)
+	}
+	var quitCount int
+	var status string
+	var draining, ready bool
+	var snapshotQuit, snapshotInFlight int
+	h.pump.do(func() {
+		h.app.requestQuit = func() { quitCount++ }
+		h.app.beginShutdown()
+		h.app.beginShutdown()
+		status = h.app.runtimeStatus
+		draining, ready = h.app.shutdownDrainStarted, h.app.quitReady
+		snapshotQuit = quitCount
+		snapshotInFlight = h.app.submissionInFlight
+	})
+	if draining || status == runtimeStateDraining || ready || snapshotQuit != 0 || snapshotInFlight != 1 {
+		t.Fatalf("shutdown began while issue mapping was held: status=%q draining=%v quitReady=%v quitCount=%d inFlight=%d",
+			status, draining, ready, snapshotQuit, snapshotInFlight)
+	}
+	var lateErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "must be rejected after shutdown starts"
+		if h.app.sendCurrent() {
+			lateErr = "conversation submit was admitted after shutdown began"
+		}
+		if reason := h.app.canStartIssue(ct, ct.issueByID(issueID)); reason == "" {
+			lateErr = "issue submit was admitted after shutdown began"
+		}
+	})
+	if lateErr != "" {
+		t.Fatal(lateErr)
+	}
+	mappingMissing := false
+	h.pump.do(func() {
+		if mapping == nil {
+			mappingMissing = true
+			return
+		}
+		callback := mapping
+		mapping = nil
+		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
+		callback()
+	})
+	if mappingMissing {
+		t.Fatal("issue mapping callback disappeared")
+	}
+	h.pump.wait(func() bool {
+		issue := h.app.contactByID(h.app.contacts[0].ID).issueByID(issueID)
+		return issue != nil && len(issue.Executions) == 1 && issue.Executions[0].TaskID != "" &&
+			issue.Executions[0].MessageID != "" && issue.Executions[0].SessionID != ""
+	})
+	var acceptedSession, acceptedTask, acceptedMessage string
+	h.pump.do(func() {
+		issue := h.app.contactByID(h.app.contacts[0].ID).issueByID(issueID)
+		execution := issue.Executions[0]
+		acceptedSession, acceptedTask, acceptedMessage = execution.SessionID, execution.TaskID, execution.MessageID
+	})
+	saved, err := openContactStore(storePath, h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var savedIssue *storedIssue
+	for i := range saved.state.Issues {
+		if saved.state.Issues[i].ID == issueID {
+			savedIssue = &saved.state.Issues[i]
+		}
+	}
+	if savedIssue == nil || savedIssue.WorkSessionID != acceptedSession || len(savedIssue.Executions) != 1 ||
+		savedIssue.Executions[0].TaskID != acceptedTask || savedIssue.Executions[0].MessageID != acceptedMessage {
+		t.Fatalf("accepted issue association was not durable: issue=%+v", savedIssue)
+	}
+	h.pump.wait(func() bool { return h.app.quitReady })
+	var finalStatus string
+	var finalReady bool
+	var finalQuit int
+	h.pump.do(func() {
+		finalStatus, finalReady = h.app.runtimeStatus, h.app.quitReady
+		finalQuit = quitCount
+	})
+	if finalStatus != runtimeStateExited || !finalReady || finalQuit != 1 || provider.count() != 1 {
+		t.Fatalf("accepted issue did not finish with one quit: status=%q ready=%v quitCount=%d provider=%d",
+			finalStatus, finalReady, finalQuit, provider.count())
+	}
+	h.shutdown(t)
+}
+
+func TestIssueSubmitRefusalCallbackPendingBlocksShutdown(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startGUIHarness(t, binary, provider, "shutdown-issue-refusal")
+	h.pump.wait(func() bool { return h.app.runtimeStatus == runtimeStateReady && h.app.runtimeCapabilitiesLoaded })
+	callbacks := make(chan func(), 8)
+	var issueID string
+	var setupErr string
+	var failure func()
+	var storePath string
+	cleanup := func() {
+		h.pump.do(func() { h.app.setUIHook(func(fn func()) { h.pump.q <- fn }) })
+		if failure != nil {
+			callback := failure
+			failure = nil
+			h.pump.do(callback)
+		}
+	}
+	defer func() {
+		if !h.closed {
+			cleanup()
+		}
+	}()
+	h.pump.do(func() {
+		h.app.setUIHook(func(fn func()) { callbacks <- fn })
+		if !h.app.createIssue("missing session refusal", "The runtime must reject this task.") {
+			setupErr = "createIssue: " + h.app.issueFormError
+			return
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		issue := ct.issueByID(issueID)
+		issue.WorkSessionID = "missing-session-for-refusal"
+		issue.Work.Loaded = true
+		storePath = h.app.storePath
+		if err := h.app.persist(); err != nil {
+			setupErr = "persist: " + err.Error()
+			return
+		}
+		if !h.app.runIssue(issueID) {
+			setupErr = "runIssue: " + h.app.issueFormError
+		}
+	})
+	if setupErr != "" {
+		t.Fatal(setupErr)
+	}
+	select {
+	case failure = <-callbacks:
+	case <-time.After(15 * time.Second):
+		t.Fatal("issue submit refusal callback did not arrive")
+	}
+	var state sendState
+	var active string
+	var pendingInFlight int
+	h.pump.do(func() {
+		issue := h.app.contactByID(h.app.contacts[0].ID).issueByID(issueID)
+		state, active, pendingInFlight = issue.Work.SendState, issue.Work.ActiveTaskID, h.app.submissionInFlight
+	})
+	if state != sendSubmitting || active != "" || pendingInFlight != 1 {
+		t.Fatalf("unexpected pending refusal state: state=%v active=%q inFlight=%d", state, active, pendingInFlight)
+	}
+	var quitCount int
+	var status string
+	var snapshotQuit, snapshotInFlight int
+	h.pump.do(func() {
+		h.app.requestQuit = func() { quitCount++ }
+		h.app.beginShutdown()
+		status = h.app.runtimeStatus
+		snapshotQuit, snapshotInFlight = quitCount, h.app.submissionInFlight
+	})
+	if status == runtimeStateDraining || snapshotQuit != 0 || snapshotInFlight != 1 {
+		t.Fatalf("shutdown began while issue refusal callback was pending: status=%q quitCount=%d inFlight=%d",
+			status, snapshotQuit, snapshotInFlight)
+	}
+	failureMissing := false
+	h.pump.do(func() {
+		if failure == nil {
+			failureMissing = true
+			return
+		}
+		callback := failure
+		failure = nil
+		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
+		callback()
+	})
+	if failureMissing {
+		t.Fatal("issue refusal callback disappeared")
+	}
+	var rejected bool
+	var executionStatus string
+	h.pump.do(func() {
+		issue := h.app.contactByID(h.app.contacts[0].ID).issueByID(issueID)
+		rejected = issue.Work.SendState == sendIdle && issue.Work.SendError != ""
+		if len(issue.Executions) == 1 {
+			executionStatus = issue.Executions[0].Status
+		}
+	})
+	if !rejected || executionStatus != issueExecutionRejected {
+		t.Fatalf("refusal callback did not persist rejection: rejected=%v execution=%q", rejected, executionStatus)
+	}
+	saved, err := openContactStore(storePath, h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var savedIssue *storedIssue
+	for i := range saved.state.Issues {
+		if saved.state.Issues[i].ID == issueID {
+			savedIssue = &saved.state.Issues[i]
+		}
+	}
+	if savedIssue == nil || len(savedIssue.Executions) != 1 || savedIssue.Executions[0].Status != issueExecutionRejected {
+		t.Fatalf("refusal was not durable: issue=%+v", savedIssue)
+	}
+	h.pump.wait(func() bool { return h.app.quitReady })
+	var finalStatus string
+	var finalReady bool
+	var finalQuit int
+	h.pump.do(func() {
+		finalStatus, finalReady = h.app.runtimeStatus, h.app.quitReady
+		finalQuit = quitCount
+	})
+	if finalStatus != runtimeStateExited || !finalReady || finalQuit != 1 || provider.count() != 0 {
+		t.Fatalf("refused submission did not finish with one quit: status=%q ready=%v quitCount=%d provider=%d",
+			finalStatus, finalReady, finalQuit, provider.count())
+	}
+	h.shutdown(t)
+}
