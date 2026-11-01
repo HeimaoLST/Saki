@@ -346,7 +346,7 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 	if err := issueResultTesterRun(h, func(tr *ui.Tester) error {
 		tr.Key(0, ui.KeyEscape)
 		tr.Frame()
-		readerClosed = !tr.HasText("File reading")
+		readerClosed = !tr.HasText("Copy current file") && !tr.Focused("Close reading")
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -1050,7 +1050,7 @@ func TestIssueResultNavigationEntryAndReturnWideNarrow(t *testing.T) {
 		if err := issueResultTesterRunAt(h, width, 720, func(tr *ui.Tester) error {
 			tr.Key(0, ui.KeyEscape)
 			tr.Frame()
-			readerClosed = !tr.HasText("File reading")
+			readerClosed = !tr.HasText("Copy current file") && !tr.Focused("Close reading")
 			resultStillOpen = tr.HasText("Run results")
 			return nil
 		}); err != nil {
@@ -1235,11 +1235,16 @@ func TestIssueResultReaderFocusReturnInsideOuterDialog(t *testing.T) {
 	var readingOpen bool
 	var readingTexts []string
 	h.pump.do(func() {
-		readingOpen = tr.HasText("File reading")
+		page := h.app.issueResult
+		key := ""
+		if len(page.Panel.Files) > 0 {
+			key = issueResultFileKey(page.Panel.Files[0])
+		}
+		readingOpen = key != "" && page.Panel.ReaderKey == key && tr.Focused("Close reading") && tr.HasText("Copy current file")
 		readingTexts = append([]string(nil), tr.Texts()...)
 	})
 	if !readingOpen {
-		t.Fatalf("nested file reader did not open: %v", readingTexts)
+		t.Fatalf("nested file reader did not open with owned file identity/focus: %v", readingTexts)
 	}
 	var closeErr error
 	h.pump.do(func() {

@@ -314,16 +314,20 @@ func TestAppearancePanelSwitchesModeAndKeepsCurrentDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if !a.settingsOpen || a.settingsTab != settingsTabAppearance || !tr.HasText("Appearance") || !tr.HasText("System is currently") {
-		t.Fatalf("appearance panel missing: %q", tr.Texts())
+	if !a.settingsOpen || a.settingsTab != settingsTabAppearance || !tr.HasText("Appearance") || !tr.HasText("System") ||
+		a.appearanceMode != appearanceSystem || a.workTheme.Theme == nil || a.workTheme.Theme.Dark != a.systemDark {
+		t.Fatalf("appearance panel/state missing: %q", tr.Texts())
 	}
-	if err := tr.Click("System"); err != nil {
-		t.Fatal(err)
+	// Reach the Dark mode control through the real keyboard focus order; the
+	// System card also contains a static actual-mode text.
+	for i := 0; i < 8 && !tr.Focused("Dark"); i++ {
+		tr.Key(0, ui.KeyTab)
+		tr.Frame()
 	}
-	tr.Frame()
-	if err := tr.Click("Dark"); err != nil {
-		t.Fatal(err)
+	if !tr.Focused("Dark") {
+		t.Fatalf("Dark appearance control is not keyboard reachable: %v", tr.Texts())
 	}
+	tr.Key(0, ui.KeyEnter)
 	tr.Frame()
 	if a.appearanceMode != appearanceDark || a.appearanceError != "" {
 		t.Fatalf("appearance switch = mode=%q error=%q", a.appearanceMode, a.appearanceError)
@@ -343,21 +347,27 @@ func TestAppearanceRetrySaveUIAndRuntimeErrorOwnership(t *testing.T) {
 	}
 	store := &contactStore{path: filepath.Join(blocked, "contacts.json")}
 	a := &appModel{
-		store: store, selected: 0, appearanceMode: appearanceSystem,
+		store: store, selected: 0, appearanceMode: appearanceSystem, systemDark: true,
 		contacts:        []*contact{{ID: "contact-keep", Name: "Saki", Draft: "keep"}},
 		issueToolLedger: &IssueToolOperationLedger{}, issueToolScopes: map[string]IssueToolScope{},
 		runtimeErr: "Runtime protocol error: unrelated",
 	}
 	a.openAppearance()
 	tr := ui.NewTester(a.view, 1040, 720)
+	// The actual system is dark, so the System card's static value is Dark and
+	// the Light button is the unique visible Light control.
+	tr.SetDark(true)
 	tr.Frame()
-	if err := tr.Click("System"); err != nil {
-		t.Fatal(err)
+	// Settings focus order is Back, four category buttons, then System,
+	// Light, Dark; use the real keyboard path instead of ambiguous static text.
+	for i := 0; i < 6; i++ {
+		tr.Key(0, ui.KeyTab)
+		tr.Frame()
 	}
-	tr.Frame()
-	if err := tr.Click("Light"); err != nil {
-		t.Fatal(err)
+	if !tr.Focused("Light") {
+		t.Fatalf("Light appearance control is not keyboard focused before Enter: %v", tr.Texts())
 	}
+	tr.Key(0, ui.KeyEnter)
 	tr.Frame()
 	if a.appearanceMode != appearanceLight || a.appearanceError == "" {
 		t.Fatalf("failed UI save = mode=%q error=%q", a.appearanceMode, a.appearanceError)
