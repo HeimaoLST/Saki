@@ -88,12 +88,28 @@ CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 python3 "$ROOT/scripts/gui-go.py" build \
 cd "$ROOT"
 chmod +x "$APP/Contents/MacOS/Saki"
 
+echo "== determine bundle minimum =="
+GUI_MIN_OS=$(python3 "$ROOT/scripts/macos_minimum.py" read "$APP/Contents/MacOS/Saki") || {
+  echo "could not read GUI Mach-O minimum; refusing to build" >&2
+  exit 5
+}
+HELPER_MIN_OS=$(python3 "$ROOT/scripts/macos_minimum.py" read "$APP/Contents/MacOS/Saki-runtime") || {
+  echo "could not read helper Mach-O minimum; refusing to build" >&2
+  exit 5
+}
+BUNDLE_MINIMUM_OS=$(python3 "$ROOT/scripts/macos_minimum.py" select "$GUI_MIN_OS" "$HELPER_MIN_OS") || {
+  echo "could not choose bundle minimum; refusing to build" >&2
+  exit 5
+}
+echo "minimum_os: gui=$GUI_MIN_OS helper=$HELPER_MIN_OS bundle=$BUNDLE_MINIMUM_OS"
+export GUI_MIN_OS HELPER_MIN_OS BUNDLE_MINIMUM_OS
+
 echo "== write Info.plist =="
-python3 - "$APP/Contents/Info.plist" "$APP_VERSION" <<'PY'
+python3 - "$APP/Contents/Info.plist" "$APP_VERSION" "$BUNDLE_MINIMUM_OS" <<'PY'
 import plistlib
 import sys
 
-path, version = sys.argv[1], sys.argv[2]
+path, version, minimum_os = sys.argv[1], sys.argv[2], sys.argv[3]
 info = {
     "CFBundleDevelopmentRegion": "en",
     "CFBundleDisplayName": "Saki",
@@ -104,7 +120,7 @@ info = {
     "CFBundlePackageType": "APPL",
     "CFBundleShortVersionString": version,
     "CFBundleVersion": "1",
-    "LSMinimumSystemVersion": "11.0",
+    "LSMinimumSystemVersion": minimum_os,
     "NSHighResolutionCapable": True,
     "NSPrincipalClass": "NSApplication",
 }
@@ -131,6 +147,9 @@ echo "== validate paths, architecture and Info.plist =="
   printf 'CFBundleShortVersionString: '; plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist"
   printf 'CFBundleVersion: '; plutil -extract CFBundleVersion raw "$APP/Contents/Info.plist"
   printf 'LSMinimumSystemVersion: '; plutil -extract LSMinimumSystemVersion raw "$APP/Contents/Info.plist"
+  printf 'GUI Mach-O minos: %s\n' "$GUI_MIN_OS"
+  printf 'Helper Mach-O minos: %s\n' "$HELPER_MIN_OS"
+  printf 'Bundle minimum: %s\n' "$BUNDLE_MINIMUM_OS"
   go version -m "$APP/Contents/MacOS/Saki"
 } | tee "$VALIDATION_LOG"
 
@@ -146,7 +165,8 @@ test "$(plutil -extract CFBundleIdentifier raw "$APP/Contents/Info.plist")" = "d
 test "$(plutil -extract CFBundleExecutable raw "$APP/Contents/Info.plist")" = "Saki"
 test "$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")" = "$APP_VERSION"
 test "$(plutil -extract CFBundleVersion raw "$APP/Contents/Info.plist")" = "1"
-test "$(plutil -extract LSMinimumSystemVersion raw "$APP/Contents/Info.plist")" = "11.0"
+test "$(plutil -extract LSMinimumSystemVersion raw "$APP/Contents/Info.plist")" = "$BUNDLE_MINIMUM_OS"
+python3 "$ROOT/scripts/macos_minimum.py" validate "$BUNDLE_MINIMUM_OS" "$GUI_MIN_OS" "$HELPER_MIN_OS"
 go version -m "$APP/Contents/MacOS/Saki" > "$OUT/gui-buildinfo.txt"
 grep -q "vcs.revision=$SOURCE_SHA" "$OUT/gui-buildinfo.txt"
 grep -q 'vcs.modified=false' "$OUT/gui-buildinfo.txt"
@@ -184,7 +204,9 @@ find "$APP" -type f -print | sed "s|^$OUT/||" | sort > "$OUT/files.txt"
 
 SOURCE_SHA="$SOURCE_SHA" CI_EVENT_SHA="$CI_EVENT_SHA" REF="$REF" RUN_URL="$RUN_URL" \
 OUT="$OUT" APP_VERSION="$APP_VERSION" APP_SHA="$APP_SHA" HELPER_SHA="$HELPER_SHA" \
-PLIST_SHA="$PLIST_SHA" ZIP_SHA="$ZIP_SHA" python3 - "$MANIFEST" <<'PY'
+PLIST_SHA="$PLIST_SHA" ZIP_SHA="$ZIP_SHA" GUI_MIN_OS="$GUI_MIN_OS" \
+HELPER_MIN_OS="$HELPER_MIN_OS" BUNDLE_MINIMUM_OS="$BUNDLE_MINIMUM_OS" \
+python3 - "$MANIFEST" <<'PY'
 import datetime
 import json
 import os
@@ -217,12 +239,18 @@ manifest = {
         "xcode": os.popen("xcodebuild -version 2>&1 | head -n 2 | tr '\\n' ';'").read().strip(),
         "sdk": os.popen("xcrun --sdk macosx --show-sdk-version 2>&1").read().strip(),
     },
+    "minimum_os": {
+        "gui": os.environ["GUI_MIN_OS"],
+        "helper": os.environ["HELPER_MIN_OS"],
+        "bundle": os.environ["BUNDLE_MINIMUM_OS"],
+        "selection": "max(gui, helper)",
+    },
     "bundle": {
         "name": "Saki",
         "identifier": "dev.saki.desktop",
         "version": os.environ["APP_VERSION"],
         "build": "1",
-        "minimum_os": "11.0",
+        "minimum_os": os.environ["BUNDLE_MINIMUM_OS"],
         "gui": "Saki.app/Contents/MacOS/Saki",
         "helper": "Saki.app/Contents/MacOS/Saki-runtime",
         "info_plist": "Saki.app/Contents/Info.plist",
@@ -248,6 +276,20 @@ with open(sys.argv[1], "w", encoding="utf-8") as handle:
     json.dump(manifest, handle, indent=2, sort_keys=True)
     handle.write("\n")
 PY
+
+
+FINAL_PLIST_MIN=$(plutil -extract LSMinimumSystemVersion raw "$APP/Contents/Info.plist") || {
+  echo "could not read final plist minimum; refusing candidate" >&2
+  exit 5
+}
+test "$FINAL_PLIST_MIN" = "$BUNDLE_MINIMUM_OS" || {
+  echo "final plist minimum $FINAL_PLIST_MIN does not match selected $BUNDLE_MINIMUM_OS; refusing candidate" >&2
+  exit 5
+}
+python3 "$ROOT/scripts/macos_minimum.py" validate-manifest "$MANIFEST" "$GUI_MIN_OS" "$HELPER_MIN_OS" "$BUNDLE_MINIMUM_OS" || {
+  echo "manifest minimum fields do not match bundle/binary minima; refusing candidate" >&2
+  exit 5
+}
 
 (
   cd "$OUT"
