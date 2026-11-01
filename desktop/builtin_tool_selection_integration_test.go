@@ -578,6 +578,16 @@ func TestBuiltinSelectionCapturedBeforeAdmissionAndRetainedOnContinue(t *testing
 			selectBuiltinSubsetThroughProfile(t, h, []string{"read"})
 			manual := make(chan func(), 32)
 			var issueID string
+			var mapping func()
+			defer func() {
+				h.pump.do(func() {
+					h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
+					if mapping != nil {
+						mapping()
+						mapping = nil
+					}
+				})
+			}()
 			builtinUI(t, h, func() error {
 				if kind == "work" {
 					if !h.app.createIssue("Captured tools", "Keep the admitted selection.") {
@@ -598,16 +608,6 @@ func TestBuiltinSelectionCapturedBeforeAdmissionAndRetainedOnContinue(t *testing
 				}
 				return nil
 			})
-			var mapping func()
-			defer func() {
-				h.pump.do(func() {
-					h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
-					if mapping != nil {
-						mapping()
-						mapping = nil
-					}
-				})
-			}()
 			select {
 			case mapping = <-manual:
 			case <-time.After(10 * time.Second):
@@ -785,8 +785,8 @@ func TestBuiltinSelectionUnknownRecoveryKeepsSessionAndNewProfile(t *testing.T) 
 	restarted.pump.wait(func() bool { return restarted.app.selectedContact().Loaded })
 	builtinUI(t, restarted, func() error {
 		ct := restarted.app.selectedContact()
-		if ct.SessionID != sessionID || ct.SendState != sendUnknown || ct.BuiltinTools == nil || len(*ct.BuiltinTools) != 0 {
-			return errors.New("restart lost unknown protection, session or future empty default")
+		if ct.SessionID != sessionID || ct.SendState != sendUnknown || ct.BuiltinTools == nil || len(*ct.BuiltinTools) != 0 || ct.Draft != "Keep this uncertain execution." {
+			return errors.New("restart lost unknown protection, session, draft or future empty default")
 		}
 		restarted.app.reloadSelected()
 		return nil
