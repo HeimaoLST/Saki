@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -531,32 +532,47 @@ func TestModelSelectionGUICommitUnknownRequiresExplicitRecovery(t *testing.T) {
 }
 
 func TestModelSelectionGUIOlderReadCannotReplaceNewTarget(t *testing.T) {
-	h := openModelGUI(t, requireRuntimeBinary(t), connectionAPIResponses, &modelProviderFixture{})
-	first := sendConnectionConversation(t, h, "First context", "model fixture answer")
-	h.pump.do(func() { h.app.addDefaultContact() })
-	second := sendConnectionConversation(t, h, "Second context", "model fixture answer")
 	manual := make(chan func(), 16)
+	var manualSeq atomic.Int32
+	t.Cleanup(func() {
+		t.Logf("stage=cleanup diag_manual_seq=%d diag_manual_pending=%d", manualSeq.Load(), len(manual))
+	})
+	t.Log("stage=startup")
+	h := openModelGUI(t, requireRuntimeBinary(t), connectionAPIResponses, &modelProviderFixture{})
+	t.Log("stage=first send")
+	first := sendConnectionConversation(t, h, "First context", "model fixture answer")
+	t.Log("stage=add contact")
+	h.pump.do(func() { h.app.addDefaultContact() })
+	t.Log("stage=second send")
+	second := sendConnectionConversation(t, h, "Second context", "model fixture answer")
 	h.pump.do(func() {
-		h.app.setUIHook(func(fn func()) { manual <- fn })
+		h.app.setUIHook(func(fn func()) {
+			manualSeq.Add(1)
+			manual <- fn
+		})
+		t.Log("stage=open older")
 		h.app.openSessionModel(first, "conversation", "First")
 	})
-	readCallback := func() func() {
+	readCallback := func(stage string) func() {
 		t.Helper()
 		select {
 		case fn := <-manual:
+			t.Logf("stage=%s callback diag_manual_seq=%d diag_manual_pending=%d", stage, manualSeq.Load(), len(manual))
 			return fn
 		case <-time.After(10 * time.Second):
 			t.Fatal("model read callback did not arrive")
 			return nil
 		}
 	}
-	older := readCallback()
+	older := readCallback("older")
 	h.pump.do(func() {
+		t.Log("stage=open newer")
 		h.app.closeAux()
 		h.app.openSessionModel(second, "conversation", "Second")
 	})
-	newer := readCallback()
+	newer := readCallback("newer")
 	h.pump.do(func() {
+		t.Log("stage=apply callbacks")
 		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
 		newer()
 		older()
