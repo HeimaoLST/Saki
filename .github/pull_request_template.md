@@ -1,4 +1,4 @@
-<!-- 协作协议见根目录 AGENTS.md。普通 PR 一个目标；发布/回流可汇总多个 issue。Spec/AC 证据见 §6/§10，合并必须取得该 PR 的明确授权（§0.2/§5/§7）。 -->
+<!-- 协作协议见根目录 AGENTS.md。普通 PR 一个目标；发布/回流可汇总多个 issue。Spec/AC 证据见 §6/§10，PM 按 §0.2 集成处置权处理（§5/§7）。 -->
 
 ## 关联与 Spec
 
@@ -63,4 +63,4 @@ FROM: agent:<line>#<instance>      <!-- 例如 agent:tui#nova -->
 IMPLEMENTER: <!-- 有子 agent 时注明实际实施实例；内部指导走 tmux，由主 agent 汇总，不写固定 pane 地址 -->
 REVIEWER: agent:<line>#<instance>  <!-- 实际评审者；主 agent 可评审自己或子 agent 产物，但须如实记录作者／评审者，不能冒充独立评审或人类结论；peer review 按需 -->
 兼容性: <!-- 非 breaking change：说明依据；breaking change：影响、迁移／回滚方案与人类确认来源 -->
-MERGE 责任与授权: <!-- 见 AGENTS §0.2；记录该 PR 的明确授权来源与时间。Ready/CI/ACK/PM 集成不等于授权；breaking change 记录人类批准。 -->
+MERGE 责任与授权: <!-- 见 AGENTS §0.2；记录 PM 集成责任与时间，或 breaking change 的人类批准。业务主责不脱离 PM 安排自行合并；force/tag/Release/deploy 不由此扩展。 -->
