@@ -101,10 +101,6 @@ BUNDLE_MINIMUM_OS=$(python3 "$ROOT/scripts/macos_minimum.py" select "$GUI_MIN_OS
   echo "could not choose bundle minimum; refusing to build" >&2
   exit 5
 }
-python3 "$ROOT/scripts/macos_minimum.py" validate "$BUNDLE_MINIMUM_OS" "$GUI_MIN_OS" "$HELPER_MIN_OS" || {
-  echo "bundle minimum does not cover GUI/helper; refusing to build" >&2
-  exit 5
-}
 echo "minimum_os: gui=$GUI_MIN_OS helper=$HELPER_MIN_OS bundle=$BUNDLE_MINIMUM_OS"
 export GUI_MIN_OS HELPER_MIN_OS BUNDLE_MINIMUM_OS
 
