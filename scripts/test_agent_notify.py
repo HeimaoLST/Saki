@@ -149,6 +149,12 @@ class StatusTests(unittest.TestCase):
             result = notify.status("agent:pm#mira", URL, "r1")
         self.assertEqual(result["status"], "ack")
 
+    def test_r2_ack_does_not_accept_r1_or_reverse(self) -> None:
+        comments_r2 = self._comments(self._ack(SPEC="r2"))
+        with mock.patch.object(notify, "_comments", return_value=comments_r2):
+            self.assertEqual(notify.status("agent:pm#mira", URL, "r1")["status"], "pending")
+            self.assertEqual(notify.status("agent:pm#mira", URL, "r2")["status"], "ack")
+
     def test_old_spec_or_wrong_target_is_pending(self) -> None:
         for overrides in (
             {"SPEC": "r0"},
