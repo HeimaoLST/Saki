@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -172,6 +173,501 @@ func TestIssueViewExecutionOpensAtTopAndBackRestoresCompact(t *testing.T) {
 	}
 	if len(issue.Executions) != 1 || issue.Executions[0].Status != issueExecutionCompleted {
 		t.Fatalf("View execution changed execution state: %+v", issue.Executions)
+	}
+}
+
+func TestIssueAttentionClearsAfterViewingFailedExecutionDetail(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.rt = &runtimeClient{}
+	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
+	a.runtimeCapabilitiesLoaded = true
+	a.runtimeMaxActiveTasks = 2
+	const detail = "provider failed after dispatch"
+	issue := &productIssue{
+		ID: "i-attention", ContactID: ct.ID, Goal: "failed work", Status: issueStatusNeedsAttention,
+		RequirementsRevision: 1, Requirements: parseIssueRequirements("keep the failure facts"),
+		WorkSessionID: "work-attention", Work: issueWorkSession{Loaded: true},
+		Executions: []*issueExecution{{
+			ID: "e-attention", SessionID: "work-attention", TaskID: "task-attention",
+			Status: issueExecutionFailed, Detail: detail,
+		}},
+	}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
+	ct.Works = []*workItem{{TaskID: "task-attention", State: workFailed, Detail: detail}}
+	a.windowWidth = 1040
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issue.ID {
+		t.Fatalf("unseen failed execution did not raise attention: %+v", notice)
+	}
+	if !tr.HasText("Execution failed") || !tr.HasText(detail) {
+		t.Fatalf("failed status/reason was not visible before viewing: %v", tr.Texts())
+	}
+	if dir := os.Getenv("SAKI_PREVIEW_DIR"); dir != "" {
+		tr.SetDark(false)
+		tr.Frame()
+		writePreviewPNG(t, filepath.Join(dir, "headless-attention-before-light.png"), tr.Image())
+		tr.SetDark(true)
+		tr.Frame()
+		writePreviewPNG(t, filepath.Join(dir, "headless-attention-before-dark.png"), tr.Image())
+		tr.SetDark(false)
+		tr.Frame()
+	}
+	if err := tr.Click("View execution"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if ct.SelectedWorkTaskID != "task-attention" || !tr.HasText("Back to issue") || !tr.HasText("Failed") ||
+		!tr.HasText(detail) || !tr.HasText("Activity") {
+		t.Fatalf("View execution did not display the failed detail: selected=%q texts=%v", ct.SelectedWorkTaskID, tr.Texts())
+	}
+	if notice := a.issueWorkNotice(ct); notice.Attention || notice.Text != "" {
+		t.Fatalf("viewing the failed execution did not clear its attention: %+v", notice)
+	}
+	if dir := os.Getenv("SAKI_PREVIEW_DIR"); dir != "" {
+		tr.SetDark(false)
+		tr.Frame()
+		writePreviewPNG(t, filepath.Join(dir, "headless-attention-after-light.png"), tr.Image())
+		tr.SetDark(true)
+		tr.Frame()
+		writePreviewPNG(t, filepath.Join(dir, "headless-attention-after-dark.png"), tr.Image())
+		tr.SetDark(false)
+		tr.Frame()
+	}
+}
+
+func TestIssueAttentionViewRequiresMatchingReasonAndResultPageConfirms(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.rt = nil
+	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
+	const reasonA = "A failed after dispatch"
+	issueA := &productIssue{
+		ID: "i-attention-a", ContactID: ct.ID, Goal: "A failed work", Status: issueStatusNeedsAttention,
+		WorkSessionID: "work-a", Work: issueWorkSession{Loaded: true},
+		Executions: []*issueExecution{{
+			ID: "e-attention-a", SessionID: "work-a", TaskID: "task-a", Status: issueExecutionFailed, Detail: reasonA,
+		}},
+	}
+	issueB := &productIssue{
+		ID: "i-attention-b", ContactID: ct.ID, Goal: "B failed work", Status: issueStatusNeedsAttention,
+		WorkSessionID: "work-b", Work: issueWorkSession{Loaded: true},
+		Executions: []*issueExecution{{
+			ID: "e-attention-b", SessionID: "work-b", TaskID: "task-b", Status: issueExecutionFailed, Detail: "B failed after dispatch",
+		}},
+	}
+	workA := &workItem{TaskID: "task-a", State: workFailed, Detail: "stale older reason"}
+	workB := &workItem{TaskID: "task-b", State: workFailed, Detail: "B failed after dispatch"}
+	ct.Issues = []*productIssue{issueA, issueB}
+	ct.Works = []*workItem{workA, workB}
+	ct.SelectedIssueID = issueA.ID
+	ct.Unread = 2
+	openIssueDetailForTest(a, ct, issueA.ID)
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issueA.ID {
+		t.Fatalf("unseen A did not raise attention: %+v", notice)
+	}
+
+	// The work card shows a stale reason, not this execution's reason, so the
+	// actual View execution click must not confirm A.
+	if err := tr.Click("View execution"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !tr.HasText("Back to issue") || !tr.HasText("stale older reason") || !tr.HasText("Activity") {
+		t.Fatalf("View execution did not open the stale work card: %v", tr.Texts())
+	}
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issueA.ID ||
+		issueA.Executions[0].AttentionSeenStatus != "" {
+		t.Fatalf("stale work reason confirmed A: notice=%+v seen=%q", notice, issueA.Executions[0].AttentionSeenStatus)
+	}
+
+	// The existing result entry now presents the execution's real Detail and
+	// confirms only A; B remains unseen.
+	if err := tr.Click("Read latest result"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !a.issueResult.Open || a.issueResult.Panel.RunDetail != reasonA || !tr.HasText(reasonA) {
+		t.Fatalf("result page did not present A's real reason: open=%v detail=%q texts=%v",
+			a.issueResult.Open, a.issueResult.Panel.RunDetail, tr.Texts())
+	}
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issueB.ID ||
+		issueA.Executions[0].AttentionSeenStatus != issueExecutionFailed {
+		t.Fatalf("result page confirmation was not scoped to A: notice=%+v seen=%q", notice, issueA.Executions[0].AttentionSeenStatus)
+	}
+	if err := tr.Click("Close results"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	a.selectIssue(issueB.ID)
+	tr.Frame()
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issueB.ID {
+		t.Fatalf("selecting B changed its unseen attention: %+v", notice)
+	}
+	if err := tr.Click("View execution"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if notice := a.issueWorkNotice(ct); notice.Attention || notice.Text != "" {
+		t.Fatalf("B confirmation did not clear B: %+v", notice)
+	}
+	if issueA.Status != issueStatusNeedsAttention || issueB.Status != issueStatusNeedsAttention ||
+		issueA.Executions[0].Status != issueExecutionFailed || issueB.Executions[0].Status != issueExecutionFailed ||
+		issueA.Executions[0].Detail != reasonA || ct.Unread != 2 {
+		t.Fatalf("viewing changed retained facts: A=%+v B=%+v unread=%d", issueA.Executions[0], issueB.Executions[0], ct.Unread)
+	}
+
+	other := &contact{ID: "i-attention-other-contact", Name: "Other", Loaded: true}
+	otherIssue := &productIssue{ID: "i-attention-other", ContactID: other.ID, Goal: "other contact failure",
+		Status: issueStatusNeedsAttention, WorkSessionID: "work-other", Work: issueWorkSession{Loaded: true},
+		Executions: []*issueExecution{{ID: "e-attention-other", SessionID: "work-other", TaskID: "task-other",
+			Status: issueExecutionFailed, Detail: "other contact unseen"}}}
+	other.Issues = []*productIssue{otherIssue}
+	other.SelectedIssueID = otherIssue.ID
+	other.Works = []*workItem{{TaskID: "task-other", State: workFailed, Detail: "other contact unseen"}}
+	a.contacts = append(a.contacts, other)
+	a.selectContact(1)
+	tr.Frame()
+	if notice := a.issueWorkNotice(other); !notice.Attention || notice.IssueID != otherIssue.ID ||
+		otherIssue.Executions[0].AttentionSeenStatus != "" {
+		t.Fatalf("another contact's unseen exception was cleared: %+v seen=%q",
+			notice, otherIssue.Executions[0].AttentionSeenStatus)
+	}
+}
+
+func TestIssueAttentionResultPageConfirmsNoTaskNoDetailExecution(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.rt = nil
+	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
+	issue := &productIssue{
+		ID: "i-no-task", ContactID: ct.ID, Goal: "no task unknown", Status: issueStatusNeedsAttention,
+		WorkSessionID: "work-no-task", Work: issueWorkSession{Loaded: true},
+		Executions: []*issueExecution{{
+			ID: "e-no-task", Status: issueExecutionUnknown,
+		}},
+	}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	ct.Unread = 2
+	openIssueDetailForTest(a, ct, issue.ID)
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issue.ID {
+		t.Fatalf("unseen no-task execution did not raise attention: %+v", notice)
+	}
+	if err := tr.Click("Read latest result"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	const absent = "No execution detail was recorded for this run."
+	if !a.issueResult.Open || a.issueResult.Panel.RunDetail != absent || !tr.HasText(absent) {
+		t.Fatalf("no-task result page did not present the explicit absence of detail: open=%v detail=%q texts=%v",
+			a.issueResult.Open, a.issueResult.Panel.RunDetail, tr.Texts())
+	}
+	if issue.Executions[0].AttentionSeenStatus != issueExecutionUnknown {
+		t.Fatalf("no-task result entry did not confirm unknown: %+v", issue.Executions[0])
+	}
+	if notice := a.issueWorkNotice(ct); notice.Attention || notice.Text != "" {
+		t.Fatalf("no-task result entry did not clear attention: %+v", notice)
+	}
+	if issue.Status != issueStatusNeedsAttention || issue.Executions[0].Status != issueExecutionUnknown || ct.Unread != 2 {
+		t.Fatalf("no-task result entry changed retained facts: %+v status=%q unread=%d", issue.Executions[0], issue.Status, ct.Unread)
+	}
+
+	// Reload only updates the displayed data; a new status is not confirmed by
+	// reload or by closing the result page.
+	issue.Executions[0].Status = issueExecutionFailed
+	issue.Executions[0].Detail = "new no-task failure"
+	generation := a.issueResult.Generation
+	if err := tr.Click("Reload result"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.issueResult.Generation <= generation || a.issueResult.Panel.RunDetail != "new no-task failure" {
+		t.Fatalf("reload did not update the result page: generation=%d detail=%q",
+			a.issueResult.Generation, a.issueResult.Panel.RunDetail)
+	}
+	if issue.Executions[0].AttentionSeenStatus != issueExecutionUnknown {
+		t.Fatalf("reload confirmed the new status: %+v", issue.Executions[0])
+	}
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issue.ID {
+		t.Fatalf("reload did not retain the new unseen status: %+v", notice)
+	}
+	if err := tr.Click("Close results"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if issue.Executions[0].AttentionSeenStatus != issueExecutionUnknown {
+		t.Fatalf("closing the result page confirmed the new status: %+v", issue.Executions[0])
+	}
+}
+
+func TestIssueAttentionPendingSeenStillShowsOlderException(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.rt = nil
+	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
+	older := &issueExecution{ID: "e-older-visible", TaskID: "task-older", Status: issueExecutionFailed, Detail: "older unseen failure"}
+	latest := &issueExecution{ID: "e-pending-visible", Status: issueExecutionUnknown}
+	issue := &productIssue{
+		ID: "i-pending-visible", ContactID: ct.ID, Goal: "pending then older", Status: issueStatusNeedsAttention,
+		WorkSessionID: "work-pending", Work: issueWorkSession{Loaded: true, SendState: sendUnknown,
+			SendError: "delivery not confirmed", pendingExecutionID: latest.ID},
+		Executions: []*issueExecution{older, latest},
+	}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issue.ID {
+		t.Fatalf("pending unknown did not raise attention: %+v", notice)
+	}
+	if err := tr.Click("Read latest result"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if latest.AttentionSeenStatus != issueExecutionUnknown {
+		t.Fatalf("pending result page did not confirm its execution: %+v", latest)
+	}
+	notice := a.issueWorkNotice(ct)
+	if !notice.Attention || notice.IssueID != issue.ID || !strings.Contains(notice.Text, "older unseen failure") ||
+		older.AttentionSeenStatus != "" {
+		t.Fatalf("seen pending execution hid the older unseen exception: %+v older=%+v", notice, older)
+	}
+}
+
+func TestIssueAttentionTracksStatusReplayAndNewExecution(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.rt = &runtimeClient{}
+	a.store = &contactStore{path: filepath.Join(t.TempDir(), "contacts.json")}
+	const initialDetail = "delivery was not confirmed"
+	issue := &productIssue{
+		ID: "i-attention-status", ContactID: ct.ID, Goal: "unknown then failed", Status: issueStatusNeedsAttention,
+		WorkSessionID: "work-status", Work: issueWorkSession{Loaded: true, LastTaskID: "task-status",
+			SendState: sendUnknown, SendError: initialDetail},
+		Executions: []*issueExecution{{
+			ID: "e-attention-status", SessionID: "work-status", TaskID: "task-status",
+			Status: issueExecutionUnknown, Detail: initialDetail,
+		}},
+	}
+	work := &workItem{TaskID: "task-status", State: workUnknown, Detail: initialDetail}
+	ct.Issues = []*productIssue{issue}
+	ct.Works = []*workItem{work}
+	ct.SelectedIssueID = issue.ID
+	ct.Unread = 3
+	openIssueDetailForTest(a, ct, issue.ID)
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issue.ID {
+		t.Fatalf("unseen unknown did not raise attention: %+v", notice)
+	}
+	if err := tr.Click("View execution"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	execution := issue.Executions[0]
+	if execution.Status != issueExecutionUnknown || execution.Detail != initialDetail ||
+		execution.AttentionSeenStatus != issueExecutionUnknown || ct.Unread != 3 {
+		t.Fatalf("viewing unknown changed retained facts or seen status: %+v unread=%d", execution, ct.Unread)
+	}
+	if notice := a.issueWorkNotice(ct); notice.Attention || notice.Text != "" {
+		t.Fatalf("seen unknown still raised attention: %+v", notice)
+	}
+	tr.Frame()
+	if notice := a.issueWorkNotice(ct); notice.Text != "" {
+		t.Fatalf("same-status replay raised attention: %+v", notice)
+	}
+
+	execution.Status = issueExecutionFailed
+	execution.Detail = "later failed"
+	work.State = workFailed
+	work.Detail = "later failed"
+	tr.Frame()
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issue.ID {
+		t.Fatalf("new failed status did not re-prompt: %+v", notice)
+	}
+	if err := tr.Click("View execution"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if execution.AttentionSeenStatus != issueExecutionFailed {
+		t.Fatalf("failed status was not confirmed: %+v", execution)
+	}
+	if notice := a.issueWorkNotice(ct); notice.Text != "" {
+		t.Fatalf("confirmed failed status raised attention: %+v", notice)
+	}
+	reason := "replayed failure"
+	records := []historyRecord{
+		{Offset: 0, Record: journalRecord{Type: "task_started", TaskID: "task-status", MessageID: "message-status"}},
+		{Offset: 1, Record: journalRecord{Type: "task_finished", TaskID: "task-status", MessageID: "message-status",
+			Status: "failed", Error: &reason}},
+	}
+	a.applyIssueWorkHistory(ct, issue, records, "failed")
+	work = workFor(ct, "task-status")
+	tr.Frame()
+	if execution.Status != issueExecutionFailed || !strings.Contains(execution.Detail, reason) ||
+		execution.AttentionSeenStatus != issueExecutionFailed {
+		t.Fatalf("failed history replay changed the seen execution: %+v", execution)
+	}
+	if notice := a.issueWorkNotice(ct); notice.Text != "" {
+		t.Fatalf("failed same-status history replay raised attention: %+v", notice)
+	}
+
+	execution.Status = issueExecutionCompleted
+	execution.Detail = ""
+	work.State = workCompleted
+	work.Detail = ""
+	issue.Work.SendState = sendIdle
+	issue.Work.SendError = ""
+	tr.Frame()
+	if notice := a.issueWorkNotice(ct); notice.Text != "" {
+		t.Fatalf("later success re-lit a seen failure: %+v", notice)
+	}
+
+	next := &issueExecution{ID: "e-attention-next", SessionID: "work-status", TaskID: "task-status-next",
+		Status: issueExecutionFailed, Detail: "next failure"}
+	issue.Executions = append(issue.Executions, next)
+	issue.Work.LastTaskID = next.TaskID
+	ct.Works = append(ct.Works, &workItem{TaskID: next.TaskID, State: workFailed, Detail: "next failure"})
+	tr.Frame()
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issue.ID || next.AttentionSeenStatus != "" {
+		t.Fatalf("new execution did not raise attention: %+v next=%+v", notice, next)
+	}
+	if issue.Status != issueStatusNeedsAttention || ct.Unread != 3 {
+		t.Fatalf("attention tracking changed issue status/unread: status=%q unread=%d", issue.Status, ct.Unread)
+	}
+}
+
+func TestIssueAttentionExpiredResultCallbackDoesNotConfirm(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	seen := &issueExecution{ID: "e-already-seen", SessionID: "work-expired", TaskID: "task-seen",
+		Status: issueExecutionFailed, Detail: "already seen failure", AttentionSeenStatus: issueExecutionFailed}
+	expired := &issueExecution{ID: "e-expired", SessionID: "work-expired", TaskID: "task-expired",
+		Status: issueExecutionFailed, Detail: "expired failure"}
+	issue := &productIssue{ID: "i-expired", ContactID: ct.ID, Goal: "expired callback", Status: issueStatusNeedsAttention,
+		WorkSessionID: "work-expired", Work: issueWorkSession{Loaded: true},
+		Executions: []*issueExecution{seen, expired}}
+	ct.Issues = []*productIssue{issue}
+	a.aux = "issue-result"
+	a.issueResult = issueResultPage{
+		Open: true, OwnerContactID: ct.ID, IssueID: issue.ID, ExecutionID: "e-expired",
+		SessionID: "work-expired", TaskID: "task-expired", Generation: 2,
+	}
+	a.applyIssueResultLoaded(nil, 0, 1, ct.ID, issue.ID, "e-expired", "work-expired", "task-expired",
+		issueResultDerivation{}, "stale result", "")
+	if seen.AttentionSeenStatus != issueExecutionFailed || expired.AttentionSeenStatus != "" {
+		t.Fatalf("expired result callback changed seen fields: seen=%q expired=%q",
+			seen.AttentionSeenStatus, expired.AttentionSeenStatus)
+	}
+	if notice := a.issueWorkNotice(ct); !notice.Attention || notice.IssueID != issue.ID {
+		t.Fatalf("expired callback changed attention: %+v", notice)
+	}
+}
+
+func TestIssueAttentionSeenPersistsAndSaveFailureStaysUnseen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "contacts.json")
+	store, err := openContactStore(path, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := &contact{ID: store.state.Contacts[0].ID, Name: "Saki", Loaded: true}
+	a := &appModel{store: store, runtimeStatus: runtimeStateReady, workspaceOpen: true, windowWidth: 1040, scrollTo: -1,
+		contacts: []*contact{ct}, selected: 0}
+	const detail = "persisted failure"
+	issue := &productIssue{ID: "i-persist-attention", ContactID: ct.ID, Goal: "persist seen", Status: issueStatusNeedsAttention,
+		WorkSessionID: "work-persist", Work: issueWorkSession{Loaded: true},
+		Executions: []*issueExecution{{ID: "e-persist-attention", SessionID: "work-persist", TaskID: "task-persist",
+			Status: issueExecutionFailed, Detail: detail}}}
+	ct.Issues = []*productIssue{issue}
+	ct.Works = []*workItem{{TaskID: "task-persist", State: workFailed, Detail: detail}}
+	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("View execution"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	reloaded, err := openContactStore(path, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.state.Issues) != 1 || len(reloaded.state.Issues[0].Executions) != 1 ||
+		reloaded.state.Issues[0].Executions[0].AttentionSeenStatus != issueExecutionFailed {
+		t.Fatalf("seen status was not persisted: %+v", reloaded.state.Issues)
+	}
+	b := &appModel{}
+	applyStoreSelection(b, reloaded)
+	if notice := b.issueWorkNotice(b.selectedContact()); notice.Attention || notice.Text != "" {
+		t.Fatalf("reloaded seen execution raised attention: %+v", notice)
+	}
+
+	// A failed save must not claim persistence or clear the prompt.
+	badParent := filepath.Join(t.TempDir(), "blocked-save")
+	if err := os.WriteFile(badParent, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a2, ct2 := workspaceTestApp(t)
+	a2.store = &contactStore{path: filepath.Join(badParent, "contacts.json")}
+	const badDetail = "save failure reason"
+	issue2 := &productIssue{ID: "i-save-failure", ContactID: ct2.ID, Goal: "save failure", Status: issueStatusNeedsAttention,
+		WorkSessionID: "work-save-failure", Work: issueWorkSession{Loaded: true},
+		Executions: []*issueExecution{{ID: "e-save-failure", SessionID: "work-save-failure", TaskID: "task-save-failure",
+			Status: issueExecutionFailed, Detail: badDetail}}}
+	ct2.Issues = []*productIssue{issue2}
+	ct2.Works = []*workItem{{TaskID: "task-save-failure", State: workFailed, Detail: badDetail}}
+	ct2.SelectedIssueID = issue2.ID
+	openIssueDetailForTest(a2, ct2, issue2.ID)
+	tr2 := ui.NewTester(a2.view, 1040, 720)
+	tr2.Frame()
+	if err := tr2.Click("View execution"); err != nil {
+		t.Fatal(err)
+	}
+	tr2.Frame()
+	if issue2.Executions[0].AttentionSeenStatus != "" {
+		t.Fatalf("failed save left a false seen status: %+v", issue2.Executions[0])
+	}
+	if notice := a2.issueWorkNotice(ct2); !notice.Attention || !strings.Contains(a2.issueActionError, "Could not save that this execution was viewed") {
+		t.Fatalf("failed save did not remain unseen/visible: notice=%+v error=%q", notice, a2.issueActionError)
+	}
+
+	// Read latest result must show the same existing localSaveErr on the result
+	// main page, keep the seen rollback, and preserve it after a background load.
+	if err := tr2.Click("Read latest result"); err != nil {
+		t.Fatal(err)
+	}
+	tr2.Frame()
+	if !a2.issueResult.Open || a2.localSaveErr == "" ||
+		!strings.Contains(strings.Join(tr2.Texts(), "\n"), a2.localSaveErr) {
+		t.Fatalf("result page did not display the existing save error: open=%v localSaveErr=%q texts=%v",
+			a2.issueResult.Open, a2.localSaveErr, tr2.Texts())
+	}
+	if issue2.Executions[0].AttentionSeenStatus != "" || issue2.Executions[0].Status != issueExecutionFailed ||
+		issue2.Executions[0].Detail != badDetail || issue2.Status != issueStatusNeedsAttention {
+		t.Fatalf("result save failure changed facts or did not roll back: issue=%+v", issue2)
+	}
+	page := a2.issueResult
+	a2.applyIssueResultLoaded(nil, 0, page.Generation, page.OwnerContactID, page.IssueID, page.ExecutionID,
+		page.SessionID, page.TaskID, issueResultDerivation{}, "", "")
+	tr2.Frame()
+	if a2.localSaveErr == "" || !strings.Contains(strings.Join(tr2.Texts(), "\n"), a2.localSaveErr) {
+		t.Fatalf("background load cleared/hid the save error: localSaveErr=%q texts=%v", a2.localSaveErr, tr2.Texts())
+	}
+	if issue2.Executions[0].AttentionSeenStatus != "" {
+		t.Fatalf("background load confirmed the exception after save failure: %+v", issue2.Executions[0])
+	}
+	if dir := os.Getenv("SAKI_PREVIEW_DIR"); dir != "" {
+		tr2.SetDark(false)
+		tr2.Frame()
+		writePreviewPNG(t, filepath.Join(dir, "headless-attention-result-save-error-light.png"), tr2.Image())
+		tr2.SetDark(true)
+		tr2.Frame()
+		writePreviewPNG(t, filepath.Join(dir, "headless-attention-result-save-error-dark.png"), tr2.Image())
+		tr2.SetDark(false)
+		tr2.Frame()
 	}
 }
 

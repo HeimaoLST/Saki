@@ -528,6 +528,60 @@ func TestUnknownIssueExecutionCanBeConfirmedNotDispatched(t *testing.T) {
 	}
 }
 
+func TestIssueWorkNoticeKeepsUnseenOlderExceptionAfterSuccess(t *testing.T) {
+	ct := &contact{ID: "x", Name: "X", Loaded: true}
+	issue := &productIssue{ID: "i-old-exception", ContactID: ct.ID, Goal: "older failed work"}
+	issue.Executions = []*issueExecution{
+		{ID: "e-old", TaskID: "t-old", Status: issueExecutionFailed, Detail: "old unseen failure"},
+		{ID: "e-new", TaskID: "t-new", Status: issueExecutionCompleted},
+	}
+	ct.Issues = []*productIssue{issue}
+	a := &appModel{contacts: []*contact{ct}, selected: 0}
+	notice := a.issueWorkNotice(ct)
+	if !notice.Attention || notice.IssueID != issue.ID || !strings.Contains(notice.Text, "old unseen failure") {
+		t.Fatalf("later success hid an unseen older exception: %+v", notice)
+	}
+	issue.Executions[0].AttentionSeenStatus = issueExecutionFailed
+	if notice := a.issueWorkNotice(ct); notice.Text != "" {
+		t.Fatalf("seen older exception was re-lit after success: %+v", notice)
+	}
+}
+
+func TestIssueAttentionLegacyStoreDefaultsUnseen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "contacts.json")
+	legacy := storedState{
+		Version:  contactStoreVersion,
+		Selected: "contact-legacy",
+		Contacts: []storedContact{{ID: "contact-legacy", Name: "Saki"}},
+		Issues: []storedIssue{{
+			ID: "issue-legacy", ContactID: "contact-legacy", Goal: "legacy failure", Status: issueStatusNeedsAttention,
+			Executions: []storedIssueExecution{{
+				ID: "exec-legacy", TaskID: "task-legacy", Status: issueExecutionFailed, Detail: "legacy failure",
+			}},
+		}},
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := openContactStore(path, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &appModel{}
+	applyStoreSelection(a, store)
+	issue := a.selectedContact().issueByID("issue-legacy")
+	if issue == nil || len(issue.Executions) != 1 || issue.Executions[0].AttentionSeenStatus != "" {
+		t.Fatalf("legacy execution did not load unseen: %+v", issue)
+	}
+	if notice := a.issueWorkNotice(a.selectedContact()); !notice.Attention || notice.IssueID != issue.ID {
+		t.Fatalf("legacy exception did not raise attention: %+v", notice)
+	}
+}
+
 func TestIssueRecoveryRejectsAnotherIssuesExecution(t *testing.T) {
 	ct := &contact{ID: "c1", Name: "Saki"}
 	issueA := &productIssue{ID: "iA", ContactID: "c1", Goal: "A"}

@@ -52,6 +52,7 @@ type storedIssueExecution struct {
 	Prompt               string            `json:"prompt,omitempty"`
 	Status               string            `json:"status,omitempty"`
 	Detail               string            `json:"detail,omitempty"`
+	AttentionSeenStatus  string            `json:"attention_seen_status,omitempty"`
 	RequirementsRevision int               `json:"requirements_revision,omitempty"`
 	Context              []taskContextItem `json:"context,omitempty"`
 	SupplementBatchID    string            `json:"supplement_batch_id,omitempty"`
@@ -303,6 +304,7 @@ func (s *contactStore) save(contacts []*contact, selected string) error {
 					ID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID,
 					MessageID: execution.MessageID, Prompt: execution.Prompt,
 					Status: execution.Status, Detail: execution.Detail,
+					AttentionSeenStatus:  execution.AttentionSeenStatus,
 					RequirementsRevision: execution.RequirementsRevision,
 					Context:              cloneTaskContextItems(execution.Context),
 					SupplementBatchID:    execution.SupplementBatchID,

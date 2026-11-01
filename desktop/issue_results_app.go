@@ -63,6 +63,13 @@ func (a *appModel) openIssueResultEntry(issueID, executionID string, latest bool
 			break
 		}
 	}
+	runDetail := ""
+	if issueExecutionNeedsAttention(execution.Status) {
+		runDetail = strings.TrimSpace(execution.Detail)
+		if runDetail == "" {
+			runDetail = "No execution detail was recorded for this run."
+		}
+	}
 	*page = issueResultPage{
 		Open: true, OwnerContactID: ct.ID, IssueID: issue.ID, ExecutionID: execution.ID,
 		SessionID: execution.SessionID, TaskID: execution.TaskID, MessageID: execution.MessageID,
@@ -71,6 +78,7 @@ func (a *appModel) openIssueResultEntry(issueID, executionID string, latest bool
 		Panel: issueResultPanelState{
 			RunLabel:       fmt.Sprintf("Run %d: %s", runIndex+1, issue.Goal),
 			RunStatus:      issueExecutionLabel(execution),
+			RunDetail:      runDetail,
 			LinkScope:      "contact:" + ct.ID + "/issue:" + issue.ID + "/execution:" + execution.ID,
 			LinkFocus:      &a.markdownLinkFocus,
 			LinkReturn:     &a.linkReturnTarget,
@@ -78,6 +86,9 @@ func (a *appModel) openIssueResultEntry(issueID, executionID string, latest bool
 		},
 	}
 	a.aux = "issue-result"
+	if issueExecutionNeedsAttention(execution.Status) {
+		a.confirmIssueExecutionSeen(ct, issue, execution)
+	}
 	a.startIssueResultLoad()
 }
 
@@ -129,6 +140,13 @@ func (a *appModel) reloadIssueResult(generation int) {
 	page.MessageID = execution.MessageID
 	page.Panel.RunLabel = fmt.Sprintf("Run %d: %s", runIndex+1, issue.Goal)
 	page.Panel.RunStatus = issueExecutionLabel(execution)
+	page.Panel.RunDetail = ""
+	if issueExecutionNeedsAttention(execution.Status) {
+		page.Panel.RunDetail = strings.TrimSpace(execution.Detail)
+		if page.Panel.RunDetail == "" {
+			page.Panel.RunDetail = "No execution detail was recorded for this run."
+		}
+	}
 	page.Panel.Checking = false
 	page.Panel.ActionFor = ""
 	page.Panel.Action = issueResultFileAction{}
@@ -283,6 +301,9 @@ func (a *appModel) issueResultPanelView(c *ui.Context, t *ui.Theme) {
 	if !page.Open {
 		return
 	}
+	if a.localSaveErr != "" {
+		ui.Text(c, a.localSaveErr).FontSize(14).LineHeight(1.5).TextColor(t.Warning)
+	}
 	hasBody := page.Panel.Response != "" || len(page.Panel.Files) > 0
 	if !hasBody && (page.Loading || page.LoadError != "") {
 		if page.Panel.RunLabel != "" {
@@ -290,6 +311,9 @@ func (a *appModel) issueResultPanelView(c *ui.Context, t *ui.Theme) {
 		}
 		if page.Panel.RunStatus != "" {
 			ui.Text(c, page.Panel.RunStatus).FontSize(typeAction).FontWeight(500).TextColor(t.TextMuted)
+		}
+		if page.Panel.RunDetail != "" {
+			ui.Text(c, page.Panel.RunDetail).FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 		}
 		if page.Loading {
 			ui.Text(c, "Loading execution history from Runtime…").FontSize(14).TextColor(t.TextMuted)

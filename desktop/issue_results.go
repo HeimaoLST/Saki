@@ -281,6 +281,7 @@ func requestRevealIssueResultWithSystem(path string) error {
 type issueResultPanelState struct {
 	RunLabel           string
 	RunStatus          string
+	RunDetail          string
 	Response           string
 	Files              []issueResultFile
 	Selected           string
@@ -367,6 +368,9 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 		}
 		if state.RunStatus != "" {
 			ui.Text(c, state.RunStatus).FontSize(typeAction).FontWeight(500).TextColor(th.TextMuted)
+		}
+		if state.RunDetail != "" {
+			ui.Text(c, state.RunDetail).FontSize(14).LineHeight(1.5).TextColor(th.Warning)
 		}
 
 		result := ui.Column(c).AlignSelf(ui.Stretch).MinWidth(0).Padding(12).Radius(th.Radius).Background(th.Surface).Gap(8)
