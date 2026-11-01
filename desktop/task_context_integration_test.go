@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -595,20 +596,59 @@ func TestTaskContextGUIAppPendingContextSurvivesRestartAndAcceptedClearPersists(
 }
 
 func TestTaskContextGUIAppUnknownSendRestartKeepsWarningWithoutReplay(t *testing.T) {
+	// Timeout cleanup can run while the UI pump still owns live application state.
+	var hSnapshot, h2Snapshot atomic.Value
+	storeSnapshot := func(slot *atomic.Value, h *guiHarness) {
+		a := h.app
+		ct := a.selectedContact()
+		slot.Store(fmt.Sprintf("runtime=%s quit=%t shutdown=%t drain=%t rt_nil=%t history=%d result=%d submission=%d tool_release=%d managed=%t legacy=%t catalog_loading=%t loaded=%t load_error=%t active=%t last=%t send=%v history_dirty=%t pending_unknown=%t",
+			a.runtimeStatus, a.quitReady, a.shutdownStarted, a.shutdownDrainStarted, a.rt == nil,
+			a.contactHistoryInFlight, a.resultInFlight, a.submissionInFlight, a.issueToolReleaseInFlight,
+			a.connectionManaged, a.connectionLegacy, a.runtimeBuiltinToolsLoading,
+			ct.Loaded, ct.LoadErr != "", ct.ActiveTaskID != "", ct.LastTaskID != "", ct.SendState, ct.HistoryDirty,
+			ct.pendingSend != nil && ct.pendingSend.State == "unknown"))
+	}
+	attach := func(h *guiHarness, slot *atomic.Value) {
+		h.app.setUIHook(func(fn func()) {
+			h.pump.q <- func() {
+				fn()
+				storeSnapshot(slot, h)
+			}
+		})
+	}
+	t.Cleanup(func() {
+		if value := hSnapshot.Load(); value != nil {
+			t.Logf("last state h: %+v", value)
+		}
+		if value := h2Snapshot.Load(); value != nil {
+			t.Logf("last state h2: %+v", value)
+		}
+	})
+
+	t.Log("phase=startup begin")
 	binary := requireRuntimeBinary(t)
 	provider := &providerFixture{}
 	h := startGUIHarness(t, binary, provider, "task-context-unknown-117")
+	t.Log("phase=startup done")
+	attach(h, &hSnapshot)
+
+	t.Log("phase=initial_send begin")
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
 		ct.Draft = "Establish the session."
 		if !h.app.sendCurrent() {
 			t.Fatalf("initial send: %s", ct.SendError)
 		}
+		storeSnapshot(&hSnapshot, h)
 	})
+	t.Log("phase=initial_send done")
+	t.Log("phase=initial_wait begin")
 	h.pump.wait(func() bool {
+		storeSnapshot(&hSnapshot, h)
 		ct := h.app.selectedContact()
 		return ct.LastTaskID != "" && ct.ActiveTaskID == "" && ct.SendState == sendIdle
 	})
+	t.Log("phase=initial_wait done")
 	if provider.count() != 1 {
 		t.Fatalf("initial provider requests = %d", provider.count())
 	}
@@ -623,16 +663,29 @@ func TestTaskContextGUIAppUnknownSendRestartKeepsWarningWithoutReplay(t *testing
 		if err := h.app.persist(); err != nil {
 			t.Fatal(err)
 		}
+		storeSnapshot(&hSnapshot, h)
 	})
+	t.Log("phase=unknown_persisted")
+	t.Log("phase=h_shutdown begin")
 	h.shutdown(t)
+	t.Log("phase=h_shutdown done; restart begin")
 
 	h2 := restartGUIHarness(t, binary)
+	t.Log("phase=restart done")
+	attach(h2, &h2Snapshot)
 	defer func() {
 		if !h2.closed {
+			t.Log("phase=h2_cleanup begin")
 			h2.shutdown(t)
+			t.Log("phase=h2_cleanup done")
 		}
 	}()
-	h2.pump.wait(func() bool { return h2.app.contacts[0].Loaded })
+	t.Log("phase=h2_loaded begin")
+	h2.pump.wait(func() bool {
+		storeSnapshot(&h2Snapshot, h2)
+		return h2.app.contacts[0].Loaded
+	})
+	t.Log("phase=h2_loaded done")
 	h2.pump.do(func() {
 		ct := h2.app.selectedContact()
 		if ct.SendState != sendUnknown || ct.pendingSend == nil || ct.pendingSend.State != "unknown" {
@@ -641,11 +694,14 @@ func TestTaskContextGUIAppUnknownSendRestartKeepsWarningWithoutReplay(t *testing
 		if len(ct.Context.snapshot()) != 1 || !strings.Contains(ct.SendError, "may have been sent") {
 			t.Fatalf("restart context/warning = %+v / %q", ct.Context.snapshot(), ct.SendError)
 		}
+		storeSnapshot(&h2Snapshot, h2)
 	})
 	if provider.count() != 1 {
 		t.Fatalf("restart replayed a send: %d provider requests", provider.count())
 	}
+	t.Log("phase=h2_shutdown begin")
 	h2.shutdown(t)
+	t.Log("phase=h2_shutdown done")
 }
 
 // clickAfterBoundedScrollInPump is the pump-safe form of the existing

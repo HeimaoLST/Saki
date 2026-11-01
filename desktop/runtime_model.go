@@ -349,7 +349,15 @@ func (a *appModel) startRuntime() {
 	a.runtimeHint = ""
 }
 
+func (a *appModel) clearBuiltinToolCatalog() {
+	a.runtimeBuiltinTools = nil
+	a.runtimeBuiltinToolsLoaded = false
+	a.runtimeBuiltinToolsLoading = false
+	a.runtimeBuiltinToolsErr = ""
+}
+
 func (a *appModel) protocolFailed(message string) {
+	a.clearBuiltinToolCatalog()
 	a.runtimeStatus = runtimeStateFailed
 	a.runtimeStage = "Runtime protocol"
 	a.runtimeErr = "Runtime protocol error: " + a.redactConnectionText(message)
@@ -420,6 +428,7 @@ func (a *appModel) clearActiveTasksAfterExit() {
 }
 
 func (a *appModel) applyRuntimeExit(err error) {
+	a.clearBuiltinToolCatalog()
 	if a.runtimeStatus == runtimeStateDraining {
 		a.runtimeStatus = runtimeStateExited
 		return
@@ -545,6 +554,50 @@ func (a *appModel) loadCapabilities(rt *runtimeClient, gen int) {
 		a.runtimeCapabilitiesErr = ""
 		a.maybeAutoContinueAllIssues()
 	})
+}
+
+func (a *appModel) loadBuiltinTools(rt *runtimeClient, gen int) {
+	if rt == nil {
+		return
+	}
+	catalog, err := rt.tools()
+	a.updateUI(func() {
+		if gen != a.connectionGeneration || a.rt != rt || a.runtimeStatus != runtimeStateReady {
+			return
+		}
+		a.runtimeBuiltinToolsLoading = false
+		if err != nil {
+			a.runtimeBuiltinTools = nil
+			a.runtimeBuiltinToolsLoaded = false
+			a.runtimeBuiltinToolsErr = "Could not load built-in tools from Runtime: " + a.connectionRuntimeMessage(err) + ". Retry after Runtime is ready."
+			return
+		}
+		a.runtimeBuiltinTools = append([]runtimeBuiltinTool(nil), catalog.Builtin...)
+		a.runtimeBuiltinToolsLoaded = true
+		a.runtimeBuiltinToolsErr = ""
+	})
+}
+
+func (a *appModel) startBuiltinToolsLoad(rt *runtimeClient, gen int) {
+	if rt == nil || a.runtimeBuiltinToolsLoading {
+		return
+	}
+	a.runtimeBuiltinToolsLoading = true
+	a.runtimeBuiltinToolsErr = ""
+	go a.loadBuiltinTools(rt, gen)
+}
+
+func (a *appModel) retryBuiltinTools() {
+	if a.rt == nil || a.runtimeStatus != runtimeStateReady {
+		a.runtimeBuiltinToolsErr = "Built-in tools are available after Runtime is ready."
+		return
+	}
+	if a.runtimeBuiltinToolsLoading {
+		return
+	}
+	a.runtimeBuiltinToolsLoading = true
+	a.runtimeBuiltinToolsErr = ""
+	go a.loadBuiltinTools(a.rt, a.connectionGeneration)
 }
 
 func (a *appModel) capacityKnown() bool {
@@ -1823,10 +1876,12 @@ func (a *appModel) startIssueTask(ct *contact, issue *productIssue, execution *i
 	system := a.issueToolWorkSystemPrompt(ct)
 	sessionID := issue.WorkSessionID
 	context := cloneTaskContextItems(execution.Context)
+	builtin := a.capturedBuiltinSelection(ct)
 	rt, configured := a.rt, a.connectionManaged
+	issueTools := a.issueToolEnabled() && configured
 	released := issue.Work.Released
 	a.submissionAsyncStarted()
-	go a.submitIssueTask(rt, configured, ct.ID, issue.ID, execution.ID, sessionID, workspace, system, prompt, context, released)
+	go a.submitIssueTask(rt, configured, ct.ID, issue.ID, execution.ID, sessionID, workspace, system, prompt, context, released, builtin, issueTools)
 	return true
 }
 
@@ -1847,18 +1902,13 @@ func (a *appModel) submissionAsyncFinished() {
 	}
 }
 
-func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID, issueID, executionID, sessionID, workspace, system, prompt string, context []taskContextItem, released bool) {
-	workTools := a.issueToolEnabled() && a.connectionManaged
+func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID, issueID, executionID, sessionID, workspace, system, prompt string, context []taskContextItem, released bool, builtin *[]string, workTools bool) {
 	createdSession := false
 	if sessionID == "" {
 		var session runtimeSession
 		var err error
-		if workTools {
-			session, err = a.configuredWorkCreate(rt, configured, workspace, system)
-			createdSession = err == nil
-		} else {
-			session, err = a.configuredCreate(rt, configured, workspace, system)
-		}
+		session, err = a.configuredWorkCreate(rt, configured, workspace, system, builtin, workTools)
+		createdSession = err == nil
 		if err != nil {
 			a.failIssueSubmit(contactID, issueID, err, false)
 			return
@@ -2222,6 +2272,7 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 	workspace := a.effectiveContactWorkspace(ct)
 	system := a.issueToolConversationSystemPrompt(ct)
 	submittedContext := ct.Context.snapshot()
+	builtin := a.capturedBuiltinSelection(ct)
 	ct.historyGen++ // invalidate any in-flight reload
 	ct.SubmittedDraft = text
 	ct.SubmittedRev = ct.draftRev
@@ -2238,14 +2289,14 @@ func (a *appModel) sendRuntimeForIssue(ct *contact, text, issueExecutionID strin
 	rt, configured := a.rt, a.connectionManaged
 	issueTools := a.issueToolEnabled() && a.connectionManaged
 	a.submissionAsyncStarted()
-	go a.submitTask(rt, configured, contactID, sessionID, text, workspace, system, submittedContext, newIssueToolTurnID(), issueTools)
+	go a.submitTask(rt, configured, contactID, sessionID, text, workspace, system, submittedContext, newIssueToolTurnID(), issueTools, builtin)
 	return true
 }
 
-func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, sessionID, text, workspace, system string, context []taskContextItem, turnID string, issueTools bool) {
+func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, sessionID, text, workspace, system string, context []taskContextItem, turnID string, issueTools bool, builtin *[]string) {
 	createdSession := false
 	if sessionID == "" {
-		session, err := a.configuredConversationCreate(rt, configured, workspace, system)
+		session, err := a.configuredConversationCreate(rt, configured, workspace, system, builtin, issueTools)
 		if err != nil {
 			a.failSubmit(contactID, err, false)
 			return

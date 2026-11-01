@@ -27,7 +27,7 @@ func historyOriginKey(origin, sessionID, entryID string) string {
 }
 
 func contactProfileDraft(ct *contact) profileDraft {
-	return profileDraft{Name: ct.Name, Purpose: ct.Purpose, Instructions: ct.Instructions, Workspace: ct.Workspace}
+	return profileDraft{Name: ct.Name, Purpose: ct.Purpose, Instructions: ct.Instructions, Workspace: ct.Workspace, BuiltinTools: cloneBuiltinTools(ct.BuiltinTools)}
 }
 
 func (a *appModel) openContactProfile(contactID string) {
@@ -154,6 +154,14 @@ func (a *appModel) saveContactProfileDraftFor(contactID string, draft profileDra
 		}
 		return false
 	}
+	if problem := a.validateBuiltinToolSelection(ct.BuiltinTools, draft.BuiltinTools); problem != "" {
+		if editor != nil {
+			editor.Draft = entered
+			editor.Error = problem
+			editor.Status = ""
+		}
+		return false
+	}
 	previous := *ct
 	previousSessions := append([]string(nil), ct.PreviousSessions...)
 	var oldState storedState
@@ -165,6 +173,7 @@ func (a *appModel) saveContactProfileDraftFor(contactID string, draft profileDra
 	ct.Purpose = draft.Purpose
 	ct.Instructions = draft.Instructions
 	ct.Workspace = draft.Workspace
+	ct.BuiltinTools = cloneBuiltinTools(draft.BuiltinTools)
 	if startNew {
 		if ct.SessionID != "" {
 			ct.PreviousSessions = append(ct.PreviousSessions, ct.SessionID)

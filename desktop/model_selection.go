@@ -355,6 +355,11 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 		ui.Text(c, fmt.Sprintf("%scontext %d / output %d, %s, revision %d",
 			limitsLabel, compaction.ContextTokens, compaction.OutputTokens, source, s.Target.Config.ConfigRevision)).
 			FontSize(14).TextColor(t.TextMuted)
+		toolsLabel := "Effective built-in tools: "
+		if s.Unconfirmed {
+			toolsLabel = "Last read built-in tools: "
+		}
+		ui.Text(c, toolsLabel+builtinToolSelectionLabel(effective.ToolSelection.Builtin)).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		if s.Unconfirmed {
 			ui.Text(c, "Runtime has not confirmed the current configuration; these are the last read values. Refresh is available.").FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 		}
