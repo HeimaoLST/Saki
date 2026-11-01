@@ -53,14 +53,16 @@
 
 2026-10-22 Magpie 网关真实验收发现旧适配器丢弃 `reasoning_content`，read 已完成但第二轮返回 HTTP 400。PR122 已集成的修复复用已有带 API 身份的续接数据，不新增执行循环、存储 schema 或隐式模型降级。依据 [DeepSeek 官方 thinking 契约](https://api-docs.deepseek.com/guides/thinking_mode/)，携带 tools 时须保留此前各轮 assistant 的 reasoning_content。JSON/SSE、文本与工具同条消息、空推理、无工具的历史轮及序列化恢复有确定性覆盖；实际网关闭环证据随 PR 记录，不将其他网关或模型推定为通过。
 
-**#177 实现事实（本次候选，尚未集成）**：Chat JSON/SSE 解码区分字段不存在、原生 `null`、空字符串与非空字符串。原生空值仍通过同一 Reasoning/ProviderData 路径持久化，下一请求原样回传；真正不存在的字段不补 `null` 或推理文本。SSE 的 null 片段不会覆盖此前已聚合的字符串。只有实际文本产生可见推理事件，空续接标记仍保留在 journal；既有 journal 不需要迁移，历史上已经丢失的原生数据无法回填。assistant 文本和随后的完整工具调用按同一轮重组，即使原生 reasoning 字段不存在也不拆成两条 assistant 消息。工具仍只在完整响应通过终止检查后执行，不自动重试该 HTTP400。
+**#177 实现事实（已集成，2026-11-01）**：修复经 [`17f03d5`](https://github.com/HeimaoLST/Saki/commit/17f03d5ac643301f967edca13dc0d06d23f5437f) 消费，随 [PR232](https://github.com/HeimaoLST/Saki/pull/232) 进入 `dev@d0502695446e4826c34c1d9d8e841d0e10cdcd09`。该版本的 `src/agent/mod.rs`、`src/client/chat.rs`、[`tests/client/chat.rs`](https://github.com/HeimaoLST/Saki/blob/d0502695446e4826c34c1d9d8e841d0e10cdcd09/tests/client/chat.rs#L589) 三个 blob 与 PR178 的原修复 `addb4e0c` 完全相同，见 [#242 包含关系核对](https://github.com/HeimaoLST/Saki/issues/242#issuecomment-6558456568)。这是静态源码／测试内容等价证据，不是一次新的线上运行或完整 GUI 验收。
 
-**升级／降级边界（静态代码推导，2026-11-01）**：本次 Chat 适配器保持旧→新升级可用，`ProviderData` JSON 形状未变；但新候选持久化的原生 `reasoning_content: null`，会在旧 `dev@fd58ec2` 的 Chat 路径用 `.as_str()` 校验时被拒绝，导致下一请求发出前失败。旧版本能解析 JSON，不等于能继续新会话；回退不能删除该 `null` 或编造推理，也不能只做普通 revert 后继续新数据。需要保留支持该原生值的适配器，或显式改用旧端的新会话。依据 [Runtime 限定报告](https://github.com/HeimaoLST/Saki/issues/140#issuecomment-6554859958)。
+Chat JSON/SSE 解码区分字段不存在、原生 `null`、空字符串与非空字符串。原生空值仍通过同一 Reasoning/ProviderData 路径持久化，下一请求原样回传；真正不存在的字段不补 `null` 或推理文本。SSE 的 null 片段不会覆盖此前已聚合的字符串。只有实际文本产生可见推理事件，空续接标记仍保留在 journal；既有 journal 不需要迁移，历史上已经丢失的原生数据无法回填。assistant 文本和随后的完整工具调用按同一轮重组，即使原生 reasoning 字段不存在也不拆成两条 assistant 消息。工具仍只在完整响应通过终止检查后执行，不自动重试该 HTTP400。
+
+**升级／降级边界（静态代码推导，2026-11-01）**：已集成的 Chat 适配器保持旧→新升级可用，`ProviderData` JSON 形状未变；但新版持久化的原生 `reasoning_content: null`，会在旧 `dev@fd58ec2` 的 Chat 路径用 `.as_str()` 校验时被拒绝，导致下一请求发出前失败。旧版本能解析 JSON，不等于能继续新会话；回退不能删除该 `null` 或编造推理，也不能只做普通 revert 后继续新数据。需要保留支持该原生值的适配器，或显式改用旧端的新会话。依据 [Runtime 限定报告](https://github.com/HeimaoLST/Saki/issues/140#issuecomment-6554859958)。
 
 **2026-10-26 作者实测**：#177 原 GUI 样本（Runtime722de4b，Magpie `deepseek/deepseek-flash` / Chat / `127.0.0.1:3425`）首 task read 后400；保留的 journal 无 Reasoning，但原始 wire 未捕获。Runtime 独立隔离复现沿相同初次提示与命名 caller context，固定 helper SHA256 `c738c63374c0222b8e4397a15e1fb4109c8ff6bf34b89b8219cdecd7e0fa5516`：首 SSE 200中11个原生 `reasoning_content:null`，其余片段无该字段；模型此次选择两个 Bash 调用。续接丢失原生空值，并把 assistant 文本/两个工具调用拆开，随后400。本次 wire 证明 Runtime 的 null 丢失边界，与原 GUI read 任务不是同一个 task；不将旧样本未捕获的 wire 写成已知。证据位于 `/private/tmp/saki-reasoning-177/live-baseline-wire/`，限本机研究日志，不含 Authorization；不由此推定其他网关/模型兼容或原 GUI 已恢复。
 
 
-**修复候选作者实测（待 GUI 组合复验）**：在 QA323d996 组合的 Runtime 上只应用本单生产修复，保留已消费的 #160 错误凭据脱敏与 #146/#167 Bash 回收修复；helper SHA256 `79eef3082bac2a04abbaa610a6a3d679ef772991999ef99f4d96266828edf065`。一次有界 DeepSeek Flash / Chat 运行，工具选择显式限定内置 `read`：首 task 读取 probeA，release/load 同一会话后第二 task 读取 probeB并准确报告两个标记，均 completed，两个 read 各执行一次，4次 HTTP 全200。首工具响应原生 null 在续接与恢复后仍存在，无工具的最终 assistant 文本 reasoning 也保留，null 尾块未抹掉文本。relay 只缓冲 SSE 以保存线协议，无请求/响应重写；因此不把它当作 GUI 自动补充/native 或网络增量时序验收。日志在 `/private/tmp/saki-reasoning-177/live-fixed/`；原 GUI 的两条 pending 补充与完整候选消费需由 GUI 主责另验，旧失败会话不回填、不重跑。
+**修复候选历史作者实测（仅下述组合，非当前 GUI 验收）**：在 QA323d996 组合的 Runtime 上只应用本单生产修复，保留已消费的 #160 错误凭据脱敏与 #146/#167 Bash 回收修复；helper SHA256 `79eef3082bac2a04abbaa610a6a3d679ef772991999ef99f4d96266828edf065`。一次有界 DeepSeek Flash / Chat 运行，工具选择显式限定内置 `read`：首 task 读取 probeA，release/load 同一会话后第二 task 读取 probeB并准确报告两个标记，均 completed，两个 read 各执行一次，4次 HTTP 全200。首工具响应原生 null 在续接与恢复后仍存在，无工具的最终 assistant 文本 reasoning 也保留，null 尾块未抹掉文本。relay 只缓冲 SSE 以保存线协议，无请求/响应重写；因此不把它当作 GUI 自动补充/native 或网络增量时序验收。日志在 `/private/tmp/saki-reasoning-177/live-fixed/`；原 GUI 的两条 pending 补充与完整候选消费需由 GUI 主责另验，旧失败会话不回填、不重跑。
 
 ## 流式响应契约
 
@@ -120,7 +122,7 @@ compact 仍由 Conversation 处理。摘要 transcript 使用公共历史表示�
 
 ## 同连接会话模型配置（#105）
 
-更新日期：2026-10-23。分类：**实现事实，已由 PR120 集成到 dev**。模型切换使用 Runtime 的 `session.config.get/update`，与 typed RuntimeHandle 为同一准备/提交路径；请求形状、错误、revision 和持久化边界见[Runtime 配置契约](runtime-api.md#105-同连接配置候选实现事实)。没有另一个独立 select-model 状态机。
+更新日期：2026-10-23。分类：**实现事实，已由 PR120 集成到 dev**。模型切换使用 Runtime 的 `session.config.get/update`，与 typed RuntimeHandle 为同一准备/提交路径；请求形状、错误、revision 和持久化边界见[Runtime 配置契约](runtime-api.md#105-同连接配置实现事实)。没有另一个独立 select-model 状态机。
 
 实际 endpoint 模型 ID 与 catalog_id 分开：后者只用于已加载容量查找。自定义模型可提供有效完整 CompactionConfig，配置期间不刷新 catalog、不发送探测推理；上游是否实际可用仍由真实任务确认。模型/预算原子保存到 schema 1 metadata，接纳任务记录当时配置快照；只读恢复不重跑历史工具。旧记录缺少快照保持未知。
 

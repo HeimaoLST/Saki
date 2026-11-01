@@ -200,6 +200,7 @@ type appModel struct {
 	contactHistoryDetailGen  int
 	contactHistoryInFlight   int
 	resultInFlight           int
+	submissionInFlight       int
 
 	appearanceMode   string
 	appearanceChoice string
