@@ -17,7 +17,7 @@
 
 ### UI 硬约束首切片（候选实现，2026-10-31）
 
-代码来源为 `6956d30` 之上的候选实现事实；最终以父审固定的 source SHA 与合入记录为准，不依赖瞬时 Git 状态。规范与 HTML 逐字取自 PM `5e9a5546f6368c641819daebc1a77cd5feeb77f5`：`desktop-workbench.md` blob `a69e29bb9239342def1e3e2bcff3378159223f3d`、`desktop-workbench.html` blob `4bdb9c3432f30c9f5c517972dc279e9d519436f3`；未 merge PM 分支，也未改两份权威文字/HTML。
+代码来源为 `6956d30` 之上的候选实现事实；最终以父审固定的 source SHA 与合入记录为准，不依赖瞬时 Git 状态。规范与 HTML 逐字取自 PM `5e9a5546f6368c641819daebc1a77cd5feeb77f5`：`desktop-workbench.md` blob `a69e29bb9239342def1e3e2bcff3378159223f3d`、`desktop-workbench.html` blob `4bdb9c3432f30c9f5c517972dc279e9d519436f3`。这是原 GUI 切片的采纳方式：当时未 merge PM 分支，也未改两份权威文字/HTML。
 
 - **字号**：应用常量为 20/16/14/12 四档；页面标题 20，主要正文与局部分组 16，控件/列表 14，辅助 12。Markdown H1 为 20，H2–H6 为 16，用字重、留白和语义层级区分；代码/标签为 14/12。normalizer 以完整 override copy 起点，只覆盖字号与派生倍率，保留 CodeBlockBackground/Border/Radius/Padding、CodeFont、链接等原 override 语义；用户原始 Markdown 不改写。产品 tooltip 走官方 `TooltipBase` 共同入口，采用 12 辅助字号；平台 OS 菜单不受应用控制。
 - **选择器**：三个下拉（Contact scope、Issue filter、Edit contact）使用固定 MyGo `SelectBase`，显示当前值，不绘制 chevron；保留 32 高、Hovered/Pressed/Focused 反馈、当前值和长列表 `Scroll`。键盘/AX 在源码与 Tester 契约中保留，End/Enter 与实际滚动由 Tester 回归验证；真实 native 下拉键盘/AX 仍未验证。composer model 按钮的自绘 chevron 也移除；没有修改 framework patch 或另造 controller。
