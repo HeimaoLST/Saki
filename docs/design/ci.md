@@ -85,7 +85,7 @@ SAKI_TEST_RUNTIME_BIN="$GITHUB_WORKSPACE/target/debug/Saki" CGO_ENABLED=0 \
 | 实现作者（runtime／tui／gui） | 维护受影响测试与命令，提供功能与有价值的回归；PR 前在本地执行同一组命令；CI 失败先定位并修复，不以 skip、`continue-on-error` 或放宽 lint 掩盖真实失败。 |
 | QA | 维护现有 workflow、CI 支撑脚本与自动检查运行可靠性；核对 PR 的实际 run URL、SHA 与退出码；区分“本次改动失败”与“基线失败”，把真实失败反馈给对应 owner。不接产品人工验收或独立 `APPROVE` 队列，不代替作者修产品代码。 |
 | PM | 维护需求边界、验收标准、协作规范与文档结构；确认 CI 约定与仓库流程一致；真实试用与用户体验判断由 PM／用户负责。 |
-| 主责／合并者 | 主 agent 代码评审与适用验收通过、required CI 真实通过、无未解决阻塞且属非 breaking change 后，按 AGENTS.md §0.2 预授权合并；CI 绿不替代评审或用户试用，也不授权 breaking migration。 |
+| 主责／合并者 | 主 agent 代码评审与适用验收通过、required CI 真实通过、无未解决阻塞后，按 AGENTS.md §0.2 的逐 PR 明确授权执行；PM 统筹集成顺序与收尾。CI 绿不替代评审或用户试用，也不授权 breaking migration。 |
 
 真实失败的处理顺序：
 
