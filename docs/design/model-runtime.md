@@ -1,6 +1,6 @@
 # Model runtime：协议、客户端与模型目录
 
-更新日期：2026-10-26。状态：已实施职责拆分、Responses 流式响应，以及 M1 的 Chat Completions 调用边界；主 Agent 默认流式，compact 与实验保留完整响应接口。参考依据见 [Pi 分层研究](../research/systems/model-runtime.md)。
+更新日期：2026-11-01。状态：已实施职责拆分、Responses 流式响应，以及 M1 的 Chat Completions 调用边界；主 Agent 默认流式，compact 与实验保留完整响应接口。参考依据见 [Pi 分层研究](../research/systems/model-runtime.md)。
 
 ## 模块与依赖
 
@@ -54,6 +54,8 @@
 2026-10-22 Magpie 网关真实验收发现旧适配器丢弃 `reasoning_content`，read 已完成但第二轮返回 HTTP 400。PR122 已集成的修复复用已有带 API 身份的续接数据，不新增执行循环、存储 schema 或隐式模型降级。依据 [DeepSeek 官方 thinking 契约](https://api-docs.deepseek.com/guides/thinking_mode/)，携带 tools 时须保留此前各轮 assistant 的 reasoning_content。JSON/SSE、文本与工具同条消息、空推理、无工具的历史轮及序列化恢复有确定性覆盖；实际网关闭环证据随 PR 记录，不将其他网关或模型推定为通过。
 
 **#177 实现事实（本次候选，尚未集成）**：Chat JSON/SSE 解码区分字段不存在、原生 `null`、空字符串与非空字符串。原生空值仍通过同一 Reasoning/ProviderData 路径持久化，下一请求原样回传；真正不存在的字段不补 `null` 或推理文本。SSE 的 null 片段不会覆盖此前已聚合的字符串。只有实际文本产生可见推理事件，空续接标记仍保留在 journal；既有 journal 不需要迁移，历史上已经丢失的原生数据无法回填。assistant 文本和随后的完整工具调用按同一轮重组，即使原生 reasoning 字段不存在也不拆成两条 assistant 消息。工具仍只在完整响应通过终止检查后执行，不自动重试该 HTTP400。
+
+**升级／降级边界（静态代码推导，2026-11-01）**：本次 Chat 适配器保持旧→新升级可用，`ProviderData` JSON 形状未变；但新候选持久化的原生 `reasoning_content: null`，会在旧 `dev@fd58ec2` 的 Chat 路径用 `.as_str()` 校验时被拒绝，导致下一请求发出前失败。旧版本能解析 JSON，不等于能继续新会话；回退不能删除该 `null` 或编造推理，也不能只做普通 revert 后继续新数据。需要保留支持该原生值的适配器，或显式改用旧端的新会话。依据 [Runtime 限定报告](https://github.com/HeimaoLST/Saki/issues/140#issuecomment-6554859958)。
 
 **2026-10-26 作者实测**：#177 原 GUI 样本（Runtime722de4b，Magpie `deepseek/deepseek-flash` / Chat / `127.0.0.1:3425`）首 task read 后400；保留的 journal 无 Reasoning，但原始 wire 未捕获。Runtime 独立隔离复现沿相同初次提示与命名 caller context，固定 helper SHA256 `c738c63374c0222b8e4397a15e1fb4109c8ff6bf34b89b8219cdecd7e0fa5516`：首 SSE 200中11个原生 `reasoning_content:null`，其余片段无该字段；模型此次选择两个 Bash 调用。续接丢失原生空值，并把 assistant 文本/两个工具调用拆开，随后400。本次 wire 证明 Runtime 的 null 丢失边界，与原 GUI read 任务不是同一个 task；不将旧样本未捕获的 wire 写成已知。证据位于 `/private/tmp/saki-reasoning-177/live-baseline-wire/`，限本机研究日志，不含 Authorization；不由此推定其他网关/模型兼容或原 GUI 已恢复。
 
