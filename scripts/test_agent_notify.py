@@ -149,6 +149,33 @@ class SendTests(unittest.TestCase):
         self.assertEqual(sum(call[:2] == ("tmux", "paste-buffer") for call in calls), 1)
         self.assertEqual(sum(call[:2] == ("tmux", "send-keys") for call in calls), 1)
 
+    def test_soft_wrapped_url_is_visible_without_duplicate_paste(self) -> None:
+        target = pane()
+        message = notify.fixed_message(target.agent_id, URL)
+        # A real terminal can wrap in the middle of the issue path. The fixed
+        # notification is one line, but capture-pane can still insert a soft wrap.
+        wrapped = message.replace("/issues/", "/issu\nes/")
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run(argv: list[str], input_text: str | None = None) -> str:
+            calls.append(tuple(argv))
+            return ""
+
+        with mock.patch.object(notify, "_comments", return_value=self.comments):
+            with mock.patch.object(notify, "_tmux_panes", return_value=[target]):
+                with mock.patch.object(
+                    notify, "_tmux_capture", side_effect=["", wrapped]
+                ):
+                    with mock.patch.object(notify, "_run", side_effect=fake_run):
+                        notify.send(
+                            target.agent_id,
+                            target.fingerprint(""),
+                            URL,
+                            sleep_fn=lambda _: None,
+                        )
+        self.assertEqual(sum(call[:2] == ("tmux", "paste-buffer") for call in calls), 1)
+        self.assertEqual(sum(call[:2] == ("tmux", "send-keys") for call in calls), 1)
+
     def test_invisible_paste_does_not_send_enter(self) -> None:
         target = pane()
         with mock.patch.object(notify, "_comments", return_value=self.comments):

@@ -184,6 +184,11 @@ def _normalized(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _layout_compact(text: str) -> str:
+    """Comparison form for terminal layout whitespace and soft wraps."""
+    return re.sub(r"\s+", "", text)
+
+
 def _wait_for_visible(
     pane_id: str,
     message: str,
@@ -194,7 +199,7 @@ def _wait_for_visible(
     sleep_fn = sleep_fn or time.sleep
     for index in range(attempts):
         capture = _tmux_capture(pane_id)
-        if _normalized(message) in _normalized(capture):
+        if _layout_compact(message) in _layout_compact(capture):
             return capture
         if index + 1 < attempts:
             sleep_fn(0.05)
@@ -232,7 +237,7 @@ def send(
     if pane.fingerprint(before) != fingerprint:
         raise NotifyError("pane state fingerprint changed; rerun inspect")
     message = fixed_message(agent_id, comment_url)
-    if _normalized(message) in _normalized(before):
+    if _layout_compact(message) in _layout_compact(before):
         raise NotifyError("notification is already present in the target pane")
 
     buffer_name = f"saki-notify-{os.getpid()}-{uuid.uuid4().hex}"
