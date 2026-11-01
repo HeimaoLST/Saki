@@ -141,6 +141,7 @@ type issueExecution struct {
 	Prompt               string
 	Status               string
 	Detail               string
+	AttentionSeenStatus  string // last exception status displayed; empty means unseen
 	RequirementsRevision int
 	Context              []taskContextItem
 	ContextExpanded      bool
@@ -547,8 +548,9 @@ func issuesForStoredContact(all []storedIssue, contactID string) []*productIssue
 			issue.Executions = append(issue.Executions, &issueExecution{
 				ID: execution.ID, SessionID: execution.SessionID, TaskID: execution.TaskID,
 				MessageID: execution.MessageID, Prompt: execution.Prompt,
-				Status: status, Detail: detail, RequirementsRevision: execution.RequirementsRevision,
-				Context: cloneTaskContextItems(execution.Context), SupplementBatchID: execution.SupplementBatchID,
+				Status: status, Detail: detail, AttentionSeenStatus: execution.AttentionSeenStatus,
+				RequirementsRevision: execution.RequirementsRevision,
+				Context:              cloneTaskContextItems(execution.Context), SupplementBatchID: execution.SupplementBatchID,
 				ToolOperationID: execution.ToolOperationID, ToolScopeRef: execution.ToolScopeRef,
 				ToolScopeInput: execution.ToolScopeInput, WaitRequested: execution.WaitRequested,
 			})
@@ -638,7 +640,8 @@ func (a *appModel) selectIssue(issueID string) {
 func (a *appModel) showIssueWork(issueID, taskID string) {
 	ct := a.selectedContact()
 	issue := ct.issueByID(issueID)
-	if issue == nil || workFor(ct, taskID) == nil || !issueHasTask(issue, taskID) {
+	work := workFor(ct, taskID)
+	if issue == nil || work == nil || !issueHasTask(issue, taskID) {
 		return
 	}
 	nav := ct.issueNavigation()
@@ -647,6 +650,43 @@ func (a *appModel) showIssueWork(issueID, taskID string) {
 	ct.SelectedIssueID = issueID
 	ct.SelectedWorkTaskID = taskID
 	a.setWorkspaceOpen(true)
+	// View execution confirms only when the work card shows this execution's
+	// same nonempty reason; a stale work reason is not enough.
+	execution := executionForTask(issue, taskID)
+	executionDetail := ""
+	if execution != nil {
+		executionDetail = strings.TrimSpace(execution.Detail)
+	}
+	if execution != nil && executionDetail != "" && issueExecutionNeedsAttention(execution.Status) &&
+		issueExecutionStatusFromWork(work.State) == execution.Status &&
+		strings.TrimSpace(work.Detail) == executionDetail {
+		a.confirmIssueExecutionSeen(ct, issue, execution)
+	}
+}
+
+// confirmIssueExecutionSeen records that the current owner displayed this
+// exception. It persists only the seen status; the execution terminal state,
+// issue lifecycle, requirements, evidence, unread and dispatch state remain
+// unchanged. A failed save leaves the exception unseen and reports the error.
+func (a *appModel) confirmIssueExecutionSeen(ct *contact, issue *productIssue, execution *issueExecution) bool {
+	if ct == nil || issue == nil || execution == nil || a.selectedContact() != ct || issue.ContactID != ct.ID {
+		return false
+	}
+	owner, found := ct.executionByID(execution.ID)
+	if owner != issue || found == nil || !issueExecutionNeedsAttention(found.Status) {
+		return false
+	}
+	if found.AttentionSeenStatus == found.Status {
+		return true
+	}
+	previous := found.AttentionSeenStatus
+	found.AttentionSeenStatus = found.Status
+	if err := a.persist(); err != nil {
+		found.AttentionSeenStatus = previous
+		a.issueActionError = "Could not save that this execution was viewed: " + err.Error()
+		return false
+	}
+	return true
 }
 
 func (a *appModel) updatePendingIssueExecution(ct *contact, status, message string) {
@@ -846,35 +886,69 @@ type issueWorkNotice struct {
 }
 
 func (a *appModel) issueWorkNotice(ct *contact) issueWorkNotice {
-	attention := issueWorkNotice{}
+	fallback := issueWorkNotice{}
 	for _, issue := range ct.Issues {
-		if issue.Work.ActiveTaskID != "" || issue.Work.SendState == sendSubmitting ||
-			issue.Work.SendState == sendAccepted || issue.Work.SendState == sendUnknown {
+		active := issue.Work.ActiveTaskID != "" || issue.Work.SendState == sendSubmitting ||
+			issue.Work.SendState == sendAccepted
+		if active || issue.Work.SendState == sendUnknown {
 			text := "Issue work active: " + issue.Goal
 			attention := issue.Work.SendError != "" || issue.Work.SendState == sendUnknown
+			if attention && issue.Work.SendState == sendUnknown {
+				execution := (*issueExecution)(nil)
+				if id := issue.Work.pendingExecutionID; id != "" {
+					for _, candidate := range issue.Executions {
+						if candidate != nil && candidate.ID == id {
+							execution = candidate
+							break
+						}
+					}
+				}
+				if execution == nil {
+					taskID := issue.Work.ActiveTaskID
+					if taskID == "" {
+						taskID = issue.Work.LastTaskID
+					}
+					execution = executionForTask(issue, taskID)
+				}
+				if execution != nil && execution.AttentionSeenStatus != "" &&
+					(execution.AttentionSeenStatus == execution.Status || !issueExecutionNeedsAttention(execution.Status)) {
+					attention = false
+				}
+			}
 			if attention {
 				text = "Issue work needs attention: " + issue.Goal
+				if issue.Work.SendError != "" {
+					text += " — " + truncate(issue.Work.SendError, 180)
+				}
+				return issueWorkNotice{Text: text, Attention: true, IssueID: issue.ID}
 			}
-			if issue.Work.SendError != "" {
-				text += " — " + truncate(issue.Work.SendError, 180)
+			if issue.Work.SendState != sendUnknown && fallback.Text == "" {
+				fallback = issueWorkNotice{Text: text, IssueID: issue.ID}
 			}
-			return issueWorkNotice{Text: text, Attention: attention, IssueID: issue.ID}
 		}
 		for index := len(issue.Executions) - 1; index >= 0; index-- {
 			execution := issue.Executions[index]
-			switch execution.Status {
-			case issueExecutionFailed, issueExecutionUnknown, issueExecutionInterrupted:
-				text := "Issue work needs attention: " + issue.Goal
-				if execution.Detail != "" {
-					text += " — " + truncate(execution.Detail, 180)
-				}
-				if attention.Text == "" {
-					attention = issueWorkNotice{Text: text, Attention: true, IssueID: issue.ID}
-				}
+			if execution == nil || !issueExecutionNeedsAttention(execution.Status) ||
+				execution.AttentionSeenStatus == execution.Status {
+				continue
 			}
+			text := "Issue work needs attention: " + issue.Goal
+			if execution.Detail != "" {
+				text += " — " + truncate(execution.Detail, 180)
+			}
+			return issueWorkNotice{Text: text, Attention: true, IssueID: issue.ID}
 		}
 	}
-	return attention
+	return fallback
+}
+
+func issueExecutionNeedsAttention(status string) bool {
+	switch status {
+	case issueExecutionFailed, issueExecutionUnknown, issueExecutionInterrupted:
+		return true
+	default:
+		return false
+	}
 }
 
 func (ct *contact) issueForTask(taskID string) (*productIssue, *issueExecution) {

@@ -313,10 +313,12 @@ func (p *uiPump) do(fn func()) {
 }
 
 func (p *uiPump) wait(cond func() bool) {
+	p.t.Helper()
 	p.waitTimeout(cond, 15*time.Second)
 }
 
 func (p *uiPump) waitTimeout(cond func() bool, timeout time.Duration) {
+	p.t.Helper()
 	waiter := &uiWaiter{cond: cond, ch: make(chan struct{})}
 	p.mu.Lock()
 	p.waiters = append(p.waiters, waiter)
@@ -802,6 +804,17 @@ func TestGUIAppStopSurvivesHistoryReload(t *testing.T) {
 }
 
 func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
+	var lastRunState, lastRecoveryState atomic.Value
+	lastRunState.Store("")
+	lastRecoveryState.Store("")
+	// Shutdown failure may leave the pump running while cleanup reports snapshots.
+	t.Cleanup(func() {
+		run, _ := lastRunState.Load().(string)
+		recovery, _ := lastRecoveryState.Load().(string)
+		t.Logf("diag_last_run=%s", run)
+		t.Logf("diag_last_recovery=%s", recovery)
+	})
+	t.Log("stage=startup")
 	binary := requireRuntimeBinary(t)
 	provider := &providerFixture{ToolFirst: false}
 	h := startGUIHarness(t, binary, provider, "saki-issue-141")
@@ -843,16 +856,26 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 		h.pump.wait(func() bool {
 			ct := h.app.selectedContact()
 			if len(ct.Issues) != 1 {
+				lastRunState.Store(fmt.Sprintf("issues=%d", len(ct.Issues)))
 				return false
 			}
 			issue := ct.Issues[0]
 			exec := issue.Executions
+			lastStatus := "<none>"
+			if len(exec) > 0 {
+				lastStatus = exec[len(exec)-1].Status
+			}
+			canStart := h.app.canStartIssue(ct, issue)
+			lastRunState.Store(fmt.Sprintf("issue_status=%q work_loaded=%v work_active=%q work_send=%v contact_active=%q contact_send=%v executions=%d last_status=%q can_start=%q",
+				issue.Status, issue.Work.Loaded, issue.Work.ActiveTaskID, issue.Work.SendState,
+				ct.ActiveTaskID, ct.SendState, len(exec), lastStatus, canStart))
 			return issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
 				issue.Work.Loaded && ct.ActiveTaskID == "" && ct.SendState == sendIdle &&
 				len(exec) > 0 && exec[len(exec)-1].Status == issueExecutionCompleted &&
-				h.app.canStartIssue(ct, issue) == ""
+				canStart == ""
 		})
 	}
+	t.Log("stage=first run")
 	run()
 	var prompt string
 	h.pump.do(func() {
@@ -860,6 +883,7 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 		prompt = issuePrompt(ct.Issues[0])
 		ct.Draft = prompt
 	})
+	t.Log("stage=second run")
 	run()
 	var issue *productIssue
 	var draftAfterRun, workSession, conversationSession string
@@ -901,17 +925,28 @@ func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
 	if provider.count() != 2 {
 		t.Fatalf("issue runs made %d model requests, want 2", provider.count())
 	}
+	t.Log("stage=shutdown")
 	h.shutdown(t)
 	beforeRestart := provider.count()
+	t.Log("stage=restart")
 	h2 := restartGUIHarness(t, binary)
 	defer func() {
 		if !h2.closed {
 			h2.shutdown(t)
 		}
 	}()
+	t.Log("stage=recovery")
 	h2.pump.wait(func() bool {
 		ct := h2.app.contacts[0]
-		return len(ct.Issues) == 1 && ct.Issues[0].Work.Loaded && len(ct.Issues[0].Executions) == 2
+		issueCount := len(ct.Issues)
+		loaded := false
+		executionCount := 0
+		if issueCount > 0 {
+			loaded = ct.Issues[0].Work.Loaded
+			executionCount = len(ct.Issues[0].Executions)
+		}
+		lastRecoveryState.Store(fmt.Sprintf("issues=%d work_loaded=%v executions=%d", issueCount, loaded, executionCount))
+		return issueCount == 1 && loaded && executionCount == 2
 	})
 	var restoredIssue *productIssue
 	var restoredDraft string
