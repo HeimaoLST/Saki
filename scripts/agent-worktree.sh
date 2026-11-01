@@ -34,6 +34,11 @@ remove_worktree() {
     echo "不能在自身 worktree 内移除: $dir" >&2
     return 1
   fi
+  actual_branch="$(git -C "$dir" symbolic-ref --quiet HEAD || true)"
+  if [ "$actual_branch" != "refs/heads/$branch" ]; then
+    echo "worktree 分支身份不符或已 detached：${dir}（期望 refs/heads/${branch}）" >&2
+    return 1
+  fi
   git worktree remove "$dir"
   echo "已移除 worktree: ${dir}（分支未动；由 PM 核验后处理）"
 }

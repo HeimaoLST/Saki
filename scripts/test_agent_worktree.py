@@ -62,6 +62,34 @@ class WorktreeSafetyTests(unittest.TestCase):
         self.assertFalse(path.exists())
         self.assertEqual(run(["git", "rev-parse", "--verify", "refs/heads/agent/test/236-safety"], self.repo).returncode, 0)
 
+    def test_slug_collision_remove_is_rejected(self) -> None:
+        path = self.add("agent/test/236-a/b")
+        result = run([str(SCRIPT), "remove", "agent/test/236-a-b"], self.repo, self.env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("分支身份不符", result.stderr)
+        self.assertTrue(path.exists())
+        self.assertEqual(
+            run(["git", "rev-parse", "--verify", "refs/heads/agent/test/236-a/b"], self.repo).returncode,
+            0,
+        )
+
+    def test_dirty_worktree_remove_fails_and_preserves_tree(self) -> None:
+        path = self.add()
+        (path / "dirty.txt").write_text("do not remove\n")
+        result = run([str(SCRIPT), "remove", "agent/test/236-safety"], self.repo, self.env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(path.exists())
+        self.assertTrue((path / "dirty.txt").exists())
+
+    def test_detached_worktree_remove_is_rejected(self) -> None:
+        path = self.add()
+        detached = run(["git", "-C", str(path), "checkout", "--detach", "-q"], self.repo)
+        self.assertEqual(detached.returncode, 0, detached.stderr)
+        result = run([str(SCRIPT), "remove", "agent/test/236-safety"], self.repo, self.env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("detached", result.stderr)
+        self.assertTrue(path.exists())
+
     def test_finish_and_prune_fail_without_touching_worktree(self) -> None:
         path = self.add()
         for command in ("finish", "prune"):
