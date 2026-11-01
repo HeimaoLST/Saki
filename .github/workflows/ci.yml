@@ -19,7 +19,7 @@ env:
 jobs:
   rust:
     name: rust
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -115,7 +115,7 @@ jobs:
 
   gui:
     name: gui
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -183,7 +183,7 @@ jobs:
 
   python:
     name: python
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -193,28 +193,41 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Collaboration-check regression tests
+      - name: Python unittest discovery (scripts/test_*.py)
         shell: bash
         run: |
           set -o pipefail
-          python3 scripts/test_collaboration_check.py 2>&1 | tee "$RUNNER_TEMP/python-collaboration-tests.log"
-          grep -Eq '^Ran [1-9][0-9]* tests? in ' "$RUNNER_TEMP/python-collaboration-tests.log"
+          python3 - <<'PY' 2>&1 | tee "$RUNNER_TEMP/python-unittest-gate.log"
+          import sys
+          import unittest
+
+          loader = unittest.TestLoader()
+          suite = loader.discover("scripts", pattern="test_*.py")
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          print(f"DISCOVERED {result.testsRun} tests")
+          if result.testsRun == 0:
+              print("python unittest discovery found zero tests", file=sys.stderr)
+              sys.exit(1)
+          if not result.wasSuccessful():
+              print("python unittest suite failed", file=sys.stderr)
+              sys.exit(1)
+          PY
 
       - name: Job summary
         if: always()
         run: |
           {
-            echo "### Python gate (collaboration checker)"
+            echo "### Python gate (stdlib unittest discovery)"
             echo ""
-            echo "- \`python3 scripts/test_collaboration_check.py\` (stdlib unittest)"
-            echo "- Non-zero test count is asserted; an empty suite cannot pass silently."
+            echo "- \`scripts/test_*.py\` discovered with stdlib \`unittest.TestLoader.discover\`"
+            echo "- Non-zero \`result.testsRun\` is required; discovery/import errors and test failures are non-zero."
           } >> "$GITHUB_STEP_SUMMARY"
 
   ci-required:
     name: ci-required
     if: always()
     needs: [rust, gui, python]
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 5
     steps:
       - name: Require rust, gui and python success
