@@ -1,6 +1,6 @@
 # Runtime 调用契约与实施规划
 
-更新日期：2026-10-23。状态：**调用契约及服务化工作包已有实现；当前联合验收来源与范围见文末，集成状态以 #103 和对应 PR 为准**。
+更新日期：2026-11-01（Python stdio 示例清理边界）。状态：**调用契约及服务化工作包已有实现；当前联合验收来源与范围见文末，集成状态以 #103 和对应 PR 为准**。
 
 需求依据：[Agent runtime 需求](../requirements/agent-runtime.md)、[#43](https://github.com/HeimaoLST/Saki/issues/43) 及 [GUI 首轮交接](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6235030388)。本文定义跨宿主调用契约与验收边界；实时优先级、任务状态和负责人以 GitHub 为准。
 
@@ -133,7 +133,11 @@ python3 examples/runtime_stdio.py --prompt 'Use read to inspect probe.txt and re
 python3 examples/runtime_stdio.py --session SAVED_ID --prompt 'Continue our previous task.'
 ```
 
-示例记录并展示所有任务事件；正式 GUI 持续路由所有 response/event，并独立处理 stderr 和子进程退出。`--self-test` 使用受控本地模型服务和真实 read 工具，启动两个独立 Rust 进程，验证恢复／历史零模型调用和新任务继续前文；它不替代真实 provider smoke。
+示例记录并展示所有任务事件；正式 GUI 持续路由所有 response/event，并独立处理 stderr 和子进程退出。`--self-test` 使用受控本地模型服务和真实 read 工具，在独立 Rust 进程间验证恢复／历史零模型调用、新任务继续前文，以及 stdout 失效后保持 stdin 打开的排空／退出，共四次本地模型请求；它不替代真实 provider smoke。
+
+实现事实（[#239 r2](https://github.com/HeimaoLST/Saki/issues/239#issuecomment-6557135111)，以同 PR 的代码与证据为准）：Python `Runtime` 正常关闭仍须收到对应 shutdown response、排空后续事件至 EOF、结束 reader 并确认 child exit 0。示例通过 `with Runtime(...)` 管理每个实例；构造器在 spawn 后失败、上下文内调用体失败或关闭失败时，统一有界回收自有子进程和 reader，保留首次异常；失败后的强制终止不算正常关闭成功。失败诊断只记录阶段、请求 ID／方法、帧／事件计数、PID／poll、stdin 与 reader 状态及清理结果，不输出 payload、环境或凭据。30 秒协议等待及 CI 的 5 分钟自测上限不变。受控脚本 child 的正常、保持输出和初始化失败回归由 `python3 -m unittest discover -s scripts -p 'test_*.py' -v` 发现；真实 Rust 进程仍由上述 `--self-test` 独立验证。
+
+待验证：原 [f5 CI 失败](https://github.com/HeimaoLST/Saki/actions/runs/41298626323)停在第二实例关闭 stdin 后等待 stdout EOF；[有界调查](https://github.com/HeimaoLST/Saki/issues/239#issuecomment-6557103773)已证实 Python 异常后缺少回收、遗留 child 可保持继承输出管道，但原 Rust 内部为何未退出仍未知。本次清理修复及新候选通过不代表该历史根因已查明或全面根治。
 
 ### 实现字段
 
