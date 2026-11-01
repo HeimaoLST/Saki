@@ -117,12 +117,12 @@ func (s *connectionSettings) validated() (connectionConfig, bool) {
 func (s *connectionSettings) view(c *ui.Context, t *ui.Theme, actions connectionSettingsActions) {
 	ui.Column(c).Gap(10).Children(func() {
 		if strings.TrimSpace(s.EffectiveSummary) == "" {
-			ui.Text(c, "Connect a model to start working with your contacts.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "Connect a model to start working with your contacts.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		}
 		if s.Error != "" {
-			ui.Text(c, s.Error).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+			ui.Text(c, s.Error).FontSize(14).LineHeight(1.5).TextColor(t.Danger)
 		}
-		ui.Text(c, "Protocol").FontSize(14).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Protocol").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 		ui.Row(c).Gap(6).Children(func() {
 			for _, choice := range []struct{ label, value string }{{"Chat completions", "openai-chat-completions"}, {"Responses", "openai-responses"}} {
 				choice := choice
@@ -136,9 +136,9 @@ func (s *connectionSettings) view(c *ui.Context, t *ui.Theme, actions connection
 			ui.Text(c, s.Errors["API"]).FontSize(14).TextColor(t.Danger)
 		}
 		s.field(c, t, "Endpoint", "API endpoint", "https://api.example.com/v1", &s.Draft.Endpoint, false)
-		ui.Text(c, "Use the API base URL. Nagi adds the protocol path.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Use the API base URL. Nagi adds the protocol path.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		s.field(c, t, "APIKey", "API key", "Paste your API key", &s.Draft.APIKey, true)
-		ui.Text(c, "Saved in a private local file, without encryption. Nagi does not add this key to contact settings or model prompts.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Saved in a private local file, without encryption. Nagi does not add this key to contact settings or model prompts.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		s.field(c, t, "Model", "Default model", "Provider model ID", &s.Draft.Model, false)
 		limitsLabel := "Capacity & execution limits"
 		if s.LimitsOpen {
@@ -146,13 +146,13 @@ func (s *connectionSettings) view(c *ui.Context, t *ui.Theme, actions connection
 		}
 		secondaryButton(c, limitsLabel).OnClick(func() { s.LimitsOpen = !s.LimitsOpen })
 		if s.LimitsOpen {
-			ui.Text(c, "Enter limits supported by this model. These values are not inferred from its name.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "Enter limits supported by this model. These values are not inferred from its name.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 			s.field(c, t, "ContextTokens", "Context tokens", "131072", &s.Draft.ContextTokens, false)
 			s.field(c, t, "OutputTokens", "Output tokens", "8192", &s.Draft.OutputTokens, false)
 			s.field(c, t, "MaxActiveTasks", "Maximum active tasks", "2", &s.Draft.Slots, false)
 		}
 		s.field(c, t, "WorkingDirectory", "Default working directory", "/absolute/path/to/project", &s.Draft.WorkingDirectory, false)
-		ui.Text(c, "Defaults apply to new work. Existing sessions keep their model, limits and working directory.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Defaults apply to new work. Existing sessions keep their model, limits and working directory.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		ui.Row(c).Gap(8).Children(func() {
 			ui.PrimaryButton(c, "Save configuration").Label("Save configuration").FontSize(typeAction).MinHeight(32).Disabled(s.Busy).OnClick(func() {
 				if config, ok := s.validated(); ok && actions.Save != nil {
@@ -165,23 +165,23 @@ func (s *connectionSettings) view(c *ui.Context, t *ui.Theme, actions connection
 			}
 		})
 		if s.ReloadBlocked != "" {
-			ui.Text(c, s.ReloadBlocked).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+			ui.Text(c, s.ReloadBlocked).FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 		}
-		ui.Text(c, "Saving does not interrupt work. When all work has finished, choose Apply saved to use the saved settings.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Saving does not interrupt work. When all work has finished, choose Apply saved to use the saved settings.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		secondaryButton(c, "Test connection and model").Disabled(s.Busy).OnClick(func() {
 			if config, ok := s.validated(); ok && actions.Test != nil {
 				actions.Test(config)
 			}
 		})
-		ui.Text(c, "Test runs a short model check using the values above. It may incur provider charges. Saving and starting the connection do not test model access.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Test runs a short model check using the values above. It may incur provider charges. Saving and starting the connection do not test model access.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		if s.Status != "" {
-			ui.Text(c, s.Status).FontSize(14).LineHeight(1.4).TextColor(t.Text)
+			ui.Text(c, s.Status).FontSize(14).LineHeight(1.5).TextColor(t.Text)
 		}
 	})
 }
 
 func (s *connectionSettings) field(c *ui.Context, t *ui.Theme, key, label, placeholder string, value *string, secret bool) {
-	ui.Text(c, label).FontSize(14).FontWeight(500).TextColor(t.Text)
+	ui.Text(c, label).FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 	input := ui.TextInput(c, value).Label(label).FontSize(14).Placeholder(placeholder).Disabled(s.Busy)
 	if secret {
 		input.Password()
@@ -191,6 +191,6 @@ func (s *connectionSettings) field(c *ui.Context, t *ui.Theme, key, label, place
 		s.focusField = ""
 	}
 	if message := s.Errors[key]; message != "" {
-		ui.Text(c, message).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+		ui.Text(c, message).FontSize(14).LineHeight(1.5).TextColor(t.Danger)
 	}
 }

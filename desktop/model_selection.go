@@ -327,7 +327,7 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 	compaction := effective.Compaction
 	ui.Column(c).Gap(10).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Session model").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
+			ui.Text(c, "Session model").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 			ui.Spacer(c)
 			secondaryButton(c, "Cancel").Disabled(s.Busy).OnClick(func() {
 				s.ResetDraft()
@@ -336,7 +336,7 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 				}
 			})
 		})
-		ui.Text(c, "Target: "+s.targetLabel()).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Target: "+s.targetLabel()).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		ui.Text(c, "Session: "+valueOr(s.Target.Config.SessionID, "not created")).FontSize(14).TextColor(t.TextMuted)
 		if id := connectionIdentity(effective.ConnectionID); id != "" {
 			ui.Text(c, "Connection: "+id).FontSize(14).TextColor(t.TextMuted)
@@ -347,7 +347,7 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 			modelLabel = "Last read model: "
 			limitsLabel = "Last read limits: "
 		}
-		ui.Text(c, modelLabel+valueOr(effective.Model, "unknown")).FontSize(14).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, modelLabel+valueOr(effective.Model, "unknown")).FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 		source := capacitySourceLabel(s.Effective)
 		if catalogID := s.effectiveCatalogID(); catalogID != "" {
 			source += " (" + catalogID + ")"
@@ -356,18 +356,18 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 			limitsLabel, compaction.ContextTokens, compaction.OutputTokens, source, s.Target.Config.ConfigRevision)).
 			FontSize(14).TextColor(t.TextMuted)
 		if s.Unconfirmed {
-			ui.Text(c, "Runtime has not confirmed the current configuration; these are the last read values. Refresh is available.").FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+			ui.Text(c, "Runtime has not confirmed the current configuration; these are the last read values. Refresh is available.").FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 		}
 		if s.Error != "" {
-			ui.Text(c, s.Error).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+			ui.Text(c, s.Error).FontSize(14).LineHeight(1.5).TextColor(t.Danger)
 		}
-		ui.Text(c, "Provider model ID").FontSize(14).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Provider model ID").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 		input := ui.TextInput(c, &s.Draft.Model).Label("Provider model ID").FontSize(14).Placeholder("Provider model ID").Disabled(s.Busy)
 		if s.focusField == "Model" {
 			input.Focus()
 			s.focusField = ""
 		}
-		ui.Text(c, "Catalog entries supply capacity only; they do not prove that the provider endpoint supports a model.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Catalog entries supply capacity only; they do not prove that the provider endpoint supports a model.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		ui.Row(c).Gap(6).Children(func() {
 			catalogButton := secondaryButton(c, "Use Runtime catalog").Disabled(s.Busy || len(s.Catalog.Models) == 0).OnClick(func() { s.SelectCapacityMode(modelCapacityCatalog) })
 			if s.Draft.CapacityMode == modelCapacityCatalog {
@@ -379,13 +379,13 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 			}
 		})
 		if s.Draft.CapacityMode == modelCapacityCatalog {
-			ui.Text(c, "Capacity comes from the selected Runtime catalog entry. Endpoint/model availability is not implied.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "Capacity comes from the selected Runtime catalog entry. Endpoint/model availability is not implied.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		} else {
-			ui.Text(c, "Context tokens").FontSize(14).FontWeight(500).TextColor(t.Text)
+			ui.Text(c, "Context tokens").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 			ui.TextInput(c, &s.Draft.ContextTokens).Label("Context tokens").FontSize(14).Placeholder("131072").Disabled(s.Busy)
-			ui.Text(c, "Output tokens").FontSize(14).FontWeight(500).TextColor(t.Text)
+			ui.Text(c, "Output tokens").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 			ui.TextInput(c, &s.Draft.OutputTokens).Label("Output tokens").FontSize(14).Placeholder("8192").Disabled(s.Busy)
-			ui.Text(c, "Other compaction strategy values are preserved from the effective config.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "Other compaction strategy values are preserved from the effective config.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		}
 		ui.Row(c).Gap(8).Children(func() {
 			secondaryButton(c, "Refresh").Disabled(s.Busy).OnClick(func() {
@@ -403,14 +403,14 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 			ui.Text(c, "Waiting for Runtime…").FontSize(14).TextColor(t.TextMuted)
 		}
 		if s.Status != "" {
-			ui.Text(c, s.Status).FontSize(14).LineHeight(1.4).TextColor(t.Text)
+			ui.Text(c, s.Status).FontSize(14).LineHeight(1.5).TextColor(t.Text)
 		}
-		ui.Text(c, "Filter candidates").FontSize(14).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Filter candidates").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 		ui.TextInput(c, &s.Filter).Label("Filter").FontSize(14).Placeholder("Model or catalog ID").Disabled(s.Busy)
 		configured := s.visibleConfiguredModels()
 		if len(configured) > 0 {
-			ui.Text(c, "Configured models").FontSize(14).FontWeight(500).TextColor(t.Text)
-			ui.Text(c, "Host-provided declarations, not verified availability.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "Configured models").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
+			ui.Text(c, "Host-provided declarations, not verified availability.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 			for _, entry := range configured {
 				entry := entry
 				button := secondaryButton(c, entry.Model+": context "+strconv.Itoa(entry.Compaction.ContextTokens)).Disabled(s.Busy).OnClick(func() { s.SelectConfiguredModel(entry.Model) })
@@ -424,7 +424,7 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 		}
 		catalog := s.visibleCatalogModels()
 		if len(catalog) > 0 {
-			ui.Text(c, "Runtime catalog capacity").FontSize(14).FontWeight(500).TextColor(t.Text)
+			ui.Text(c, "Runtime catalog capacity").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 			for _, entry := range catalog {
 				entry := entry
 				label := entry.Name
@@ -440,7 +440,7 @@ func (s *modelSelection) view(c *ui.Context, t *ui.Theme, actions modelSelection
 				ui.Text(c, fmt.Sprintf("Showing %d of %d catalog entries; refine Filter to see more.", len(catalog), len(s.Catalog.Models))).FontSize(14).TextColor(t.TextMuted)
 			}
 		} else if len(s.Catalog.Models) == 0 {
-			ui.Text(c, "No Runtime catalog entries are available; enter explicit limits.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, "No Runtime catalog entries are available; enter explicit limits.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		}
 	})
 }

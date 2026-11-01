@@ -425,7 +425,7 @@ func (a *appModel) modelPanel(c *ui.Context, t *ui.Theme) {
 	if a.modelForm != nil {
 		if a.modelTargetNeedsReload(a.modelForm.Target.Config.SessionID) {
 			secondaryButton(c, "Reload session").Disabled(a.modelOpActive).OnClick(func() { a.reloadModelSession() })
-			ui.Text(c, "Configuration commit is unconfirmed. Reload is required before this session can accept another task; Refresh only re-reads config.").FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+			ui.Text(c, "Configuration commit is unconfirmed. Reload is required before this session can accept another task; Refresh only re-reads config.").FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 		}
 		a.modelForm.view(c, t, modelSelectionActions{
 			Refresh: a.refreshSessionModel,
@@ -433,12 +433,12 @@ func (a *appModel) modelPanel(c *ui.Context, t *ui.Theme) {
 			Cancel:  a.closeAux,
 		})
 	} else if a.modelPanelError != "" {
-		ui.Text(c, "Session model").FontSize(16).FontWeight(600).TextColor(t.Text)
-		ui.Text(c, a.modelPanelError).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+		ui.Text(c, "Session model").FontSize(16).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, a.modelPanelError).FontSize(14).LineHeight(1.5).TextColor(t.Danger)
 		secondaryButton(c, "Close").OnClick(func() { a.closeAux() })
 	} else {
-		ui.Text(c, "Session model").FontSize(16).FontWeight(600).TextColor(t.Text)
-		ui.Text(c, valueOr(a.modelPanelMessage, "Reading session model…")).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Session model").FontSize(16).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, valueOr(a.modelPanelMessage, "Reading session model…")).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		secondaryButton(c, "Close").OnClick(func() { a.closeAux() })
 	}
 }

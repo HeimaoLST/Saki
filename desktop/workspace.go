@@ -300,7 +300,7 @@ func (a *appModel) workspaceContent(c *ui.Context, t *ui.Theme, narrow bool) {
 		if issue != nil || nav.ShowConversationWork || a.issueFormOpen {
 			return
 		}
-		newIssue := secondaryButton(c, "New issue").OnClick(func() {
+		newIssue := secondaryButton(c, "New issue").FontWeight(500).OnClick(func() {
 			a.issueFormOpen = true
 			a.issueGoal = ""
 			a.issueRequirements = ""
@@ -312,16 +312,16 @@ func (a *appModel) workspaceContent(c *ui.Context, t *ui.Theme, narrow bool) {
 			a.focusIssueNew = false
 		}
 	}
-	ui.Column(c).FillWidth().Padding(12, 12).Gap(5).Children(func() {
+	ui.Column(c).FillWidth().Padding(12).Gap(8).Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
 			if narrow {
 				back := detailBackButton(c, t, "Close work", "Back from Work").OnClick(func() { a.closeDetail() })
 				a.focusDetailControl(c, back)
-				ui.Text(c, title).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).Grow(1).MaxLines(2)
+				ui.Text(c, title).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text).Grow(1).MaxLines(2)
 				newIssueAction()
 				return
 			}
-			ui.Text(c, title).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).Grow(1)
+			ui.Text(c, title).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text).Grow(1)
 			newIssueAction()
 			close := appTooltip(c, secondaryButton(c, "Close work"), "Back from Work").OnClick(func() { a.closeDetail() })
 			a.focusDetailControl(c, close)
@@ -378,7 +378,11 @@ func (a *appModel) issueOverviewRow(c *ui.Context, t *ui.Theme, ct *contact, iss
 	row.Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-				ui.Text(c, issue.Goal).FontSize(14).FontWeight(500).LineHeight(1.35).MaxLines(2).TextColor(t.Text).Grow(1)
+				goalWeight := 400
+				if nav.DetailID == issue.ID {
+					goalWeight = 500
+				}
+				ui.Text(c, issue.Goal).FontSize(typeAction).FontWeight(goalWeight).LineHeight(1.35).MaxLines(2).TextColor(t.Text).Grow(1)
 				ui.Text(c, "›").FontSize(16).TextColor(t.TextMuted)
 			})
 			recent := issueOverviewRecent(ct, issue)
@@ -514,7 +518,7 @@ func (a *appModel) conversationWorkView(c *ui.Context, t *ui.Theme, ct *contact)
 				if ct.ActiveTaskID == work.TaskID {
 					title = "Current work"
 				}
-				ui.Text(c, title).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
+				ui.Text(c, title).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 				a.workCard(c, t, work, ct.ActiveTaskID == work.TaskID, false)
 				a.workActivity(c, t, work)
 			}
@@ -528,22 +532,22 @@ func (a *appModel) issueFormView(c *ui.Context, t *ui.Theme) {
 	if a.issueFormEditingID != "" {
 		title = "Edit issue"
 	}
-	ui.Column(c).Padding(10).Radius(t.Radius).Background(a.workTheme.Well).Gap(6).Children(func() {
+	ui.Column(c).Padding(8).Radius(8).Background(a.workTheme.Well).Gap(4).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, title).FontSize(typeBody).FontWeight(600).TextColor(t.Text)
+			ui.Text(c, title).FontSize(typeBody).FontWeight(500).TextColor(t.Text)
 			ui.Spacer(c)
 			secondaryButton(c, "Cancel").OnClick(func() { a.cancelIssueForm() })
 		})
-		ui.Text(c, "Goal").FontSize(14).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Goal").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 		goal := ui.TextArea(c, &a.issueGoal).Label("Issue goal").FontSize(14).Placeholder("What should this issue accomplish?").Height(56)
 		if a.focusIssueGoal {
 			goal.Focus()
 			a.focusIssueGoal = false
 		}
-		ui.Text(c, "Requirements").FontSize(14).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Requirements").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 		ui.TextArea(c, &a.issueRequirements).Label("Issue requirements").FontSize(14).Placeholder("One requirement per line; edits start unverified").Height(72)
 		if a.issueFormError != "" {
-			ui.Text(c, a.issueFormError).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+			ui.Text(c, a.issueFormError).FontSize(14).LineHeight(1.5).TextColor(t.Danger)
 		}
 		ui.Row(c).Gap(8).Children(func() {
 			ui.PrimaryButton(c, "Save issue").FontSize(typeAction).MinHeight(32).OnClick(func() { a.saveIssueForm() })
@@ -612,7 +616,7 @@ func (a *appModel) issueResultContext(c *ui.Context, t *ui.Theme, issue *product
 	if work.State == workAccepted || work.State == workRunning || work.State == workStopping {
 		label = "in progress"
 	}
-	ui.Text(c, fmt.Sprintf("Run %d %s: %s", index+1, label, issue.Goal)).FontSize(14).FontWeight(500).TextColor(t.TextMuted).MaxLines(2)
+	ui.Text(c, fmt.Sprintf("Run %d %s: %s", index+1, label, issue.Goal)).FontSize(typeAction).FontWeight(500).TextColor(t.TextMuted).MaxLines(2)
 }
 
 func latestIssueExecution(issue *productIssue) *issueExecution {
@@ -630,17 +634,17 @@ func latestIssueExecution(issue *productIssue) *issueExecution {
 func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue) {
 	editable := !issue.Archived && issue.Status != issueStatusCompleted && issue.Status != issueStatusCanceled
 	expanded := a.issueDetailOpen[issue.ID]
-	ui.Column(c).Padding(10).Radius(t.Radius).Background(a.workTheme.Well).Gap(5).Children(func() {
+	ui.Column(c).Padding(8).Radius(8).Background(a.workTheme.Well).Gap(4).Children(func() {
 		ui.Column(c).Gap(2).Children(func() {
-			ui.Text(c, issue.Goal).FontSize(typePageTitle).FontWeight(600).LineHeight(1.5).TextColor(t.Text)
+			ui.Text(c, issue.Goal).FontSize(typePageTitle).FontWeight(500).LineHeight(1.5).TextColor(t.Text)
 		})
 		if a.issueActionError != "" {
-			ui.Text(c, a.issueActionError).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+			ui.Text(c, a.issueActionError).FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 		}
 		if question := issue.openQuestion(); question != nil {
 			ui.Column(c).Padding(8).Radius(8).Background(t.Surface).Gap(3).Children(func() {
-				ui.Text(c, "Waiting for your answer").FontSize(14).FontWeight(500).TextColor(t.Warning)
-				ui.Text(c, question.Text).FontSize(14).LineHeight(1.4).TextColor(t.Text)
+				ui.Text(c, "Waiting for your answer").FontSize(typeAction).FontWeight(500).TextColor(t.Warning)
+				ui.Text(c, question.Text).FontSize(14).LineHeight(1.5).TextColor(t.Text)
 				if editable {
 					secondaryButton(c, "Answer question").TextColor(t.Text).OnClick(func() { a.openIssueSupplementForm(issue.ID) })
 				}
@@ -684,7 +688,7 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 				evidence = "Previous completion evidence: " + issue.Evidence
 			}
 			ui.Text(c, "Completion evidence").FontSize(14).TextColor(t.TextMuted)
-			ui.Text(c, evidence).FontSize(14).LineHeight(1.4).TextColor(t.Text).MaxLines(4)
+			ui.Text(c, evidence).FontSize(14).LineHeight(1.5).TextColor(t.Text).MaxLines(4)
 			a.issueRequirementEvidence(c, t, ct, issue, editable)
 			a.issueSupplementSection(c, t, ct, issue, editable)
 			a.issueExecutions(c, t, ct, issue)
@@ -692,7 +696,7 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 			a.issueSupplementSection(c, t, ct, issue, editable)
 		}
 		if executionHasUnknownRecovery(issue) {
-			ui.Text(c, "Recovery is available for an execution without a trusted terminal state.").FontSize(14).LineHeight(1.35).TextColor(t.TextMuted)
+			ui.Text(c, "Recovery is available for an execution without a trusted terminal state.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		}
 	})
 }
@@ -700,33 +704,33 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue) {
 	execution := latestIssueExecution(issue)
 	if execution == nil {
-		ui.Text(c, "No execution yet").FontSize(14).FontWeight(500).TextColor(t.TextMuted)
+		ui.Text(c, "No execution yet").FontSize(typeAction).FontWeight(500).TextColor(t.TextMuted)
 		return
 	}
-	ui.Text(c, "Latest execution").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
+	ui.Text(c, "Latest execution").FontSize(typeGroupTitle).FontWeight(500).TextColor(t.TextMuted)
 	ui.Text(c, issueExecutionLabel(execution)).FontSize(14).TextColor(t.TextMuted)
 	text := strings.TrimSpace(ct.resultTextForExecution(execution))
 	work := workFor(ct, execution.TaskID)
 	switch {
 	case execution.Status == issueExecutionAccepted || execution.Status == issueExecutionRunning:
 		if text == "" {
-			ui.Text(c, "No result yet; this execution is still running.").FontSize(14).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
+			ui.Text(c, "No result yet; this execution is still running.").FontSize(14).LineHeight(1.5).TextColor(t.Text).MaxLines(3)
 		} else {
-			ui.Text(c, "Current response (execution still running): "+truncate(text, 300)).FontSize(14).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
+			ui.Text(c, "Current response (execution still running): "+truncate(text, 300)).FontSize(14).LineHeight(1.5).TextColor(t.Text).MaxLines(3)
 		}
 	case execution.Status == issueExecutionCompleted:
 		if text == "" {
 			if work != nil && len(work.Tools) > 0 {
-				ui.Text(c, "No assistant message was recorded; open the execution to inspect tool output.").FontSize(14).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
+				ui.Text(c, "No assistant message was recorded; open the execution to inspect tool output.").FontSize(14).LineHeight(1.5).TextColor(t.Text).MaxLines(3)
 			} else {
-				ui.Text(c, "No assistant message was recorded for this execution.").FontSize(14).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
+				ui.Text(c, "No assistant message was recorded for this execution.").FontSize(14).LineHeight(1.5).TextColor(t.Text).MaxLines(3)
 			}
 		} else {
-			ui.Text(c, "Result preview: "+truncate(text, 300)).FontSize(14).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
+			ui.Text(c, "Result preview: "+truncate(text, 300)).FontSize(14).LineHeight(1.5).TextColor(t.Text).MaxLines(3)
 		}
 	default:
 		if text != "" {
-			ui.Text(c, "Result preview: "+truncate(text, 300)).FontSize(14).LineHeight(1.4).TextColor(t.Text).MaxLines(3)
+			ui.Text(c, "Result preview: "+truncate(text, 300)).FontSize(14).LineHeight(1.5).TextColor(t.Text).MaxLines(3)
 		}
 		reason := strings.TrimSpace(execution.Detail)
 		if reason == "" {
@@ -745,14 +749,14 @@ func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, is
 				reason = "The terminal state is unknown; inspect the execution details before continuing."
 			}
 		}
-		ui.Text(c, truncate(reason, 180)).FontSize(14).LineHeight(1.4).TextColor(t.Warning).MaxLines(3)
+		ui.Text(c, truncate(reason, 180)).FontSize(14).LineHeight(1.5).TextColor(t.Warning).MaxLines(3)
 	}
 	read := ui.ButtonBase(c).Label("Read latest result").
 		AlignSelf(ui.Stretch).Padding(8).Radius(t.Radius).Border(0.5, t.Border).Background(a.workTheme.Well).Gap(6)
 	read.OnClick(func() { a.openIssueResultFromLatest(issue.ID, execution.ID) })
 	read.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, "Read latest result").FontSize(14).FontWeight(500).TextColor(t.Text).Grow(1)
+			ui.Text(c, "Read latest result").FontSize(typeAction).FontWeight(500).TextColor(t.Text).Grow(1)
 			ui.Text(c, "→").FontSize(16).TextColor(t.TextMuted)
 		})
 	})
@@ -761,7 +765,7 @@ func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, is
 		a.consumeIssueResultReturnFocus()
 	}
 	if work != nil {
-		ui.Row(c).Gap(10).Children(func() {
+		ui.Row(c).Gap(8).Children(func() {
 			secondaryButton(c, "View execution").OnClick(func() { a.showIssueWork(issue.ID, execution.TaskID) })
 		})
 	}
@@ -769,17 +773,17 @@ func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, is
 
 func (a *appModel) issueRequirementSummary(c *ui.Context, t *ui.Theme, issue *productIssue) {
 	if len(issue.Requirements) == 0 {
-		ui.Text(c, "Requirements").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
+		ui.Text(c, "Requirements").FontSize(typeGroupTitle).FontWeight(500).TextColor(t.TextMuted)
 		ui.Text(c, "No requirements recorded.").FontSize(14).TextColor(t.TextMuted)
 		return
 	}
-	ui.Text(c, "Requirements").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
+	ui.Text(c, "Requirements").FontSize(typeGroupTitle).FontWeight(500).TextColor(t.TextMuted)
 	for _, requirement := range issue.Requirements {
 		if requirement == nil {
 			continue
 		}
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-			ui.Text(c, requirement.Text).FontSize(14).LineHeight(1.35).TextColor(t.Text).Grow(1)
+			ui.Text(c, requirement.Text).FontSize(14).LineHeight(1.5).TextColor(t.Text).Grow(1)
 			ui.Text(c, requirementStateLabel(requirement.State)).FontSize(14).TextColor(requirementStateColor(t, requirement.State))
 		})
 	}
@@ -797,7 +801,7 @@ func (a *appModel) issueStartAction(c *ui.Context, t *ui.Theme, ct *contact, iss
 		reason = issueRunBlocked(issue)
 	}
 	if reason != "" {
-		ui.Text(c, "Next action unavailable: "+reason).FontSize(14).LineHeight(1.35).TextColor(t.TextMuted).MaxLines(2)
+		ui.Text(c, "Next action unavailable: "+reason).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted).MaxLines(2)
 		return
 	}
 	label := "Start issue"
@@ -822,13 +826,13 @@ func (a *appModel) issueRequirementEvidence(c *ui.Context, t *ui.Theme, ct *cont
 	if len(issue.Requirements) == 0 {
 		return
 	}
-	ui.Text(c, "Requirement evidence").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
+	ui.Text(c, "Requirement evidence").FontSize(typeGroupTitle).FontWeight(500).TextColor(t.TextMuted)
 	for _, requirement := range issue.Requirements {
 		if requirement == nil {
 			continue
 		}
 		ui.Column(c).Padding(6).Radius(6).Background(t.Surface).Gap(3).Children(func() {
-			ui.Text(c, requirement.Text).FontSize(14).LineHeight(1.35).TextColor(t.Text).MaxLines(2)
+			ui.Text(c, requirement.Text).FontSize(14).LineHeight(1.5).TextColor(t.Text).MaxLines(2)
 			if editable {
 				draft := a.requirementDraft(requirement)
 				ui.TextInput(c, draft).Label("Evidence for " + requirement.Text).FontSize(14).Placeholder("Evidence or user judgment")
@@ -850,7 +854,7 @@ func (a *appModel) issueRequirementEvidence(c *ui.Context, t *ui.Theme, ct *cont
 					}
 				})
 			} else if requirement.Evidence != "" {
-				ui.Text(c, "Evidence: "+requirement.Evidence).FontSize(14).LineHeight(1.3).TextColor(t.TextMuted).MaxLines(2)
+				ui.Text(c, "Evidence: "+requirement.Evidence).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted).MaxLines(2)
 			}
 		})
 	}
@@ -860,13 +864,13 @@ func (a *appModel) issueExecutions(c *ui.Context, t *ui.Theme, ct *contact, issu
 	if len(issue.Executions) == 0 {
 		return
 	}
-	ui.Text(c, "Execution history").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
+	ui.Text(c, "Execution history").FontSize(typeGroupTitle).FontWeight(500).TextColor(t.TextMuted)
 	for index, execution := range issue.Executions {
 		if execution == nil {
 			continue
 		}
 		w := workFor(ct, execution.TaskID)
-		ui.Column(c).Padding(7).Radius(t.Radius).Background(t.Surface).Gap(2).Children(func() {
+		ui.Column(c).Padding(8).Radius(8).Background(t.Surface).Gap(4).Children(func() {
 			ui.Column(c).Gap(2).Children(func() {
 				ui.Text(c, fmt.Sprintf("Execution %d: %s", index+1, issueExecutionLabel(execution))).FontSize(14).TextColor(t.TextMuted)
 				if execution.RequirementsRevision > 0 {
@@ -890,12 +894,12 @@ func (a *appModel) issueExecutions(c *ui.Context, t *ui.Theme, ct *contact, issu
 			}
 			if execution.ContextExpanded {
 				if execution.Prompt != "" {
-					ui.Text(c, "Sent snapshot: "+truncate(execution.Prompt, 240)).FontSize(14).LineHeight(1.3).TextColor(t.TextMuted).MaxLines(3)
+					ui.Text(c, "Sent snapshot: "+truncate(execution.Prompt, 240)).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted).MaxLines(3)
 				}
 				a.executionTaskContextView(c, t, ct, issue, execution)
 			}
 			if execution.Detail != "" {
-				ui.Text(c, execution.Detail).FontSize(14).LineHeight(1.35).TextColor(t.Warning)
+				ui.Text(c, execution.Detail).FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 			}
 			if execution.Status == issueExecutionUnknown || execution.Status == issueExecutionPending {
 				ui.Row(c).Gap(6).Children(func() {
@@ -1019,7 +1023,7 @@ func (a *appModel) issueList(c *ui.Context, t *ui.Theme, ct *contact) {
 	nav := ct.issueNavigation()
 	issues := ct.issuesForFilter(nav.Filter)
 	if len(issues) == 0 {
-		ui.Text(c, "No issues in "+issueFilterDescription(nav.Filter)+".").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "No issues in "+issueFilterDescription(nav.Filter)+".").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		return
 	}
 	for _, issue := range issues {
@@ -1068,26 +1072,26 @@ func requirementStateColor(t *ui.Theme, state string) ui.Color {
 
 func (a *appModel) workEmptyState(c *ui.Context, t *ui.Theme, ct *contact) {
 	if !a.demo && ct.SessionID != "" && !ct.Loaded {
-		ui.Text(c, "Session history is not loaded").FontSize(14).FontWeight(500).TextColor(t.Text)
-		ui.Text(c, "This contact already has a session, but its history has not been loaded yet; existing work is not shown as absent.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
+		ui.Text(c, "Session history is not loaded").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "This contact already has a session, but its history has not been loaded yet; existing work is not shown as absent.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		if a.runtimeStatus != runtimeStateReady {
-			ui.Text(c, "Runtime is not ready; work history cannot be read yet.").FontSize(14).LineHeight(1.45).TextColor(t.Warning)
+			ui.Text(c, "Runtime is not ready; work history cannot be read yet.").FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 		}
 		return
 	}
 	if !a.demo && a.runtimeStatus != runtimeStateReady {
-		ui.Text(c, "Work is unavailable while Runtime is not ready").FontSize(14).FontWeight(500).TextColor(t.Text)
-		ui.Text(c, "No work is shown until the Runtime connection is ready; this is not a claim that no work exists.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
+		ui.Text(c, "Work is unavailable while Runtime is not ready").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "No work is shown until the Runtime connection is ready; this is not a claim that no work exists.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		return
 	}
-	ui.Text(c, "No current work").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
-	ui.Text(c, "Work will appear here when "+ct.Name+" starts a task. Tool activity and results stay out of the conversation.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
+	ui.Text(c, "No current work").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
+	ui.Text(c, "Work will appear here when "+ct.Name+" starts a task. Tool activity and results stay out of the conversation.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 }
 
 func (a *appModel) workCard(c *ui.Context, t *ui.Theme, w *workItem, isCurrent, issueWork bool) {
-	ui.Column(c).Padding(12).Radius(12).Background(a.workTheme.WorkSurface).Border(0.5, t.Border).Gap(6).Children(func() {
+	ui.Column(c).Padding(8).Radius(8).Background(a.workTheme.WorkSurface).Border(0.5, t.Border).Gap(4).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, workStateLabel(w)).FontSize(14).FontWeight(600).TextColor(a.workStateColor(w.State))
+			ui.Text(c, workStateLabel(w)).FontSize(typeAction).FontWeight(500).TextColor(a.workStateColor(w.State))
 			ui.Spacer(c)
 			if isCurrent && (w.State == workAccepted || w.State == workRunning || w.State == workStopping) {
 				label := "Stop task"
@@ -1100,7 +1104,7 @@ func (a *appModel) workCard(c *ui.Context, t *ui.Theme, w *workItem, isCurrent, 
 						label = "Stopping issue…"
 					}
 				}
-				stop := secondaryButton(c, label).OnClick(func() {
+				stop := secondaryButton(c, label).FontWeight(500).OnClick(func() {
 					if issueWork {
 						a.cancelWorkTask(a.selectedContact(), w.TaskID)
 					} else {
@@ -1123,10 +1127,10 @@ func (a *appModel) workCard(c *ui.Context, t *ui.Theme, w *workItem, isCurrent, 
 			} else {
 				action = "Running " + action
 			}
-			ui.Text(c, action).FontSize(14).LineHeight(1.4).TextColor(a.workTheme.WorkMuted)
+			ui.Text(c, action).FontSize(14).LineHeight(1.5).TextColor(a.workTheme.WorkMuted)
 		}
 		if w.Detail != "" {
-			ui.Text(c, w.Detail).FontSize(14).LineHeight(1.45).TextColor(a.workTheme.WorkAttention)
+			ui.Text(c, w.Detail).FontSize(14).LineHeight(1.5).TextColor(a.workTheme.WorkAttention)
 		}
 	})
 }
@@ -1144,8 +1148,8 @@ func (a *appModel) unlinkedActivity(c *ui.Context, t *ui.Theme, tools []*workToo
 	if len(tools) == 0 {
 		return
 	}
-	ui.Text(c, "Earlier activity").FontSize(14).FontWeight(500).TextColor(t.TextMuted)
-	ui.Text(c, "No task ID was recorded; these tool results are shown as readable history, without a claimed task.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Earlier activity").FontSize(typeAction).FontWeight(500).TextColor(t.TextMuted)
+	ui.Text(c, "No task ID was recorded; these tool results are shown as readable history, without a claimed task.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	a.toolCalls(c, t, tools)
 }
 
@@ -1154,7 +1158,7 @@ func (a *appModel) toolCalls(c *ui.Context, t *ui.Theme, tools []*workTool) {
 		call := call
 		ui.Column(c).Padding(8).Radius(8).Background(a.workTheme.Well).Gap(3).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-				ui.Text(c, toolTitleFor(call.Name, call.Args)).FontSize(14).LineHeight(1.4).TextColor(t.Text)
+				ui.Text(c, toolTitleFor(call.Name, call.Args)).FontSize(14).LineHeight(1.5).TextColor(t.Text)
 				ui.Spacer(c)
 				state := "Running"
 				if call.Finished {
@@ -1168,7 +1172,7 @@ func (a *appModel) toolCalls(c *ui.Context, t *ui.Theme, tools []*workTool) {
 					// Keep long output (including unbroken JSON/paths) in its
 					// own full-width line so it cannot push the actions out of
 					// the card.
-					ui.Text(c, "Preview: "+summary).FontSize(14).LineHeight(1.4).MaxLines(4).TextColor(t.TextMuted)
+					ui.Text(c, "Preview: "+summary).FontSize(14).LineHeight(1.5).MaxLines(4).TextColor(t.TextMuted)
 				}
 				label := "Details"
 				if call.Expanded {
@@ -1188,7 +1192,7 @@ func (a *appModel) toolCalls(c *ui.Context, t *ui.Theme, tools []*workTool) {
 				})
 				if call.Expanded {
 					markdownReader(c, call.Output, markdownReaderOptions{PlainText: true, CopyLabel: "Copy received output"}).
-						FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+						FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 				}
 			} else if call.Started && !call.Finished {
 				ui.Text(c, "Tool is running.").FontSize(14).TextColor(t.TextMuted)

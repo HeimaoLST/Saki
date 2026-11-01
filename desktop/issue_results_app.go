@@ -289,24 +289,24 @@ func (a *appModel) issueResultPanelView(c *ui.Context, t *ui.Theme) {
 			ui.Text(c, page.Panel.RunLabel).FontSize(14).TextColor(t.TextMuted)
 		}
 		if page.Panel.RunStatus != "" {
-			ui.Text(c, page.Panel.RunStatus).FontSize(14).FontWeight(500).TextColor(t.TextMuted)
+			ui.Text(c, page.Panel.RunStatus).FontSize(typeAction).FontWeight(500).TextColor(t.TextMuted)
 		}
 		if page.Loading {
 			ui.Text(c, "Loading execution history from Runtime…").FontSize(14).TextColor(t.TextMuted)
 		}
 		if page.LoadError != "" {
-			ui.Text(c, page.LoadError).FontSize(14).LineHeight(1.45).TextColor(t.Warning)
+			ui.Text(c, page.LoadError).FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 		}
 		return
 	}
 	if page.Loading {
-		ui.Text(c, "Reloading result from Runtime… The recorded output below is the previous snapshot.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Reloading result from Runtime… The recorded output below is the previous snapshot.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	}
 	if page.LoadError != "" {
-		ui.Text(c, page.LoadError).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+		ui.Text(c, page.LoadError).FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 	}
 	if page.Notice != "" {
-		ui.Text(c, page.Notice).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+		ui.Text(c, page.Notice).FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 	}
 	issueResultPanel(c, &page.Panel, a.issueResultPanelActions(page.Generation))
 }
@@ -431,7 +431,7 @@ func issueResultPageHeader(c *ui.Context, t *ui.Theme, state *issueResultPanelSt
 				state.FocusClose = false
 			}
 		}
-		ui.Text(c, "Run results").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, "Run results").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 		ui.Spacer(c)
 		if showReload && actions.Reload != nil {
 			secondaryButton(c, "Reload result").Bind(&state.ReloadHandle).OnClick(actions.Reload)
