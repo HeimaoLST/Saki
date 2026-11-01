@@ -31,36 +31,36 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 	if pending > 0 {
 		title = fmt.Sprintf("Supplements: %d pending", pending)
 	}
-	ui.Text(c, title).FontSize(14).FontWeight(600).TextColor(t.Text)
+	ui.Text(c, title).FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 	if auto {
 		ui.Text(c, "Automatic continuation on").FontSize(14).TextColor(t.TextMuted)
 	} else {
 		ui.Text(c, "Automatic continuation stopped").FontSize(14).TextColor(t.Warning)
 	}
 	ui.Text(c, fmt.Sprintf("Current target: revision %d. %s", issue.RequirementsRevision, truncate(issue.Goal, 100))).
-		FontSize(14).LineHeight(1.35).TextColor(t.TextMuted)
+		FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	if ledger != nil {
 		if active := ledger.activeBatch(target); active != nil {
 			switch active.State {
 			case supplementBatchDispatching:
 				ui.Text(c, "Dispatching; waiting for the Runtime receipt. Automatic continuation will not start another batch yet.").
-					FontSize(14).LineHeight(1.35).TextColor(t.Warning)
+					FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 			case supplementBatchUnknown:
 				ui.Text(c, "Delivery is unknown; check the execution. Nothing will be resent automatically.").
-					FontSize(14).LineHeight(1.35).TextColor(t.Warning)
+					FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 			}
 		} else if pending > 0 && auto {
 			if reason := a.canStartIssue(ct, issue); reason != "" {
-				ui.Text(c, "Waiting: "+reason).FontSize(14).LineHeight(1.35).TextColor(t.TextMuted)
+				ui.Text(c, "Waiting: "+reason).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 			} else if len(issue.Executions) == 0 {
 				ui.Text(c, "No execution yet. Use Start with supplement to authorize the first run.").
-					FontSize(14).LineHeight(1.35).TextColor(t.TextMuted)
+					FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 			} else {
 				ui.Text(c, "Ready at the next safe boundary.").FontSize(14).TextColor(t.TextMuted)
 			}
 		} else if pending > 0 {
 			ui.Text(c, "Pending text is preserved. Resume automatic continuation or use Continue explicitly.").
-				FontSize(14).LineHeight(1.35).TextColor(t.TextMuted)
+				FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		}
 	}
 	if ledger != nil {
@@ -71,18 +71,18 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 			}
 		}
 		if len(pendingItems) > 0 {
-			ui.Text(c, "Saved pending supplements").FontSize(14).FontWeight(500).TextColor(t.TextMuted)
+			ui.Text(c, "Saved pending supplements").FontSize(typeAction).FontWeight(500).TextColor(t.TextMuted)
 			for _, item := range pendingItems {
 				item := item
 				ui.Column(c).Padding(6).Radius(6).Background(t.Surface).Gap(2).Children(func() {
 					ui.Text(c, fmt.Sprintf("received r%d: %s", item.RequirementsRevision, truncate(item.Text, 180))).
-						FontSize(14).LineHeight(1.35).TextColor(t.Text)
+						FontSize(14).LineHeight(1.5).TextColor(t.Text)
 					if a.issueSupplementPreviewID == item.ID {
 						ui.Row(c).Children(func() {
 							secondaryButton(c, "Close preview").OnClick(func() { a.issueSupplementPreviewID = "" })
 						})
 						markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy supplement text"}).
-							FontSize(14).LineHeight(1.35).TextColor(t.Text)
+							FontSize(14).LineHeight(1.5).TextColor(t.Text)
 					} else {
 						secondaryButton(c, "Preview full text").OnClick(func() { a.issueSupplementPreviewID = item.ID })
 					}
@@ -100,7 +100,7 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 		} else {
 			draft := a.issueSupplementDraft(issue.ID)
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "Add supplement").FontSize(14).FontWeight(500).TextColor(t.TextMuted)
+				ui.Text(c, "Add supplement").FontSize(typeAction).FontWeight(500).TextColor(t.TextMuted)
 				ui.Spacer(c)
 				secondaryButton(c, "Cancel").OnClick(func() {
 					a.closeIssueSupplementForm()
@@ -118,7 +118,7 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 				})
 			})
 			ui.Text(c, "Saving a supplement is not a model-acceptance or requirement-satisfaction receipt.").
-				FontSize(14).LineHeight(1.35).TextColor(t.TextMuted)
+				FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		}
 		if ledger != nil {
 			if auto {
@@ -143,7 +143,7 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 		}
 		if start > 0 {
 			ui.Text(c, fmt.Sprintf("%d earlier batches hidden from this card; the execution list remains the original input record.", start)).
-				FontSize(14).LineHeight(1.3).TextColor(t.TextMuted)
+				FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		}
 		for _, batch := range batches[start:] {
 			if batch == nil {
@@ -152,7 +152,7 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 			batch := batch
 			ui.Column(c).Padding(7).Radius(7).Background(t.Surface).Gap(2).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, issueSupplementBatchLabel(batch)).FontSize(14).FontWeight(500).TextColor(t.TextMuted)
+					ui.Text(c, issueSupplementBatchLabel(batch)).FontSize(typeAction).FontWeight(500).TextColor(t.TextMuted)
 					ui.Spacer(c)
 					ui.Text(c, fmt.Sprintf("target r%d", batch.Target.RequirementsRevision)).
 						FontSize(14).TextColor(t.TextMuted)
@@ -161,18 +161,18 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 					item := item
 					ui.Column(c).Gap(1).Children(func() {
 						ui.Text(c, fmt.Sprintf("received r%d: %s", item.RequirementsRevision, truncate(item.Text, 180))).
-							FontSize(14).LineHeight(1.35).TextColor(t.Text)
+							FontSize(14).LineHeight(1.5).TextColor(t.Text)
 						if a.issueSupplementPreviewID == item.ID {
 							secondaryButton(c, "Close preview").OnClick(func() { a.issueSupplementPreviewID = "" })
 							markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy supplement text"}).
-								FontSize(14).LineHeight(1.35).TextColor(t.Text)
+								FontSize(14).LineHeight(1.5).TextColor(t.Text)
 						} else {
 							secondaryButton(c, "Preview full text").OnClick(func() { a.issueSupplementPreviewID = item.ID })
 						}
 					})
 				}
 				if batch.SaveError != "" {
-					ui.Text(c, "Local receipt save failed: "+batch.SaveError).FontSize(14).LineHeight(1.35).TextColor(t.Warning)
+					ui.Text(c, "Local receipt save failed: "+batch.SaveError).FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 				}
 				if batch.State == supplementBatchAccepted {
 					ui.Text(c, "Submitted to Runtime execution "+shortExecutionID(batch.ExecutionID)+", task "+batch.TaskID).

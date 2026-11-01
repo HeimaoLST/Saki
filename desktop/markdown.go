@@ -384,7 +384,7 @@ func writeClipboardText(text string, write func(string), read func() string) err
 }
 
 // normalizedMarkdownTheme keeps rendered Markdown inside the app's four-size
-// scale. H1 maps to 20; H2-H6 map to 16 and use weight/spacing; code labels use 12.
+// scale. H1 maps to 16; H2-H6 map to 14 and use weight/spacing; code uses 13.
 // Source text
 // and user-provided Markdown are never rewritten.
 func normalizedMarkdownTheme(override *markdown.Theme) *markdown.Theme {
@@ -395,9 +395,17 @@ func normalizedMarkdownTheme(override *markdown.Theme) *markdown.Theme {
 		th = *override
 	}
 	th.FontSize = typeBody
-	headingSizes := [6]float32{20, 16, 16, 16, 16, 16}
+	headingSizes := [6]float32{16, 14, 14, 14, 14, 14}
 	for i := range th.Headings {
 		th.Headings[i].Size = headingSizes[i] / th.FontSize
+		if th.Headings[i].Weight == 0 {
+			// Preserve an explicit caller weight; otherwise keep semantic hierarchy
+			// with the app's restrained 16/14 scale.
+			th.Headings[i].Weight = 500
+			if i == 0 {
+				th.Headings[i].Weight = 600
+			}
+		}
 	}
 	th.CodeSize = typeAction / th.FontSize
 	return &th

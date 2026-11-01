@@ -258,24 +258,24 @@ func (a *appModel) profileDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 	if ct == nil {
 		return
 	}
-	ui.Column(c).FillHeight().Padding(12).Gap(8).Children(func() {
+	ui.Column(c).FillHeight().Padding(16).Gap(8).Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
 			if narrow {
 				back := detailBackButton(c, t, "Close profile", "Back from Contact profile").OnClick(func() { a.closeDetail() })
 				a.focusDetailControl(c, back)
-				ui.Text(c, "Contact profile").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).Grow(1)
+				ui.Text(c, "Contact profile").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text).Grow(1)
 				return
 			}
-			ui.Text(c, "Contact profile").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).Grow(1)
+			ui.Text(c, "Contact profile").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text).Grow(1)
 			close := appTooltip(c, secondaryButton(c, "Close profile"), "Back from Contact profile").OnClick(func() { a.closeDetail() })
 			a.focusDetailControl(c, close)
 		})
 		ui.Scroll(c).Grow(1).TrackScroll(a.profileScrollFor(ct.ID)).Children(func() {
-			ui.Column(c).Gap(10).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
-					a.avatarTile(c, t, 42)
+			ui.Column(c).Gap(8).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+					a.avatarTile(c, t, 32)
 					ui.Column(c).MinWidth(0).Shrink(1).Gap(1).Children(func() {
-						ui.Text(c, ct.Name).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).MaxLines(2)
+						ui.Text(c, ct.Name).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text).MaxLines(2)
 						ui.Text(c, a.statusLabel(ct)+": "+ct.Role).FontSize(typeMeta).LineHeight(1.4).TextColor(a.statusColor(t, ct.Status))
 					})
 				})
@@ -322,8 +322,8 @@ func (a *appModel) profileDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 
 func (a *appModel) profileSummaryField(c *ui.Context, t *ui.Theme, label, value string) {
 	ui.Column(c).FillWidth().MinWidth(0).Gap(2).Children(func() {
-		ui.Text(c, label).FontSize(typeMeta).FontWeight(600).TextColor(t.TextMuted)
-		ui.Text(c, value).FontSize(14).LineHeight(1.45).TextColor(t.Text)
+		ui.Text(c, label).FontSize(typeMeta).FontWeight(500).TextColor(t.TextMuted)
+		ui.Text(c, value).FontSize(14).LineHeight(1.5).TextColor(t.Text)
 	})
 }
 
@@ -363,12 +363,12 @@ func (a *appModel) historyFullPage(c *ui.Context, t *ui.Theme) {
 				back.Focus()
 				a.focusHistoryFullBack = false
 			}
-			ui.Text(c, "Full saved message").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
+			ui.Text(c, "Full saved message").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 		})
 		ui.Scroll(c).Grow(1).TrackScroll(&a.historyFullScroll).Padding(0, 16).Children(func() {
-			ui.Column(c).FillWidth().MaxWidth(760).AlignItems(ui.Start).Gap(10).Children(func() {
+			ui.Column(c).FillWidth().MaxWidth(760).AlignItems(ui.Start).Gap(8).Children(func() {
 				ui.Text(c, from+". "+full.Date+". "+full.SessionID).FontSize(typeMeta).LineHeight(1.4).TextColor(t.TextMuted)
-				markdownReader(c, full.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy saved message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "full:"+full.SessionID, full.EntryID))).FontSize(typeBody).LineHeight(1.8).TextColor(t.Text)
+				markdownReader(c, full.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy saved message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "full:"+full.SessionID, full.EntryID))).FontSize(typeBody).LineHeight(1.6).TextColor(t.Text)
 				taskContextReadOnlyView(c, a.workTheme, full.Context)
 			})
 		})
@@ -383,10 +383,10 @@ func (a *appModel) sourcesPage(c *ui.Context, t *ui.Theme) {
 				back.Focus()
 				a.focusSourcesBack = false
 			}
-			ui.Text(c, "Sources").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
+			ui.Text(c, "Sources").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 		})
 		ui.Scroll(c).Grow(1).TrackScroll(&a.sourcesScroll).Padding(0, 16).Children(func() {
-			ui.Column(c).FillWidth().MaxWidth(760).AlignItems(ui.Start).Gap(10).Children(func() {
+			ui.Column(c).FillWidth().MaxWidth(760).AlignItems(ui.Start).Gap(8).Children(func() {
 				a.sourcesPanel(c, t)
 			})
 		})
@@ -407,10 +407,10 @@ func (a *appModel) auxPage(c *ui.Context, t *ui.Theme) {
 				back.Focus()
 				a.focusAuxBack = false
 			}
-			ui.Text(c, title).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
+			ui.Text(c, title).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 		})
 		ui.Scroll(c).Grow(1).TrackScroll(a.auxScrollFor(a.aux)).Padding(0, 16).Children(func() {
-			ui.Column(c).FillWidth().MaxWidth(760).AlignItems(ui.Start).Gap(10).Children(func() {
+			ui.Column(c).FillWidth().MaxWidth(760).AlignItems(ui.Start).Gap(8).Children(func() {
 				switch a.aux {
 				case "model":
 					a.modelPanel(c, t)

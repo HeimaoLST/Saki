@@ -11,7 +11,7 @@ import (
 
 // Message typography is supplied at the view call site so the reader's
 // parser, clipboard and file behavior stay untouched (#187 owns those files).
-var messageMarkdownTheme = &markdown.Theme{FontSize: typeBody, LineHeight: 1.8}
+var messageMarkdownTheme = &markdown.Theme{FontSize: typeBody, LineHeight: 1.6}
 
 const (
 	composerPanelModel   = "model"
@@ -198,9 +198,9 @@ func (a *appModel) finishMarkdownLinkReturn() {
 // ---------- rail ----------
 
 func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
-	ui.Column(c).FillWidth().FillHeight().Padding(10, 10).Gap(10).Background(a.workTheme.Rail).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-			ui.Text(c, "Saki").FontSize(16).FontWeight(600).TextColor(t.Text)
+	ui.Column(c).FillWidth().FillHeight().Padding(8).Gap(8).Background(a.workTheme.Rail).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+			ui.Text(c, "Saki").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 			ui.Spacer(c)
 			hide := secondaryButton(c, "Hide").OnClick(func() { a.toggleRail() })
 			if a.focusRail {
@@ -208,10 +208,10 @@ func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
 				a.focusRail = false
 			}
 		})
-		ui.Text(c, "Contacts").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
-		secondaryButton(c, "Add contact").FillWidth().Radius(999).OnClick(func() { a.addDefaultContact() })
+		ui.Text(c, "Contacts").FontSize(typeGroupTitle).FontWeight(500).TextColor(t.TextMuted)
+		secondaryButton(c, "Add contact").FontWeight(500).FillWidth().Radius(999).OnClick(func() { a.addDefaultContact() })
 		ui.TextInput(c, &a.contactSearch).Label("Search contacts").FontSize(typeAction).Placeholder("Name or purpose")
-		ui.Text(c, "Contact scope").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.TextMuted)
+		ui.Text(c, "Contact scope").FontSize(typeGroupTitle).FontWeight(500).TextColor(t.TextMuted)
 		a.contactScopeSelect(c)
 		visible := a.visibleContactIndices()
 		if len(visible) == 0 {
@@ -264,16 +264,20 @@ func (a *appModel) contactScopeSelect(c *ui.Context) {
 
 func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
 	ct := a.contacts[i]
-	row := ui.ButtonBase(c).Label("Contact " + ct.Name).Gap(10).Padding(8).Radius(12).AlignItems(ui.Start).Background(ui.Transparent).BorderWidth(0)
+	row := ui.ButtonBase(c).Label("Contact " + ct.Name).Gap(8).Padding(6).Radius(8).AlignItems(ui.Start).Background(ui.Transparent).BorderWidth(0)
 	if i == a.selected {
 		row.Background(t.SurfaceHover)
 	}
 	row.OnClick(func() { a.selectContact(i) })
 	row.Children(func() {
-		a.avatarTile(c, t, 34)
+		a.avatarTile(c, t, 28)
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-				ui.Text(c, ct.Name).FontSize(14).FontWeight(500).TextColor(t.Text)
+				nameWeight := 400
+				if i == a.selected {
+					nameWeight = 500
+				}
+				ui.Text(c, ct.Name).FontSize(typeRailName).FontWeight(nameWeight).TextColor(t.Text)
 				ui.Spacer(c)
 				if workCount := issueWorkActiveCount(ct); workCount > 0 {
 					ui.Text(c, fmt.Sprintf("%d work", workCount)).FontSize(12).TextColor(t.TextMuted)
@@ -310,7 +314,7 @@ func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
 				}
 				color = a.statusColor(t, ct.Status)
 			}
-			ui.Text(c, line).FontSize(typeAction).LineHeight(1.35).MaxLines(1).TextColor(color)
+			ui.Text(c, line).FontSize(typeRailSummary).LineHeight(1.2).MaxLines(1).TextColor(color)
 		})
 	})
 }
@@ -350,9 +354,9 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 					label = "Runtime"
 				}
 				ui.Column(c).Padding(8, 16).Gap(2).Children(func() {
-					ui.Text(c, label+": "+a.runtimeErr).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+					ui.Text(c, label+": "+a.runtimeErr).FontSize(14).LineHeight(1.5).TextColor(t.Danger)
 					if a.runtimeHint != "" {
-						ui.Text(c, a.runtimeHint).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+						ui.Text(c, a.runtimeHint).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 					}
 					ui.Row(c).Children(func() {
 						details := secondaryButton(c, "Configuration details")
@@ -410,11 +414,11 @@ func (a *appModel) workEntryStatus(ct *contact) (string, bool) {
 func (a *appModel) header(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Row(c).Justify(ui.Center).Children(func() {
-		ui.Column(c).WidthPercent(86).MaxWidth(760).Padding(8, 0).Gap(6).Children(func() {
-			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(9).Children(func() {
-				a.avatarTile(c, t, 35)
+		ui.Column(c).WidthPercent(86).MaxWidth(760).Padding(6, 0).Gap(4).Children(func() {
+			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
+				a.avatarTile(c, t, 28)
 				ui.Column(c).MinWidth(0).Shrink(1).Gap(1).Children(func() {
-					ui.Text(c, ct.Name).FontSize(typeContactTitle).FontWeight(600).TextColor(t.Text).MaxLines(1)
+					ui.Text(c, ct.Name).FontSize(typeContactTitle).FontWeight(500).TextColor(t.Text).MaxLines(2)
 					ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
 						ui.Text(c, a.statusLabel(ct)).FontSize(12).LineHeight(1.35).TextColor(a.statusColor(t, ct.Status))
 						ui.Text(c, ct.Role).FontSize(12).LineHeight(1.35).MaxLines(1).TextColor(t.TextMuted)
@@ -481,7 +485,7 @@ func (a *appModel) chat(c *ui.Context, t *ui.Theme) {
 					default:
 						a.message(c, t, ct, it.msg)
 					}
-				}).Label("Conversation messages").FillHeight().WidthPercent(86).MaxWidth(760).Padding(16, 0).Gap(18)
+				}).Label("Conversation messages").FillHeight().WidthPercent(86).MaxWidth(760).Padding(16, 0).Gap(12)
 			})
 		}
 		if len(items) > 0 && !ct.list.AtEnd() {
@@ -513,19 +517,19 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 			ui.Column(c).MaxWidth(460).MinWidth(0).Gap(4).Children(func() {
 				if e.Text != "" {
 					markdownReader(c, e.Text, messageReaderOptions(true)).
-						FontSize(typeBody).LineHeight(1.8).Padding(8, 12).Radius(12).Background(bg).TextColor(t.Text)
+						FontSize(typeBody).LineHeight(1.5).Padding(8, 12).Radius(12).Background(bg).TextColor(t.Text)
 				}
 				taskContextReadOnlyView(c, a.workTheme, e.Context)
 			})
 		})
 		return
 	}
-	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
+	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Start).Children(func() {
 		a.avatarTile(c, t, 28)
 		ui.Column(c).MaxWidth(680).MinWidth(0).Shrink(1).Padding(10, 14).Radius(14).Background(bg).Gap(4).Children(func() {
 			ui.Text(c, a.selectedContact().Name+"  "+e.Date).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
 			markdownReader(c, e.Text, a.readerOptions(messageReaderOptions(false), historyLinkScope(a.selectedContact().ID, "conversation", e.ID))).
-				FontSize(typeBody).LineHeight(1.8)
+				FontSize(typeBody).LineHeight(1.6)
 		})
 	})
 }
@@ -541,7 +545,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 			}
 			ui.Column(c).Gap(2).Padding(4, 0).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					ui.Text(c, title).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+					ui.Text(c, title).FontSize(typeAction).LineHeight(1.4).TextColor(t.TextMuted)
 					if m.ToolOutput != "" {
 						label := "Details"
 						if m.Expanded {
@@ -555,12 +559,12 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 					if m.Expanded {
 						lines = 12
 					}
-					ui.Text(c, summary).FontSize(14).LineHeight(1.45).MaxLines(lines).TextColor(t.TextMuted)
+					ui.Text(c, summary).FontSize(typeAction).LineHeight(1.5).MaxLines(lines).TextColor(t.TextMuted)
 				}
 			})
 			return
 		}
-		ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
 			ui.Column(c).Gap(4).Children(func() {
 				label := "Looked up earlier conversations"
 				if m.Expanded {
@@ -573,7 +577,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 				})
 				if m.Expanded {
 					for _, step := range m.Steps {
-						ui.Text(c, step).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+						ui.Text(c, step).FontSize(typeAction).LineHeight(1.4).TextColor(t.TextMuted)
 					}
 					if len(m.Sources) > 0 {
 						ui.Row(c).Children(func() {
@@ -595,20 +599,20 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 				}
 				if m.Text != "" {
 					markdownReader(c, m.Text, messageReaderOptions(true)).
-						FontSize(typeBody).LineHeight(1.8).Padding(10, 14).Radius(14).Background(a.workTheme.BubbleUser).TextColor(t.Text)
+						FontSize(typeBody).LineHeight(1.5).Padding(8, 12).Radius(12).Background(a.workTheme.BubbleUser).TextColor(t.Text)
 				}
 				taskContextReadOnlyView(c, a.workTheme, m.Context)
 			})
 		})
 	default:
-		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Start).Children(func() {
 			a.avatarTile(c, t, 28)
-			ui.Column(c).MaxWidthPercent(80).MinWidth(0).Shrink(1).Padding(10, 14).Radius(14).Background(a.workTheme.BubbleContact).Gap(4).Children(func() {
+			ui.Column(c).MaxWidthPercent(80).MinWidth(0).Shrink(1).Padding(8, 12).Radius(12).Background(a.workTheme.BubbleContact).Gap(4).Children(func() {
 				if m.Key != "" && m.Key == a.highlight {
 					ui.Text(c, "Located in history").FontSize(14).TextColor(t.TextMuted)
 				}
 				markdownReader(c, m.Text, a.readerOptions(markdownReaderOptions{Streaming: m.Streaming, CopyLabel: "Copy message", Theme: messageMarkdownTheme}, messageLinkScope(ct.ID, m))).
-					FontSize(typeBody).LineHeight(1.8)
+					FontSize(typeBody).LineHeight(1.6)
 				if m.AlertTitle != "" {
 					a.alert(c, t, m)
 				}
@@ -628,9 +632,9 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 
 func (a *appModel) alert(c *ui.Context, t *ui.Theme, m *message) {
 	ui.Column(c).Padding(8).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
-		ui.Text(c, m.AlertTitle).FontSize(14).FontWeight(500).TextColor(t.Warning)
+		ui.Text(c, m.AlertTitle).FontSize(typeAction).FontWeight(500).TextColor(t.Warning)
 		if m.AlertDetail != "" {
-			ui.Text(c, m.AlertDetail).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Text(c, m.AlertDetail).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		}
 		if m.Retry && !m.RetryDone {
 			ui.Row(c).Children(func() {
@@ -646,18 +650,18 @@ func (a *appModel) emptyState(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	ui.Column(c).Padding(8, 0).Gap(8).Children(func() {
 		if !a.demo && ct.SessionID != "" && !ct.Loaded {
-			ui.Text(c, "Conversation history is not loaded").FontSize(16).FontWeight(600).TextColor(t.Text)
-			ui.Text(c, "This contact already has a session, but its history has not been read yet; it is not shown as empty.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
+			ui.Text(c, "Conversation history is not loaded").FontSize(16).FontWeight(500).TextColor(t.Text)
+			ui.Text(c, "This contact already has a session, but its history has not been read yet; it is not shown as empty.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 			if a.runtimeStatus != runtimeStateReady {
-				ui.Text(c, "Runtime is not ready; history cannot be read yet.").FontSize(14).LineHeight(1.45).TextColor(t.Warning)
+				ui.Text(c, "Runtime is not ready; history cannot be read yet.").FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 			}
 			return
 		}
-		ui.Text(c, "No messages yet").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, "No messages yet").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 		if a.demo {
-			ui.Text(c, "Start typing below to talk with "+ct.Name+"; you can personalize name, purpose, instructions and workspace any time in Settings.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
+			ui.Text(c, "Start typing below to talk with "+ct.Name+"; you can personalize name, purpose, instructions and workspace any time in Settings.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		} else {
-			ui.Text(c, "Start a conversation with "+ct.Name+". Edit this contact in Settings. Changes apply to new conversations.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
+			ui.Text(c, "Start a conversation with "+ct.Name+". Edit this contact in Settings. Changes apply to new conversations.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		}
 	})
 }
@@ -699,7 +703,7 @@ func (a *appModel) connectionErrorBanner(c *ui.Context, t *ui.Theme, ct *contact
 	}
 	expanded := a.connectionDetailsOpen != nil && a.connectionDetailsOpen[ct.ID]
 	ui.Column(c).Padding(8, 16).Gap(3).Background(t.SurfaceHover).Children(func() {
-		ui.Text(c, summary).FontSize(14).LineHeight(1.4).TextColor(t.Warning).MaxLines(3)
+		ui.Text(c, summary).FontSize(14).LineHeight(1.5).TextColor(t.Warning).MaxLines(3)
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			entry := secondaryButton(c, "Connection settings").TextColor(t.Text)
 			entry.OnClick(func() { a.openSettingsTab(settingsTabConnection, settingsSourceConnection) })
@@ -720,7 +724,7 @@ func (a *appModel) connectionErrorBanner(c *ui.Context, t *ui.Theme, ct *contact
 		})
 		if expanded && details != "" {
 			markdownReader(c, details, markdownReaderOptions{PlainText: true, CopyLabel: "Copy error details"}).
-				FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+				FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		}
 	})
 }
@@ -773,10 +777,10 @@ func (a *appModel) composerInlinePanel(c *ui.Context, t *ui.Theme) {
 
 func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
-	ui.Column(c).Padding(10, 0).Gap(4).Children(func() {
-		ui.Column(c).FillWidth().Padding(8, 10).Radius(14).Background(a.workTheme.Well).Gap(6).Children(func() {
+	ui.Column(c).FillWidth().Padding(8, 0).Gap(4).Children(func() {
+		ui.Column(c).FillWidth().Padding(8, 12).Radius(12).Background(a.workTheme.Well).Gap(4).Children(func() {
 			input := ui.TextArea(c, &ct.Draft).Bind(&a.composerHandle).Label("Composer for "+ct.Name).
-				FontSize(typeBody).LineHeight(1.6).Lines(1, 6).
+				FontSize(typeBody).LineHeight(1.5).Lines(2, 6).MinHeight(0).
 				Background(ui.Transparent).BorderWidth(0).Padding(2).
 				Placeholder("Message " + ct.Name).FillWidth().OnChange(func() {
 				a.draftChanged(ct)
@@ -808,13 +812,13 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				sendReason = a.canSend(ct)
 				sendDisabled = strings.TrimSpace(ct.Draft) == "" || sendReason != ""
 			}
-			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(2).Children(func() {
+			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(4).Children(func() {
 				ui.Toolbar(c, func() {
 					contextButton := appTooltip(c, ui.Button(c, "").Label(contextLabel), contextLabel).
 						MinWidth(32).Height(32).Padding(2, 6)
 					contextButton.Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(2).Children(func() {
-							ui.Icon(c, composerAttachIcon).Width(18).Height(18).TextColor(t.TextMuted)
+							ui.Icon(c, composerAttachIcon).Width(16).Height(16).TextColor(t.TextMuted)
 							ui.Text(c, fmt.Sprint(contextCount)).FontSize(typeMeta).LineHeight(1.3).TextColor(t.TextMuted)
 						})
 					})
@@ -823,7 +827,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 						contextButton.Focus()
 						a.composerFocusContext = false
 					}
-				}).Label("Composer tools").Shrink(0)
+				}).Label("Composer tools").Shrink(0).Padding(0)
 				ui.Spacer(c)
 				modelButton := a.composerModelButton(c, t, ct)
 				modelButton.OnClick(func() { a.openComposerModel() })
@@ -834,27 +838,26 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				// Send/Stop are outside the Toolbar: the main action must never
 				// disappear into a toolbar overflow menu at narrow widths.
 				if !a.demo && ct.ActiveTaskID != "" {
-					stop := appTooltip(c, secondaryButton(c, "").Label("Stop conversation"), "Stop this conversation").
+					stop := appTooltip(c, secondaryButton(c, "").Label("Stop conversation").FontWeight(500), "Stop this conversation").
 						Shrink(0).Height(32).Padding(4, 8).TextColor(t.Warning)
 					stop.Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
 							ui.Icon(c, composerStopIcon).Width(16).Height(16)
-							ui.Text(c, "Stop conversation").FontSize(typeAction).LineHeight(1.3).TextColor(t.Warning)
+							ui.Text(c, "Stop conversation").FontSize(typeAction).FontWeight(500).LineHeight(1.3).TextColor(t.Warning)
 						})
 					})
 					stop.OnClick(func() { a.cancelSelected() })
 				} else {
-					send := appTooltip(c, ui.PrimaryButton(c, "").Label("Send"), "Send message").
+					send := appTooltip(c, ui.PrimaryButton(c, "").Label("Send"), "Send message. Enter to send; Shift + Enter for a new line.").
 						Width(32).Height(32).Padding(0).Disabled(sendDisabled)
 					send.Children(func() {
-						ui.Icon(c, composerSendIcon).Width(18).Height(18)
+						ui.Icon(c, composerSendIcon).Width(16).Height(16)
 					})
 					if send.Clicked() {
 						a.sendCurrent()
 					}
 				}
 			})
-			ui.Text(c, "Enter to send. Shift + Enter for a new line.").FontSize(typeMeta).LineHeight(1.4).TextColor(t.TextMuted)
 			if !a.demo {
 				if a.rt != nil && a.runtimeStatus == runtimeStateReady && !a.capacityKnown() {
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
@@ -862,28 +865,28 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 						if message == "" {
 							message = "Runtime task capacity is not loaded; using the conservative single-slot behavior."
 						}
-						ui.Text(c, message).FontSize(14).LineHeight(1.4).TextColor(t.Warning).Grow(1)
+						ui.Text(c, message).FontSize(14).LineHeight(1.5).TextColor(t.Warning).Grow(1)
 						secondaryButton(c, "Retry capacity").OnClick(func() { a.retryCapabilities() })
 					})
 				}
 				if sendReason != "" && strings.TrimSpace(ct.Draft) != "" {
-					ui.Text(c, sendReason).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+					ui.Text(c, sendReason).FontSize(typeBody).LineHeight(1.5).TextColor(t.TextMuted)
 				}
 				switch {
 				case ct.SendState == sendSubmitting:
-					ui.Text(c, "Sending…").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+					ui.Text(c, "Sending…").FontSize(typeMeta).LineHeight(1.4).TextColor(t.TextMuted)
 				case ct.SendState == sendAccepted && ct.Status != statusWorking:
-					ui.Text(c, "Accepted; waiting for the runtime to start.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+					ui.Text(c, "Accepted; waiting for the runtime to start.").FontSize(typeMeta).LineHeight(1.4).TextColor(t.TextMuted)
 				case ct.SendState == sendUnknown:
 					if a.runtimeStatus == runtimeStateReady && a.rt != nil {
-						ui.Text(c, "Delivery not confirmed. Reload to verify before sending again.").FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+						ui.Text(c, "Delivery not confirmed. Reload to verify before sending again.").FontSize(typeMeta).LineHeight(1.4).TextColor(t.Danger)
 					} else {
-						ui.Text(c, "Runtime disconnected; restart Saki to check the task and history.").FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+						ui.Text(c, "Runtime disconnected; restart Saki to check the task and history.").FontSize(typeMeta).LineHeight(1.4).TextColor(t.Danger)
 					}
 				}
 				if ct.SendError != "" && !a.connectionSendFailureKnown(ct) {
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						ui.Text(c, ct.SendError).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+						ui.Text(c, ct.SendError).FontSize(typeBody).LineHeight(1.5).TextColor(t.Warning)
 						if (ct.SendState == sendUnknown || ct.SendError != "") && a.runtimeStatus == runtimeStateReady && a.rt != nil {
 							if secondaryButton(c, "Reload").Clicked() {
 								a.reloadSelected()
@@ -892,7 +895,7 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 					})
 				}
 				if ct.StatusDetail != "" {
-					ui.Text(c, ct.StatusDetail).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+					ui.Text(c, ct.StatusDetail).FontSize(typeBody).LineHeight(1.5).TextColor(t.Warning)
 				}
 			}
 		})
@@ -909,23 +912,23 @@ func (a *appModel) historyDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 	if ct == nil {
 		return
 	}
-	ui.Column(c).FillHeight().Padding(12).Gap(8).Children(func() {
+	ui.Column(c).FillHeight().Padding(16).Gap(8).Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
 			if narrow {
 				back := detailBackButton(c, t, "Close history", "Back from History").OnClick(func() { a.closeDetail() })
 				a.focusDetailControl(c, back)
-				ui.Text(c, "History: "+ct.Name).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).MaxLines(2).Grow(1)
+				ui.Text(c, "History: "+ct.Name).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text).MaxLines(2).Grow(1)
 				return
 			}
-			ui.Text(c, "History: "+ct.Name).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text).MaxLines(2).Grow(1)
+			ui.Text(c, "History: "+ct.Name).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text).MaxLines(2).Grow(1)
 			close := appTooltip(c, secondaryButton(c, "Close history"), "Back from History").OnClick(func() { a.closeDetail() })
 			a.focusDetailControl(c, close)
 		})
 		ui.Scroll(c).Grow(1).TrackScroll(&a.historyScroll).Children(func() {
-			ui.Column(c).Gap(10).Children(func() {
-				ui.Text(c, "Searching only "+ct.Name+"'s conversation history. Messages from other contacts are never included.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+			ui.Column(c).Gap(8).Children(func() {
+				ui.Text(c, "Searching only "+ct.Name+"'s conversation history. Messages from other contacts are never included.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 				if !a.demo && ct.SessionID != "" && !ct.Loaded {
-					ui.Text(c, "History is not loaded yet; existing records are not shown as absent.").FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+					ui.Text(c, "History is not loaded yet; existing records are not shown as absent.").FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 				}
 				ui.TextInput(c, &a.historyQuery).FontSize(14).Placeholder("Search " + ct.Name + "'s history")
 				if !a.demo {
@@ -934,20 +937,20 @@ func (a *appModel) historyDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 						ui.Text(c, "Searching saved contexts…").FontSize(14).TextColor(t.TextMuted)
 					}
 					if a.contactHistoryError != "" {
-						ui.Text(c, a.contactHistoryError).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+						ui.Text(c, a.contactHistoryError).FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 					}
 					if a.contactHistory != nil {
-						ui.Text(c, a.contactHistorySummary()).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+						ui.Text(c, a.contactHistorySummary()).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 						if len(a.contactHistory.Failures) > 0 {
 							for _, failure := range a.contactHistory.Failures {
-								ui.Text(c, "Saved context unavailable: "+failure.SessionID).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+								ui.Text(c, "Saved context unavailable: "+failure.SessionID).FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 							}
 						}
 						for _, match := range a.contactHistory.Matches {
 							match := match
 							key := historyOriginKey(historyOriginSaved, match.SessionID, match.EntryID)
-							ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
-								ui.Text(c, match.Date+": saved context "+match.SessionID).FontSize(14).LineHeight(1.4).TextColor(t.Success)
+							ui.Column(c).FillWidth().MinWidth(0).Padding(8).Radius(8).Background(t.SurfaceHover).Gap(4).Children(func() {
+								ui.Text(c, match.Date+": saved context "+match.SessionID).FontSize(typeMeta).LineHeight(1.4).TextColor(t.Success)
 								ui.Text(c, match.Preview).FontSize(14).LineHeight(1.5).TextColor(t.Text)
 								button := secondaryButton(c, "View full message").OnClick(func() { a.openContactHistoryMatch(match) })
 								if a.focusHistoryFullID == key {
@@ -964,23 +967,23 @@ func (a *appModel) historyDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 				matches := a.historyMatches()
 				if len(matches) == 0 {
 					if strings.TrimSpace(a.historyQuery) == "" {
-						ui.Text(c, "No saved messages in "+ct.Name+"'s loaded history.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+						ui.Text(c, "No saved messages in "+ct.Name+"'s loaded history.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 					} else {
-						ui.Text(c, "No messages in "+ct.Name+"'s loaded history match “"+a.historyQuery+"”.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+						ui.Text(c, "No messages in "+ct.Name+"'s loaded history match “"+a.historyQuery+"”.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 					}
 				}
 				for _, e := range matches {
 					e := e
-					ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
-						ui.Text(c, e.Date+". "+speakerLabel(ct, e)).FontSize(14).LineHeight(1.4).TextColor(t.Success)
+					ui.Column(c).FillWidth().MinWidth(0).Padding(8).Radius(8).Background(t.SurfaceHover).Gap(4).Children(func() {
+						ui.Text(c, e.Date+". "+speakerLabel(ct, e)).FontSize(typeMeta).LineHeight(1.4).TextColor(t.Success)
 						if len([]rune(e.Text)) <= 180 {
 							if e.From == "me" {
-								markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy history message", Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.8).TextColor(t.Text)
+								markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy history message", Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.6).TextColor(t.Text)
 							} else {
-								markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy history message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "history", e.ID))).FontSize(typeBody).LineHeight(1.8)
+								markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy history message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "history", e.ID))).FontSize(typeBody).LineHeight(1.6)
 							}
 						} else {
-							ui.Text(c, truncate(e.Text, 150)).FontSize(14).LineHeight(1.45).MaxLines(3).TextColor(t.Text)
+							ui.Text(c, truncate(e.Text, 150)).FontSize(14).LineHeight(1.5).MaxLines(3).TextColor(t.Text)
 						}
 						if len(e.Context) > 0 {
 							ui.Text(c, fmt.Sprintf("Context: %d items", len(e.Context))).FontSize(typeAction).TextColor(t.TextMuted)
@@ -1012,15 +1015,15 @@ func speakerLabel(c *contact, e historyEntry) string {
 func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 	ct := a.selectedContact()
 	entries := a.sourceEntries(a.auxMessage)
-	ui.Text(c, fmt.Sprintf("%d earlier messages from %s's history, cited in this reply.", len(entries), ct.Name)).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, fmt.Sprintf("%d earlier messages from %s's history, cited in this reply.", len(entries), ct.Name)).FontSize(typeMeta).LineHeight(1.4).TextColor(t.TextMuted)
 	for _, e := range entries {
 		e := e
-		ui.Column(c).FillWidth().MinWidth(0).Padding(10).Radius(10).Background(t.SurfaceHover).Gap(4).Children(func() {
-			ui.Text(c, e.Date+". "+speakerLabel(ct, e)).FontSize(14).LineHeight(1.4).TextColor(t.Success)
+		ui.Column(c).FillWidth().MinWidth(0).Padding(8).Radius(8).Background(t.SurfaceHover).Gap(4).Children(func() {
+			ui.Text(c, e.Date+". "+speakerLabel(ct, e)).FontSize(typeMeta).LineHeight(1.4).TextColor(t.Success)
 			if e.From == "me" {
-				markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy source message", Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.8).TextColor(t.Text)
+				markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy source message", Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.6).TextColor(t.Text)
 			} else {
-				markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy source message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "sources", e.ID))).FontSize(typeBody).LineHeight(1.8)
+				markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy source message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "sources", e.ID))).FontSize(typeBody).LineHeight(1.6)
 			}
 			ui.Row(c).Children(func() {
 				secondaryButton(c, "View in conversation").OnClick(func() { a.viewInConversation(e.ID) })
@@ -1037,8 +1040,8 @@ func (a *appModel) openConfiguration() {
 func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 	localStore := a.runtimeStage == startupStageLocalStore
 	if localStore {
-		ui.Text(c, "Local contact store: unavailable; the runtime was not started.").FontSize(14).LineHeight(1.4).TextColor(t.Danger)
-		ui.Text(c, "Runtime: not started (local contact store unavailable)").FontSize(14).LineHeight(1.4).TextColor(t.Text)
+		ui.Text(c, "Local contact store: unavailable; the runtime was not started.").FontSize(14).LineHeight(1.5).TextColor(t.Danger)
+		ui.Text(c, "Runtime: not started (local contact store unavailable)").FontSize(14).LineHeight(1.5).TextColor(t.Text)
 	} else {
 		status := a.runtimeStatus
 		if status == "" {
@@ -1047,17 +1050,17 @@ func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 		if status == runtimeStateReady {
 			status += " (connection only)"
 		}
-		ui.Text(c, "Runtime: "+status).FontSize(14).LineHeight(1.4).TextColor(t.Text)
+		ui.Text(c, "Runtime: "+status).FontSize(14).LineHeight(1.5).TextColor(t.Text)
 	}
 	if a.runtimeErr != "" {
 		label := a.runtimeStage
 		if label == "" {
 			label = "Runtime"
 		}
-		ui.Text(c, label+": "+a.runtimeErr).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+		ui.Text(c, label+": "+a.runtimeErr).FontSize(14).LineHeight(1.5).TextColor(t.Danger)
 	}
 	if a.runtimeHint != "" {
-		ui.Text(c, a.runtimeHint).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, a.runtimeHint).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	}
 	helper := a.runtimeBinary
 	if helper == "" {
@@ -1072,15 +1075,15 @@ func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 			helper = "not checked yet; configure and apply a connection first"
 		}
 	}
-	ui.Text(c, "Helper: "+helper).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
-	ui.Text(c, "Store: "+valueOr(a.storePath, "not configured")).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
-	ui.Text(c, "Session directory: "+valueOr(a.sessionDir, "not configured")).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
-	ui.Text(c, "GUI work directory: "+valueOr(a.workDir, "not configured")).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Helper: "+helper).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
+	ui.Text(c, "Store: "+valueOr(a.storePath, "not configured")).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
+	ui.Text(c, "Session directory: "+valueOr(a.sessionDir, "not configured")).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
+	ui.Text(c, "GUI work directory: "+valueOr(a.workDir, "not configured")).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	workspace := ct.SessionWorkingDir
 	if workspace == "" {
 		workspace = a.effectiveContactWorkspace(ct)
 	}
-	ui.Text(c, "Contact workspace: "+valueOr(workspace, "not configured")).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Contact workspace: "+valueOr(workspace, "not configured")).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	session := ct.SessionID
 	if session == "" {
 		session = "not created until the first message"
@@ -1089,20 +1092,20 @@ func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 	if state == "" {
 		state = "unknown"
 	}
-	ui.Text(c, "Session: "+session+": state: "+state).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Session: "+session+": state: "+state).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	switch {
 	case ct.SessionAPI != "":
-		ui.Text(c, "Session API: "+ct.SessionAPI).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Session API: "+ct.SessionAPI).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	case a.runtimeAPI != "":
-		ui.Text(c, "Runtime API (connected): "+a.runtimeAPI+"; no session API loaded").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Runtime API (connected): "+a.runtimeAPI+"; no session API loaded").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	default:
-		ui.Text(c, "Session API: unknown until the runtime session is loaded").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Session API: unknown until the runtime session is loaded").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	}
-	ui.Text(c, "Session model: "+valueOr(ct.SessionModel, "unknown until the session is loaded")).FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+	ui.Text(c, "Session model: "+valueOr(ct.SessionModel, "unknown until the session is loaded")).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	if a.connectionManaged || (a.connectionForm != nil && a.connectionForm.HasSaved) {
-		ui.Text(c, "Connection settings are managed by Nagi; the runtime reads its endpoint, model and key from that saved connection.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Connection settings are managed by Nagi; the runtime reads its endpoint, model and key from that saved connection.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	} else {
-		ui.Text(c, "Host configuration: API_KEY is required; SAKI_API, SAKI_BASE_URL and SAKI_MODEL have runtime defaults. Set them in the environment or in the GUI work directory's .env; values stay hidden.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Host configuration: API_KEY is required; SAKI_API, SAKI_BASE_URL and SAKI_MODEL have runtime defaults. Set them in the environment or in the GUI work directory's .env; values stay hidden.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	}
 }
 

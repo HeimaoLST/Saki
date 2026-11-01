@@ -133,15 +133,15 @@ func (e *contactProfileEditor) activityReason() string {
 func (e *contactProfileEditor) view(c *ui.Context, t *ui.Theme, actions contactProfileActions) {
 	editable := !e.Busy && !e.Archived
 	ui.Column(c).Gap(10).Children(func() {
-		ui.Text(c, "Saving updates this contact's name. Purpose, instructions and workspace are defaults for future conversations and issues; existing conversations and issue work keep the snapshots they were created with.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Saving updates this contact's name. Purpose, instructions and workspace are defaults for future conversations and issues; existing conversations and issue work keep the snapshots they were created with.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		if reason := e.activityReason(); reason != "" {
-			ui.Text(c, reason).FontSize(14).LineHeight(1.4).TextColor(t.Warning)
+			ui.Text(c, reason).FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 		}
 		if e.Archived {
-			ui.Text(c, "Archived").FontSize(14).FontWeight(500).TextColor(t.Warning)
+			ui.Text(c, "Archived").FontSize(typeAction).FontWeight(500).TextColor(t.Warning)
 		}
 
-		ui.Text(c, "Name").FontSize(14).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Name").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 		name := ui.TextInput(c, &e.Draft.Name).Label("Contact name").FontSize(14).Placeholder("Name").Disabled(!editable)
 		if e.focusField == "Name" {
 			name.Focus()
@@ -150,11 +150,11 @@ func (e *contactProfileEditor) view(c *ui.Context, t *ui.Theme, actions contactP
 		if message := e.Errors["Name"]; message != "" {
 			ui.Text(c, message).FontSize(14).TextColor(t.Danger)
 		}
-		ui.Text(c, "Purpose").FontSize(14).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Purpose").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 		ui.TextArea(c, &e.Draft.Purpose).Label("Contact purpose").FontSize(14).Placeholder("Purpose").Disabled(!editable)
-		ui.Text(c, "Instructions").FontSize(14).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Instructions").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 		ui.TextArea(c, &e.Draft.Instructions).Label("Contact instructions").FontSize(14).Placeholder("Instructions").Disabled(!editable)
-		ui.Text(c, "Workspace").FontSize(14).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, "Workspace").FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 		workspace := ui.TextInput(c, &e.Draft.Workspace).Label("Contact workspace").FontSize(14).Placeholder("/absolute/path/to/workspace (empty uses default)").Disabled(!editable)
 		if e.focusField == "Workspace" {
 			workspace.Focus()
@@ -163,7 +163,7 @@ func (e *contactProfileEditor) view(c *ui.Context, t *ui.Theme, actions contactP
 		if message := e.Errors["Workspace"]; message != "" {
 			ui.Text(c, message).FontSize(14).TextColor(t.Danger)
 		}
-		ui.Text(c, "Leave Workspace empty to use the applied default directory.").FontSize(14).LineHeight(1.4).TextColor(t.TextMuted)
+		ui.Text(c, "Leave Workspace empty to use the applied default directory.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 
 		ui.Column(c).Gap(6).Children(func() {
 			ui.Row(c).Gap(8).Wrap().Children(func() {
@@ -183,7 +183,7 @@ func (e *contactProfileEditor) view(c *ui.Context, t *ui.Theme, actions contactP
 					secondaryButton(c, "Discard changes").OnClick(actions.Discard)
 				}
 			})
-			ui.Text(c, "Contact management").FontSize(typeAction).FontWeight(600).TextColor(t.TextMuted)
+			ui.Text(c, "Contact management").FontSize(typeAction).FontWeight(500).TextColor(t.TextMuted)
 			ui.Row(c).Gap(8).Wrap().Children(func() {
 				if e.Archived {
 					secondaryButton(c, "Restore").Disabled(e.Busy).OnClick(func() {
@@ -204,10 +204,10 @@ func (e *contactProfileEditor) view(c *ui.Context, t *ui.Theme, actions contactP
 			ui.Text(c, "Saving…").FontSize(14).TextColor(t.TextMuted)
 		}
 		if e.Error != "" {
-			ui.Text(c, e.Error).FontSize(14).LineHeight(1.4).TextColor(t.Danger)
+			ui.Text(c, e.Error).FontSize(14).LineHeight(1.5).TextColor(t.Danger)
 		}
 		if e.Status != "" {
-			ui.Text(c, e.Status).FontSize(14).LineHeight(1.4).TextColor(t.Text)
+			ui.Text(c, e.Status).FontSize(14).LineHeight(1.5).TextColor(t.Text)
 		}
 	})
 }

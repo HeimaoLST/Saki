@@ -366,14 +366,14 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 			ui.Text(c, state.RunLabel).FontSize(14).TextColor(th.TextMuted)
 		}
 		if state.RunStatus != "" {
-			ui.Text(c, state.RunStatus).FontSize(14).FontWeight(500).TextColor(th.TextMuted)
+			ui.Text(c, state.RunStatus).FontSize(typeAction).FontWeight(500).TextColor(th.TextMuted)
 		}
 
 		result := ui.Column(c).AlignSelf(ui.Stretch).MinWidth(0).Padding(12).Radius(th.Radius).Background(th.Surface).Gap(8)
 		result.Children(func() {
-			ui.Text(c, "Result").FontSize(14).FontWeight(600).TextColor(th.Text)
+			ui.Text(c, "Result").FontSize(typeAction).FontWeight(500).TextColor(th.Text)
 			if state.Response == "" {
-				ui.Text(c, "No assistant response was recorded for this run.").FontSize(14).LineHeight(1.45).TextColor(th.TextMuted)
+				ui.Text(c, "No assistant response was recorded for this run.").FontSize(14).LineHeight(1.5).TextColor(th.TextMuted)
 				return
 			}
 			markdownReader(c, state.Response, markdownReaderOptions{
@@ -389,9 +389,9 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 		})
 
 		ui.Column(c).AlignSelf(ui.Stretch).MinWidth(0).Gap(8).Children(func() {
-			ui.Text(c, "Reported files").FontSize(14).FontWeight(600).TextColor(th.Text)
+			ui.Text(c, "Reported files").FontSize(typeAction).FontWeight(500).TextColor(th.Text)
 			if len(state.Files) == 0 {
-				ui.Text(c, "No files were reported for this run.").FontSize(14).LineHeight(1.45).TextColor(th.TextMuted)
+				ui.Text(c, "No files were reported for this run.").FontSize(14).LineHeight(1.5).TextColor(th.TextMuted)
 				return
 			}
 			for index, file := range state.Files {
@@ -441,7 +441,7 @@ func issueResultFileRow(c *ui.Context, th *ui.Theme, state *issueResultPanelStat
 	}
 	row.Children(func() {
 		ui.Row(c).Wrap().AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, filepath.Base(file.Path)).FontSize(14).FontWeight(600).TextColor(th.Text).MaxLines(2).Grow(1)
+			ui.Text(c, filepath.Base(file.Path)).FontSize(typeAction).FontWeight(500).TextColor(th.Text).MaxLines(2).Grow(1)
 			ui.Text(c, "Read file →").FontSize(typeAction).FontWeight(500).TextColor(th.TextMuted)
 		})
 		ui.Text(c, file.Path).FontSize(14).TextColor(th.TextMuted).MaxLines(2)
@@ -516,7 +516,7 @@ func issueResultReaderPage(c *ui.Context, th *ui.Theme, state *issueResultPanelS
 				state.FocusReader = false
 			}
 			ui.Column(c).MinWidth(0).Shrink(1).Gap(2).Children(func() {
-				ui.Text(c, filepath.Base(file.Path)).FontSize(16).FontWeight(600).TextColor(th.Text).MaxLines(2)
+				ui.Text(c, filepath.Base(file.Path)).FontSize(16).FontWeight(500).TextColor(th.Text).MaxLines(2)
 			})
 		})
 		ui.Scroll(c).Grow(1).TrackScroll(&state.ReaderScroll).Padding(0, 16).Children(func() {
@@ -600,16 +600,16 @@ func issueResultReaderPreview(c *ui.Context, th *ui.Theme, state *issueResultPan
 		return
 	}
 	if inspection.Notice != "" {
-		ui.Text(c, inspection.Notice).FontSize(14).LineHeight(1.45).TextColor(th.Warning)
+		ui.Text(c, inspection.Notice).FontSize(14).LineHeight(1.5).TextColor(th.Warning)
 	}
 	if inspection.ReadError != "" {
-		ui.Text(c, inspection.ReadError).FontSize(14).LineHeight(1.45).TextColor(th.Danger)
+		ui.Text(c, inspection.ReadError).FontSize(14).LineHeight(1.5).TextColor(th.Danger)
 	}
 	if !inspection.Exists || !inspection.Regular || inspection.Notice != "" || inspection.ReadError != "" {
 		return
 	}
 	if inspection.Preview == "" {
-		ui.Text(c, "Empty file (0 bytes). Copy the current file to verify its empty content.").FontSize(14).LineHeight(1.45).TextColor(th.TextMuted)
+		ui.Text(c, "Empty file (0 bytes). Copy the current file to verify its empty content.").FontSize(14).LineHeight(1.5).TextColor(th.TextMuted)
 	}
 	markdownReader(c, inspection.Preview, markdownReaderOptions{
 		PlainText:       !issueResultMarkdownFile(file.Path),
@@ -627,9 +627,9 @@ func issueResultReaderPreview(c *ui.Context, th *ui.Theme, state *issueResultPan
 func issueResultSourceView(c *ui.Context, th *ui.Theme, state *issueResultPanelState, actions issueResultPanelActions, file issueResultFile) {
 	source := ui.Column(c).AlignSelf(ui.Stretch).MinWidth(0).Gap(4)
 	source.Children(func() {
-		ui.Text(c, "Source & raw record").FontSize(14).FontWeight(600).TextColor(th.Text)
+		ui.Text(c, "Source & raw record").FontSize(typeAction).FontWeight(500).TextColor(th.Text)
 		ui.Text(c, "Working directory: "+file.WorkingDirectory).FontSize(typeAction).TextColor(th.TextMuted).MaxLines(2)
-		ui.Text(c, "The reader shows the current file at the reported path. Its content may have changed since the execution; it is not an execution-time snapshot.").FontSize(typeAction).LineHeight(1.45).TextColor(th.TextMuted)
+		ui.Text(c, "The reader shows the current file at the reported path. Its content may have changed since the execution; it is not an execution-time snapshot.").FontSize(typeAction).LineHeight(1.5).TextColor(th.TextMuted)
 		ui.Text(c, "Session: "+file.SessionID).FontSize(typeAction).TextColor(th.TextMuted).MaxLines(2)
 		ui.Text(c, "Task: "+file.TaskID).FontSize(typeAction).TextColor(th.TextMuted).MaxLines(2)
 		ui.Text(c, "Message: "+file.MessageID).FontSize(typeAction).TextColor(th.TextMuted).MaxLines(2)

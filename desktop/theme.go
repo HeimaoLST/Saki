@@ -6,17 +6,17 @@ import "github.com/egoist/mygo/ui"
 // appearance. Theme keeps the framework's control roles semantic; the small
 // app-only set names reading surfaces that must not be reused as button faces.
 // Composer and workbench type roles are shared by the existing render paths
-// rather than a second design system. Body and metadata sizes keep the
-// 16px reading/local groups and 12px supporting text.
+// rather than a second design system. Body/input text is 14, controls 13, and
+// supporting text 12; page/object titles are 16.
 const (
-	// Four app text sizes: supporting 12, controls 14, reading/local groups 16, page 20.
-	typeContactTitle float32 = 20
-	typePageTitle    float32 = 20
-	typeGroupTitle   float32 = 16
-	typeBody         float32 = 16
-	typeAction       float32 = 14
+	// Four app text sizes: supporting 12, controls 13, body/input 14, object/page titles 16.
+	typeContactTitle float32 = 16
+	typePageTitle    float32 = 16
+	typeGroupTitle   float32 = 14
+	typeBody         float32 = 14
+	typeAction       float32 = 13
 	typeMeta         float32 = 12
-	typeRailName     float32 = 14
+	typeRailName     float32 = 13
 	typeRailSummary  float32 = 12
 )
 
@@ -37,12 +37,12 @@ type workbenchTheme struct {
 
 func resolveWorkbenchTheme(dark bool) workbenchTheme {
 	t := ui.LightTheme()
-	t.FontSize = 14
+	t.FontSize = 13
 	t.Spacing = 4
 	t.Radius = 8
 	if dark {
 		t = ui.DarkTheme()
-		t.FontSize = 14
+		t.FontSize = 13
 		t.Spacing = 4
 		t.Radius = 8
 		// #218 palette: the same theme fields, populated from the researched
@@ -163,5 +163,5 @@ func appTooltip(c *ui.Context, anchor ui.Element, text string) ui.Element {
 // reserved for the main action. Do not set Background on this control: MyGo's
 // styleButton only supplies hover/pressed while its default face is intact.
 func secondaryButton(c *ui.Context, label string) ui.Element {
-	return ui.Button(c, label).FontSize(typeAction).FontWeight(500).MinHeight(32).Padding(6, 10)
+	return ui.Button(c, label).FontSize(typeAction).FontWeight(400).MinHeight(32).Padding(6, 10)
 }

@@ -235,7 +235,7 @@ func (a *appModel) settingsSidebar(c *ui.Context, t *ui.Theme, narrow bool) {
 	if narrow {
 		width = 0
 	}
-	column := ui.Column(c).Gap(14).Padding(18, 14).Background(a.workTheme.Rail)
+	column := ui.Column(c).Gap(12).Padding(16).Background(a.workTheme.Rail)
 	if narrow {
 		column.FillWidth()
 	} else {
@@ -247,7 +247,7 @@ func (a *appModel) settingsSidebar(c *ui.Context, t *ui.Theme, narrow bool) {
 			back.Focus()
 			a.settingsFocusBack = false
 		}
-		ui.Text(c, "Settings").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, "Settings").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 		nav := func(label, tab string) {
 			selected := a.settingsTab == tab
 			button := ui.ButtonBase(c).Label(label).FontSize(typeAction).MinHeight(32).
@@ -257,7 +257,7 @@ func (a *appModel) settingsSidebar(c *ui.Context, t *ui.Theme, narrow bool) {
 				button.FillWidth()
 			}
 			if selected {
-				button.Background(t.Selection).TextColor(t.Text).FontWeight(600)
+				button.Background(t.Selection).TextColor(t.Text).FontWeight(500)
 			}
 			if button.Pressed() {
 				button.Background(t.SurfacePressed)
@@ -282,7 +282,7 @@ func (a *appModel) settingsSidebar(c *ui.Context, t *ui.Theme, narrow bool) {
 				nav("Advanced", settingsTabAdvanced)
 			})
 		} else {
-			ui.Column(c).Gap(3).Children(func() {
+			ui.Column(c).Gap(4).Children(func() {
 				nav("Appearance", settingsTabAppearance)
 				nav("Connection & model", settingsTabConnection)
 				nav("Contact profile", settingsTabContact)
@@ -293,13 +293,13 @@ func (a *appModel) settingsSidebar(c *ui.Context, t *ui.Theme, narrow bool) {
 }
 
 func (a *appModel) settingsMain(c *ui.Context, t *ui.Theme, narrow bool) {
-	paddingY, paddingX := float32(32), float32(40)
+	paddingY, paddingX := float32(16), float32(16)
 	if narrow {
-		paddingY, paddingX = 20, 16
+		paddingY, paddingX = 16, 16
 	}
 	ui.Column(c).Grow(1).FillHeight().AlignItems(ui.Start).Children(func() {
 		ui.Scroll(c).Grow(1).FillHeight().TrackScroll(&a.settingsScroll).Padding(paddingY, paddingX).Children(func() {
-			ui.Column(c).FillWidth().MaxWidth(720).AlignItems(ui.Start).Gap(10).Children(func() {
+			ui.Column(c).FillWidth().MaxWidth(720).AlignItems(ui.Start).Gap(12).Children(func() {
 				switch a.settingsTab {
 				case settingsTabAppearance:
 					a.settingsAppearanceContent(c, t)
@@ -316,15 +316,15 @@ func (a *appModel) settingsMain(c *ui.Context, t *ui.Theme, narrow bool) {
 }
 
 func (a *appModel) settingsAppearanceContent(c *ui.Context, t *ui.Theme) {
-	ui.Text(c, "Appearance").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
-	ui.Text(c, "Changes apply immediately.").FontSize(typeAction).LineHeight(1.45).TextColor(t.TextMuted)
+	ui.Text(c, "Appearance").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
+	ui.Text(c, "Changes apply immediately.").FontSize(typeBody).LineHeight(1.5).TextColor(t.TextMuted)
 	a.appearanceChoice = appearanceModeLabel(a.appearanceMode)
-	ui.Row(c).Gap(10).AlignItems(ui.Stretch).Children(func() {
+	ui.Row(c).Gap(8).AlignItems(ui.Stretch).Children(func() {
 		for _, mode := range []struct{ label, value string }{
 			{"System", appearanceSystem}, {"Light", appearanceLight}, {"Dark", appearanceDark},
 		} {
 			mode := mode
-			button := ui.ButtonBase(c).Label(mode.label).Grow(1).MinWidth(120).Padding(10).Radius(t.Radius).AlignSelf(ui.Stretch).
+			button := ui.ButtonBase(c).Label(mode.label).Grow(1).MinWidth(120).Padding(8).Radius(t.Radius).AlignSelf(ui.Stretch).
 				Background(t.SurfaceHover).BorderWidth(1).BorderColor(t.Border)
 			if normalizeAppearanceMode(a.appearanceMode) == mode.value {
 				button.BorderColor(t.Accent).BorderWidth(2)
@@ -337,7 +337,7 @@ func (a *appModel) settingsAppearanceContent(c *ui.Context, t *ui.Theme) {
 			button.OnClick(func() { a.setAppearanceMode(mode.value) })
 			button.Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-					ui.Text(c, mode.label).FontSize(typeAction).FontWeight(600).TextColor(t.Text)
+					ui.Text(c, mode.label).FontSize(typeAction).FontWeight(500).TextColor(t.Text)
 					if mode.value == appearanceSystem {
 						system := "Light"
 						if a.systemDark {
@@ -353,29 +353,29 @@ func (a *appModel) settingsAppearanceContent(c *ui.Context, t *ui.Theme) {
 		ui.Text(c, a.appearanceStatus).FontSize(typeAction).TextColor(t.Success)
 	}
 	if a.appearanceError != "" {
-		ui.Text(c, a.appearanceError).FontSize(typeAction).LineHeight(1.45).TextColor(t.Danger)
+		ui.Text(c, a.appearanceError).FontSize(typeBody).LineHeight(1.5).TextColor(t.Danger)
 		secondaryButton(c, "Retry save").OnClick(func() { a.saveAppearance() })
 	}
 }
 
 func (a *appModel) settingsConnectionContent(c *ui.Context, t *ui.Theme) {
 	form := a.connectionForm
-	ui.Text(c, "Connection & model").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
+	ui.Text(c, "Connection & model").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 	if a.connectionApplied() && a.connectionEffective != nil {
-		ui.Column(c).Padding(10, 12).Radius(t.Radius).Background(t.SurfaceHover).Gap(3).Children(func() {
-			ui.Text(c, "Current: "+connectionCurrentSummary(a.connectionEffective)).FontSize(typeAction).LineHeight(1.45).TextColor(t.Text)
+		ui.Column(c).Padding(8, 12).Radius(t.Radius).Background(t.SurfaceHover).Gap(4).Children(func() {
+			ui.Text(c, "Current: "+connectionCurrentSummary(a.connectionEffective)).FontSize(typeBody).LineHeight(1.5).TextColor(t.Text)
 			if form.Error != "" {
-				ui.Text(c, "The current connection remains in use; this attempt did not replace it.").FontSize(typeAction).LineHeight(1.45).TextColor(t.Warning)
+				ui.Text(c, "The current connection remains in use; this attempt did not replace it.").FontSize(typeBody).LineHeight(1.5).TextColor(t.Warning)
 			}
 		})
 	} else {
-		ui.Text(c, "No connection is currently applied.").FontSize(typeAction).LineHeight(1.45).TextColor(t.TextMuted)
+		ui.Text(c, "No connection is currently applied.").FontSize(typeBody).LineHeight(1.5).TextColor(t.TextMuted)
 	}
 	if form.Dirty() {
-		ui.Text(c, "Unsaved form changes.").FontSize(typeAction).LineHeight(1.45).TextColor(t.Warning)
+		ui.Text(c, "Unsaved form changes.").FontSize(typeBody).LineHeight(1.5).TextColor(t.Warning)
 	}
 	if a.connectionSavedPending() {
-		ui.Text(c, "Saved configuration is awaiting Apply.").FontSize(typeAction).LineHeight(1.45).TextColor(t.Warning)
+		ui.Text(c, "Saved configuration is awaiting Apply.").FontSize(typeBody).LineHeight(1.5).TextColor(t.Warning)
 	}
 	form.ReloadBlocked = a.connectionReloadBlocked()
 	actions := a.connectionActions()
@@ -386,7 +386,7 @@ func (a *appModel) settingsConnectionContent(c *ui.Context, t *ui.Theme) {
 func (a *appModel) settingsContactContent(c *ui.Context, t *ui.Theme) {
 	editor := a.settingsContactEditor()
 	if editor == nil {
-		ui.Text(c, "Contact profile").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
+		ui.Text(c, "Contact profile").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 		ui.Text(c, "No contact is available to edit.").FontSize(14).TextColor(t.Warning)
 		return
 	}
@@ -414,9 +414,9 @@ func (a *appModel) settingsContactContent(c *ui.Context, t *ui.Theme) {
 	var ct *contact
 	ct = a.contactByID(a.settingsContactID)
 	editor = a.settingsContactEditor()
-	ui.Text(c, "Contact profile: "+a.settingsContactChoice(ct)).FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
+	ui.Text(c, "Contact profile: "+a.settingsContactChoice(ct)).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 	if editor.Draft != editor.initial {
-		ui.Text(c, "Unsaved changes.").FontSize(typeAction).LineHeight(1.45).TextColor(t.Warning)
+		ui.Text(c, "Unsaved changes.").FontSize(typeMeta).LineHeight(1.5).TextColor(t.Warning)
 	}
 	editor.view(c, t, contactProfileActions{
 		Save:       func(draft profileDraft) { a.saveContactProfileDraftFor(ct.ID, draft, false) },
@@ -485,9 +485,9 @@ func containsString(values []string, want string) bool {
 }
 
 func (a *appModel) settingsAdvancedContent(c *ui.Context, t *ui.Theme) {
-	ui.Text(c, "Advanced").FontSize(typePageTitle).FontWeight(600).TextColor(t.Text)
-	ui.Text(c, "Read-only Runtime and startup diagnostics. Open connection settings to repair configuration.").FontSize(14).LineHeight(1.45).TextColor(t.TextMuted)
-	ui.Text(c, "Startup & configuration").FontSize(typeGroupTitle).FontWeight(600).TextColor(t.Text)
+	ui.Text(c, "Advanced").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
+	ui.Text(c, "Read-only Runtime and startup diagnostics. Open connection settings to repair configuration.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
+	ui.Text(c, "Startup & configuration").FontSize(typeGroupTitle).FontWeight(500).TextColor(t.Text)
 	label := "Show runtime, paths and session"
 	if a.startupDetailsOpen {
 		label = "Hide runtime, paths and session"
