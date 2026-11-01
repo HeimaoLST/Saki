@@ -1,10 +1,16 @@
 # SAKI 文档
 
-更新日期：2026-10-20。
+更新日期：2026-11-01。
 
 产品目标：让 SAKI 通过持续积累经验和修正行为，在长期使用中更好用，减少用户重复指导与纠正的负担。研究目标：理解怎样让经历持久地影响判断和行动，并验证这种变化能否改善任务结果与长期协作体验。用户已授权开展第一轮实验，由另一个 agent 负责实现和执行、主 agent 指导与验收；独立 pilot 的两轮真实结果已复核，包含一轮 bearer 配置偏差和一轮修正运行；主 Agent 尚未接入成长机制。
 
 产品形态是可由 Web、Bot、TUI、GUI 等宿主承载的 Agent runtime／core。不同外壳使用同一核心语义；单会话／多会话不等于不同身份。已确认的产品边界见 [Persistent identity](design/persistent-identity.md#产品边界可由不同宿主承载的-agent-runtime)，会话使用场景见 [Session management](design/session-management.md)。
+
+## Spec 驱动的协作
+
+GitHub issue 正文承载当前 Spec，PM 以固定评论快照分发精确版本；`docs/` 保存已采用的长期需求、设计、接口和实验事实，不重复维护同一任务 delta。Spec 至少写问题/价值、范围与非目标、可观察 R 编号、可执行 AC（输入、步骤、预期、失败边界、证据）、依赖、唯一 owner、可写路径、base/目标分支和交付物；实质变化升版本并说明差异与接续动作。
+
+协作入口以 [AGENTS.md](../AGENTS.md) 为准：PM 统筹 Spec、分派、分支/PR 顺序和收尾，业务主 agent 组织实施并交逐条 AC 证据，子 agent 只走 tmux；跨线通知使用 `scripts/agent_notify.py`，目标必须在 GitHub 顶层回 ACK，通知运输成功不等于已接收。PR 必须记录 Spec 版本/评论、AC→证据/SHA/限制；合并仍需该 PR 的明确授权，CI 绿、Ready 或 ACK 都不等于完成。`scripts/agent-worktree.sh` 只保留 add/list/path/安全 remove，自动 finish/prune/force 清理已移除。
 
 ## 源码结构
 
