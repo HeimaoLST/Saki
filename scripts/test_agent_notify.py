@@ -277,11 +277,17 @@ class StatusTests(unittest.TestCase):
             with self.assertRaisesRegex(notify.NotifyError, "absent"):
                 notify.status("agent:pm#mira", URL, "r1")
 
+    def test_wrong_kind_is_rejected_even_when_number_matches(self) -> None:
+        pull_url = URL.replace("/issues/236", "/pull/236")
+        with mock.patch.object(notify, "_comments", return_value=[comment()]):
+            with self.assertRaisesRegex(notify.NotifyError, "does not match"):
+                notify.status("agent:pm#mira", pull_url, "r1")
+
     def test_comment_from_another_issue_is_rejected(self) -> None:
         wrong = comment()
-        wrong["issue_url"] = "https://api.github.com/repos/HeimaoLST/Saki/issues/235"
+        wrong["html_url"] = "https://github.com/HeimaoLST/Saki/issues/235#issuecomment-6556457330"
         with mock.patch.object(notify, "_comments", return_value=[wrong]):
-            with self.assertRaisesRegex(notify.NotifyError, "belong"):
+            with self.assertRaisesRegex(notify.NotifyError, "does not match"):
                 notify.status("agent:pm#mira", URL, "r1")
 
     def test_comment_url_is_strict(self) -> None:

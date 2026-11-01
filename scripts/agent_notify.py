@@ -207,17 +207,32 @@ def _wait_for_visible(
 
 
 def _assert_comment_belongs(
-    owner: str, repo: str, number: str, comment_id: str, comments: list[dict[str, Any]]
+    owner: str,
+    repo: str,
+    kind: str,
+    number: str,
+    comment_id: str,
+    comments: list[dict[str, Any]],
 ) -> None:
-    expected_issue = f"/repos/{owner}/{repo}/issues/{number}"
     for comment in comments:
         if str(comment.get("id")) != comment_id:
             continue
-        issue_url = comment.get("issue_url")
-        if not isinstance(issue_url, str) or not issue_url.rstrip("/").endswith(
-            expected_issue
+        html_url = comment.get("html_url")
+        if not isinstance(html_url, str):
+            raise NotifyError("target comment has no canonical html_url")
+        parsed = urlparse(html_url)
+        parts = [part for part in parsed.path.split("/") if part]
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc.lower() != "github.com"
+            or len(parts) != 4
+            or parts[0].lower() != owner.lower()
+            or parts[1].lower() != repo.lower()
+            or parts[2] != kind
+            or parts[3] != number
+            or parsed.fragment != f"issuecomment-{comment_id}"
         ):
-            raise NotifyError("comment does not belong to the requested issue")
+            raise NotifyError("comment html_url does not match the requested issue/PR")
         return
     raise NotifyError("target comment is absent from the issue comments")
 
@@ -229,9 +244,9 @@ def send(
     *,
     sleep_fn: Any = None,
 ) -> dict[str, Any]:
-    owner, repo, _kind, number, comment_id = parse_comment_url(comment_url)
+    owner, repo, kind, number, comment_id = parse_comment_url(comment_url)
     comments = _comments(owner, repo, number)
-    _assert_comment_belongs(owner, repo, number, comment_id, comments)
+    _assert_comment_belongs(owner, repo, kind, number, comment_id, comments)
     pane = discover(agent_id)
     before = _tmux_capture(pane.pane_id)
     if pane.fingerprint(before) != fingerprint:
@@ -332,12 +347,12 @@ def _ack_fields(body: str) -> dict[str, str] | None:
 def status(agent_id: str, comment_url: str, spec: str) -> dict[str, Any]:
     if not AGENT_ID.fullmatch(agent_id):
         raise NotifyError("agent ID must be a stable agent:<line>#<name> ID")
-    owner, repo, _kind, number, comment_id = parse_comment_url(comment_url)
+    owner, repo, kind, number, comment_id = parse_comment_url(comment_url)
     try:
         comments = _comments(owner, repo, number)
     except NotifyError as exc:
         raise NotifyError(f"GitHub comments read failed: {exc}") from exc
-    _assert_comment_belongs(owner, repo, number, comment_id, comments)
+    _assert_comment_belongs(owner, repo, kind, number, comment_id, comments)
     for comment in comments:
         body = comment.get("body")
         if not isinstance(body, str):

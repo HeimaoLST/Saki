@@ -154,7 +154,7 @@ REFS: #42, 1a2b3c4, src/frontend/tui/view.rs:120
 | `feature` | 新能力需求 | 用户价值、可验证的验收标准、非目标 |
 | `test-request` | 测试／CI 检查需要补充或修复 | 被测行为、确定性验收场景、允许的 mock 边界；CI 失败附 run URL 与 SHA |
 | `handoff` | 独立任务的主责移交（跨线换 `agent:*`，同线不换） | 交接清单（§8）；主子内部派活按 §2.2 |
-| `decision` | 需要架构／协议决策 | 候选方案、影响面、需要哪些业务线 `ACK` |
+| `decision` | 需要架构／协议决策 | 候选方案、影响面、受影响业务线的设计 `KIND: review`/`KIND: decision` 结论（不是接单 ack） |
 | `question` | 需要澄清 | 已确认事实（带证据）、阻塞了什么 |
 | `ack` | 接收固定 Spec/通知 | `FROM` 实际目标、`KIND: ack`、`ACK` 固定评论 URL、`SPEC` 精确版本、`SCOPE` 责任／路径、`NEXT` 第一步；必须是目标顶层评论 |
 | `status` | 例行进度、计划、阻塞变化 | 已完成／下一步／阻塞 |
@@ -366,7 +366,7 @@ Issue 和 PR 承载**当前 Spec、过程与沟通**，`docs/` 是**已采用长
 | Feature/Spec | `type:feature` + `status:triage` | 固定 Spec 版本/评论、R/AC、可写路径、base/依赖、非目标与证据 |
 | 测试／CI 检查请求 | `type:test` + `status:triage` | 被测行为、确定性场景、mock 边界或 CI 失败 run；不是独立 QA 验收队列 |
 | Agent 任务交接 | `status:triage` + `handoff` | 原任务优先在原 issue 交接；新任务按目标补类型与归属 |
-| 决策／RFC | `type:decision` + `status:triage` | 候选方案、影响面、需要谁 ACK |
+| 决策／RFC | `type:decision` + `status:triage` | 候选方案、影响面、需要哪些业务线设计结论（review/decision，非 ack） |
 | 澄清问题 | `type:question` + `status:triage` | 已确认事实、阻塞点、期望答案形式 |
 
 模板创建后处于 `triage`，由 PM 补齐类型、归属、优先级与迭代安排。是否需要 PR 取决于交付是否修改文件，不取决于 issue 类型；只读报告无需 PR，研究产生文档修改则仍需提交交付（§4）。
@@ -509,7 +509,7 @@ BLOCKED-BY: #77            # 有真实 issue 依赖时写；权限／环境／�
 - **唯一写入路径**：主 agent 明确每个子任务的文件范围，同一文件同时只有一个写入者；并行修改需范围不重叠。主 agent 读代码、capture 进展和验收不算争抢写入；要修改子 agent 正在写的文件，先让其暂停并交回。Git 提交、同步等工作区操作串行进行；任务执行期间保持约定分支，不在共享工作区切换分支。
 - **遵守修改范围**：跨线代码先明确交接或取得当前任务的授权；模块事实文档按 §3.3 同步，不能借机修改无关内容。
 - **抢占**：两个实例同时认领同一 issue，以注明实例与文件范围、时间较早的认领评论为准；后来者不要撤销对方标签，改领其他 ready issue 或在评论中协商。
-- **公共契约决策**：新增跨业务线公共契约，或对既有公共接口／协议／事件作不兼容变更，先开 `type:decision` 写明动机、方案、影响面、迁移与回滚，取得受影响业务线的实例 `ACK`。需人类拍板的事项按 §8 确认，再拆实施任务；不改变公共契约的局部维护走普通 PR。决策结论沉淀到 `docs/design/`。
+- **公共契约决策**：新增跨业务线公共契约，或对既有公共接口／协议／事件作不兼容变更，先开 `type:decision` 写明动机、方案、影响面、迁移与回滚，取得受影响业务线的实例设计结论（`KIND: review`/`KIND: decision`，不是接单 ack）。需人类拍板的事项按 §8 确认，再拆实施任务；不改变公共契约的局部维护走普通 PR。决策结论沉淀到 `docs/design/`。
 - **同步 base**：合并前同步到最新 base（普通 PR 为 `dev`，hotfix 为 `master`，stacked 为直接父分支）。未发布的本地分支可以 rebase；已推送／开 PR 的分支用 merge commit，不 force-push、不覆盖远端。有冲突由分支作者解决，不要求评审者代劳。
 - **工作目录隔离（默认开发规则）**：`Saki/` 主检出固定在 `master`，用于查看与巡检；开发在独立 worktree 中进行。主检出更新仅在干净且无其他实例写入时执行；用户指定的当次例外按 §0。
   - 每个独立开发 issue 一个 worktree：`./scripts/agent-worktree.sh add agent/<line>/<issue>-<slug>`，目录位于 `<Workspace>/worktrees/Saki/<branch 中 / 替换为 ->`（默认 `$HOME/Workspace`，可用 `SAKI_WORKTREE_ROOT` 覆盖）。主 agent 统一分配给该任务的子 agent，不为内部每个步骤重复建 worktree。
@@ -609,5 +609,5 @@ gh issue close 42 --comment "验收通过，证据见 PR #43"
 
 ## 附：本文件维护
 
-- 本文件由 `agent:pm` 维护，默认修改走 PR；协议本身变更必须开 `type:decision` issue 并获得受影响业务线的 `ACK`。用户明确授权直接修订时（§0），按授权范围执行并把改动与理由记录到 issue；单次例外不改变默认流程。
+- 本文件由 `agent:pm` 维护，默认修改走 PR；协议本身变更必须开 `type:decision` issue 并获得受影响业务线的设计结论（`KIND: review`/`KIND: decision`，不是接单 ack）。用户明确授权直接修订时（§0），按授权范围执行并把改动与理由记录到 issue；单次例外不改变默认流程。
 - 标签的实际创建与更新由 `scripts/setup-labels.sh` 完成（需要 `gh` 已登录且对仓库有写权限）。
