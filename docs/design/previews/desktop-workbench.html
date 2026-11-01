@@ -126,8 +126,8 @@
         pointer-events: none;
       }
       svg {
-        width: 17px;
-        height: 17px;
+        width: 16px;
+        height: 16px;
         fill: none;
         stroke: currentColor;
         stroke-width: 1.7;
@@ -146,16 +146,16 @@
       }
       h1 {
         font-size: 16px;
-        font-weight: 600;
+        font-weight: 500;
       }
       h2 {
         font-size: 16px;
-        font-weight: 600;
+        font-weight: 500;
         line-height: 1.5;
       }
       h3 {
         font-size: 14px;
-        font-weight: 600;
+        font-weight: 500;
       }
       a {
         color: var(--accent);
@@ -200,7 +200,7 @@
         gap: 7px;
         min-height: 32px;
         padding: 6px 10px;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 500;
       }
       .quiet {
@@ -239,7 +239,7 @@
       }
       .chevron {
         color: var(--muted);
-        width: 15px;
+        width: 16px;
       }
       .proto-bar {
         max-width: 1440px;
@@ -317,18 +317,19 @@
         display: flex;
         flex-direction: column;
         min-height: 0;
-        padding: 18px 10px 10px;
+        padding: 12px 8px 8px;
         background: var(--rail);
       }
       .brand {
-        height: 42px;
-        padding: 0 12px;
+        height: 36px;
+        padding: 0 8px;
         display: flex;
         align-items: center;
         justify-content: space-between;
       }
       .brand strong {
         font-size: 16px;
+        font-weight: 500;
       }
       .brand-mark {
         width: 22px;
@@ -336,12 +337,12 @@
         color: var(--accent);
       }
       .search {
-        height: 34px;
+        height: 32px;
         display: flex;
         align-items: center;
-        gap: 7px;
-        margin: 16px 5px 14px;
-        padding: 0 9px;
+        gap: 6px;
+        margin: 12px 4px 8px;
+        padding: 0 8px;
         border: 1px solid var(--control-border);
         border-radius: 7px;
         color: var(--muted);
@@ -353,7 +354,7 @@
         outline: none;
         min-width: 0;
         width: 100%;
-        font-size: 14px;
+        font-size: 13px;
       }
       .search:focus-within {
         outline: 2px solid var(--focus);
@@ -369,7 +370,7 @@
         border: 0;
         background: none;
         max-width: 120px;
-        font-size: 14px;
+        font-size: 13px;
         color: var(--muted);
       }
       .contacts {
@@ -380,33 +381,36 @@
       .contact {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         width: 100%;
-        padding: 11px 9px;
+        padding: 6px 8px;
         text-align: left;
         border-radius: 8px;
-        margin-bottom: 3px;
+        margin-bottom: 2px;
+        min-height: 44px;
       }
       .contact[aria-current="true"] {
         background: var(--hover);
       }
       .contact strong {
-        font-size: 14px;
-        font-weight: 550;
+        font-size: 13px;
+        font-weight: 500;
         display: block;
+        line-height: 16px;
       }
       .contact small {
         display: block;
         font-size: 12px;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-        overflow: hidden;
+        white-space: normal;
+        text-overflow: clip;
+        overflow: visible;
         color: var(--muted);
-        margin-top: 2px;
+        margin-top: 0;
+        line-height: 16px;
       }
       .avatar {
-        width: 34px;
-        height: 34px;
+        width: 32px;
+        height: 32px;
         border-radius: 10px;
         object-fit: cover;
         background: var(--well);
@@ -421,7 +425,7 @@
         background: var(--tint);
       }
       .rail-bottom {
-        padding: 10px 5px 0;
+        padding: 8px 4px 0;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -456,17 +460,17 @@
         min-height: 0;
       }
       .main-head {
-        height: 76px;
+        height: 56px;
         flex: none;
-        padding: 0 28px;
+        padding: 0 16px;
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 8px;
         border-bottom: 0.5px solid var(--line);
       }
       .main-head .avatar {
-        width: 35px;
-        height: 35px;
+        width: 28px;
+        height: 28px;
       }
       .identity {
         flex: 1;
@@ -491,7 +495,7 @@
         min-height: 0;
         overflow: auto;
         scrollbar-width: thin;
-        padding: 28px 28px 12px;
+        padding: 16px 16px 8px;
       }
       .reading {
         max-width: 710px;
@@ -501,10 +505,10 @@
         font-size: 12px;
         text-align: center;
         color: var(--muted);
-        margin: 0 0 25px;
+        margin: 0 0 12px;
       }
       .message {
-        margin-bottom: 22px;
+        margin-bottom: 12px;
         display: flex;
         flex-direction: column;
         align-items: flex-start;
@@ -514,7 +518,7 @@
       }
       .bubble {
         max-width: 90%;
-        padding: 13px 16px;
+        padding: 8px 12px;
         border-radius: 4px 15px 15px 15px;
         background: var(--bubble);
         font-size: 14px;
@@ -540,14 +544,14 @@
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        min-height: 24px;
+        min-height: 32px;
       }
       .message-meta svg {
         width: 13px;
         height: 13px;
       }
       .message p + p {
-        margin-top: 12px;
+        margin-top: 8px;
       }
       .bubble h3 {
         margin-bottom: 8px;
@@ -610,7 +614,7 @@
       }
       .composer-wrap {
         flex: none;
-        padding: 10px 28px 18px;
+        padding: 8px 16px 12px;
       }
       .composer {
         max-width: 710px;
@@ -629,8 +633,8 @@
         resize: none;
         background: none;
         width: 100%;
-        height: 82px;
-        padding: 15px 16px 6px;
+        height: 50px;
+        padding: 8px 12px 0;
         outline: none;
         font-size: 14px;
         line-height: 1.5;
@@ -650,18 +654,19 @@
         border: 0;
         border-radius: 7px;
         padding: 6px 8px;
-        font-size: 14px;
+        font-size: 13px;
         max-width: 220px;
         min-width: 0;
       }
       .composer-hint {
         max-width: 710px;
-        margin: 7px auto 0;
+        margin: 4px 14px 0;
         display: flex;
         justify-content: space-between;
         gap: 8px;
         color: var(--muted);
         font-size: 12px;
+        padding: 0 0 6px;
       }
       .alert-inline {
         max-width: 710px;
@@ -711,7 +716,7 @@
         min-height: 32px;
         padding: 5px 7px;
         color: var(--muted);
-        font-size: 14px;
+        font-size: 13px;
         white-space: nowrap;
       }
       .detail-back:hover {
@@ -726,9 +731,9 @@
         display: none;
       }
       .work-head {
-        height: 76px;
+        height: 56px;
         flex: none;
-        padding: 0 18px 0 22px;
+        padding: 0 12px;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -736,6 +741,8 @@
       }
       .work-head h2 {
         font-size: 16px;
+        font-weight: 500;
+        line-height: 1.5;
       }
       .work-head p {
         font-size: 12px;
@@ -743,7 +750,7 @@
         margin-top: 2px;
       }
       .work-body {
-        padding: 18px 20px 24px;
+        padding: 16px;
         overflow: auto;
         min-height: 0;
         flex: 1;
@@ -752,22 +759,23 @@
       .tabs {
         display: flex;
         background: var(--well);
-        padding: 3px;
+        padding: 2px;
         border-radius: 7px;
-        margin-bottom: 22px;
+        margin-bottom: 12px;
       }
       .tabs button {
         flex: 1;
-        padding: 5px 8px;
-        font-size: 14px;
+        padding: 4px 8px;
+        font-size: 13px;
         color: var(--muted);
+        min-height: 32px;
       }
       .tabs button[aria-pressed="true"] {
         background: var(--surface);
         color: var(--ink);
       }
       .section-heading {
-        margin: 23px 0 9px;
+        margin: 16px 0 8px;
         color: var(--muted);
         font-size: 12px;
         font-weight: 500;
@@ -786,12 +794,13 @@
       }
       .task-row {
         width: 100%;
-        padding: 13px 12px;
+        padding: 6px 8px;
         text-align: left;
         display: flex;
         gap: 10px;
         align-items: flex-start;
         border-radius: 0;
+        min-height: 44px;
       }
       .task-row + .task-row {
         border-top: 0.5px solid var(--line);
@@ -803,15 +812,15 @@
         color: var(--muted);
       }
       .task-row strong {
-        font-size: 14px;
-        font-weight: 550;
+        font-size: 13px;
+        font-weight: 500;
         display: block;
-        line-height: 1.55;
+        line-height: 1.5;
         overflow-wrap: anywhere;
       }
       .task-row small {
         display: block;
-        margin-top: 4px;
+        margin-top: 2px;
         color: var(--muted);
         font-size: 12px;
         line-height: 1.5;
@@ -833,12 +842,12 @@
         justify-content: space-between;
         gap: 8px;
         align-items: center;
-        margin-bottom: 12px;
+        margin-bottom: 8px;
       }
       .work-toolbar select {
         background: none;
         border: 0;
-        font-size: 14px;
+        font-size: 13px;
         color: var(--muted);
         max-width: 160px;
         padding: 5px 0;
@@ -856,15 +865,16 @@
         gap: 5px;
         align-items: center;
         color: var(--muted);
-        font-size: 14px;
-        margin: -4px 0 20px;
-        padding: 5px 0;
-        min-height: 30px;
+        font-size: 13px;
+        margin: -4px 0 12px;
+        padding: 4px 0;
+        min-height: 32px;
       }
       .detail-title {
         font-size: 16px;
         line-height: 1.5;
-        margin: 10px 0;
+        margin: 8px 0;
+        font-weight: 500;
       }
       .description {
         font-size: 14px;
@@ -872,29 +882,29 @@
         line-height: 1.5;
       }
       .notice {
-        margin-top: 18px;
-        padding: 13px 14px;
+        margin-top: 12px;
+        padding: 8px 12px;
         background: var(--warning-bg);
         border-radius: 8px;
         font-size: 14px;
         color: var(--warning);
-        line-height: 1.7;
+        line-height: 1.5;
       }
       .notice strong {
         display: block;
         margin-bottom: 3px;
       }
       .detail-action {
-        margin: 14px 0 22px;
+        margin: 8px 0 12px;
         width: 100%;
-        min-height: 36px;
+        min-height: 32px;
       }
       .result-file {
         width: 100%;
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding: 13px 11px;
+        gap: 8px;
+        padding: 8px;
         text-align: left;
         background: var(--surface);
         border: 0.5px solid var(--line);
@@ -907,19 +917,19 @@
       }
       .result-file strong {
         display: block;
-        font-size: 14px;
-        font-weight: 550;
+        font-size: 13px;
+        font-weight: 500;
       }
       .result-file small {
         display: block;
         color: var(--muted);
         font-size: 12px;
-        margin-top: 3px;
+        margin-top: 2px;
       }
       .disclosure {
         border-top: 0.5px solid var(--line);
-        margin-top: 18px;
-        padding-top: 3px;
+        margin-top: 12px;
+        padding-top: 2px;
       }
       .disclosure summary {
         list-style: none;
@@ -927,8 +937,8 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 13px 0;
-        font-size: 14px;
+        padding: 8px 0;
+        font-size: 13px;
         font-weight: 500;
       }
       .disclosure summary::-webkit-details-marker {
@@ -946,9 +956,9 @@
         display: flex;
         align-items: flex-start;
         gap: 8px;
-        padding: 9px 0;
-        font-size: 14px;
-        line-height: 1.6;
+        padding: 6px 0;
+        font-size: 13px;
+        line-height: 1.5;
       }
       .requirements svg {
         width: 16px;
@@ -966,9 +976,9 @@
         margin-top: 3px;
       }
       .run-line {
-        padding: 10px 0;
-        font-size: 14px;
-        line-height: 1.6;
+        padding: 8px 0;
+        font-size: 13px;
+        line-height: 1.5;
       }
       .run-line p {
         color: var(--muted);
@@ -1003,18 +1013,18 @@
         margin-bottom: 5px;
       }
       .timeline strong {
-        font-size: 14px;
-        font-weight: 550;
+        font-size: 13px;
+        font-weight: 500;
       }
       .timeline p {
-        font-size: 14px;
-        line-height: 1.7;
+        font-size: 13px;
+        line-height: 1.5;
         color: var(--muted);
         margin: 5px 0;
       }
       .timeline button {
         padding: 4px 0;
-        font-size: 14px;
+        font-size: 13px;
         color: var(--accent);
         display: flex;
         align-items: center;
@@ -1024,16 +1034,16 @@
         font-size: 12px;
         line-height: 1.7;
         color: var(--muted);
-        margin-bottom: 24px;
+        margin-bottom: 12px;
       }
       .settings-entry {
         display: inline-flex;
         align-items: center;
         gap: 7px;
-        min-height: 34px;
-        padding: 6px 9px;
+        min-height: 32px;
+        padding: 4px 8px;
         color: var(--muted);
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 500;
       }
       .settings-entry:hover {
@@ -1042,7 +1052,7 @@
       .settings-entry[aria-current="page"] {
         background: var(--tint);
         color: var(--accent);
-        font-weight: 600;
+        font-weight: 500;
       }
       .settings-page {
         grid-column: 1;
@@ -1076,9 +1086,9 @@
       .settings-sidebar {
         display: flex;
         flex-direction: column;
-        gap: 16px;
+        gap: 12px;
         min-height: 0;
-        padding: 20px 14px;
+        padding: 16px 12px;
         border-right: 0.5px solid var(--line);
         background: var(--rail);
       }
@@ -1086,13 +1096,13 @@
         align-self: flex-start;
       }
       .settings-sidebar h1 {
-        padding: 0 10px;
+        padding: 0 8px;
         font-size: 16px;
-        line-height: 1.3;
-        font-weight: 600;
+        line-height: 1.5;
+        font-weight: 500;
       }
       .settings-purpose {
-        padding: 0 10px;
+        padding: 0 8px;
         color: var(--muted);
         font-size: 12px;
         line-height: 1.5;
@@ -1109,33 +1119,33 @@
         border-radius: 8px;
         background: var(--warning-bg);
         color: var(--warning);
-        font-size: 14px;
+        font-size: 13px;
         line-height: 1.6;
       }
       .settings-nav {
         display: flex;
         flex-direction: column;
-        gap: 3px;
+        gap: 2px;
         min-height: 0;
       }
       .settings-nav button {
-        min-height: 36px;
-        padding: 8px 10px;
+        min-height: 32px;
+        padding: 6px 8px;
         border-radius: 7px;
         text-align: left;
         color: var(--muted);
-        font-size: 14px;
+        font-size: 13px;
       }
       .settings-nav button[aria-current="page"] {
         background: var(--tint);
         color: var(--accent);
-        font-weight: 600;
+        font-weight: 500;
       }
       .settings-main {
         min-width: 0;
         min-height: 0;
         overflow: auto;
-        padding: 32px 40px 48px;
+        padding: 16px;
       }
       .settings-content {
         width: 100%;
@@ -1146,16 +1156,16 @@
       .appearance-cards {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
-        margin-top: 4px;
+        gap: 8px;
+        margin-top: 0;
       }
       .appearance-card {
         display: flex;
         flex-direction: column;
         align-items: stretch;
-        gap: 7px;
-        min-height: 142px;
-        padding: 10px;
+        gap: 4px;
+        min-height: 96px;
+        padding: 8px;
         border: 0.5px solid var(--line);
         border-radius: 10px;
         background: var(--panel);
@@ -1172,7 +1182,7 @@
       }
       .appearance-preview {
         display: block;
-        height: 64px;
+        height: 48px;
         border-radius: 0;
         background: #ffffff;
         color: #252e28;
@@ -1185,12 +1195,13 @@
         background: linear-gradient(90deg, #ffffff 0 50%, #1d2520 50% 100%);
       }
       .appearance-card strong {
-        font-size: 14px;
+        font-size: 13px;
+        font-weight: 500;
       }
       .appearance-check {
         color: var(--accent);
         font-size: 12px;
-        font-weight: 600;
+        font-weight: 500;
         min-height: 16px;
       }
       .appearance-card[aria-pressed="false"] .appearance-check {
@@ -1199,12 +1210,12 @@
       .connection-summary {
         display: flex;
         flex-direction: column;
-        gap: 3px;
-        padding: 12px 14px;
+        gap: 2px;
+        padding: 8px 10px;
         border: 0.5px solid var(--line);
         border-radius: 9px;
         background: var(--panel);
-        font-size: 14px;
+        font-size: 13px;
         line-height: 1.5;
       }
       .connection-summary strong {
@@ -1217,21 +1228,21 @@
         border-radius: 8px;
         background: var(--warning-bg);
         color: var(--warning);
-        font-size: 14px;
+        font-size: 13px;
         line-height: 1.6;
       }
       .settings-form label {
         display: block;
-        margin: 14px 0 6px;
-        font-size: 14px;
+        margin: 10px 0 4px;
+        font-size: 13px;
         font-weight: 500;
       }
       .settings-form .field {
-        min-height: 36px;
+        min-height: 32px;
       }
       .settings-form small {
         display: block;
-        margin-top: 6px;
+        margin-top: 4px;
         color: var(--muted);
         font-size: 12px;
         line-height: 1.5;
@@ -1239,26 +1250,26 @@
       .field-error {
         margin-top: 5px;
         color: var(--warning);
-        font-size: 14px;
+        font-size: 13px;
       }
       .settings-grid {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
+        gap: 8px;
       }
       .settings-grid label {
         margin-top: 0;
       }
       .settings-advanced {
-        margin-top: 18px;
-        padding-top: 12px;
+        margin-top: 12px;
+        padding-top: 8px;
         border-top: 0.5px solid var(--line);
       }
       .settings-advanced summary {
         cursor: pointer;
         color: var(--muted);
-        font-size: 14px;
-        font-weight: 600;
+        font-size: 13px;
+        font-weight: 500;
       }
       .settings-advanced .settings-grid {
         margin-top: 10px;
@@ -1267,23 +1278,23 @@
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
-        margin-top: 20px;
+        margin-top: 12px;
       }
       .settings-status {
-        min-height: 44px;
-        padding: 9px 0 0;
+        min-height: 32px;
+        padding: 6px 0 0;
         color: var(--muted);
-        font-size: 14px;
+        font-size: 13px;
         line-height: 1.6;
       }
       .settings-status:empty {
-        min-height: 44px;
+        min-height: 32px;
       }
       .settings-diagnostics {
         display: grid;
         grid-template-columns: max-content minmax(0, 1fr);
-        gap: 10px 18px;
-        font-size: 14px;
+        gap: 4px 12px;
+        font-size: 13px;
         line-height: 1.6;
       }
       .settings-diagnostics dt {
@@ -1297,13 +1308,14 @@
         border: 1px solid var(--control-border);
         border-radius: 7px;
         background: var(--panel);
-        padding: 9px 11px;
+        padding: 6px 8px;
+        font-size: 13px;
       }
       .field + small {
         display: block;
         color: var(--muted);
         font-size: 12px;
-        margin-top: 7px;
+        margin-top: 4px;
       }
       .form-actions {
         display: flex;
@@ -1314,17 +1326,18 @@
       .board {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 16px;
+        gap: 12px;
       }
       .board-column {
         background: var(--panel);
         border-radius: 9px;
-        padding: 12px;
+        padding: 8px;
       }
       .board-column h3 {
         margin: 0 0 12px;
         color: var(--muted);
-        font-size: 14px;
+        font-size: 13px;
+        margin-bottom: 8px;
       }
       .board-column .task-row {
         background: var(--surface);
@@ -1343,19 +1356,19 @@
         table-layout: fixed;
         width: 100%;
         font-size: 14px;
-        margin: 15px 0;
+        margin: 12px 0;
       }
       .reader th,
       .reader td {
-        padding: 10px 12px;
+        padding: 6px 8px;
         border-bottom: 0.5px solid var(--line);
         text-align: left;
         overflow-wrap: anywhere;
       }
       .reader blockquote {
         border-left: 0.5px solid var(--line);
-        margin: 20px 0;
-        padding-left: 16px;
+        margin: 12px 0;
+        padding-left: 12px;
         color: var(--muted);
       }
       .toast {
@@ -1365,10 +1378,10 @@
         transform: translateX(-50%);
         background: var(--ink);
         color: var(--surface);
-        padding: 10px 16px;
+        padding: 8px 12px;
         border-radius: 9px;
         z-index: 100;
-        font-size: 14px;
+        font-size: 13px;
         max-width: 90vw;
       }
       .run-actions {
@@ -1379,7 +1392,7 @@
       }
       .text-action {
         color: var(--accent);
-        font-size: 14px;
+        font-size: 13px;
         padding: 5px 0;
         text-decoration: underline;
         text-underline-offset: 3px;
@@ -1412,6 +1425,8 @@
       }
       .app.settings-open.settings-narrow .settings-sidebar h1 {
         font-size: 16px;
+        font-weight: 500;
+        line-height: 1.5;
       }
       .app.settings-open.settings-narrow .settings-nav {
         flex-direction: row;
@@ -1420,11 +1435,12 @@
       }
       .app.settings-open.settings-narrow .settings-nav button {
         flex: 0 0 auto;
-        min-height: 34px;
+        min-height: 32px;
         padding: 7px 10px;
+        font-size: 13px;
       }
       .app.settings-open.settings-narrow .settings-main {
-        padding: 20px 16px 32px;
+        padding: 16px;
       }
       .app.settings-open.settings-narrow .appearance-cards,
       .app.settings-open.settings-narrow .settings-grid,
@@ -1533,18 +1549,28 @@
       .detail-title {
         font-size: 16px;
         font-weight: 500;
+        line-height: 1.5;
+        margin: 8px 0;
       }
       .settings-sidebar h1 {
         font-size: 16px;
         font-weight: 500;
+        line-height: 1.5;
+        padding: 0 8px;
       }
       .contact strong {
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 500;
+        line-height: 16px;
       }
       .contact small {
         font-size: 12px;
         font-weight: 400;
+        line-height: 16px;
+        margin-top: 0;
+        white-space: normal;
+        text-overflow: clip;
+        overflow: visible;
       }
       .head-actions .tool {
         position: relative;
@@ -1561,8 +1587,8 @@
         color: var(--accent);
       }
       .head-actions .tool svg {
-        width: 17px;
-        height: 17px;
+        width: 16px;
+        height: 16px;
       }
       .tool-count,
       .context-count {
@@ -1626,17 +1652,19 @@
         padding: 0;
       }
       .composer textarea {
-        height: 78px;
+        height: 50px;
         min-height: 0;
-        padding: 13px 14px 5px;
-        line-height: 1.6;
+        padding: 8px 12px 0;
+        line-height: 1.5;
+        font-size: 14px;
       }
       .composer-toolbar {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-        padding: 2px 8px 5px;
+        padding: 2px 8px 6px;
+        min-height: 40px;
       }
       .composer-left,
       .composer-right {
@@ -1654,8 +1682,8 @@
         color: var(--muted);
       }
       .composer .tool svg {
-        width: 17px;
-        height: 17px;
+        width: 16px;
+        height: 16px;
       }
       .context-toggle {
         position: relative;
@@ -1676,7 +1704,7 @@
         padding: 6px 5px;
         color: var(--muted);
         background: transparent;
-        font-size: 14px;
+        font-size: 13px;
       }
       .send-icon {
         width: 32px;
@@ -1707,7 +1735,7 @@
         gap: 5px;
         background: var(--warning-bg);
         color: var(--warning);
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 500;
       }
       .stop-button svg {
@@ -1715,8 +1743,8 @@
         height: 15px;
       }
       .composer-hint {
-        margin: 0 14px;
-        padding: 0 0 9px;
+        margin: 4px 14px 0;
+        padding: 0 0 6px;
         color: var(--muted);
         font-size: 12px;
       }
@@ -1725,8 +1753,8 @@
         padding: 9px 10px;
       }
       .context-panel {
-        margin: 2px 10px 4px;
-        padding: 9px 10px;
+        margin: 2px 8px 4px;
+        padding: 6px 8px;
         border: 0.5px solid var(--line);
         border-radius: 8px;
         background: var(--panel);
@@ -1743,8 +1771,8 @@
         justify-content: space-between;
         align-items: center;
         gap: 8px;
-        padding: 4px 0;
-        font-size: 14px;
+        padding: 3px 0;
+        font-size: 13px;
       }
       .context-item small {
         display: block;
@@ -1797,6 +1825,7 @@
       .work-head h2 {
         font-size: 16px;
         font-weight: 500;
+        line-height: 1.5;
       }
       .work-head p {
         font-size: 12px;
@@ -1817,11 +1846,11 @@
       }
       .page-head {
         flex: none;
-        min-height: 64px;
-        padding: 10px 20px;
+        min-height: 48px;
+        padding: 8px 16px;
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 8px;
         border-bottom: 0.5px solid var(--line);
       }
       .page-head h2 {
@@ -1833,7 +1862,7 @@
         flex: 1;
         min-height: 0;
         overflow: auto;
-        padding: 22px;
+        padding: 16px;
       }
       .page-content p {
         font-size: 14px;
@@ -1843,13 +1872,13 @@
       .page-content h3 {
         margin: 18px 0 8px;
         font-size: 14px;
-        font-weight: 600;
+        font-weight: 500;
       }
       .page-content label {
         display: block;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 500;
-        margin: 14px 0 6px;
+        margin: 10px 0 4px;
       }
       .page-layer .reader {
         max-width: 720px;
@@ -1887,13 +1916,13 @@
         width: 100%;
         display: grid;
         grid-template-columns: auto minmax(0, 1fr) auto;
-        gap: 8px;
+        gap: 6px;
         align-items: start;
-        padding: 10px 0;
+        padding: 8px 0;
         border-top: 0.5px solid var(--line);
         text-align: left;
-        font-size: 14px;
-        line-height: 1.55;
+        font-size: 13px;
+        line-height: 1.5;
       }
       .history-result:first-child {
         border-top: 0;
@@ -1908,26 +1937,28 @@
       .profile-summary {
         display: flex;
         align-items: center;
-        gap: 12px;
-        margin-bottom: 18px;
+        gap: 8px;
+        margin-bottom: 12px;
       }
       .profile-summary h2 {
         font-size: 16px;
         font-weight: 500;
+        line-height: 1.5;
       }
       .profile-summary p {
         color: var(--muted);
-        font-size: 14px;
-        margin-top: 3px;
+        font-size: 13px;
+        margin-top: 2px;
       }
       .profile-facts {
         margin: 0 0 18px;
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 8px;
+        gap: 4px;
+        margin-bottom: 12px;
       }
       .profile-facts div {
-        padding: 10px;
+        padding: 8px;
         border: 0.5px solid var(--line);
         border-radius: 8px;
       }
@@ -1937,419 +1968,20 @@
       }
       .profile-facts dd {
         margin: 3px 0 0;
-        font-size: 14px;
+        font-size: 13px;
+        margin-top: 2px;
       }
       .small-action {
         min-height: 32px;
-        padding: 6px 10px;
+        padding: 5px 8px;
         border: 0.5px solid var(--line);
         border-radius: 8px;
-        font-size: 14px;
+        font-size: 13px;
       }
       .history-result:hover {
         background: var(--hover);
       }
 
-      /* v10 compact density — first-round Nagi sample, based on user feedback. */
-      h1,
-      h2,
-      h3,
-      .brand strong,
-      .identity h1,
-      .settings-sidebar h1,
-      .page-head h2,
-      .work-head h2,
-      .detail-title,
-      .profile-summary h2,
-      .contact strong,
-      .task-row strong,
-      .result-file strong,
-      .timeline strong,
-      .appearance-card strong,
-      .settings-entry[aria-current="page"],
-      .settings-nav button[aria-current="page"],
-      .settings-advanced summary,
-      .appearance-check {
-        font-weight: 500;
-      }
-      .quiet,
-      .soft,
-      .primary,
-      .search input,
-      .rail-heading select,
-      .contact strong,
-      .tabs button,
-      .work-toolbar select,
-      .back,
-      .detail-back,
-      .result-file strong,
-      .disclosure summary,
-      .requirements li,
-      .run-line,
-      .timeline p,
-      .timeline button,
-      .settings-entry,
-      .model-select,
-      .stop-button,
-      .context-item,
-      .settings-nav button,
-      .connection-summary,
-      .settings-issue,
-      .settings-leave-note,
-      .settings-form label,
-      .field-error,
-      .settings-advanced summary,
-      .settings-status,
-      .settings-diagnostics,
-      .board-column h3,
-      .reader table,
-      .bubble table,
-      .toast,
-      .text-action,
-      .history-result,
-      .profile-summary p,
-      .profile-facts dd,
-      .small-action,
-      .appearance-card strong,
-      .task-row strong,
-      .notice {
-        font-size: 13px;
-      }
-      .bubble,
-      .reader,
-      .page-content p,
-      .description {
-        font-size: 14px;
-        line-height: 1.5;
-      }
-      .bubble h3,
-      .page-content h3 {
-        font-size: 14px;
-        font-weight: 500;
-      }
-      .date {
-        margin-bottom: 12px;
-      }
-      .message {
-        margin-bottom: 12px;
-      }
-      .bubble {
-        padding: 8px 12px;
-      }
-      .message p + p {
-        margin-top: 8px;
-      }
-      .message-meta {
-        margin-top: 3px;
-      }
-      .message-meta button {
-        min-height: 32px;
-      }
-      .message p,
-      .bubble table,
-      .reader table,
-      .requirements li,
-      .run-line,
-      .timeline p,
-      .history-result,
-      .settings-status,
-      .settings-diagnostics,
-      .settings-help,
-      .settings-leave-note,
-      .settings-issue,
-      .notice,
-      .description {
-        line-height: 1.5;
-      }
-      .main-head {
-        height: 56px;
-        padding: 0 16px;
-        gap: 8px;
-      }
-      .main-head .avatar {
-        width: 28px;
-        height: 28px;
-      }
-      .identity h1 {
-        line-height: 1.5;
-      }
-      .identity p {
-        margin-top: 2px;
-      }
-      .rail {
-        padding: 12px 8px 8px;
-      }
-      .brand {
-        height: 36px;
-        padding: 0 8px;
-      }
-      .search {
-        height: 32px;
-        margin: 12px 4px 8px;
-        padding: 0 8px;
-        gap: 6px;
-      }
-      .contact {
-        min-height: 44px;
-        gap: 8px;
-        padding: 6px 8px;
-        margin-bottom: 2px;
-      }
-      .contact .avatar {
-        width: 32px;
-        height: 32px;
-      }
-      .rail-bottom {
-        padding: 8px 4px 0;
-      }
-      .conversation {
-        padding: 16px 16px 8px;
-      }
-      .composer-wrap {
-        padding: 8px 16px 12px;
-      }
-      .composer textarea {
-        height: 50px;
-        padding: 8px 12px 0;
-        line-height: 1.5;
-      }
-      .composer-toolbar {
-        min-height: 40px;
-        padding: 2px 8px 6px;
-      }
-      .composer-hint {
-        margin: 4px 14px 0;
-        padding: 0 0 6px;
-      }
-      .context-panel {
-        margin: 2px 8px 4px;
-        padding: 6px 8px;
-      }
-      .context-item {
-        padding: 3px 0;
-      }
-      .work-head {
-        height: 56px;
-        padding: 0 12px;
-      }
-      .work-head h2 {
-        line-height: 1.5;
-      }
-      .work-body {
-        padding: 16px;
-      }
-      .tabs {
-        margin-bottom: 12px;
-        padding: 2px;
-      }
-      .tabs button {
-        min-height: 32px;
-        padding: 4px 8px;
-      }
-      .section-heading {
-        margin: 16px 0 8px;
-      }
-      .task-row {
-        min-height: 44px;
-        padding: 6px 8px;
-      }
-      .task-row strong {
-        line-height: 1.5;
-      }
-      .task-row small {
-        margin-top: 2px;
-        line-height: 1.5;
-      }
-      .work-toolbar {
-        margin-bottom: 8px;
-      }
-      .back {
-        min-height: 32px;
-        margin: -4px 0 12px;
-        padding: 4px 0;
-      }
-      .detail-title {
-        margin: 8px 0;
-      }
-      .notice {
-        margin-top: 12px;
-        padding: 8px 12px;
-      }
-      .detail-action {
-        min-height: 32px;
-        margin: 8px 0 12px;
-      }
-      .result-file {
-        gap: 8px;
-        padding: 8px;
-      }
-      .result-file small {
-        margin-top: 2px;
-      }
-      .disclosure {
-        margin-top: 12px;
-        padding-top: 2px;
-      }
-      .disclosure summary {
-        padding: 8px 0;
-      }
-      .requirements li {
-        padding: 6px 0;
-      }
-      .run-line {
-        padding: 8px 0;
-      }
-      .view-note {
-        margin-bottom: 12px;
-      }
-      .settings-entry {
-        min-height: 32px;
-        padding: 4px 8px;
-      }
-      .settings-sidebar {
-        gap: 12px;
-        padding: 16px 12px;
-      }
-      .settings-sidebar h1 {
-        padding: 0 8px;
-        line-height: 1.5;
-      }
-      .settings-purpose {
-        padding: 0 8px;
-      }
-      .settings-nav {
-        gap: 2px;
-      }
-      .settings-nav button {
-        min-height: 32px;
-        padding: 6px 8px;
-      }
-      .settings-main {
-        padding: 16px;
-      }
-      .app.settings-open.settings-narrow .settings-main {
-        padding: 16px;
-      }
-      .appearance-cards {
-        gap: 8px;
-        margin-top: 0;
-      }
-      .appearance-card {
-        min-height: 96px;
-        gap: 4px;
-        padding: 8px;
-      }
-      .appearance-preview {
-        height: 48px;
-      }
-      .appearance-check {
-        min-height: 16px;
-      }
-      .connection-summary {
-        gap: 2px;
-        padding: 8px 10px;
-      }
-      .settings-form label {
-        margin: 10px 0 4px;
-      }
-      .settings-form .field {
-        min-height: 32px;
-      }
-      .settings-form small {
-        margin-top: 4px;
-      }
-      .settings-grid {
-        gap: 8px;
-      }
-      .settings-advanced {
-        margin-top: 12px;
-        padding-top: 8px;
-      }
-      .settings-actions {
-        gap: 8px;
-        margin-top: 12px;
-      }
-      .settings-status {
-        min-height: 32px;
-        padding: 6px 0 0;
-      }
-      .settings-status:empty {
-        min-height: 32px;
-      }
-      .settings-diagnostics {
-        gap: 4px 12px;
-      }
-      .field {
-        padding: 6px 8px;
-        font-size: 13px;
-      }
-      .field + small {
-        margin-top: 4px;
-      }
-      .board {
-        gap: 12px;
-      }
-      .board-column {
-        padding: 8px;
-      }
-      .board-column h3 {
-        margin-bottom: 8px;
-      }
-      .reader table {
-        margin: 12px 0;
-      }
-      .reader th,
-      .reader td {
-        padding: 6px 8px;
-      }
-      .reader blockquote {
-        margin: 12px 0;
-        padding-left: 12px;
-      }
-      .toast {
-        padding: 8px 12px;
-      }
-      .profile-summary {
-        gap: 8px;
-        margin-bottom: 12px;
-      }
-      .profile-summary h2 {
-        line-height: 1.5;
-      }
-      .profile-summary p {
-        margin-top: 2px;
-      }
-      .profile-facts {
-        gap: 4px;
-        margin-bottom: 12px;
-      }
-      .profile-facts div {
-        padding: 8px;
-      }
-      .profile-facts dd {
-        margin-top: 2px;
-      }
-      .small-action {
-        padding: 5px 8px;
-      }
-      .history-result {
-        gap: 6px;
-        padding: 8px 0;
-      }
-      .page-head {
-        min-height: 48px;
-        padding: 8px 16px;
-        gap: 8px;
-      }
-      .page-content {
-        padding: 16px;
-      }
-      .page-content h3 {
-        margin: 12px 0 6px;
-      }
-      .page-content label {
-        margin: 10px 0 4px;
-      }
     </style>
   </head>
   <body>
