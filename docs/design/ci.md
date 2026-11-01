@@ -1,6 +1,6 @@
 # CI governance（Runtime／TUI／GUI）
 
-更新日期：2026-10-31。状态：**实现事实（macOS-only CI 配置、#191 issue-tool helper 接线与本地受控验证）**；实际 GitHub Actions run evidence 以 PR 记录，当前平台**仅 macOS**。本轮候选基于固定输入 `6956d30a…` 与独立的 `agent/qa/191-issue-tool-helper-ci` CI 修复；旧 Ubuntu/Linux/4ae/259 run 结果只作历史，不再代表当前门禁平台。工程构建通过不等于 Nagi MVP 验收。
+更新日期：2026-11-01。状态：**配置事实（固定 CI 配置；实际运行证据以对应 PR 的 exact SHA/run 为准）**。基线来自 product `85ce514c…`（五 job、issue-tool helper、fullGo/checker18MUST、macOS package）与 dev `f12374e8…`（Python stdlib discovery、#236r4 PM 集成处置权）；旧 Ubuntu/Linux/4ae/259 run 结果只作历史，不代表本配置。工程构建通过不等于 Nagi MVP 验收。
 
 ## 目的与范围
 
@@ -36,13 +36,13 @@
 | GUI（独立 Go module） | `gui` | `gofmt -l .`（必须为空）、`CGO_ENABLED=0 python3 ../scripts/gui-go.py vet ./...`、`CGO_ENABLED=0 python3 ../scripts/gui-go.py test ./... -count=1`、`CGO_ENABLED=0 python3 ../scripts/gui-go.py build` | 格式、vet、测试、构建（经固定 MyGo Split/Editor 临时 patch） |
 | GUI（MyGo Split 与 Editor 回归） | `gui` | `CGO_ENABLED=0 python3 ../scripts/gui-go.py test github.com/egoist/mygo/ui -run '^(TestSplitReleaseBeforeFrame\|TestEditorSelectionReleaseBeforeFrame)$' -count=1 -v` | 验证 GUI 依赖的实际 Split 与 Editor selection release-before-frame patch |
 | GUI（可复现图像） | `gui` | `CGO_ENABLED=0 python3 ../scripts/gui-go.py test -run TestPreviewImages -count=1 .`（`SAKI_PREVIEW_DIR`） | headless `ui.Tester` 生成 light/dark add／settings 等场景 PNG，作为 artifact 保留 14 天 |
-| 协作检查 | `python` | `python3 scripts/test_collaboration_check.py`；断言运行测试数非零 | 既有协作检查回归；pipefail 保留失败，空套件不能静默通过 |
+| Python 回归 | `python` | 现有 step 内 `unittest.TestLoader.discover("scripts", pattern="test_*.py")`；`result.testsRun > 0` 且 `wasSuccessful()` | 执行 `scripts/test_*.py` 全部 stdlib unittest；发现/导入失败、测试失败、空 suite 均非零；不依赖文件数或新框架 |
 
 聚合检查：`ci-required`（`if: always()`，依赖 `rust`、`gui`、`python` 与 `macos-app`）只在四者结果都为 `success` 时通过。`cancelled`／`failed`／`skipped` 都不算成功。若未来新增 job，必须同时更新 `ci-required` 的 `needs` 与判定。
 
 稳定检查名：`rust`、`gui`、`python`、`macos-app`、`ci-required`。分支保护只需要引用聚合检查 `ci-required`，避免逐个维护子 job 名称。
 
-全部五个 job 固定 `runs-on: macos-15`（arm64），当前平台只声明 macOS；旧 Ubuntu job 结果仅作历史。检查名、全部检查步骤、18 个 MUST、8 项 allowlist、真实 helper/PTY/stdio/GUI/preview/Python/macOS package 门禁和 `ci-required` 严格聚合均保持不变。
+全部五个 job 固定 `runs-on: macos-15`（arm64），当前平台只声明 macOS；旧 Ubuntu job 结果仅作历史。product 基线的 18 个 MUST、8 项 allowlist、真实 helper/PTY/stdio/GUI/preview/macOS package 门禁和 `ci-required` 严格聚合保留；Python gate 按 dev f123 的 stdlib discovery 扩展，不写死 test 数。
 
 ## macOS-only runner adaptation（2026-10-28）
 
@@ -52,7 +52,7 @@
 - 只适配实际 macOS 所需的 runner 选择、shell 可用的 `uname`/`sw_vers`/`tee`/`patch`/`ditto` 路径和既有 CGO=0 设置；产品源码、测试断言、checker 合同、skip allowlist 与超时均未改变。
 - 旧 Linux 的 GUI 返回滚动失败、旧 4ae CI 失败以及历史负向 probe 均保留为历史，不能用本轮 macOS 结果或旧本地 548 PASS 替代。真实 macOS 运行结果必须在 exact combined SHA 上重新读取。
 
-Python 门禁的真实失败传播：临时探针 `9480847` 的 [run 39381934207](https://github.com/HeimaoLST/Saki/actions/runs/39381934207) 中 Python 与聚合均失败，Rust／Go 成功；恢复探针并同步后的最终候选 `96ad987` 的 [run 39384000031](https://github.com/HeimaoLST/Saki/actions/runs/39384000031) 四个 job 均成功。探针已用追加提交撤回，不在最终树中。
+历史负向探针与旧基线 run 只作历史，不能作为本 CI 配置的运行证据；实际结果以对应 PR 的 exact SHA/run 为准。Python gate 只依赖实际 `testsRun` 与 `wasSuccessful()`，不把作者报告或历史计数转记为通过。
 
 ## Runtime stdio 门禁（2026-10-20 已启用）
 
@@ -88,6 +88,8 @@ python3 "$GITHUB_WORKSPACE/scripts/check-gui-runtime-results.py" \
 `gui-go.py test` 的 stdout JSON 用仅 stdout 的 `tee` 同时保留完整逐项日志，stderr 直接进入 CI 日志；不使用会混入 stderr 的 `2>&1`。显式 `set -o pipefail` 与 bash `-e` 保证 Go 非零不会被 tee 吞掉，checker 错误也有原始 JSON/日志可查。step 在 Go 命令前设置并创建临时 `SAKI_PREVIEW_DIR`，让 desktop 包已有的 headless preview 测试实际运行（包括新增 model-selection preview）；8 项 allowlist 名称保持不变，当前路径使 6 个 preview 实际 PASS，正常仅剩 3 个已知 online/reader opt-in Skip。`SAKI_TEST_RUNTIME_BIN` 必须指向本次构建的绝对 binary，`SAKI_TEST_ONLINE=0` 显式关闭线上入口，`-count=1` 禁止缓存替代新 binary。Go test 非零直接失败；checker 再验证 package PASS 与场景合同，任一不符都失败。
 
 `rust` job 在 Go setup 后、full package 前，用同一 checkout 的 `scripts/gui-go.py build -trimpath -mod=readonly -buildvcs=true` 构建 GUI helper 到 `$RUNNER_TEMP/saki-issue-tool-helper`，并把其绝对路径作为 `SAKI_TEST_ISSUE_TOOL_HELPER` 传入 full-Go step；`SAKI_TEST_RUNTIME_BIN` 仍是同 checkout 的 Rust `target/debug/Saki`。这是测试 harness 的受控 helper 接线，不启动 native GUI，也不复用 `gui` job 的产物。
+
+本组合实际是同 checkout 的两个可执行：Rust `target/debug/Saki` 与 Go GUI `saki-issue-tool-helper`（`gui-go.py build`），分别通过 `SAKI_TEST_RUNTIME_BIN` 与 `SAKI_TEST_ISSUE_TOOL_HELPER` 传入；不新增第三个 binary。product 的 fullGo 是普通 `go test`（`-count=1` 与 `-json`），**没有 `-race` 标志**；本候选不把普通测试称为 race-detector 结果。
 
 checker（`scripts/check-gui-runtime-results.py`）的**必须 PASS** 清单（原 #87 五项 + 当前 Nagi 场景）：
 
@@ -166,7 +168,7 @@ codesign --verify --deep --strict Saki.app
 - 运行平台：全部五个 job 固定 `macos-15`（arm64）；当前平台只声明 macOS。旧 Ubuntu/Linux run 结果仅历史，不作为当前门禁证据。
 - 工具链：Rust 固定 `1.99.0`（rustfmt + clippy，官方 rustup 安装，已验证该版本可从 static.rust-lang.org 下载）；Go 由 `desktop/go.mod`（当前 `1.27.1`）通过 `actions/setup-go` 的 `go-version-file` 决定，不使用本机未来版本随意钉死不可下载版本。
 - 缓存：Cargo registry／git／`target` 以 `runner.os + Rust 版本 + Cargo.lock` 为 key；Go 使用 `actions/setup-go` 内置缓存（`desktop/go.sum`）。缓存只加速，不改变 `--locked` 校验。
-- Python：`actions/setup-python@v7` 显式提供 3.12；协作检查 job 运行现有 stdlib unittest，rust job 的 stdio self-test 使用同一版本，不依赖 runner 偶然环境。
+- Python：`actions/setup-python@v7` 显式提供 3.12；Python job 在现有 step 内用 stdlib `unittest` discovery 执行全部 `scripts/test_*.py`，以实际 `testsRun` 非零和 `wasSuccessful()` 作为门禁；rust job 的 stdio self-test 使用同一版本。
 - 超时：Rust 30 分钟（含 stdio self-test step 的 5 分钟上限），GUI 20 分钟，Python 10 分钟，macOS candidate 25 分钟，聚合 5 分钟。
 
 ## 失败处理与责任
@@ -176,7 +178,7 @@ codesign --verify --deep --strict Saki.app
 | 实现作者（runtime／tui／gui） | 维护受影响测试与命令，提供功能与有价值的回归；PR 前在本地执行同一组命令；CI 失败先定位并修复，不以 skip、`continue-on-error` 或放宽 lint 掩盖真实失败。 |
 | QA | 维护现有 workflow、CI 支撑脚本与自动检查运行可靠性；核对 PR 的实际 run URL、SHA 与退出码；区分“本次改动失败”与“基线失败”，把真实失败反馈给对应 owner。不接产品人工验收或独立 `APPROVE` 队列，不代替作者修产品代码。 |
 | PM | 维护需求边界、验收标准、协作规范与文档结构；确认 CI 约定与仓库流程一致；真实试用与用户体验判断由 PM／用户负责。 |
-| 主责／合并者 | 主 agent 代码评审与适用验收通过、required CI 真实通过、无未解决阻塞且属非 breaking change 后，按 AGENTS.md §0.2 预授权合并；CI 绿不替代评审或用户试用，也不授权 breaking migration。 |
+| 主责／合并者 | 主 agent 代码评审与适用验收通过、required CI 真实通过、无未解决阻塞后，按 AGENTS.md §0.2 的 PM 集成处置权执行；PM 统筹集成顺序与收尾，业务主责不脱离 PM 安排自行合并。CI 绿不替代评审或用户试用，也不授权 breaking migration。 |
 
 真实失败的处理顺序：
 
@@ -244,8 +246,22 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
 cargo test --locked --bin Saki frontend::tui::tests::pty::pty_panic_restores_terminal -- --ignored --exact --test-threads=1
 
-# Python（协作检查回归）
-python3 scripts/test_collaboration_check.py
+# Python（全部 scripts/test_*.py；与 workflow 相同的 stdlib discovery）
+python3 - <<'PY'
+import sys
+import unittest
+
+loader = unittest.TestLoader()
+suite = loader.discover("scripts", pattern="test_*.py")
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+print(f"DISCOVERED {result.testsRun} tests")
+if result.testsRun == 0:
+    print("python unittest discovery found zero tests", file=sys.stderr)
+    sys.exit(1)
+if not result.wasSuccessful():
+    print("python unittest suite failed", file=sys.stderr)
+    sys.exit(1)
+PY
 
 # Runtime stdio 跨进程 smoke（dev@4001fd4 起）
 cargo build --locked --bin Saki

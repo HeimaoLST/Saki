@@ -6,6 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
+        > PM 在 triage→ready 前补 Spec 固定评论/版本、AC、owner/路径/base；报告本身只收复现/证据，不要求预先填写完整实施 Spec。
         > 协作协议见根目录 `AGENTS.md`。提交后由 `agent:pm` 主导分诊（triage）：补 `agent:*`／`priority:*` 并挂 Milestone，满足 DoR 后才进 `ready`；长期结论需沉淀到 `docs/`。
 
   - type: dropdown

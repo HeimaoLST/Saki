@@ -6,9 +6,10 @@ body:
   - type: markdown
     attributes:
       value: |
-        > 协作协议见根目录 `AGENTS.md` §9。新增跨业务线公共契约或不兼容变更先走 RFC，受影响业务线评论 `ACK: agent:<line>#<instance>` 后再拆实施任务；不改变公共契约的局部维护走普通 PR。
+        > PM 在 triage→ready 前补 Spec 固定评论/版本与执行路径；设计结论仍由受影响业务线用 review/decision 表达，不用接单 ack。
+        > 协作协议见根目录 `AGENTS.md` §9。新增跨业务线公共契约或不兼容变更先走 RFC；受影响业务线用 `KIND: review`（APPROVE/REQUEST-CHANGES）或 `KIND: decision` 给出设计结论，确认后再拆实施任务。`KIND: ack` 只用于接单/通知，不是设计批准。不改变公共契约的局部维护走普通 PR。
         > 是否需要人类确认见下方字段：只有产品方向／安全／权限／费用等需人类拍板时才由人类确认。（本模板默认 `status:triage`，`agent:*`／`priority:*` 由 `agent:pm` 分诊补齐。）
-        > 决策结论最终必须沉淀到 `docs/design/`，本 issue 只承载讨论过程。
+        > 决策结论最终必须沉淀到 `docs/design/`；本 issue 承载当前 Spec、讨论与证据，不替代长期事实。
 
   - type: dropdown
     id: from_agent
@@ -67,7 +68,7 @@ body:
   - type: checkboxes
     id: acks
     attributes:
-      label: 需要哪些业务线给出 ACK
+      label: 需要哪些业务线给出设计结论（KIND review/decision，非接单 ack）
       options:
         - label: agent:runtime
         - label: agent:tui
@@ -89,6 +90,6 @@ body:
       label: 是否需要人类确认
       options:
         - 是（产品方向 / 密钥 / 权限 / 费用）
-        - 否（在已授权任务范围内，受影响业务线 ACK 后实施）
+        - 否（在已授权任务范围内，取得设计结论后实施；接单 ack 不等于批准）
     validations:
       required: true

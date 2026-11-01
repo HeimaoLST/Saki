@@ -1,12 +1,18 @@
 # SAKI 文档
 
-更新日期：2026-10-30。
+更新日期：2026-11-01。
 
 Saki 提供可被不同应用复用的 Agent Runtime。Nagi（GUI 暂定名）提供开源的联系人式自主工作台，TUI 侧重用户直接指导执行。三个产品共享运行基础，GUI/TUI 围绕同一工作协作是待实现和验证的产品目标。
 
 GUI 的权威产品定义、概念和行为需求在 [Nagi 产品定义与需求](requirements/desktop.md)；视觉与交互在 [Desktop workbench](design/desktop-workbench.md)；已实现行为与验收证据在 [Desktop](design/desktop.md)。联系人、事项、对话和执行会话的关系以产品需求为准，既有单会话映射只表示阶段实现。成长与人格属于独立研究，不替代当前产品定义，也不是联系人式产品的前置。
 
 Nagi MVP 的基本功能、边界与 MVP-01–MVP-12 验收见 [完整 MVP 交付定义](requirements/desktop.md#首个可用-mvp-的交付边界)；开发 agent 从 [roadmap 总入口 #140](https://github.com/HeimaoLST/Saki/issues/140) 获取阶段、依赖和具体 issue，组合候选与真实试用记录见 [#156](https://github.com/HeimaoLST/Saki/issues/156)，候选与验收证据入口见 [#200](https://github.com/HeimaoLST/Saki/issues/200)。候选 PR 和阶段验收不表示完整产品已交付。桌面应用的首次使用步骤只在根 [README](../README.md#运行桌面应用macos-arm64) 维护，本文不复制操作流程。
+
+## Spec 驱动的协作
+
+GitHub issue 承载当前 Spec、任务过程与证据；PM 以固定评论快照分发精确版本，`docs/` 只保存已采用的长期需求、设计、接口和实验事实，不重复维护同一任务 delta。Spec 的完整字段、接收 ACK 与 PM 集成处置权见 [AGENTS.md](../AGENTS.md)；本索引不复制流程。
+
+协作入口、角色、Spec/AC、通知 ACK、PM 集成处置权、分支与清理均以 [AGENTS.md](../AGENTS.md) 为唯一规则来源。`docs/` 只记录已采用的长期契约和可复核事实；`scripts/agent_notify.py` 不后台监控、不判断产品 APPROVE，共享 GitHub 账号的 FROM 不是身份认证。
 
 ## 源码结构
 

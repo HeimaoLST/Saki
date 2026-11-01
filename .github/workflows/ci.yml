@@ -237,21 +237,34 @@ jobs:
           sw_vers
           python3 --version
 
-      - name: Collaboration-check regression tests
+      - name: Python unittest discovery (scripts/test_*.py)
         shell: bash
         run: |
           set -o pipefail
-          python3 scripts/test_collaboration_check.py 2>&1 | tee "$RUNNER_TEMP/python-collaboration-tests.log"
-          grep -Eq '^Ran [1-9][0-9]* tests? in ' "$RUNNER_TEMP/python-collaboration-tests.log"
+          python3 - <<'PY' 2>&1 | tee "$RUNNER_TEMP/python-unittest-gate.log"
+          import sys
+          import unittest
+
+          loader = unittest.TestLoader()
+          suite = loader.discover("scripts", pattern="test_*.py")
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          print(f"DISCOVERED {result.testsRun} tests")
+          if result.testsRun == 0:
+              print("python unittest discovery found zero tests", file=sys.stderr)
+              sys.exit(1)
+          if not result.wasSuccessful():
+              print("python unittest suite failed", file=sys.stderr)
+              sys.exit(1)
+          PY
 
       - name: Job summary
         if: always()
         run: |
           {
-            echo "### Python gate (collaboration checker)"
+            echo "### Python gate (stdlib unittest discovery)"
             echo ""
-            echo "- \`python3 scripts/test_collaboration_check.py\` (stdlib unittest)"
-            echo "- Non-zero test count is asserted; an empty suite cannot pass silently."
+            echo "- \`scripts/test_*.py\` discovered with stdlib \`unittest.TestLoader.discover\`"
+            echo "- Non-zero \`result.testsRun\` is required; discovery/import errors and test failures are non-zero."
           } >> "$GITHUB_STEP_SUMMARY"
 
   macos-app:
