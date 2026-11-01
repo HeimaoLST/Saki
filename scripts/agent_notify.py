@@ -21,9 +21,9 @@ import json
 import os
 import re
 import subprocess
-import sys
+import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
@@ -49,8 +49,8 @@ class Pane:
         return not self.parent_agent_id.strip()
 
     @property
-    def fingerprint(self) -> str:
-        value = [
+    def identity(self) -> tuple[str, ...]:
+        return (
             self.pane_id,
             self.agent_id,
             self.parent_agent_id,
@@ -60,11 +60,14 @@ class Pane:
             self.pane_pid,
             self.command,
             self.cwd,
-        ]
+        )
+
+    def fingerprint(self, capture: str) -> str:
+        value = [*self.identity, _normalized(capture)]
         return hashlib.sha256("\0".join(value).encode("utf-8")).hexdigest()
 
 
-SHELL_COMMANDS = {"sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "tmux"}
+SUPPORTED_AGENT_COMMANDS = {"codex", "node"}
 AGENT_ID = re.compile(r"^agent:[a-z]+#[A-Za-z0-9._-]+$")
 COMMENT_URL = re.compile(
     r"^https://github\.com/([^/]+)/([^/]+)/(issues|pull)/([0-9]+)"
@@ -129,8 +132,8 @@ def _validate_target(pane: Pane, agent_id: str) -> None:
     if not pane.is_main:
         raise NotifyError("target is a child pane; only a main pane is allowed")
     command = os.path.basename(pane.command).lower()
-    if command in SHELL_COMMANDS:
-        raise NotifyError(f"target is a shell/unsupported process: {pane.command}")
+    if command not in SUPPORTED_AGENT_COMMANDS:
+        raise NotifyError(f"target process is not an allowed agent: {pane.command}")
 
 
 def discover(agent_id: str) -> Pane:
@@ -148,6 +151,7 @@ def discover(agent_id: str) -> Pane:
 
 def inspect(agent_id: str) -> dict[str, Any]:
     pane = discover(agent_id)
+    capture = _tmux_capture(pane.pane_id)
     return {
         "agent_id": pane.agent_id,
         "pane_id": pane.pane_id,
@@ -158,8 +162,8 @@ def inspect(agent_id: str) -> dict[str, Any]:
         "pane_pid": pane.pane_pid,
         "command": pane.command,
         "cwd": pane.cwd,
-        "fingerprint": pane.fingerprint,
-        "capture": _tmux_capture(pane.pane_id),
+        "fingerprint": pane.fingerprint(capture),
+        "capture": capture,
     }
 
 
@@ -173,24 +177,61 @@ def parse_comment_url(url: str) -> tuple[str, str, str, str, str]:
 
 
 def fixed_message(agent_id: str, comment_url: str) -> str:
-    return (
-        f"TO: {agent_id}\n"
-        f"GitHub: {comment_url}\n"
-        "请读取该固定评论；接收时在 GitHub 回 ACK。"
-    )
+    return f"TO: {agent_id} 固定评论：{comment_url}；请按 AGENTS.md 在 GitHub 回 ACK。"
 
 
 def _normalized(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def send(agent_id: str, fingerprint: str, comment_url: str) -> dict[str, Any]:
-    parse_comment_url(comment_url)
+def _wait_for_visible(
+    pane_id: str,
+    message: str,
+    *,
+    sleep_fn: Any = None,
+    attempts: int = 12,
+) -> str:
+    sleep_fn = sleep_fn or time.sleep
+    for index in range(attempts):
+        capture = _tmux_capture(pane_id)
+        if _normalized(message) in _normalized(capture):
+            return capture
+        if index + 1 < attempts:
+            sleep_fn(0.05)
+    raise NotifyError("pasted notification was not visible; Enter not sent")
+
+
+def _assert_comment_belongs(
+    owner: str, repo: str, number: str, comment_id: str, comments: list[dict[str, Any]]
+) -> None:
+    expected_issue = f"/repos/{owner}/{repo}/issues/{number}"
+    for comment in comments:
+        if str(comment.get("id")) != comment_id:
+            continue
+        issue_url = comment.get("issue_url")
+        if not isinstance(issue_url, str) or not issue_url.rstrip("/").endswith(
+            expected_issue
+        ):
+            raise NotifyError("comment does not belong to the requested issue")
+        return
+    raise NotifyError("target comment is absent from the issue comments")
+
+
+def send(
+    agent_id: str,
+    fingerprint: str,
+    comment_url: str,
+    *,
+    sleep_fn: Any = None,
+) -> dict[str, Any]:
+    owner, repo, _kind, number, comment_id = parse_comment_url(comment_url)
+    comments = _comments(owner, repo, number)
+    _assert_comment_belongs(owner, repo, number, comment_id, comments)
     pane = discover(agent_id)
-    if pane.fingerprint != fingerprint:
-        raise NotifyError("pane fingerprint changed; rerun inspect")
-    message = fixed_message(agent_id, comment_url)
     before = _tmux_capture(pane.pane_id)
+    if pane.fingerprint(before) != fingerprint:
+        raise NotifyError("pane state fingerprint changed; rerun inspect")
+    message = fixed_message(agent_id, comment_url)
     if _normalized(message) in _normalized(before):
         raise NotifyError("notification is already present in the target pane")
 
@@ -203,9 +244,10 @@ def send(agent_id: str, fingerprint: str, comment_url: str) -> dict[str, Any]:
         _run(
             ["tmux", "paste-buffer", "-p", "-b", buffer_name, "-t", pane.pane_id]
         )
-        after_paste = _tmux_capture(pane.pane_id)
-        if _normalized(message) not in _normalized(after_paste):
-            raise NotifyError("pasted notification was not visible; Enter not sent")
+        _wait_for_visible(pane.pane_id, message, sleep_fn=sleep_fn)
+        current = discover(agent_id)
+        if current.identity != pane.identity:
+            raise NotifyError("target identity changed after paste; Enter not sent")
         _run(["tmux", "send-keys", "-t", pane.pane_id, "Enter"])
     finally:
         try:
@@ -230,6 +272,8 @@ def _comments(owner: str, repo: str, number: str) -> list[dict[str, Any]]:
             "--paginate",
         ]
     )
+    if not output.strip():
+        raise NotifyError("empty GitHub comments output")
     comments: list[dict[str, Any]] = []
     decoder = json.JSONDecoder()
     position = 0
@@ -238,13 +282,16 @@ def _comments(owner: str, repo: str, number: str) -> list[dict[str, Any]]:
             position += 1
         if position >= len(output):
             break
-        payload, position = decoder.raw_decode(output, position)
-        if isinstance(payload, list):
-            comments.extend(item for item in payload if isinstance(item, dict))
-        elif isinstance(payload, dict):
-            comments.append(payload)
-        else:
-            raise NotifyError("unexpected GitHub comments payload")
+        try:
+            payload, position = decoder.raw_decode(output, position)
+        except json.JSONDecodeError as exc:
+            raise NotifyError("invalid GitHub comments JSON") from exc
+        if not isinstance(payload, list):
+            raise NotifyError("unexpected non-list GitHub comments payload")
+        for item in payload:
+            if not isinstance(item, dict):
+                raise NotifyError("unexpected non-object GitHub comment")
+            comments.append(item)
     return comments
 
 
@@ -280,11 +327,12 @@ def _ack_fields(body: str) -> dict[str, str] | None:
 def status(agent_id: str, comment_url: str, spec: str) -> dict[str, Any]:
     if not AGENT_ID.fullmatch(agent_id):
         raise NotifyError("agent ID must be a stable agent:<line>#<name> ID")
-    owner, repo, _kind, number, _comment_id = parse_comment_url(comment_url)
+    owner, repo, _kind, number, comment_id = parse_comment_url(comment_url)
     try:
         comments = _comments(owner, repo, number)
     except NotifyError as exc:
         raise NotifyError(f"GitHub comments read failed: {exc}") from exc
+    _assert_comment_belongs(owner, repo, number, comment_id, comments)
     for comment in comments:
         body = comment.get("body")
         if not isinstance(body, str):

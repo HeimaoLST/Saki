@@ -3,10 +3,8 @@
 
 from __future__ import annotations
 
-import io
 import sys
 import unittest
-from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -38,6 +36,15 @@ def pane(
     )
 
 
+def comment(comment_id: str = "6556457330", body: str = "") -> dict[str, str]:
+    return {
+        "id": comment_id,
+        "body": body,
+        "html_url": f"https://github.com/HeimaoLST/Saki/issues/236#issuecomment-{comment_id}",
+        "issue_url": "https://api.github.com/repos/HeimaoLST/Saki/issues/236",
+    }
+
+
 class InspectTests(unittest.TestCase):
     def test_unique_main_is_accepted(self) -> None:
         target = pane()
@@ -45,7 +52,7 @@ class InspectTests(unittest.TestCase):
             with mock.patch.object(notify, "_tmux_capture", return_value="ready"):
                 result = notify.inspect(target.agent_id)
         self.assertEqual(result["pane_id"], "%1")
-        self.assertEqual(result["fingerprint"], target.fingerprint)
+        self.assertEqual(result["fingerprint"], target.fingerprint("ready"))
         self.assertEqual(result["capture"], "ready")
 
     def test_duplicate_main_is_rejected(self) -> None:
@@ -70,30 +77,53 @@ class InspectTests(unittest.TestCase):
     def test_shell_target_is_rejected(self) -> None:
         shell = pane(command="zsh")
         with mock.patch.object(notify, "_tmux_panes", return_value=[shell]):
-            with self.assertRaisesRegex(notify.NotifyError, "shell"):
+            with self.assertRaisesRegex(notify.NotifyError, "allowed agent"):
                 notify.inspect(shell.agent_id)
+
+    def test_unknown_process_is_rejected(self) -> None:
+        unknown = pane(command="python3")
+        with mock.patch.object(notify, "_tmux_panes", return_value=[unknown]):
+            with self.assertRaisesRegex(notify.NotifyError, "allowed agent"):
+                notify.inspect(unknown.agent_id)
 
 
 class SendTests(unittest.TestCase):
-    def test_fingerprint_change_sends_nothing(self) -> None:
+    def setUp(self) -> None:
+        self.comments = [comment()]
+
+    def _send(self, target: notify.Pane, fingerprint: str, **kwargs: object) -> dict[str, object]:
+        with mock.patch.object(notify, "_comments", return_value=self.comments):
+            with mock.patch.object(notify, "_tmux_panes", return_value=[target]):
+                return notify.send(
+                    target.agent_id,
+                    fingerprint,
+                    URL,
+                    sleep_fn=lambda _: None,
+                    **kwargs,
+                )
+
+    def test_capture_fingerprint_change_sends_nothing(self) -> None:
         target = pane()
-        with mock.patch.object(notify, "_tmux_panes", return_value=[target]):
-            with mock.patch.object(notify, "_run") as run:
-                with self.assertRaisesRegex(notify.NotifyError, "fingerprint"):
-                    notify.send(target.agent_id, "stale", URL)
+        with mock.patch.object(notify, "_comments", return_value=self.comments):
+            with mock.patch.object(notify, "_tmux_panes", return_value=[target]):
+                with mock.patch.object(notify, "_tmux_capture", return_value="changed"):
+                    with mock.patch.object(notify, "_run") as run:
+                        with self.assertRaisesRegex(notify.NotifyError, "state fingerprint"):
+                            notify.send(target.agent_id, target.fingerprint("ready"), URL)
         run.assert_not_called()
 
     def test_duplicate_notice_sends_nothing(self) -> None:
         target = pane()
         message = notify.fixed_message(target.agent_id, URL)
-        with mock.patch.object(notify, "_tmux_panes", return_value=[target]):
-            with mock.patch.object(notify, "_tmux_capture", return_value=message):
-                with mock.patch.object(notify, "_run") as run:
-                    with self.assertRaisesRegex(notify.NotifyError, "already present"):
-                        notify.send(target.agent_id, target.fingerprint, URL)
+        with mock.patch.object(notify, "_comments", return_value=self.comments):
+            with mock.patch.object(notify, "_tmux_panes", return_value=[target]):
+                with mock.patch.object(notify, "_tmux_capture", return_value=message):
+                    with mock.patch.object(notify, "_run") as run:
+                        with self.assertRaisesRegex(notify.NotifyError, "already present"):
+                            notify.send(target.agent_id, target.fingerprint(message), URL)
         run.assert_not_called()
 
-    def test_paste_is_verified_before_one_enter(self) -> None:
+    def test_paste_is_verified_after_bounded_wait_before_one_enter(self) -> None:
         target = pane()
         message = notify.fixed_message(target.agent_id, URL)
         calls: list[tuple[str, ...]] = []
@@ -102,27 +132,57 @@ class SendTests(unittest.TestCase):
             calls.append(tuple(argv))
             return ""
 
-        with mock.patch.object(notify, "_tmux_panes", return_value=[target]):
-            with mock.patch.object(
-                notify,
-                "_tmux_capture",
-                side_effect=["", message],
-            ):
-                with mock.patch.object(notify, "_run", side_effect=fake_run):
-                    result = notify.send(target.agent_id, target.fingerprint, URL)
+        with mock.patch.object(notify, "_comments", return_value=self.comments):
+            with mock.patch.object(notify, "_tmux_panes", return_value=[target]):
+                with mock.patch.object(
+                    notify, "_tmux_capture", side_effect=["", "", message]
+                ):
+                    with mock.patch.object(notify, "_run", side_effect=fake_run):
+                        result = notify.send(
+                            target.agent_id,
+                            target.fingerprint(""),
+                            URL,
+                            sleep_fn=lambda _: None,
+                        )
         self.assertEqual(result["transport"], "submitted")
         self.assertEqual(result["ack"], "pending")
-        self.assertEqual(sum(call[:2] == ("tmux", "send-keys") for call in calls), 1)
         self.assertEqual(sum(call[:2] == ("tmux", "paste-buffer") for call in calls), 1)
-        self.assertEqual(len([call for call in calls if call[:2] == ("tmux", "send-keys")]), 1)
+        self.assertEqual(sum(call[:2] == ("tmux", "send-keys") for call in calls), 1)
 
     def test_invisible_paste_does_not_send_enter(self) -> None:
         target = pane()
-        with mock.patch.object(notify, "_tmux_panes", return_value=[target]):
-            with mock.patch.object(notify, "_tmux_capture", return_value=""):
-                with mock.patch.object(notify, "_run") as run:
-                    with self.assertRaisesRegex(notify.NotifyError, "not visible"):
-                        notify.send(target.agent_id, target.fingerprint, URL)
+        with mock.patch.object(notify, "_comments", return_value=self.comments):
+            with mock.patch.object(notify, "_tmux_panes", return_value=[target]):
+                with mock.patch.object(notify, "_tmux_capture", return_value=""):
+                    with mock.patch.object(notify, "_run") as run:
+                        with self.assertRaisesRegex(notify.NotifyError, "not visible"):
+                            notify.send(
+                                target.agent_id,
+                                target.fingerprint(""),
+                                URL,
+                                sleep_fn=lambda _: None,
+                            )
+        self.assertFalse(
+            any(call.args[0][:2] == ["tmux", "send-keys"] for call in run.call_args_list)
+        )
+
+    def test_identity_change_after_paste_does_not_send_enter(self) -> None:
+        target = pane()
+        changed = pane(pane_id="%2", task="#other")
+        message = notify.fixed_message(target.agent_id, URL)
+        with mock.patch.object(notify, "_comments", return_value=self.comments):
+            with mock.patch.object(
+                notify, "_tmux_panes", side_effect=[[target], [changed]]
+            ):
+                with mock.patch.object(notify, "_tmux_capture", side_effect=["", message]):
+                    with mock.patch.object(notify, "_run") as run:
+                        with self.assertRaisesRegex(notify.NotifyError, "identity"):
+                            notify.send(
+                                target.agent_id,
+                                target.fingerprint(""),
+                                URL,
+                                sleep_fn=lambda _: None,
+                            )
         self.assertFalse(
             any(call.args[0][:2] == ["tmux", "send-keys"] for call in run.call_args_list)
         )
@@ -142,7 +202,7 @@ class StatusTests(unittest.TestCase):
         return "\n".join(f"{key}: {value}" for key, value in fields.items())
 
     def _comments(self, body: str) -> list[dict[str, str]]:
-        return [{"body": body, "html_url": "https://github.com/HeimaoLST/Saki/issues/236#issuecomment-1"}]
+        return [comment(), comment("1", body)]
 
     def test_complete_exact_ack_passes(self) -> None:
         with mock.patch.object(notify, "_comments", return_value=self._comments(self._ack())):
@@ -177,6 +237,24 @@ class StatusTests(unittest.TestCase):
     def test_github_error_is_error_not_empty_success(self) -> None:
         with mock.patch.object(notify, "_comments", side_effect=notify.NotifyError("gh down")):
             with self.assertRaisesRegex(notify.NotifyError, "GitHub"):
+                notify.status("agent:pm#mira", URL, "r1")
+
+    def test_malformed_or_empty_comments_output_is_error(self) -> None:
+        for output in ("", "{}", '{"body": "not a list"}', "not-json"):
+            with mock.patch.object(notify, "_run", return_value=output):
+                with self.assertRaises(notify.NotifyError):
+                    notify._comments("HeimaoLST", "Saki", "236")
+
+    def test_target_comment_must_belong_to_issue(self) -> None:
+        with mock.patch.object(notify, "_comments", return_value=[comment("1")]):
+            with self.assertRaisesRegex(notify.NotifyError, "absent"):
+                notify.status("agent:pm#mira", URL, "r1")
+
+    def test_comment_from_another_issue_is_rejected(self) -> None:
+        wrong = comment()
+        wrong["issue_url"] = "https://api.github.com/repos/HeimaoLST/Saki/issues/235"
+        with mock.patch.object(notify, "_comments", return_value=[wrong]):
+            with self.assertRaisesRegex(notify.NotifyError, "belong"):
                 notify.status("agent:pm#mira", URL, "r1")
 
     def test_comment_url_is_strict(self) -> None:
