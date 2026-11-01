@@ -117,20 +117,14 @@ func (a *appModel) issueToolLaunchSource() *runtimeToolSource {
 	}
 }
 
-func (a *appModel) issueToolConversationSelection() map[string]any {
-	if !a.issueToolEnabled() {
-		return nil
-	}
+func issueToolConversationExternal() []map[string]string {
 	external := make([]map[string]string, 0, len(issueToolConversationDefinitions()))
 	for _, definition := range issueToolConversationDefinitions() {
 		external = append(external, map[string]string{
 			"source_id": issueToolSourceID, "tool_name": definition.Name, "exposed_name": definition.Name,
 		})
 	}
-	return map[string]any{
-		"builtin":  []string{"read", "bash", "edit", "write"},
-		"external": external,
-	}
+	return external
 }
 
 func issueToolConversationDefinitions() []issueToolDefinition {
@@ -155,16 +149,51 @@ func issueToolWorkDefinitions() []issueToolDefinition {
 
 const issueToolWorkToolName = "issue_wait"
 
-func (a *appModel) issueToolWorkSelection() map[string]any {
-	if !a.issueToolEnabled() {
-		return nil
+func issueToolWorkExternal() []map[string]string {
+	return []map[string]string{{
+		"source_id": issueToolSourceID, "tool_name": issueToolWorkToolName, "exposed_name": issueToolWorkToolName,
+	}}
+}
+
+func resolveBuiltinToolNames(rt *runtimeClient, selection *[]string) ([]string, error) {
+	if selection != nil {
+		return append([]string{}, (*selection)...), nil
 	}
-	return map[string]any{
-		"builtin": []string{"read", "bash", "edit", "write"},
-		"external": []map[string]string{{
-			"source_id": issueToolSourceID, "tool_name": issueToolWorkToolName, "exposed_name": issueToolWorkToolName,
-		}},
+	catalog, err := rt.tools()
+	if err != nil {
+		return nil, fmt.Errorf("load Runtime built-in tools: %w", err)
 	}
+	return builtinToolNames(catalog.Builtin), nil
+}
+
+func runtimeConversationSelection(rt *runtimeClient, builtin *[]string, issueTools bool) (map[string]any, error) {
+	if builtin == nil && !issueTools {
+		return nil, nil
+	}
+	names, err := resolveBuiltinToolNames(rt, builtin)
+	if err != nil {
+		return nil, err
+	}
+	external := []map[string]string{}
+	if issueTools {
+		external = issueToolConversationExternal()
+	}
+	return map[string]any{"builtin": names, "external": external}, nil
+}
+
+func runtimeWorkSelection(rt *runtimeClient, builtin *[]string, issueTools bool) (map[string]any, error) {
+	if builtin == nil && !issueTools {
+		return nil, nil
+	}
+	names, err := resolveBuiltinToolNames(rt, builtin)
+	if err != nil {
+		return nil, err
+	}
+	external := []map[string]string{}
+	if issueTools {
+		external = issueToolWorkExternal()
+	}
+	return map[string]any{"builtin": names, "external": external}, nil
 }
 
 func runtimeSelectionHasWorkWait(selection runtimeToolSelection) bool {
@@ -177,10 +206,10 @@ func runtimeSelectionHasWorkWait(selection runtimeToolSelection) bool {
 }
 
 func (a *appModel) issueToolMergedWorkSelection(current runtimeToolSelection) (map[string]any, error) {
-	selection := a.issueToolWorkSelection()
-	if selection == nil {
+	if !a.issueToolEnabled() {
 		return nil, nil
 	}
+	selection := map[string]any{"external": issueToolWorkExternal()}
 	selection["builtin"] = append([]string{}, current.Builtin...)
 	external := make([]map[string]string, 0, len(current.External)+1)
 	exposedOwner := map[string]string{}
@@ -347,12 +376,12 @@ func runtimeSelectionHasIssueTools(selection runtimeToolSelection) bool {
 }
 
 func (a *appModel) issueToolMergedSelection(current runtimeToolSelection) (map[string]any, error) {
-	selection := a.issueToolConversationSelection()
-	if selection == nil {
+	if !a.issueToolEnabled() {
 		return nil, nil
 	}
+	selection := map[string]any{"external": issueToolConversationExternal()}
 	// An empty builtin list is an explicit "no built-in tools" choice. Preserve
-	// it exactly; only a new conversation gets the default four.
+	// it exactly; only a new conversation resolves the host default.
 	selection["builtin"] = append([]string{}, current.Builtin...)
 	external := make([]map[string]string, 0, len(current.External)+len(issueToolConversationDefinitions()))
 	exposedOwner := map[string]string{}

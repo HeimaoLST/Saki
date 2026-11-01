@@ -95,6 +95,7 @@ type contact struct {
 	Purpose               string
 	Instructions          string
 	Workspace             string
+	BuiltinTools          *[]string
 	Status                contactStatus
 	Unread                int
 	Work                  string
@@ -147,6 +148,7 @@ type profileDraft struct {
 	Purpose      string
 	Instructions string
 	Workspace    string
+	BuiltinTools *[]string
 }
 
 type appModel struct {
@@ -231,30 +233,34 @@ type appModel struct {
 
 	// Runtime mode. demo keeps the local fixture path for tests/screenshots;
 	// the shipped app is runtime-backed.
-	demo                      bool
-	store                     *contactStore
-	rt                        *runtimeClient
-	runtimeStatus             string
-	runtimeErr                string
-	runtimeStage              string
-	runtimeHint               string
-	runtimeBinary             string
-	runtimeHelperChecked      bool
-	runtimeAPI                string
-	runtimeHandshake          bool
-	runtimeMaxActiveTasks     int
-	runtimeCapabilitiesLoaded bool
-	runtimeCapabilitiesErr    string
-	workDir                   string
-	sessionDir                string
-	storePath                 string
-	uiHookMu                  sync.Mutex
-	uiHook                    func(func()) // test seam for deterministic UI-thread ordering
-	requestQuit               func()       // set by main to mygo.App.Quit
-	quitReady                 bool
-	shutdownStarted           bool
-	historyQuery              string
-	highlight                 string
+	demo                       bool
+	store                      *contactStore
+	rt                         *runtimeClient
+	runtimeStatus              string
+	runtimeErr                 string
+	runtimeStage               string
+	runtimeHint                string
+	runtimeBinary              string
+	runtimeHelperChecked       bool
+	runtimeAPI                 string
+	runtimeHandshake           bool
+	runtimeMaxActiveTasks      int
+	runtimeCapabilitiesLoaded  bool
+	runtimeCapabilitiesErr     string
+	runtimeBuiltinTools        []runtimeBuiltinTool
+	runtimeBuiltinToolsLoaded  bool
+	runtimeBuiltinToolsLoading bool
+	runtimeBuiltinToolsErr     string
+	workDir                    string
+	sessionDir                 string
+	storePath                  string
+	uiHookMu                   sync.Mutex
+	uiHook                     func(func()) // test seam for deterministic UI-thread ordering
+	requestQuit                func()       // set by main to mygo.App.Quit
+	quitReady                  bool
+	shutdownStarted            bool
+	historyQuery               string
+	highlight                  string
 
 	connectionPath         string
 	connectionForm         *connectionSettings

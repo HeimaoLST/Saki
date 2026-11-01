@@ -51,6 +51,8 @@ func helperMain() int {
 	gateMode := os.Getenv("RUNTIME_HELPER_GATE") == "1"
 	capabilitiesFailFirst := os.Getenv("RUNTIME_CAPABILITIES_FAIL_FIRST") == "1"
 	capabilityCalls := 0
+	toolsFailFirst := os.Getenv("RUNTIME_TOOLS_FAIL_FIRST") == "1"
+	toolListCalls := 0
 	accepted := false
 	completed := make(chan struct{})
 	var completeOnce sync.Once
@@ -81,10 +83,23 @@ func helperMain() int {
 		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
 			continue
 		}
+		if toolsFailFirst {
+			writeStderr("tools-fixture:" + request.Method)
+		}
 		respond := func(result any) {
 			write(map[string]any{"version": 1, "type": "response", "id": request.ID, "result": result})
 		}
 		switch request.Method {
+		case "tool.list":
+			toolListCalls++
+			if toolsFailFirst && toolListCalls == 1 {
+				write(map[string]any{
+					"version": 1, "type": "response", "id": request.ID,
+					"error": map[string]any{"code": "tool_source_unavailable", "message": "controlled tool catalog failure"},
+				})
+				continue
+			}
+			respond(map[string]any{"builtin": []map[string]string{{"name": "fixture-read", "description": "Fixture catalog tool"}}})
 		case "runtime.capabilities":
 			capabilityCalls++
 			if capabilitiesFailFirst && capabilityCalls == 1 {

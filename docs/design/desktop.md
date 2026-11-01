@@ -607,6 +607,18 @@ type resolvedTheme struct {
 - **验证范围**：`connection_app_test.go` 验证空配置不提前落盘、旧联系人保持、无效设置修复及联系人目录创建失败后可修复；`connection_app_integration_test.go` 通过实际 app.view/actions 和真实 Rust helper 验证 Save/Apply/Test、首次发送、重启、保存失败、后台事项保护、候选失败回退、未知恢复、换端点后的历史边界、测试错误修正和退出取消。`connection_integration_test.go` 继续覆盖 Responses/Chat 两协议。使用受控本地 endpoint，不代表任意外部 provider 均兼容。
 - **未验与外部缺口**：本轮原生 CUA 仍返回 `Sky Computer Use native pipe startup failed`，Finder 冷启动/原生键盘交互未验，headless 截图与真实进程测试不替代。#160 已复现 Runtime 把 provider 回显的当前 key 写入错误事件与历史；GUI 显示层处理不能修复服务端 journal，本单不宣称该全链路边界已通过。没有真实凭据用于该复现或候选包。
 
+### #116 联系人内置工具默认值（候选实现，2026-11-02）
+
+需求依据为 [tool-selection-r1](https://github.com/HeimaoLST/Saki/issues/116#issuecomment-6560886562)，代码来源为 `agent/gui/116-builtin-tool-selection`。本节补齐 G7-1 的工具选择；精确验证 SHA、逐项 AC 与集成状态以对应 PR／#116 交付为准，不代表 Finder 冷启动或整个 #116 已验收。
+
+- **唯一配置入口与目录**：现有 Settings → Contact profile 使用 MyGo 复选框选择内置工具，候选名称与说明读取当前 Runtime 的 `tool.list.builtin`；GUI 不维护另一份固定能力目录。宿主默认表示当前 Runtime 提供的默认内置工具。Nagi 的事项工具与 `issue_wait` 仍按对话／工作职责组装，不属于该复选组的可移除项。
+- **默认与明确空集合**：联系人／profile／contact store 的可选 `builtin_tools` 区分缺省和明确数组。缺字段仍使用宿主默认；`[]` 明确禁用所有内置工具，保存与重启不能回退到默认。沿用当前 store 版本，不强制迁移旧会话或改写 Runtime 存储；明确空集合不表示 Nagi 的内部事项工具也被移除。
+- **保存作用范围**：Save changes 只保存联系人未来默认。首次创建对话或事项工作 session 时，在派发边界复制该次选择；已存在的会话、工作 session、在途任务及历史均保持原配置。Save and start new conversation 沿原入口保留旧会话并明确开始新对话。已有事项下一次 Continue 仍复用原工作 session，不因联系人默认变化而重新创建。
+- **实际值与后续变更**：Conversation model／Issue model 的既有详情从 `session.config.get.effective_config.tool_selection` 显示有效内置工具。未知读回沿原 Last read 提示，不把联系人默认冒充已生效配置。模型修改、补齐 Nagi external 工具及恢复继续保留原 built-in 集合、外部工具别名和作用域。
+- **失败与兼容路径**：目录读取失败保留 profile 草稿和旧配置，Runtime 就绪后可重试；未配置或断连时不提供无效重试。保存失败沿原显式错误与回滚路径。旧环境启动没有受管连接时保持原默认会话行为，自定义工具要求先在 Connection & model 保存并应用连接；显式选择不得被旧创建路径静默忽略。读取目录、编辑、保存及读取有效配置不调用模型或执行业务工具。
+- **确定性验证**：`builtin_tool_selection_integration_test.go` 核对实际 GUI 子集／空集创建、Rust 有效配置与 provider 工具声明；暂停会话映射并修改 profile 后，首次派发及同 session 继续执行仍使用原选择。受控代理丢弃真实 Rust 的发送回复，重启与显式恢复保留旧 session／新 profile，`task.send` 计数保持一次。模型 A→B→A 与外部工具补齐保留自定义别名。`builtin_tool_selection_test.go` 覆盖旧 store、明确空集合、保存失败、单项键盘切换；目录失败／Retry 走既有受控 stdio helper 和真实客户端往返，属于协议消费证据，不冒充 Rust MCP 故障实验。
+- **证据边界**：回归复用实际 Contact profile 控件、既有 GUI／Runtime harness 与本地受控 provider，区分 UI Tester、真实 Rust 进程和原生窗口三类证据。本轮不调用在线模型、不启动用户应用；两色／宽窄截图与键盘验证属于 headless，Finder 和原生交互仍须单独验收。最终命令、失败记录、完整 Go／race／既有检查器和五项 macOS CI 结果随固定 SHA 发布，不用总测试数代替逐条验收。
+
 ## #153 事项生命周期、要求核对与归档（实现事实，2026-10-25）
 
 代码来源：`agent/gui/153-issue-lifecycle`，base `885fb1f`（#116 配置组合），生产代码最终为 `817d9c9`（生命周期实现 `23929d9`，之后仅有归档标题/截图测试整理）。只描述 #153 范围，不等于完整 MVP；#142/#154、看板、日程和跨人转交未随本阶段完成。设置模块仍由 #115/#116 负责，本单未改 `connection_app.go` 或 `runtime.go`。

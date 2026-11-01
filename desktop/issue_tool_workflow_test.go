@@ -246,7 +246,9 @@ func TestIssueToolEnsureSkipsNoOpConfigUpdate(t *testing.T) {
 	var setupErr error
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
-		session, err := h.app.rt.createConfiguredConversationSession(h.root, issueToolConversationGuidance, h.app.issueToolConversationSelection())
+		session, err := h.app.rt.createConfiguredConversationSession(h.root, issueToolConversationGuidance, map[string]any{
+			"builtin": []string{"read", "bash", "edit", "write"}, "external": issueToolConversationExternal(),
+		})
 		if err != nil {
 			setupErr = err
 			return
@@ -390,7 +392,9 @@ func TestIssueToolWorkRefreshUsesSameTypedMarker(t *testing.T) {
 	var rt *runtimeClient
 	var setupErr error
 	h.pump.do(func() {
-		session, err := h.app.rt.createConfiguredConversationSession(h.root, issueToolWorkGuidance, h.app.issueToolWorkSelection())
+		session, err := h.app.rt.createConfiguredConversationSession(h.root, issueToolWorkGuidance, map[string]any{
+			"builtin": []string{"read", "bash", "edit", "write"}, "external": issueToolWorkExternal(),
+		})
 		if err != nil {
 			setupErr = err
 			return

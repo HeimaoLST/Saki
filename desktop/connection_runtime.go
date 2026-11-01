@@ -28,6 +28,21 @@ type runtimeToolSelection struct {
 	External []runtimeExternalToolBinding `json:"external"`
 }
 
+type runtimeBuiltinTool struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type runtimeToolList struct {
+	Builtin []runtimeBuiltinTool `json:"builtin"`
+}
+
+func (c *runtimeClient) tools() (runtimeToolList, error) {
+	var result runtimeToolList
+	err := c.call("tool.list", map[string]any{}, &result, runtimeControlTimeout)
+	return result, err
+}
+
 type runtimeConnectionConfig struct {
 	SessionID       string   `json:"session_id"`
 	ConfigRevision  uint64   `json:"config_revision"`

@@ -73,7 +73,8 @@ func contactsFromStore(store *contactStore) []*contact {
 		ct := &contact{
 			ID: stored.ID, Name: stored.Name, Role: stored.Role,
 			Purpose: stored.Purpose, Instructions: stored.Instructions,
-			Workspace: stored.Workspace, SessionID: stored.SessionID, Draft: stored.Draft,
+			Workspace: stored.Workspace, BuiltinTools: cloneBuiltinTools(stored.BuiltinTools),
+			SessionID: stored.SessionID, Draft: stored.Draft,
 			Archived: stored.Archived, ArchivedAt: stored.ArchivedAt,
 			PreviousSessions: append([]string(nil), stored.PreviousSessions...),
 			Status:           statusReady, WorkLabel: "Preparing a reply",
@@ -396,6 +397,10 @@ func (a *appModel) applyConnectionWorker(gen int, path, sessionDir, helperHint s
 		a.runtimeCapabilitiesLoaded = false
 		a.runtimeMaxActiveTasks = 0
 		a.runtimeCapabilitiesErr = ""
+		a.runtimeBuiltinTools = nil
+		a.runtimeBuiltinToolsLoaded = false
+		a.runtimeBuiltinToolsLoading = false
+		a.runtimeBuiltinToolsErr = ""
 	})
 	if !installed {
 		launch.Cleanup()
@@ -424,6 +429,9 @@ func (a *appModel) applyConnectionWorker(gen int, path, sessionDir, helperHint s
 			a.restoreContacts(rt, gen)
 			a.restoreIssueWorks(rt, gen)
 			go a.loadCapabilities(rt, gen)
+			if a.connectionManaged {
+				a.startBuiltinToolsLoad(rt, gen)
+			}
 		}
 		if a.shutdownStarted {
 			a.finishShutdown()
@@ -525,6 +533,9 @@ func (a *appModel) handleRuntimeReady(gen int, ready runtimeReady) {
 	a.restoreContacts(a.rt, gen)
 	a.restoreIssueWorks(a.rt, gen)
 	go a.loadCapabilities(a.rt, gen)
+	if a.connectionManaged {
+		a.startBuiltinToolsLoad(a.rt, gen)
+	}
 }
 
 func (a *appModel) handleRuntimeEvent(gen int, event runtimeEventEnvelope) {
@@ -589,23 +600,30 @@ func (a *appModel) connectionTaskFinishedDetail(payload *runtimeEvent) string {
 	return taskFinishedDetail(&copyPayload)
 }
 
-func (a *appModel) configuredCreate(rt *runtimeClient, configured bool, workspace, system string) (runtimeSession, error) {
+func (a *appModel) configuredConversationCreate(rt *runtimeClient, configured bool, workspace, system string, builtin *[]string, issueTools bool) (runtimeSession, error) {
 	if configured {
-		return rt.createConfiguredSession(workspace, system)
+		selection, err := runtimeConversationSelection(rt, builtin, issueTools)
+		if err != nil {
+			return runtimeSession{}, err
+		}
+		return rt.createConfiguredConversationSession(workspace, system, selection)
+	}
+	if builtin != nil {
+		return runtimeSession{}, errors.New("Built-in tool selection requires a managed Nagi connection; save and Apply a connection before creating a new conversation.")
 	}
 	return rt.createSession(workspace, system)
 }
 
-func (a *appModel) configuredConversationCreate(rt *runtimeClient, configured bool, workspace, system string) (runtimeSession, error) {
+func (a *appModel) configuredWorkCreate(rt *runtimeClient, configured bool, workspace, system string, builtin *[]string, issueTools bool) (runtimeSession, error) {
 	if configured {
-		return rt.createConfiguredConversationSession(workspace, system, a.issueToolConversationSelection())
+		selection, err := runtimeWorkSelection(rt, builtin, issueTools)
+		if err != nil {
+			return runtimeSession{}, err
+		}
+		return rt.createConfiguredConversationSession(workspace, system, selection)
 	}
-	return rt.createSession(workspace, system)
-}
-
-func (a *appModel) configuredWorkCreate(rt *runtimeClient, configured bool, workspace, system string) (runtimeSession, error) {
-	if configured {
-		return rt.createConfiguredConversationSession(workspace, system, a.issueToolWorkSelection())
+	if builtin != nil {
+		return runtimeSession{}, errors.New("Built-in tool selection requires a managed Nagi connection; save and Apply a connection before creating a new work session.")
 	}
 	return rt.createSession(workspace, system)
 }
