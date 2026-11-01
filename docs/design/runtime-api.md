@@ -32,11 +32,11 @@ SAKI_MODEL=model-id SAKI_SESSION_DIR=/path/to/sessions target/debug/Saki --stdio
 
 示例假设宿主已经通过进程环境或既有 `.env` 提供 `API_KEY`；示例不表示无需凭据。实际 provider 与模型的兼容性以对应 smoke 运行证据为准。
 
-provider 的协议／endpoint／凭据归宿主，启动时注入一次；不进入请求、事件或 session metadata。模型、工作目录、system prompt、compact 配置归 session；省略覆盖值时使用宿主默认。首轮工具为现有 read/bash/edit/write，Rust 调用方继续用 ToolRegistry 组装，不开放由 JSON 上传可执行工具定义。
+当前连接目录、客户端和凭据由宿主在启动时组装；凭据不写入 stdio 请求／事件、session metadata 或 journal。持久身份与当前客户端配置分开：两种 metadata schema 都记录 API，显式 schema 2 还保存 ConnectionIdentity 的 connection_id、API 和规范化 endpoint，供恢复时核对历史路由（[身份定义](https://github.com/HeimaoLST/Saki/blob/d0502695446e4826c34c1d9d8e841d0e10cdcd09/src/client/connections.rs#L16-L21)）；这不包含凭据，也不证明 schema 1 的原 endpoint。模型、工作目录、system prompt、compact 配置按 session 生效，省略新建覆盖值时使用宿主默认。默认内置工具为 read/bash/edit/write；外部工具沿既有 MCP 配置接入，不由 JSON 上传可执行实现。
 
 机器入口不隐式创建或恢复 session，不读取 `SAKI_SESSION` 来选择全局活动对象。配置不完整时进程初始化失败（stderr + 非零退出），不发 ready 或 task.started；初始化成功先输出 `ready`，包含协议版本和可用 API 标识，不包含 key。新 session 无需联系人 profile；联系人、名称、头像和 contact→session 映射由 GUI 保存。
 
-联系人/profile、名称、头像和编辑 UI 由宿主/GUI 持有，Runtime 不提供 profile 编辑；`SessionMetadata` 持久化 session 的 model、API、system prompt、working directory、compaction、配置 revision、连接身份/绑定和工具选择，不保存 profile 字段。`session.config.update` 在 session 空闲时校验并原子应用 model/compaction，效果从下一次任务开始，不重写原始历史。
+联系人/profile、名称、头像和编辑 UI 由宿主/GUI 持有，Runtime 不保存 profile 字段。metadata 的共同部分保存 model、API、working_directory、compaction 等；system_prompt、连接身份/绑定及工具选择/schema 只在显式 schema 2 持久化。schema 1 要求这些增强字段缺失，初始 system 消息仍在 journal，不能从旧 metadata 推定完整绑定（[创建与赋值](https://github.com/HeimaoLST/Saki/blob/d0502695446e4826c34c1d9d8e841d0e10cdcd09/src/session/store.rs#L200-L221)、[schema 1 校验](https://github.com/HeimaoLST/Saki/blob/d0502695446e4826c34c1d9d8e841d0e10cdcd09/src/session/store.rs#L657-L666)）。`session.config.update` 在 session 空闲时校验并原子应用变更，效果从下一次任务开始，不重写原始历史；增强配置及显式升级见 #106。
 
 ## 请求、响应与事件
 
@@ -869,9 +869,11 @@ legacy 单客户端兼容执行的 schema 1 会话未验证原 endpoint，connec
 资料部分实际编码后的 UTF-8 字节总和上限为 1 MiB（包含上述每条 JSON 包装）。typed 和 stdio 复用 UserMessage.validate，在任务接纳/分配 ID/写入用户历史之前返回 invalid_request；不静默截断。既有 8 MiB 整请求限制同时适用。通过资料入口限制仍须满足所选模型的上下文预算；预算不足时沿用原有 compact/明确失败规则，不绕过容量校验。
 
 资料随历史保留，不宣称一次使用后删除。TUI 构造 UserMessage 的既有位置仅补空 context 以保持编译，不提供资料编辑 UI；#109 消费方服务化仍另行交付。确定性证据覆盖两端实际模型输入、图片旧表示、特殊字符串、超限拒绝、合法边界不截断、compact 来源与历史原字节前缀、跨进程恢复及继续时不重复注入；验收 SHA 与真实模型结果见 PR。
-## #106 连接、增强配置与显式升级（候选实现事实）
+<a id="106-连接增强配置与显式升级候选实现事实"></a>
 
-更新日期：2026-10-22。分类：**本 PR 候选，尚未合入 dev**。schema 1 默认创建/读取与旧模型配置路径保持；增强字段仅使用显式 schema 2，不自动升级用户数据。下述 SDK、stdio 与启动配置的行为以本 PR 验收 SHA 为准。
+## #106 连接、增强配置与显式升级（实现事实）
+
+更新日期：2026-11-01。分类：**#106 已集成；以下保留首次交付范围**。[44f53a6](https://github.com/HeimaoLST/Saki/commit/44f53a6d7312ac17535419fbd969c2818a5e9961) 已是 `dev@d0502695446e4826c34c1d9d8e841d0e10cdcd09` 的祖先，连接路由、增强配置和显式 schema 2 升级已存在。schema 1 兼容路径保持，不自动升级用户数据。下文受后续 MCP 接线、终端委托改变的早期限制标为历史，后续范围见 #107/#109；不将这些历史限制当成当前能力开关。
 
 ### 宿主配置和执行路由
 
@@ -885,7 +887,7 @@ schema 1 单连接继续兼容执行，connection_binding.state=unknown、connec
 
 新会话使用 `session.create {storage_schema:2,config:{connection_id,model?,compaction?,system_prompt?,working_directory?,tool_selection?}}`；旧顶层 working_directory/system_prompt 保留，重复提供同含义字段返回 invalid_request。多连接目录下旧的空 create 明确要求增强创建，不生成一个无法执行的 legacy 会话。capabilities.storage_schemas 返回宿主实际可创建的版本。
 
-`tool_selection` 使用已批准对象 `{"builtin":["read"],"external":[]}`；省略使用四内置工具，显式空对象/空两组开放零工具。MCP 接入前 external 非空明确拒绝；本候选不宣告外部工具支持。 读取持久 metadata 时也校验所选工具；未知内置工具或本版本不支持的外部工具在打开/修复 journal 前拒绝，不能静默只装载可识别的子集。不接受临时原型的名字数组作为另一套配置格式。该更正发生在未合入候选之间，schema 1 metadata 不新增工具字段，现有生产调用者未使用这一新增配置入口。
+`tool_selection` 使用已批准对象 `{"builtin":["read"],"external":[]}`；省略使用四内置工具，显式空对象/空两组开放零工具。**#106 首次交付的历史边界**：当时尚未接入 MCP，external 非空会拒绝；当时读取持久 metadata 也拒绝不支持的工具，避免静默仅装载子集。这不是当前 d050 禁用外部工具的结论，后续 MCP 接线见 #107，宿主以实际 capabilities/工具目录为准。不接受临时原型的名字数组作为另一套配置格式；该格式更正发生在当时未合入的候选之间。schema 1 不新增增强工具字段。
 
 普通 config.update 对已 loaded、idle session 执行。目标连接 API 不变时可切 provider，模型、prompt、工具集合和容量在同一次 CAS/metadata 提交后无 await 地替换 Agent；工作目录不可改。已接纳任务返回 busy，之后请求使用新配置，旧 journal 不重写。含原生 ProviderItem/provider_data 的模型/连接/prompt/工具重解释明确拒绝，不能通过丢原生数据实现迁移。有效值未改变不增加 revision、不写磁盘。 配置提交、手动改名和自动标题共用非阻塞 metadata 写锁，并在锁内重读最新值；锁冲突返回 locked。配置 CAS 只替换配置字段，保留最新标题及其来源，避免并发标题任务用旧副本覆盖已生效配置。
 
@@ -899,7 +901,7 @@ system_prompt 保存在 schema 2 metadata；load 时替换有效上下文的原 
 
 增加明确的维护操作 `session.config.rollback {session_id,expected_revision}`：须先 release，仅对有一致 schema 1 备份、revision 匹配且 journal 指纹完全未变的增强会话恢复原 metadata 字节。新增任务、其他 journal 变更、缺少/不一致备份均返回 rollback_unsafe，不删除历史来回退。新建 schema 2 没有 schema 1 备份。旧二进制须在读取 schema 2 时明确拒绝。更改 schema 标签不能使增强字段被当成 legacy 执行。
 
-默认终端旧 SessionManager 在 #109 迁移前仅接收 schema 1/单连接，增强配置通过 Runtime 服务入口；拒绝在恢复修复 journal 前完成。此边界不是最终“两端统一”交付，后续由 #109 使用同一服务实现解除，不放入第二套连接/执行循环。
+**#109 迁移前的终端边界（历史）**：当时旧 SessionManager 仅接收 schema 1/单连接，增强配置走 Runtime 服务入口，拒绝在恢复修复 journal 前完成。后续 #109 已将 SessionManager 改为同一 RuntimeHandle 的委托；当前终端路由见 [terminal 适配器](https://github.com/HeimaoLST/Saki/blob/d0502695446e4826c34c1d9d8e841d0e10cdcd09/src/session/terminal.rs#L333-L391)，不另设连接或执行循环。
 
 ## #107 MCP 首个技术验证（07d092b 历史阶段）
 
