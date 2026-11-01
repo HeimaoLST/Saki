@@ -578,6 +578,8 @@ type resolvedTheme struct {
 - 阶段证据：常驻图标追加后定向 Go race **45 PASS / 0 FAIL / 1 SKIP，4.735s**（原 `799c41e` 阶段为 5.406s，记录保留）（SKIP 为未启用截图环境变量的 opt-in 测试；截图另行运行），vet/build 通过。覆盖精确全文/代码与行尾、复制失败重试反馈、流式选择与转最终、窄表/代码、实际消息/历史/来源/工具，以及 Settings 返回 reader/重复链接的既有回归。短中文的同场景 headless 测量由原 reader 高 53px / 正文起点 y=32，变为 reader 高 21px / y=0；复制不再添加 32px 独占行。
 - 预览是同场景旧 source 与本阶段 source 的 Tester 图：组件 340/720px、浅深色、一行中文/长 Markdown/代码/表格及静止/hover/focus；实际 app 720×640、1040×720 的聊天/详情。未运行本阶段全套 Go、打包、原生剪贴板/IME或在线模型；最终组合/原生由 #218 统一执行，不能将冻结4546的旧原生结果转记到本切片。CI账户限制与网络恢复分别记录，不以此宣称 required CI 通过。
 
+**reader-polish-r1（实现事实，2026-11-02，base `8cac35438539badef17b819d05cb1265e6ca48eb`）：** 仅清理两个阅读文案：默认保留 `Current file: content may differ from this run`，展开 `Source & raw record` 不再重复完整快照说明；空文件显示 `Empty file (0 bytes).`，既有 exact-empty `Copy current file` 行为不变。另复核既有 reader 明暗、正常/最小样本的代码块、表格和气泡相邻边缘与内距，未发现具体相交、裁切或不协调，故未改 radius 或样式。为 #113 补充 1040×720/720×640 浅深色四张 headless Tester 图（`/tmp/nagi-reader-217-polish-r1/previews/`），经实际 Conversation work → Details 展示 Failed、permission diagnostic、Hide 与长 received output；仅本地 fixture，不是 native/Runtime/model 证据。七个既有 reader/result 定向检查与 focused preview PASS；本段未跑 full/race/native/CI，required CI 与最终 SHA 由父级后续处理。
+
 ## #118 独立工作会话与事项 UI（实现事实，2026-10-25）
 
 代码来源：本分支 `agent/gui/118-independent-execution`；reader 精确提交 `75fdfc7` 的 merge 为 `79299b3`，UI/路由与 rail 整理最终为 `c4779f9`（中间 UI 提交 `3197849`、preview `6702e6a`）。本节只陈述 #118 阶段事实，不表示完整 MVP、#142/#153/#154 或全部 MVP 已完成。
