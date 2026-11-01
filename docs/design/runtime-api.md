@@ -1,6 +1,6 @@
 # Runtime 调用契约与实施规划
 
-更新日期：2026-11-01（Python stdio 示例清理边界）。状态：**调用契约及服务化工作包已有实现；当前联合验收来源与范围见文末，集成状态以 #103 和对应 PR 为准**。
+更新日期：2026-11-01（#31 有限 MVP 输入事实与 Python stdio 示例清理边界）。状态：**调用契约及服务化工作包已有实现；当前联合验收来源与范围见文末，集成状态以 #103、#31 和对应 PR 为准**。
 
 需求依据：[Agent runtime 需求](../requirements/agent-runtime.md)、[#43](https://github.com/HeimaoLST/Saki/issues/43) 及 [GUI 首轮交接](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6235030388)。本文定义跨宿主调用契约与验收边界；实时优先级、任务状态和负责人以 GitHub 为准。
 
@@ -8,11 +8,11 @@
 
 本契约已取得实际消费意见与独立提案评审：[GUI ACK](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6258133217)、[PM 范围 ACK](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6258394345)、[TUI 兼容 ACK](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6262714452)、[最终提案独立评审汇总](https://github.com/HeimaoLST/Saki/pull/59#issuecomment-6244513599)。[PM 实施交接](https://github.com/HeimaoLST/Saki/issues/60#issuecomment-6284753791)已确认 #60 的 DoR，首轮按 #60 → #63 推进；[QA 边界调整](https://github.com/HeimaoLST/Saki/issues/60#issuecomment-6284890371)将 #64 限定为 CI 工程，不作为逐 PR 人工产品验收前置。
 
-以上确认针对调用契约与范围，不代表代码或跨端验收完成。具体 v1 DTO 位于 `src/session/stdio.rs`，可执行驱动位于 `examples/runtime_stdio.py`，运行证据随 #60 交付；共享 typed 事件的实际字段与消费接线按 TUI ACK 继续协调。多会话并发、压缩后原文检索及 #31／#32／#33 仍为独立后续任务。
+以上确认针对调用契约与范围；现行实现状态以此时 `dev@d0502695` 的源码、测试和下文实现事实为准。具体 v1 DTO 位于 `src/session/stdio.rs`，可执行驱动位于 `examples/runtime_stdio.py`。多 session 并发、调用方输入资料和配置更新已经存在；#31 的有限 MVP 由 PM 接受，FIFO/steering 仍未实现；压缩后原文检索（#62）和权威已应用编辑结果（#33）仍是独立后续事项。
 
 ## 现状与目标
 
-实现事实（#60；以同 PR 的代码和运行证据为准）：`src/session/runtime.rs` 提供 typed 服务核心，`src/session/stdio.rs` 提供 stdio v1 调用边界，按 ID 保留真实 loaded sessions，首轮只有一个执行槽。`Agent` 继续承担唯一模型／工具循环，`SessionStore` 和 journal reader 继续承担持久化／恢复，旧 TUI／console 入口保持。GUI 联系人接入由 #63 交付；重叠执行和 compact 后原文检索仍分别由 #61／#62 交付。
+实现事实（`dev@d0502695`）：`src/session/runtime.rs` 提供 typed 服务核心，`src/session/stdio.rs` 提供 stdio v1 调用边界，按 ID 保留 loaded sessions；Runtime capacity 默认 1、可配置更高，同一 session 最多一个 accepted/running task，不同 session 可在容量内重叠。`Agent` 继续承担唯一模型／工具循环，`SessionStore` 和 journal reader 继续承担持久化／恢复，旧 TUI／console 入口保持。跨 session 并发已实现；压缩后原文检索（#62）和权威已应用编辑结果（#33）仍独立。
 
 ## 推荐方案与取舍
 
@@ -36,7 +36,7 @@ provider 的协议／endpoint／凭据归宿主，启动时注入一次；不进
 
 机器入口不隐式创建或恢复 session，不读取 `SAKI_SESSION` 来选择全局活动对象。配置不完整时进程初始化失败（stderr + 非零退出），不发 ready 或 task.started；初始化成功先输出 `ready`，包含协议版本和可用 API 标识，不包含 key。新 session 无需联系人 profile；联系人、名称、头像和 contact→session 映射由 GUI 保存。
 
-首轮不提供联系人的运行期 profile 编辑或模型覆盖 UI。后续配置更新在 session 空闲时原子生效，只影响未来模型请求；不重写原始历史。模型更新由 #32 承载，profile 的具体持久化字段在独立实施项中定稿，未定稿前不宣称支持。
+联系人/profile、名称、头像和编辑 UI 由宿主/GUI 持有，Runtime 不提供 profile 编辑；`SessionMetadata` 持久化 session 的 model、API、system prompt、working directory、compaction、配置 revision、连接身份/绑定和工具选择，不保存 profile 字段。`session.config.update` 在 session 空闲时校验并原子应用 model/compaction，效果从下一次任务开始，不重写原始历史。
 
 ## 请求、响应与事件
 
@@ -55,7 +55,7 @@ provider 的协议／endpoint／凭据归宿主，启动时注入一次；不进
 | `session.history` | `session_id,offset?,limit?`；从同一个 journal reader 返回原始记录页、状态和下一 offset；不执行模型／工具、不修复未加载文件 |
 | `session.status` | `session_id`；返回 loaded、运行 task 或 idle，以及已有持久完成／中断状态；没有全局选中会话 |
 | `session.release` | `session_id`；释放空闲 session 的内存／写锁，不删除历史；运行中返回 busy |
-| `task.send` | `session_id,message:{text,images?}`；有效且可运行时返回 task_id、message_id；首轮忙时明确拒绝，不排队 |
+| `task.send` | `session_id,message:{text,images?},context?:[{name,text}]`；有效且可运行时返回 task_id、message_id；同一 session 忙时明确拒绝，不排队。context 是用户资料，serialized 上限 1 MiB；完整 stdio frame 仍受 8 MiB 限制 |
 | `task.cancel` | `session_id,task_id`；仅取消匹配的活动任务；返回 `requested`、`already_requested` 或 `not_running`，均不是完成证明 |
 | `runtime.shutdown` | 停止接纳新工作，等待已接纳执行结束，再关闭写锁和进程；不是取消 |
 
@@ -166,11 +166,11 @@ python3 examples/runtime_stdio.py --session SAVED_ID --prompt 'Continue our prev
 | 0 | #47 统一客户端合入 dev；#54 同步 README | 以实际最新 dev 为准同步／验收；质量修复 #58 与 CI 治理 #55 的影响须核对，不能沿用旧基线通过结果 |
 | 1 | #43 定稿本契约；拆 runtime／GUI／QA 实施任务 | 真实三线 ACK 与最终独立提案评审齐备；#43 decision 已据证据关闭，状态与实现事实随 #60 同步 |
 | 2 | [#60](https://github.com/HeimaoLST/Saki/issues/60) Runtime 机器入口、关联、历史与取消；无 GUI 真实闭环 | 基于合入后的 #47；只改 runtime 路径和必要接线，默认 TUI/console 保持；最终 SHA 离线及真实 smoke 通过 |
-| 3 | [#63](https://github.com/HeimaoLST/Saki/issues/63) GUI 使用真实入口替换 demo；[#64](https://github.com/HeimaoLST/Saki/issues/64) CI 工程 | GUI 负责人实施并真实试用，主 agent 评审／运行验收与 required CI；首轮完成不意味着后续并发／检索完成 |
-| 4 | [#61](https://github.com/HeimaoLST/Saki/issues/61) 同宿主多 session 重叠执行与失败隔离 | 独立 runtime 实施项，保留同一个机器契约和同一个 Agent；A 活动时 B 创建／加载／提交，事件不串，A 失败不结束 B |
+| 3 | [#63](https://github.com/HeimaoLST/Saki/issues/63) GUI 使用真实入口替换 demo；[#64](https://github.com/HeimaoLST/Saki/issues/64) CI 工程 | GUI 负责人实施并真实试用，主 agent 评审／运行验收与 required CI；首轮完成不意味着后续压缩后检索完成 |
+| 4 | [#61](https://github.com/HeimaoLST/Saki/issues/61) 同宿主多 session 重叠执行与失败隔离 | 已实现：保留同一个机器契约和同一个 Agent；A 活动时 B 创建／加载／提交，事件不串，A 失败不结束 B。容量/定向取消测试见下文。 |
 | 5 | [#62](https://github.com/HeimaoLST/Saki/issues/62) compact 后 search_history／read_history | 独立 runtime 实施项；复用 journal 与 ToolRegistry，默认当前 session／绑定范围，返回来源与记录位置，不设向量库前提 |
-| 6 | #31 follow-up／steering 策略与实施 | 复用 task 接纳边界；推荐先显式 FIFO follow-up、默认 busy 不变；队列、取消、关闭策略定稿后实施，steering 单列取舍 |
-| 7 | #32 会话内模型切换 | 定义候选模型配置与容量、闲时切换／失败保持、持久化及 API continuation 兼容；首版优先同 API 已配置连接，跨协议不强行迁移 |
+| 6 | #31 输入证据与后续执行 | PM 已接受有限 MVP：应用保存 pending revision/immutable snapshot，实际终态后显式 `task.send`/`context`；无 Runtime 队列。FIFO 是历史未实现提案，steering 仍未实现，不能作为当前 MVP 前置 |
+| 7 | #32 会话内模型切换 | Runtime 已提供 idle `session.config.update`（model/compaction 原子生效、next task 使用、revision/continuation 约束）；产品模型选择 UI 由消费方维护；跨协议续接受现有兼容性校验约束 |
 | 8 | #33 已应用变更的权威工具结果 | 先设计 edit 结果中的结构化 before/after 或 change；仅报告真实应用结果，失败不伪造 diff，TUI 消费需 ACK |
 
 阶段 4／5 是完整 runtime 需求的一部分，不因首轮 GUI 可运行就取消；每阶段单独的可验收 issue／PR，避免 #43 混入所有代码。阶段 6–8 复用已有 decision，不另造重复议题；实现顺序可在阶段 2 后按真实使用与 PM 排期调整。M2/M3、新厂商协议、OAuth、订阅授权、长期身份和成长机制不在当前队列的默认实施范围。
@@ -186,7 +186,7 @@ python3 examples/runtime_stdio.py --session SAVED_ID --prompt 'Continue our prev
 | 查看 B | A 执行工具时 list/history/load B，不取消／替换 A；首轮向忙碌执行器提交明确 busy | A/B 同时执行，创建／加载 B 不受 A busy 阻塞 |
 | 保存与恢复 | 跨进程恢复同一 session、继续前文；仅 load/history 的模型／工具计数为零 | 两个独立上下文、失败隔离和各自写锁 |
 | 错误 | 无效 session、损坏／锁定历史、API 不匹配有明确错误；工具业务错误能回传模型 | A 失败不错误结束 B；容量拒绝与同 session 冲突按定稿策略 |
-| 取消竞争 | 受控协调 cancel 与 finish 两种顺序；恰好一个终态；错误 task_id 不取消别的任务 | 队列任务与活动任务的定向取消、FIFO 不重排 |
+| 取消竞争 | 受控协调 cancel 与 finish 两种顺序；恰好一个终态；错误 task_id 不取消别的任务 | 若后续采纳队列，其定向取消与顺序另行定稿；FIFO 仍是历史未实现提案 |
 | 退出／断连 | EOF 等待；输出通道丢失不伪造成功；重启不重跑工具；接纳不确定时不自动重试 | 如需 durable queue／幂等重连，另开契约，不能冒用首轮证据 |
 | 历史检索 | 历史由同一个 reader 提供，GUI 不复制 parser | 多次 compact 后原文可 search/read，来源可定位，绑定范围外无泄漏 |
 | 配置与兼容 | 缺少配置不开始；旧终端接口／session 可用；两种已实现模型协议回归 | 模型切换失败保持原配置；权威 diff 与实际文件变更一致 |
@@ -197,14 +197,14 @@ python3 examples/runtime_stdio.py --session SAVED_ID --prompt 'Continue our prev
 
 新增入口和封套，不改变现有终端请求／事件调用方；确需新增底层事件时先取得调用方 ACK。保持旧 session／journal 可读，新增关联字段用可选字段承载，不改变旧记录的含义。先核实共享 helper、实验独立编译接线及 #47 的实际集成状态，不在多个分支重复实现相同职责。
 
-撤回机器入口不删除会话数据；回滚代码前核对新增 metadata／journal 字段的兼容性，不保证旧版本支持新增 API 的会话。不移除旧协议或用户能力；出现实质 breaking change、破坏性数据迁移或产品方向争议时单列人类决策。普通兼容实施按用户已建立的 dev 合并授权执行，仍需独立评审和适用验收。
+撤回机器入口不删除会话数据；回滚代码前核对新增 metadata／journal 字段的兼容性，不保证旧版本支持新增 API 的会话。不移除旧协议或用户能力；出现实质 breaking change、破坏性数据迁移或产品方向争议时单列人类决策。普通实施、评审与集成按 [AGENTS §0.2](../../AGENTS.md#02-当前授权与合并边界) 执行；不再要求逐 PR 人类许可或一律独立 QA/APPROVE。真实公共契约设计、breaking change、发布与 tag/Release 边界仍按 §0.2/§8 保留；历史记录中实际发生的审批仍保持历史，不改写成未发生。
 
-定稿需要 GUI 确认 Go 消费、标识／生命周期和联系人映射；TUI 确认兼容边界及 #31 的承接；PM 确认首轮／后续切分；独立评审检查失败与恢复语义。ACK／审批只记录实际发出者与所审 SHA，不能由作者代填。实施完成后将本文相应部分改为实现事实，并链接真实证据；规划通过不代表代码已交付。
+实施与集成的评审责任按 AGENTS §0.2 记录实际作者、复核范围和验证 SHA；不把作者自查冒称独立评审或人类批准。GUI/TUI/PM 的消费边界按其各自记录处理；真实公共契约或 breaking change 仍需相应评审，实施完成后将本文相应部分改为实现事实并链接证据。
 
 
 ## Runtime 服务化改进方案
 
-更新日期：2026-10-21。分类：**分阶段设计，#103 已完成内容复审；不代表各阶段已实现。** 本节是服务化设计与验收依据；实际交付以对应 PR 和下文“#104 候选实现事实”为准。保留上文 stdio v1 契约，任务认领与排期继续放 GitHub。
+更新日期：2026-10-21。分类：**历史分阶段设计基线，#103 已完成内容复审；后续交付状态以 `dev@d0502695` 的上文现状、实现事实和对应 PR 为准。** 保留本节是为了解释设计取舍，不把当时未实现的阶段当成当前状态。
 
 本轮按 [#103 初审](https://github.com/HeimaoLST/Saki/issues/103) 补充旧连接身份绑定、端到端背压及 MCP 版本协商/重新发现规则，并扩展对应验收子场景。[复审已 APPROVE 设计内容](https://github.com/HeimaoLST/Saki/issues/103#issuecomment-6317323474)，用户随后授权从 #104 开始实施；配置、并发、MCP 和终端迁移仍按各自任务交付。
 
@@ -214,20 +214,20 @@ python3 examples/runtime_stdio.py --session SAVED_ID --prompt 'Continue our prev
 
 ### 事实基线与已有工作的关系
 
-实现事实固定到 dev 的快照 **47d01ee83972f8459167503001656a12f9f87c6c**。初稿编写时网络同步失败；本轮已读回 #103，评审者报告其核对的远端 dev 与此相同，#32/PR #68 仍为文档提案、#61 尚未实施。该远端核对属于评审者报告，负责人开工时仍须核对最新代码与在途交付，已有实现优先复用。
+历史事实快照固定到 **47d01ee83972f8459167503001656a12f9f87c6c**；在该快照时 #32/PR #68 仍是文档提案、#61 尚未实施。当前 `dev@d0502695` 已包含 #61 容量/并发、#108 caller context 和 #105 配置更新，不能把本段的历史基线当成当前缺口。
 
 | 待解决的问题 | 已核实的实现事实 | 本方案的交付目标 |
 | --- | --- | --- |
 | 服务实现分叉 | [app.rs](../../src/app.rs) 的 stdio 分支使用 Runtime；默认终端分支使用 SessionManager；两者共享 Agent、store、journal | session/task 管理只有一份实现，stdio 与进程内调用使用同一服务 |
 | 配置仍以进程为中心 | [runtime.rs](../../src/session/runtime.rs) 的 create 只接收 cwd/prompt；[session/mod.rs](../../src/session/mod.rs) 恢复 metadata 中的 model/compaction | 同一服务中不同 session 可选不同已配置连接、模型、提示词、工具和压缩参数；空闲时原子更新 |
-| 全局只有一个任务槽 | Runtime 的 active 是单个 Option；A 活动时 B send 返回 busy | 不同 session 可重叠执行，同一 session 保持一个任务，满容量明确拒绝 |
+| 全局只有一个任务槽（历史基线） | 47d 时 Runtime 的 active 是单个 Option；A 活动时 B send 返回 busy | 当前 d050 已由 #61 实现不同 session 容量内重叠；同一 session 保持一个任务，满容量明确拒绝 |
 | 服务缺少定制入口 | [ToolRegistry](../../src/tools/tool_registry.rs) 提供 Rust 注册能力，机器接口未提供外部工具配置 | 产品能为 session 选择外部工具，无需修改或重编译 Saki |
 
 2026-10-21 的本地验收中，148 项 Rust 测试、5 项真实 Rust 进程消费方集成、Python stdio 自测以及取消/压缩探针通过。模型由受控本地 fixture 提供，不能替代线上模型或两端产品试用。任务 journal 写失败、接纳响应丢失的专项故障注入仍需补齐，列入下方共同验收。
 
-本地 #32 草案位于 commit **ce745eea0938d56f6d5f370f945d8886c1fe0f91** 的 docs/design/model-runtime.md，提出同连接模型切换、容量验证、原子提交和 opaque continuation 拒绝规则。本方案沿用这些约束，扩大到统一 session 配置；不另实现第二套 select-model 状态机。该草案尚不能视为已批准接口。
+本地 #32 历史草案位于 commit **ce745eea0938d56f6d5f370f945d8886c1fe0f91** 的 docs/design/model-runtime.md，提出同连接模型切换、容量验证、原子提交和 opaque continuation 拒绝规则。当前 d050 已通过 `session.config.update` 承载 model/compaction 更新，产品模型选择 UI/跨协议迁移仍按各自边界处理；不另实现第二套 select-model 状态机。
 
-#31 follow-up/steering、#62 历史检索、#33 已应用编辑结果保持独立范围。多 session 并发不顺带实现同 session 隐藏队列。若接手时 #31 已实现，应把其 pending 状态纳入配置锁定与容量规则，并重新取得契约评审，不能按本节删除已有能力。
+#31 的有限 MVP 输入证据已由 PM 接受，但同 session durable queue、steering、#62 历史检索和 #33 已应用编辑结果仍保持独立范围。多 session 并发不等于同 session 隐藏队列；拒绝请求不入队。若未来实现 durable queue，必须把 pending 状态纳入配置锁定与容量规则并另行评审，不能按本节删除已有能力。
 
 ### 服务对象与职责
 
@@ -487,7 +487,7 @@ system_prompt 当前存于初始 journal，不能仅改 UI 文本。新配置必
 - max_active_tasks 为正整数，默认先保持 1，显式配置 2 或更高启用重叠执行。发布时是否提高默认值单独决定。
 - 同一 session 已有 accepted/running task：busy，reason=session_busy。
 - 服务任务容量已满：保持 v1 顶层 code=busy，增加 reason=capacity_exceeded；不创建 task、不写用户消息、不启动 worker、不隐藏排队。
-- 被拒绝的请求不会在容量释放后自动执行。用户或产品若要排队，必须以后按 #31 的显式契约提交。
+- 被拒绝的请求不会在容量释放后自动执行，也不产生隐藏队列。当前 #31 的有限 MVP 是应用侧持久 pending + 终态后显式再次 `task.send`；FIFO/steering 不在当前 MVP。
 - A、B 拥有独立上下文、Agent、取消信号、工具工作目录与输出目录。共享只读连接客户端不等于共享对话状态。
 - 容量令牌在 worker 和其子资源完成回收后释放，不能收到 cancel 请求就释放。
 
@@ -815,14 +815,14 @@ Unix stdio pipe 使用非阻塞 AsyncFd，输出 deadline 可以中断等待内�
 
 #109 接入时使用以上 typed 命令和独立 TaskEvents，保留终端投影、草稿、命令解析及自动标题默认行为；自动标题服务化和旧 SessionManager 委托移除仍需 Runtime/TUI 对齐后交付。GUI 继续使用相同 stdio v1；本 PR 无桌面 UI 修改，也不提供 Rust library 打包或 HTTP 入口。
 
-### #105 同连接配置候选实现事实
+### #105 同连接配置实现事实
 
-更新日期：2026-10-22。分类：**本 PR 候选实现事实，尚未合入 dev**。依赖 #104 的 typed 服务，同连接模型选择统一使用 `session.config.update`，未另建 `session.select_model` 状态机。#32/PR68 的模型容量、原子提交、opaque continuation 约束在此落实；GUI/TUI 模型选择界面仍由对应消费方负责。
+更新日期：2026-11-01。分类：**实现事实，已进入 dev@d0502695**。依赖 #104 的 typed 服务，同连接模型选择统一使用 `session.config.update`，未另建 `session.select_model` 状态机。#32/PR68 的模型容量、原子提交、opaque continuation 约束在此落实；GUI/TUI 模型选择界面仍由对应消费方负责。
 
-| 方法 | 当前候选的实际行为 |
+| 方法 | 当前实现的实际行为 |
 | --- | --- |
-| `runtime.capabilities` | 返回 methods、protocol_version、max_active_tasks 和功能标志；session_configuration=true，multi_connection/external_tools/caller_context=false |
-| `model.list` | 可选 connection_id，首版只允许 default；返回已加载容量 `models:[{catalog_id,name,limits}]` 和宿主显式 `configured_models:[{model,compaction}]`，不访问网络。catalog_id 只供容量查找，不能当作 endpoint 的实际模型 ID |
+| `runtime.capabilities` | 返回 methods、protocol_version、max_active_tasks 和功能标志；session_configuration=true，caller_context=true；multi_connection/external_tools 以当前实际配置为准 |
+| `model.list` | 可选 connection_id，省略时使用宿主默认连接；已配置目录内按 ID 选择，未知连接返回 unknown_connection，未配置目录时仅有 default（[来源](https://github.com/HeimaoLST/Saki/blob/d0502695446e4826c34c1d9d8e841d0e10cdcd09/src/session/runtime.rs#L1260-L1286)）。返回已加载容量 `models:[{catalog_id,name,limits}]` 和宿主显式 `configured_models:[{model,compaction}]`，不访问网络。catalog_id 只供容量查找，不能当作 endpoint 的实际模型 ID |
 | `session.config.get` | session_id；返回 effective_config/config_revision/storage_schema/immutable_fields；未 loaded 也能只读查询，零模型/工具调用、不修复 journal |
 | `session.config.update` | session_id、expected_revision、patch；patch 支持 model、catalog_id 或完整 compaction；working_directory 返回 immutable_field。缺省保持、显式 null 拒绝、未知字段拒绝；成功返回完整有效配置及 effective_from=next_task |
 
@@ -840,13 +840,13 @@ Unix stdio pipe 使用非阻塞 AsyncFd，输出 deadline 可以中断等待内�
 
 TaskStarted 新增可选 `configuration:{model,api,compaction,config_revision}`，由 Runtime 在接纳时固定，后续生成/工具/压缩使用同一份 Agent 配置。旧记录没有该字段时返回缺失，不倒填当前模型或版本。模型改变且上下文含 ProviderItem/provider_data 返回 continuation_not_supported，不删除原生续接数据来迁移；可确定的协议图片不兼容返回 config_incompatible。
 
-schema 1 仍未验证原 endpoint，effective_config 返回 connection_binding.state=unknown、connection_identity=null、execution_connection_id=default。此字段仅说明本进程执行连接，不是历史绑定证明。#106 的多连接、增强 prompt/tool selection、显式 schema 2 迁移尚未在本候选开放；#61 的容量并发仍另案。默认终端入口保持既有行为，#109 将消费同一 typed 接口。
+legacy 单客户端兼容执行的 schema 1 会话未验证原 endpoint，connection_binding.state=unknown、connection_identity=null；execution_connection_id=default 仅说明该兼容入口当前的执行连接，不是历史绑定证明。多连接宿主的来源核对与显式绑定按下节 #106 处理。#106 的多连接、增强 prompt/tool selection、显式 schema 2 迁移仍按各自能力边界记录；#61 的容量并发已在 d050 实现。默认终端入口保持既有行为，#109 消费同一 typed 接口。
 
 验收固定到本 PR SHA：实际 A→B→A 请求、重启恢复 B、接纳配置 journal 快照、两个同时提交的版本冲突、不同 session 的 busy 隔离、no-op 字节不变、未知容量/非法配置/opaque 拒绝、metadata 写入前/rename 前/rename 后故障，以及新模型 summary/generation 和失败后原上下文保留。stdio 同时覆盖 capabilities/model.list、缺省/null/未知字段、版本错误和未 loaded 的只读配置查询。测试/运行/CI 证据记录在 #105 及对应 PR；尚未通过的阶段不以本节代替联合验收。
 
-## #61 多 session 并发（候选实现事实）
+## #61 多 session 并发（实现事实）
 
-更新日期：2026-10-22。分类：**本 PR 候选，尚未合入 dev**。本节在 #104/#105 typed 服务之上实现并发，不代表 #109 终端迁移、#106 多连接或 #107 MCP 已完成。
+更新日期：2026-11-01。分类：**实现事实，已进入 dev@d0502695**。本节在 #104/#105 typed 服务之上实现并发；终端迁移、多连接和 MCP 的集成状态各自另行记录。
 
 `Runtime::with_max_active_tasks(n)` 设置正整数容量，默认 1；stdio 宿主可注入 `SAKI_MAX_ACTIVE_TASKS`，`runtime.capabilities.max_active_tasks` 返回实际值。不同 session 可同时执行；同一 session 只允许一个 accepted task，拒绝 `busy` 并附 `reason:session_busy`。其他 session 占满总容量时返回 `busy/reason:capacity_exceeded`。拒绝不落用户输入、不分配新 task、不隐形排队，释放后调用方须再次显式提交。
 
@@ -860,9 +860,9 @@ schema 1 仍未验证原 endpoint，effective_config 返回 connection_binding.s
 
 确定性验收覆盖双请求 gate、容量拒绝无排队、相同工具 ID 的不同 cwd、定向取消、模型失败/实际 worker panic、idle 锁释放、并发 compact、compact hook 发送等待、两个任务同时满事件链及控制回复缓冲、writer 恢复/断开/虚拟时钟期限、真实 stdio 双任务 EOF 三种输出状态。证据与具体 SHA 记录于 PR；并发能力不等同于任意模型/provider 已通过真实服务验收。
 
-## #108 调用方输入资料（候选实现事实）
+## #108 调用方输入资料（实现事实）
 
-更新日期：2026-10-22。分类：**本 PR 候选，尚未合入 dev**。`runtime.capabilities.caller_context:true` 表示支持 stdio `task.send` 的顶层可选 `context:[{name,text}]`；typed 调用方在同一个 UserMessage.context 提供 ContextInput。缺省为空，原 text/images 请求继续可用；可以提交仅含 context 的用户消息。未知字段明确拒绝。
+更新日期：2026-11-01。分类：**实现事实，已进入 dev@d0502695**。`runtime.capabilities.caller_context:true` 表示支持 stdio `task.send` 的顶层可选 `context:[{name,text}]`；typed 调用方在同一个 UserMessage.context 提供 ContextInput。缺省为空，原 text/images 请求继续可用；可以提交仅含 context 的用户消息。未知字段明确拒绝。
 
 唯一 Conversation 输入拼装按原始 text、按顺序的 context、images 组成一条 user 消息。每条资料为带 `caller_context` 类型、`Caller-provided context (user data)` 标签、name/text 的 JSON 文本部分；特殊换行/引号仍是字段数据，不变成 system 指令。它进入既有 token 估算、compact、journal 和恢复路径，不在工具后或下一轮额外注入；原始 journal 保留资料，compact 可将活动上下文变为摘要，不保证摘要逐字保存每个来源内容。
 
