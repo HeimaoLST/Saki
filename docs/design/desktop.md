@@ -1,14 +1,14 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-10-30。当前设置页面见文末 **#199 独立设置页面**。本文保留各阶段的实现与验证记录；连接配置见末尾 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118，资料快照与递交见 **#117 资料快照、阅读与递交**，联系人编辑、归档及旧对话访问见 **#152 联系人管理与已保存对话**。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
+更新日期：2026-11-01。当前设置页面见文末 **#199 独立设置页面**。本文保留各阶段的实现与验证记录；产品定义、联系人／事项／会话语义和 MVP-01–MVP-12 以 [Nagi 产品定义与需求](../requirements/desktop.md) 为唯一权威；当前视觉与交互以 [Desktop workbench](desktop-workbench.md) 为唯一规范。连接配置见 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118，资料快照与递交见 **#117 资料快照、阅读与递交**，联系人编辑、归档及旧对话访问见 **#152 联系人管理与已保存对话**。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
 
-[previews/desktop-contacts.html](previews/desktop-contacts.html) 仍是早期浏览器示意，不是当前原生应用的验收对象；仓库内 `desktop/` 是当前可运行的原生应用。当前主题事实见 `desktop/theme.go` 的 `resolveWorkbenchTheme`（Paper/Moss；light/dark 语义角色）；#92 的 Moon/Dawn 和 #90 的 11px/12px 数值只保留为历史设计/实现记录，不再作为当前规范。此前将这些能力或颜色列为后续独立任务的说明已失效，不再作为当前实现或未来承诺；具体状态以对应任务段、PR 和 `dev` 为准。
+早期浏览器示意保留在 Git 历史（[7145225 的 desktop-contacts.html](https://github.com/HeimaoLST/Saki/blob/7145225c47b9b29c8011edbaefc410d0d6d46b61/docs/design/previews/desktop-contacts.html)），不是当前原生应用的验收对象，也不在仓库维护第二套现行预览；仓库内 `desktop/` 是当前可运行的原生应用，当前视觉与交互以 [Desktop workbench](desktop-workbench.md) 为准。当前主题事实见 `desktop/theme.go` 的 `resolveWorkbenchTheme`（Paper/Moss；light/dark 语义角色）；#92 的 Moon/Dawn 和 #90 的 11px/12px 数值只保留为历史设计/实现记录，不再作为当前规范。此前将这些能力或颜色列为后续独立任务的说明已失效，不再作为当前实现或未来承诺；具体状态以对应任务段、PR 和 `dev` 为准。
 
 <a id="gui-design-constraints"></a>
 
 ## GUI 设计约束（当前规范）
 
-更新日期：2026-10-30。当前唯一设计规范由 #216 维护：[PR #226 中的 `desktop-workbench.md`（尚未合并）](https://github.com/HeimaoLST/Saki/pull/226)。合并后以 `docs/design/desktop-workbench.md` 为准；本地实现的候选事实见下方 [#219 节](#detail-navigation-219)。本文件不再把旧 #90/#130 的“所有次动作有底面”“右侧覆盖抽屉”等当作当前规范，那些内容只保留为历史实现记录，避免双标准。
+更新日期：2026-11-01。当前唯一设计规范由 #216 维护：[Desktop workbench](desktop-workbench.md)。候选实现与合入状态以 PR 和 dev 为准。本地实现的候选事实见下方 [#219 节](#detail-navigation-219)。本文件不再把旧 #90/#130 的“所有次动作有底面”“右侧覆盖抽屉”等当作当前规范，那些内容只保留为历史实现记录，避免双标准。
 
 - **规范边界**：内容优先、输入集中在 composer、低频工具可发现、长内容主区阅读、右侧非模态详情、窄窗应用内页面与明确返回，均以 #216 为准；实现只引用该规范，不在本文件另立一套数值或组件规则。
 - **组件与文案**：复用当前固定 MyGo 稳定版和现有 theme 角色；不允许为单个任务另造兼容框架。实际版本、控件 API、palette 与必要偏离以 #98/#218 的实现事实及 #216 规范为准。
@@ -527,7 +527,7 @@ type resolvedTheme struct {
 
 ## 浏览器验证（2026-10-14）
 
-- 环境：本地 Chrome（headless）＋ Playwright；对象是 [previews/desktop-contacts.html](previews/desktop-contacts.html) 经 `render.py` 生成的独立预览。截图与脚本只放在 QA 临时目录，不进入仓库。
+- 环境：本地 Chrome（headless）＋ Playwright；对象是 Git 历史中的[早期 desktop-contacts.html 预览](https://github.com/HeimaoLST/Saki/blob/7145225c47b9b29c8011edbaefc410d0d6d46b61/docs/design/previews/desktop-contacts.html)；当前仓库不维护第二套现行预览。截图与脚本只放在 QA 临时目录，不进入仓库。
 - 结果：57/57 项交互检查通过，0 个页面脚本错误；1024／736／375／320 均无横向溢出；历史浏览器预览使用旧 Main／Dawn 表，`light-dark()` 角色可解析；这不是 #92 的 Moon/Dawn 设计验收。
 - 覆盖：默认会话与 Activity、逐 contact 草稿、切换期间回复归属与 unread、Add／Settings、附件 chip、Sources 揭示与高亮、History 范围与无结果、Ren 的 Working→Needs attention→Try again→Ready。最后两处文案调整（m2／m4 的引用配对与 composer 工作态文案）另做了 16/16 的针对性回归检查（copy-check.log）。
 - 头像更新的针对性验证：27/27 通过——内嵌字节与 workspace 资产逐字节一致（sha256）、256px RGBA、各位置 `naturalWidth` 256、新建／重命名／回复／Working 均使用默认头像、选中不重着色、1024／320 light／dark 无横向溢出、0 运行时错误。
