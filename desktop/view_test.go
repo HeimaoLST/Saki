@@ -30,7 +30,7 @@ func TestViewRendersBothThemes(t *testing.T) {
 }
 
 // TestMinimumWindowRenders checks the 960x640 window minimum with the
-// sidebar, chat header, composer, and both panels.
+// sidebar, chat header, and composer. The right workspace starts closed.
 func TestMinimumWindowRenders(t *testing.T) {
 	a := testApp(t)
 	tr := ui.NewTester(a.view, 960, 640)
@@ -43,6 +43,8 @@ func TestMinimumWindowRenders(t *testing.T) {
 	if !tr.HasText("Save changes") {
 		t.Fatal("settings should render at the 960x640 minimum")
 	}
+	a.closeSettings()
+	tr.Frame()
 	a.addDefaultContact()
 	tr.Frame()
 	if !tr.HasText("New contact 1") {
@@ -273,7 +275,11 @@ func TestSettingsFieldsReceiveInputAndDoNotStealComposerFocus(t *testing.T) {
 	if ct.Draft != "keep me" {
 		t.Fatalf("composer draft = %q", ct.Draft)
 	}
-	if err := tr.Click("Settings"); err != nil {
+	if err := tr.Click("Contact profile"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if err := tr.Click("Edit full profile"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
@@ -283,7 +289,7 @@ func TestSettingsFieldsReceiveInputAndDoNotStealComposerFocus(t *testing.T) {
 	}
 
 	// Explicitly focus the Settings name field through the UI and type.
-	nameBefore := a.settingsDraft.Name
+	nameBefore := a.contactProfile.Draft.Name
 	if err := tr.Click("Contact name"); err != nil {
 		t.Fatal(err)
 	}
@@ -293,8 +299,8 @@ func TestSettingsFieldsReceiveInputAndDoNotStealComposerFocus(t *testing.T) {
 	}
 	tr.Type(" edited")
 	tr.Frame()
-	if a.settingsDraft.Name != nameBefore+" edited" {
-		t.Fatalf("Settings name field did not receive the typed input: %q", a.settingsDraft.Name)
+	if a.contactProfile.Draft.Name != nameBefore+" edited" {
+		t.Fatalf("Settings name field did not receive the typed input: %q", a.contactProfile.Draft.Name)
 	}
 	if ct.Draft != "keep me" {
 		t.Fatalf("typing in Settings changed the composer draft: %q", ct.Draft)
@@ -313,8 +319,8 @@ func TestSettingsFieldsReceiveInputAndDoNotStealComposerFocus(t *testing.T) {
 	if ct.Draft != "keep me" {
 		t.Fatalf("typing after Tab leaked into the composer: %q", ct.Draft)
 	}
-	if a.settingsDraft.Name != nameBefore+" edited" {
-		t.Fatalf("typing after Tab changed the name field: %q", a.settingsDraft.Name)
+	if a.contactProfile.Draft.Name != nameBefore+" edited" {
+		t.Fatalf("typing after Tab changed the name field: %q", a.contactProfile.Draft.Name)
 	}
 }
 
@@ -333,10 +339,11 @@ func TestSettingsSavePreservesMessagesHistoryAndDraft(t *testing.T) {
 	beforeLast := ct.Messages[beforeMsgs-1].Text
 
 	a.openSettings()
-	a.settingsDraft.Name = "Saki Renamed"
-	a.settingsDraft.Purpose = "Keeps earlier decisions in view."
-	a.settingsDraft.Workspace = "~/Workspace/saki"
-	if !a.saveSettings() {
+	draft := a.contactProfile.Draft
+	draft.Name = "Saki Renamed"
+	draft.Purpose = "Keeps earlier decisions in view."
+	draft.Workspace = t.TempDir()
+	if !a.saveContactProfileDraft(draft, false) {
 		t.Fatal("settings save should succeed with a name")
 	}
 	if ct.Name != "Saki Renamed" {
@@ -353,8 +360,8 @@ func TestSettingsSavePreservesMessagesHistoryAndDraft(t *testing.T) {
 	}
 
 	a.openSettings()
-	a.settingsDraft.Name = "  "
-	if a.saveSettings() || !a.settingsError {
+	a.contactProfile.Draft.Name = "  "
+	if a.saveContactProfileDraft(a.contactProfile.Draft, false) || a.contactProfile.Errors["Name"] == "" {
 		t.Fatal("empty settings name must be rejected")
 	}
 	if ct.Name != "Saki Renamed" {
@@ -432,6 +439,8 @@ func TestPreviewImages(t *testing.T) {
 			writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("native-%s-%s.png", theme, scene)), tr.Image())
 		}
 	}
+	writeV07AppearancePreviews(t, dir)
+
 	// Minimum window proof for the two densest panels.
 	for _, scene := range []string{"chat", "settings"} {
 		a := testApp(t)
@@ -466,10 +475,12 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 	}
 	a := &appModel{
 		demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1,
+		workspaceOpen: true, windowWidth: 1040,
 		contacts: []*contact{ct},
 	}
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
+	openConversationWorkPanel(t, tr)
 	if !tr.HasText("Accepted; waiting for the runtime to start.") {
 		t.Fatal("accepted task should show the pre-start waiting state")
 	}
@@ -482,8 +493,8 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 	if tr.HasText("Accepted; waiting for the runtime to start.") {
 		t.Fatal("started task must not keep the pre-start waiting text")
 	}
-	if !tr.HasText("Starting") {
-		t.Fatal("started task should show the working row")
+	if !tr.HasText("Current work") || !tr.HasText("Working") {
+		t.Fatal("started task should show the current work state")
 	}
 
 	a.applyEvent(ct, runtimeEventEnvelope{
@@ -491,8 +502,11 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 		Event: &runtimeEvent{Type: "response_text_delta", ItemID: "a1", Delta: "Hel"},
 	})
 	tr.Frame()
-	if !tr.HasText("Hel") || !tr.HasText("Writing") {
-		t.Fatal("streaming delta should render with the writing state")
+	if !tr.HasText("Hel") {
+		t.Fatal("streaming delta should render in the conversation")
+	}
+	if !tr.HasText("Current work") || !tr.HasText("Working") {
+		t.Fatal("streaming a message must not end the work state")
 	}
 	a.applyEvent(ct, runtimeEventEnvelope{
 		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
@@ -508,8 +522,8 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 		Event: &runtimeEvent{Type: "tool_started", CallID: "k1", Name: "read", Arguments: `{"path":"probe.txt"}`},
 	})
 	tr.Frame()
-	if !tr.HasText("read") || !tr.HasText("Running read") {
-		t.Fatal("tool activity should render with its running state")
+	if !tr.HasText("read") || !tr.HasText("Running") {
+		t.Fatal("tool activity should render in the work panel with its running state")
 	}
 	a.applyEvent(ct, runtimeEventEnvelope{
 		Version: 1, Type: "event", SessionID: "s1", TaskID: "t1", MessageID: "m1",
@@ -517,7 +531,7 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 	})
 	tr.Frame()
 	if !tr.HasText("marker") {
-		t.Fatal("tool output should render")
+		t.Fatal("tool output should render in the work panel")
 	}
 
 	a.applyEvent(ct, runtimeEventEnvelope{
@@ -527,6 +541,9 @@ func TestLiveTaskStatesRenderWithoutWaitingConflict(t *testing.T) {
 	tr.Frame()
 	if ct.SendState != sendIdle || ct.ActiveTaskID != "" {
 		t.Fatalf("finished state = %+v", ct)
+	}
+	if !tr.HasText("Completed") || len(ct.Messages) != 1 {
+		t.Fatalf("completed work/messages = %+v / %+v", ct.Works, ct.Messages)
 	}
 	if tr.HasText("Accepted; waiting for the runtime to start.") || tr.HasText("Working") {
 		t.Fatal("completed task must not keep waiting/working text")
@@ -564,15 +581,22 @@ func runtimePreviewApp(scene string) *appModel {
 		Workspace: "/Users/you/Workspace/saki",
 		Messages: []*message{
 			{Key: "u1", Kind: msgUser, Text: "Use read to inspect README.md and report its first heading. Do not write files."},
-			{Key: "k1", Kind: msgActivity, ToolName: "read", ToolArgs: `{"path":"README.md"}`,
-				ToolOutput: `{"content":"# Saki\n\nA small agent runtime with a shared core.","start_line":1,"end_line":2}`},
 			{Key: "a1", Kind: msgContact, Text: "The first heading is # Saki."},
 		},
+		Works: []*workItem{{
+			TaskID: "task-preview", MessageID: "message-preview", Prompt: "Use read to inspect README.md and report its first heading.",
+			State: workCompleted,
+			Tools: []*workTool{{
+				CallID: "read-1", Name: "read", Args: `{"path":"README.md"}`,
+				Output:  `{"content":"# Saki\n\nA small agent runtime with a shared core.","start_line":1,"end_line":2}`,
+				Started: true, Finished: true,
+			}},
+		}},
 	}
 	unbound := &contact{ID: "mio", Name: "Mio", Role: "Assistant", Draft: "draft for Mio"}
 	a := &appModel{
-		demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1,
-		contacts: []*contact{bound, unbound}, selected: 0,
+		demo: false, runtimeStatus: runtimeStateReady, workspaceOpen: true, windowWidth: 1040,
+		scrollTo: -1, contacts: []*contact{bound, unbound}, selected: 0,
 	}
 	switch scene {
 	case "runtime-working":
@@ -582,18 +606,34 @@ func runtimePreviewApp(scene string) *appModel {
 		bound.SendState = sendAccepted
 		bound.Messages = []*message{
 			{Key: "u2", Kind: msgUser, Text: "Inspect README.md and summarize the project."},
-			{Key: "k2", Kind: msgActivity, ToolName: "read", ToolArgs: `{"path":"README.md"}`},
-			{Key: "a2", Kind: msgContact, Text: "Checking the README", Streaming: true},
 		}
+		bound.Works[0].State = workRunning
+		bound.Works[0].Prompt = "Inspect README.md and summarize the project."
+		bound.Works[0].Tools[0].Finished = false
+		bound.Works[0].Tools[0].Output = ""
+	case "runtime-progress":
+		bound.Status = statusWorking
+		bound.Work = "Waiting for model"
+		bound.ActiveTaskID = "task-preview"
+		bound.SendState = sendAccepted
+		bound.Messages = append(bound.Messages, &message{
+			Key: "live:task-preview:progress", Kind: msgContact,
+			Text: "I found the first heading; checking the rest of the file before summarizing.",
+		})
+		bound.Works[0].State = workRunning
+		bound.Works[0].Prompt = "Inspect README.md and summarize the project."
+	case "runtime-empty":
+		a.contacts = []*contact{{ID: "saki", Name: "Saki", Role: "Assistant", Status: statusReady}}
+		a.selected = 0
 	case "runtime-error":
 		bound.Status = statusAttention
 		bound.StatusDetail = "Task failed: model_error: upstream request failed"
-		bound.Messages = []*message{
-			{Key: "u3", Kind: msgUser, Text: "Inspect README.md and summarize the project."},
-			{Key: "a3", Kind: msgContact, Text: "Checking the README"},
-		}
+		bound.Works[0].State = workFailed
+		bound.Works[0].Detail = bound.StatusDetail
 	case "runtime-settings":
 		a.openSettings()
+	case "runtime-history":
+		a.openHistory()
 	}
 	return a
 }
@@ -606,30 +646,34 @@ func TestPreviewRuntimeStates(t *testing.T) {
 	if err := loadAvatar(); err != nil {
 		t.Fatal(err)
 	}
-	scenes := []string{"runtime-chat", "runtime-working", "runtime-error", "runtime-settings"}
-	for _, dark := range []bool{false, true} {
+	write := func(scene string, width, height int, dark bool) {
 		theme := "light"
 		if dark {
 			theme = "dark"
 		}
-		for _, scene := range scenes {
-			a := runtimePreviewApp(scene)
-			tr := ui.NewTester(a.view, 1040, 720)
-			tr.SetDark(dark)
-			tr.Frame()
-			writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("headless-%s-%s.png", theme, scene)), tr.Image())
-		}
-	}
-	for _, scene := range []string{"runtime-chat", "runtime-settings"} {
 		a := runtimePreviewApp(scene)
-		tr := ui.NewTester(a.view, 960, 640)
+		a.windowWidth = width
+		tr := ui.NewTester(a.view, width, height)
+		tr.SetDark(dark)
 		tr.Frame()
-		writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("headless-light-min-%s.png", scene)), tr.Image())
+		writePreviewPNG(t, filepath.Join(dir,
+			fmt.Sprintf("headless-%s-%s-%dx%d.png", theme, scene, width, height)), tr.Image())
 	}
-	a := runtimePreviewApp("runtime-chat")
-	tr := ui.NewTester(a.view, 1600, 900)
-	tr.Frame()
-	writePreviewPNG(t, filepath.Join(dir, "headless-light-wide-runtime-chat.png"), tr.Image())
+	for _, dark := range []bool{false, true} {
+		for _, size := range []struct {
+			width, height int
+		}{{1040, 720}, {960, 640}, {1380, 900}} {
+			for _, scene := range []string{"runtime-chat", "runtime-working", "runtime-progress", "runtime-empty"} {
+				write(scene, size.width, size.height, dark)
+			}
+		}
+		for _, scene := range []string{"runtime-error", "runtime-settings", "runtime-history"} {
+			write(scene, 1040, 720, dark)
+		}
+		// Overlay proof at 900; the native minimum is now 720, so this
+		// presentation is reachable in the real window.
+		write("runtime-working", 900, 640, dark)
+	}
 }
 
 func TestToolFailureIsVisibleBeforeDetails(t *testing.T) {
@@ -645,13 +689,14 @@ func TestToolFailureIsVisibleBeforeDetails(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ct := &contact{ID: "saki", Name: "Saki", Role: "Assistant", Loaded: true}
-			ct.Messages = []*message{{
-				Key: "tool", Kind: msgActivity, ToolName: "bash", ToolArgs: `{"command":"false"}`,
-				ToolOutput: tc.output,
+			ct.Works = []*workItem{{
+				TaskID: "t1", State: workRunning,
+				Tools: []*workTool{{CallID: "k1", Name: "bash", Args: `{"command":"false"}`, Output: tc.output, Started: true, Finished: true}},
 			}}
-			a := &appModel{demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1, contacts: []*contact{ct}}
+			a := &appModel{demo: false, runtimeStatus: runtimeStateReady, scrollTo: -1, workspaceOpen: true, windowWidth: 1040, contacts: []*contact{ct}}
 			tr := ui.NewTester(a.view, 1040, 720)
 			tr.Frame()
+			openConversationWorkPanel(t, tr)
 			if !tr.HasText(tc.want) || !tr.HasText("normal text") && !tr.HasText("still working") {
 				t.Fatalf("failure summary not visible: %v", tr.Texts())
 			}
@@ -664,4 +709,317 @@ func TestToolFailureIsVisibleBeforeDetails(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestContactRailControlsStayVisibleAtNarrowWidths(t *testing.T) {
+	a, _ := workspaceTestApp(t)
+	a.workspaceOpen = false
+	a.detail = ""
+	for _, width := range []int{1040, 960} {
+		a.windowWidth = width
+		tr := ui.NewTester(a.view, width, 720)
+		tr.Frame()
+		limit := a.railWidth()
+		if limit != defaultLeftPaneWidth {
+			t.Fatalf("%d rail width = %v", width, limit)
+		}
+		for _, label := range []string{"Add contact", "Contact scope", "Active"} {
+			r, ok := tr.Find(label)
+			if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > limit || r.Y < 0 || r.Y+r.H > 720 {
+				t.Fatalf("%dx720 contact rail %q out of rail: ok=%v rect=%+v", width, label, ok, r)
+			}
+		}
+	}
+}
+
+func TestComposerModelAndTaskContextStayInlineAndReturnFocus(t *testing.T) {
+	a := testApp(t)
+	ct := a.selectedContact()
+	ct.Context.items = []taskContextItem{
+		{ID: "p1", Name: "资料一", Text: "第一条"},
+		{ID: "p2", Name: "资料二", Text: "第二条"},
+	}
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("Conversation model"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.aux != "model" || !a.composerInlineAux() || a.mainPageActive() {
+		t.Fatalf("conversation model aux=%q panel=%q inline=%v", a.aux, a.composerPanel, a.composerInlineAux())
+	}
+	if !tr.HasText("This context has no Runtime session yet") {
+		t.Fatalf("inline model panel missing actual target state: %v", tr.Texts())
+	}
+	if err := tr.Click("Close"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.aux != "" || a.composerPanel != "" || !tr.Focused("Conversation model") {
+		t.Fatalf("model close = aux=%q panel=%q focused=%v", a.aux, a.composerPanel, tr.Focused("Conversation model"))
+	}
+
+	if err := tr.Click("Task context: 2"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.aux != "task-context" || !a.composerInlineAux() || !tr.HasText("Conversation: Saki") || !tr.HasText("资料一") {
+		t.Fatalf("inline context = aux=%q panel=%q texts=%v", a.aux, a.composerPanel, tr.Texts())
+	}
+	if err := tr.Click("Close task context"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.aux != "" || a.composerPanel != "" || !tr.Focused("Task context: 2") {
+		t.Fatalf("context close = aux=%q panel=%q focused=%v", a.aux, a.composerPanel, tr.Focused("Task context: 2"))
+	}
+
+	// A model open request refused by an active model transaction must not
+	// expose a model panel flag while the context panel remains the owner.
+	for _, reject := range []struct {
+		name  string
+		set   func(*appModel)
+		clear func(*appModel)
+	}{
+		{name: "model-busy", set: func(a *appModel) { a.modelOpActive = true }, clear: func(a *appModel) { a.modelOpActive = false }},
+		{name: "connection-applying", set: func(a *appModel) { a.connectionApplying = true }, clear: func(a *appModel) { a.connectionApplying = false }},
+	} {
+		t.Run(reject.name, func(t *testing.T) {
+			a := testApp(t)
+			ct := a.selectedContact()
+			ct.Context.items = []taskContextItem{{ID: "reject-1", Name: "资料", Text: "保留"}}
+			tr := ui.NewTester(a.view, 1040, 720)
+			tr.Frame()
+			if err := tr.Click("Task context: 1"); err != nil {
+				t.Fatal(err)
+			}
+			tr.Frame()
+			reject.set(a)
+			if err := tr.Click("Conversation model"); err != nil {
+				t.Fatal(err)
+			}
+			tr.Frame()
+			if a.aux != "task-context" || a.composerPanel != composerPanelContext || !a.composerInlineAux() || tr.HasText("Session model") {
+				t.Fatalf("rejected model open changed owner: aux=%q panel=%q inline=%v texts=%v", a.aux, a.composerPanel, a.composerInlineAux(), tr.Texts())
+			}
+			reject.clear(a)
+			if err := tr.Click("Conversation model"); err != nil {
+				t.Fatal(err)
+			}
+			tr.Frame()
+			if a.aux != "model" || a.composerPanel != composerPanelModel || !a.composerInlineAux() {
+				t.Fatalf("model could not open after rejection cleared: aux=%q panel=%q inline=%v", a.aux, a.composerPanel, a.composerInlineAux())
+			}
+		})
+	}
+
+	// Switching contacts while the inline model entry is open must drop the
+	// owner-specific panel rather than leaving it attached to the new target.
+	if err := tr.Click("Conversation model"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	a.selectContact(1)
+	tr.Frame()
+	if a.aux != "" || a.composerPanel != "" || a.composerInlineAux() || tr.HasText("Session model") {
+		t.Fatalf("contact switch kept stale inline model panel: aux=%q panel=%q texts=%v", a.aux, a.composerPanel, tr.Texts())
+	}
+	a.selectContact(0)
+	tr.Frame()
+
+	// The visible model label is the selected contact's value, not a stale
+	// value left by another contact.
+	a.contacts[1].SessionID = "session-mio"
+	a.contacts[1].SessionModel = "model-mio"
+	a.selectContact(1)
+	tr.Frame()
+	if !tr.HasText("model-mio") || tr.HasText("model-default") {
+		t.Fatalf("selected contact model label crossed contacts: %v", tr.Texts())
+	}
+}
+
+func TestComposerKeepsModelScopeAndPrimaryActionAtNarrowCenter(t *testing.T) {
+	a := testApp(t)
+	a.windowWidth = 1040
+	a.leftPaneWidth = defaultLeftPaneWidth
+	a.rightPaneWidth = 358 // leaves the real minimum 480px center beside the work pane
+	a.workspaceOpen = true
+	ct := a.selectedContact()
+	ct.SessionID = "long-model-session"
+	ct.SessionModel = "provider/very-long-model-name-that-must-not-push-the-action-out-of-the-composer"
+	ct.Draft = "保留这段草稿"
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if a.workOverlay() {
+		t.Fatal("test setup must keep the three-pane center")
+	}
+	composer, ok := tr.Find("Composer for Saki")
+	if !ok || composer.W <= 0 {
+		t.Fatalf("composer bounds missing: %+v ok=%v", composer, ok)
+	}
+	left, right := composer.X, composer.X+composer.W
+	withinComposer := func(label string) ui.Rect {
+		t.Helper()
+		r, ok := tr.Find(label)
+		if !ok || r.W <= 0 || r.H <= 0 || r.X < left || r.X+r.W > right {
+			t.Fatalf("%s is outside the composer bounds: rect=%+v ok=%v composer=%+v", label, r, ok, composer)
+		}
+		return r
+	}
+	model := withinComposer("Conversation model")
+	scope := withinComposer("Conversation")
+	if scope.X < model.X || scope.X+scope.W > model.X+model.W {
+		t.Fatalf("model scope is outside its chip: scope=%+v model=%+v", scope, model)
+	}
+	short := a.conversationModelShortName(ct)
+	if short == "" || !tr.HasText(short) {
+		t.Fatalf("short model name %q missing: %v", short, tr.Texts())
+	}
+	send := withinComposer("Send")
+	if send.X < model.X+model.W {
+		t.Fatalf("send action overlaps the model chip: send=%+v model=%+v", send, model)
+	}
+
+	// A running conversation replaces Send with the same fixed Stop target.
+	a.demo = false
+	a.runtimeStatus = runtimeStateReady
+	a.runtimeCapabilitiesLoaded = true
+	a.rt = &runtimeClient{}
+	ct.ActiveTaskID = "conversation-task"
+	ct.Status = statusWorking
+	tr.Frame()
+	composer, ok = tr.Find("Composer for Saki")
+	if !ok || composer.W <= 0 {
+		t.Fatalf("composer bounds missing after stop switch: %+v ok=%v", composer, ok)
+	}
+	left, right = composer.X, composer.X+composer.W
+	model = withinComposer("Conversation model")
+	stop := withinComposer("Stop conversation")
+	if stop.X < model.X+model.W {
+		t.Fatalf("stop action overlaps the model chip: stop=%+v model=%+v", stop, model)
+	}
+	if tr.HasText("Send") {
+		t.Fatal("running conversation kept the Send action instead of Stop conversation")
+	}
+
+	// The same view shows the real send guard reason when the model recovery
+	// state blocks a non-empty draft; it is not hidden only in the button tip.
+	a = testApp(t)
+	a.demo = false
+	a.runtimeStatus = runtimeStateReady
+	a.runtimeCapabilitiesLoaded = true
+	a.rt = &runtimeClient{}
+	ct = a.selectedContact()
+	ct.SessionID = "recovery-session"
+	ct.Loaded = true
+	ct.Draft = "保留并提示原因"
+	a.modelRecovery = map[string]modelRecoveryState{ct.SessionID: modelRecoveryNeedsReload}
+	tr = ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if !tr.HasText("Reload the session before sending") {
+		t.Fatalf("send guard reason missing: %v", tr.Texts())
+	}
+}
+
+// TestPreviewComposerTypography always exercises the composer geometry matrix;
+// it writes the review PNGs only when SAKI_PREVIEW_DIR is set.
+func TestPreviewComposerTypography(t *testing.T) {
+	dir := os.Getenv("SAKI_PREVIEW_DIR")
+	type scene struct {
+		name, draft string
+		context     int
+		active      bool
+		width       int
+		height      int
+	}
+	scenes := []scene{
+		{name: "empty", width: 1040, height: 720},
+		{name: "single", draft: "帮我整理这周的发布说明。", context: 2, width: 1040, height: 720},
+		{name: "multiline", draft: "第一行：保留项目代号。\n第二行：确认负责人。\n第三行：列出下一步。", context: 2, width: 720, height: 640},
+		{name: "long", draft: "把这周的资料整理成一份可以执行的计划：先核对项目代号和负责人，再把风险、依赖和下一步写清楚，最后给出可以直接继续处理的最小行动。", context: 3, width: 720, height: 640},
+		{name: "stop", draft: "当前对话正在运行；这个位置应显示停止动作。", context: 1, active: true, width: 720, height: 640},
+	}
+	for _, sc := range scenes {
+		for _, dark := range []bool{false, true} {
+			a := testApp(t)
+			a.windowWidth = sc.width
+			a.workspaceOpen = false
+			a.runtimeStatus = runtimeStateReady
+			a.runtimeCapabilitiesLoaded = true
+			a.runtimeMaxActiveTasks = 2
+			ct := a.selectedContact()
+			ct.SessionID = "composer-preview-session"
+			ct.SessionModel = "deepseek/deepseek-chat"
+			ct.Draft = sc.draft
+			ct.Context.items = nil
+			for i := 0; i < sc.context; i++ {
+				ct.Context.items = append(ct.Context.items, taskContextItem{Name: "资料 " + fmt.Sprint(i+1), Text: "预览资料"})
+			}
+			if sc.active {
+				a.demo = false
+				a.rt = &runtimeClient{}
+				ct.ActiveTaskID = "composer-preview-task"
+				ct.Status = statusWorking
+			}
+			tr := ui.NewTester(a.view, sc.width, sc.height)
+			tr.SetDark(dark)
+			tr.Frame()
+			visible := func(label string) ui.Rect {
+				t.Helper()
+				r, ok := tr.Find(label)
+				if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.Y < 0 || r.X+r.W > float32(sc.width) || r.Y+r.H > float32(sc.height) {
+					t.Fatalf("%s: %s bounds=%+v ok=%v", sc.name, label, r, ok)
+				}
+				return r
+			}
+			visible("Composer for Saki")
+			visible(contextLabelForTest(sc.context))
+			visible("Conversation model")
+			if sc.active {
+				visible("Stop conversation")
+			} else {
+				visible("Send")
+			}
+			if !tr.HasText("deepseek/deepseek-chat") {
+				t.Fatalf("%s: actual model label missing: %v", sc.name, tr.Texts())
+			}
+			if sc.active && sc.width == 720 {
+				composer := visible("Composer for Saki")
+				context := visible(contextLabelForTest(sc.context))
+				model := visible("Conversation model")
+				stop := visible("Stop conversation")
+				if !tr.HasText("Stop conversation") {
+					t.Fatalf("%s: Stop text was hidden: %v", sc.name, tr.Texts())
+				}
+				if context.X+context.W > model.X || model.X+model.W > stop.X ||
+					stop.X+stop.W > composer.X+composer.W ||
+					context.X < composer.X || model.X < composer.X || stop.X < composer.X {
+					t.Fatalf("%s: composer controls overlap/overflow composer=%+v context=%+v model=%+v stop=%+v",
+						sc.name, composer, context, model, stop)
+				}
+				scope, ok := tr.Find("Conversation")
+				if !ok || scope.X < model.X || scope.X+scope.W > model.X+model.W {
+					t.Fatalf("%s: model scope outside model button: scope=%+v ok=%v model=%+v", sc.name, scope, ok, model)
+				}
+				actual, ok := tr.Find(a.conversationModelShortName(ct))
+				if !ok || actual.X < model.X || actual.X+actual.W > model.X+model.W {
+					t.Fatalf("%s: model text outside model button: actual=%+v ok=%v model=%+v", sc.name, actual, ok, model)
+				}
+			}
+			if dir != "" {
+				theme := "light"
+				if dark {
+					theme = "dark"
+				}
+				writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("headless-composer-%s-%dx%d-%s.png", sc.name, sc.width, sc.height, theme)), tr.Image())
+			}
+		}
+	}
+}
+
+func contextLabelForTest(count int) string {
+	if count > 0 {
+		return fmt.Sprintf("Task context: %d", count)
+	}
+	return "Task context"
 }

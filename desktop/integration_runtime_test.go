@@ -22,10 +22,16 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/egoist/mygo/ui"
 )
 
 type providerFixture struct {
 	ToolFirst bool
+	Auth401   bool
+	Hold      chan struct{}
+	Arrived   chan struct{}
+	arrived   sync.Once
 	requests  atomic.Int32
 	mu        sync.Mutex
 	bodies    []string
@@ -49,6 +55,18 @@ func (p *providerFixture) handler(t *testing.T, marker string) http.HandlerFunc 
 		p.mu.Lock()
 		p.bodies = append(p.bodies, string(body))
 		p.mu.Unlock()
+		if p.Auth401 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"Incorrect API key provided: sk-sentinel-112-auth"}}`))
+			return
+		}
+		if index == 1 && p.Arrived != nil {
+			p.arrived.Do(func() { close(p.Arrived) })
+		}
+		if p.Hold != nil && index == 1 {
+			<-p.Hold
+		}
 		var response any
 		switch {
 		case p.ToolFirst && index == 1:
@@ -257,7 +275,7 @@ type uiPump struct {
 
 func newUIPump(t *testing.T, app *appModel) *uiPump {
 	p := &uiPump{t: t, q: make(chan func(), 256), done: make(chan struct{})}
-	app.uiHook = func(fn func()) { p.q <- fn }
+	app.setUIHook(func(fn func()) { p.q <- fn })
 	go p.run()
 	return p
 }
@@ -365,10 +383,7 @@ func startGUIHarness(t *testing.T, binary string, provider *providerFixture, mar
 		if h.closed {
 			return
 		}
-		if app.rt != nil {
-			_ = app.rt.shutdown()
-		}
-		pump.close()
+		h.shutdown(t)
 	})
 	return h
 }
@@ -391,22 +406,31 @@ func (h *guiHarness) shutdown(t *testing.T) {
 	if h.closed {
 		return
 	}
-	quit := make(chan struct{}, 1)
-	h.pump.do(func() {
-		h.app.requestQuit = func() { quit <- struct{}{} }
-		h.app.beginShutdown()
-	})
-	select {
-	case <-quit:
-	case <-time.After(15 * time.Second):
-		t.Fatal("runtime did not drain before quit")
-	}
+	h.pump.do(func() { h.app.beginShutdown() })
+	h.pump.waitTimeout(func() bool {
+		if !h.app.quitReady {
+			return false
+		}
+		return h.app.rt == nil || h.app.runtimeStatus == runtimeStateExited
+	}, 15*time.Second)
 	h.pump.close()
 	h.closed = true
 }
 
 func (h *guiHarness) snapshot(fn func()) {
 	h.pump.do(fn)
+}
+
+func TestGUIShutdownAfterManualBeginIsIdempotent(t *testing.T) {
+	app := &appModel{}
+	pump := newUIPump(t, app)
+	h := &guiHarness{app: app, pump: pump}
+	h.pump.do(func() { h.app.beginShutdown() })
+	h.shutdown(t)
+	h.shutdown(t)
+	if !h.closed {
+		t.Fatal("idempotent harness shutdown did not finish")
+	}
 }
 
 func TestGUIAppRuntimeFlow(t *testing.T) {
@@ -463,9 +487,11 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 	}
 	var sawToolResult bool
 	h.pump.do(func() {
-		for _, m := range h.app.contacts[0].Messages {
-			if strings.Contains(m.ToolOutput, marker+"-file-content") {
-				sawToolResult = true
+		for _, w := range h.app.contacts[0].Works {
+			for _, call := range w.Tools {
+				if strings.Contains(call.Output, marker+"-file-content") {
+					sawToolResult = true
+				}
 			}
 		}
 	})
@@ -476,29 +502,33 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 		t.Fatalf("zero-profile send changed purpose: %q", aProfile)
 	}
 
-	// Bound settings: only the name changes; no create/send, history/draft kept.
+	// Bound profile edits update future defaults; they must not create/send or
+	// replace the current conversation, draft or history.
 	before := provider.count()
+	futureWorkspace := h.root
 	h.pump.do(func() {
 		h.app.selectContact(0)
 		ct := h.app.contacts[0]
 		ct.Draft = "keep after restart"
 		h.app.draftChanged(ct)
 		h.app.openSettings()
-		h.app.settingsDraft.Name = "Renamed"
-		h.app.settingsDraft.Purpose = "should not apply"
-		h.app.settingsDraft.Instructions = "should not apply"
-		h.app.settingsDraft.Workspace = "/should-not-apply"
-		h.app.saveSettings()
+		draft := h.app.contactProfile.Draft
+		draft.Name = "Renamed"
+		draft.Purpose = "future purpose"
+		draft.Instructions = "future instructions"
+		draft.Workspace = futureWorkspace
+		if !h.app.saveContactProfileDraft(draft, false) {
+			t.Errorf("profile save failed: %s", h.app.contactProfile.Error)
+		}
 	})
-	var name, sessionAfter, draftAfter string
-	var purposeAfter string
+	var name, sessionAfter, draftAfter, purposeAfter, workspaceAfter string
 	var messagesAfter int
 	h.pump.do(func() {
 		ct := h.app.contacts[0]
-		name, sessionAfter, draftAfter, purposeAfter, messagesAfter = ct.Name, ct.SessionID, ct.Draft, ct.Purpose, len(ct.Messages)
+		name, sessionAfter, draftAfter, purposeAfter, workspaceAfter, messagesAfter = ct.Name, ct.SessionID, ct.Draft, ct.Purpose, ct.Workspace, len(ct.Messages)
 	})
-	if name != "Renamed" || sessionAfter != aSession || purposeAfter != "" || draftAfter != "keep after restart" || messagesAfter != aMessages {
-		t.Fatalf("bound settings changed identity: name=%q session=%q purpose=%q draft=%q messages=%d", name, sessionAfter, purposeAfter, draftAfter, messagesAfter)
+	if name != "Renamed" || sessionAfter != aSession || purposeAfter != "future purpose" || workspaceAfter != futureWorkspace || draftAfter != "keep after restart" || messagesAfter != aMessages {
+		t.Fatalf("profile edit changed the current session: name=%q session=%q purpose=%q workspace=%q draft=%q messages=%d", name, sessionAfter, purposeAfter, workspaceAfter, draftAfter, messagesAfter)
 	}
 	if provider.count() != before {
 		t.Fatalf("settings save issued runtime work: %d -> %d", before, provider.count())
@@ -515,19 +545,58 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 	}()
 	h2.pump.wait(func() bool {
 		ct := h2.app.contacts[0]
-		return ct.Loaded && len(ct.Messages) > 0
+		return ct.Loaded && len(ct.Messages) > 0 && len(ct.Works) > 0 && ct.SessionModel != ""
 	})
+	// Keep the #112 restore contract: compare the loaded state/metadata with
+	// a fresh Runtime response, not only the work projection.
+	runtimeTruth, err := h2.app.rt.loadSession(aSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedRoot, err := filepath.EvalSymlinks(h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtimeTruth.Metadata == nil || runtimeTruth.State != "idle" ||
+		runtimeTruth.Metadata.Model != "fixture" || runtimeTruth.Metadata.API != "openai-responses" ||
+		runtimeTruth.Metadata.WorkingDirectory != expectedRoot {
+		t.Fatalf("unexpected runtime session truth: state=%q metadata=%+v root=%q", runtimeTruth.State, runtimeTruth.Metadata, expectedRoot)
+	}
 	var restoredSession, restoredName, restoredPurpose, restoredDraft, restoredBDraft string
+	var restoredState, restoredModel, restoredAPI, restoredWorkingDir string
 	h2.snapshot(func() {
 		ct := h2.app.contacts[0]
 		restoredSession, restoredName, restoredPurpose, restoredDraft = ct.SessionID, ct.Name, ct.Purpose, ct.Draft
+		restoredState, restoredModel, restoredAPI, restoredWorkingDir = ct.SessionState, ct.SessionModel, ct.SessionAPI, ct.SessionWorkingDir
 		restoredBDraft = h2.app.contacts[1].Draft
 	})
-	if restoredSession != aSession || restoredName != "Renamed" || restoredPurpose != "" || restoredDraft != "keep after restart" {
+	if restoredState != runtimeTruth.State || restoredModel != runtimeTruth.Metadata.Model ||
+		restoredAPI != runtimeTruth.Metadata.API || restoredWorkingDir != runtimeTruth.Metadata.WorkingDirectory {
+		t.Fatalf("restored metadata/state = state %q model %q api %q cwd %q; runtime = %+v",
+			restoredState, restoredModel, restoredAPI, restoredWorkingDir, runtimeTruth)
+	}
+	if restoredSession != aSession || restoredName != "Renamed" || restoredPurpose != "future purpose" || restoredDraft != "keep after restart" {
 		t.Fatalf("restored contact: session=%q name=%q purpose=%q draft=%q", restoredSession, restoredName, restoredPurpose, restoredDraft)
 	}
 	if restoredBDraft != "draft for B" {
 		t.Fatalf("B draft = %q", restoredBDraft)
+	}
+	var restoredWorkTask, restoredTool string
+	h2.snapshot(func() {
+		if w := h2.app.contacts[0].recentWork(); w != nil {
+			restoredWorkTask = w.TaskID
+			for _, call := range w.Tools {
+				if strings.Contains(call.Output, marker+"-file-content") {
+					restoredTool = call.Output
+				}
+			}
+		}
+	})
+	if restoredWorkTask == "" || restoredTool == "" {
+		t.Fatalf("restored work/tool = task %q output %q", restoredWorkTask, restoredTool)
+	}
+	if h2.app.contacts[1].recentWork() != nil {
+		t.Fatal("work from contact A leaked into contact B on restore")
 	}
 	if provider.count() != beforeRestart {
 		t.Fatalf("restore issued model requests: %d -> %d", beforeRestart, provider.count())
@@ -552,6 +621,421 @@ func TestGUIAppRuntimeFlow(t *testing.T) {
 	h2.shutdown(t)
 }
 
+func TestGUIAppProviderAuthHistoryRedaction(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{Auth401: true}
+	h := startGUIHarness(t, binary, provider, "saki-auth-boundary-112")
+
+	h.pump.do(func() {
+		ct := h.app.contacts[0]
+		ct.Draft = "accepted-auth-boundary-check"
+		h.app.sendCurrent()
+		ct.Draft = "later-unsent-after-auth"
+	})
+	h.pump.wait(func() bool {
+		ct := h.app.contacts[0]
+		return ct.ActiveTaskID == "" && ct.SendState == sendIdle && ct.Loaded &&
+			!ct.HistoryDirty && strings.Contains(ct.StatusDetail, "Provider authentication failed")
+	})
+	var detail, draft string
+	h.pump.do(func() {
+		ct := h.app.contacts[0]
+		detail, draft = ct.StatusDetail, ct.Draft
+	})
+	if !strings.Contains(detail, "HTTP 401") || strings.Contains(detail, "sk-sentinel-112-auth") ||
+		strings.Contains(detail, "Incorrect API key") {
+		t.Fatalf("history status detail echoed provider body: %q", detail)
+	}
+	var workDetail string
+	h.pump.do(func() {
+		if w := h.app.contacts[0].recentWork(); w != nil {
+			workDetail = w.Detail
+		}
+	})
+	if strings.Contains(workDetail, "sk-sentinel-112-auth") || strings.Contains(workDetail, "Incorrect API key") {
+		t.Fatalf("Work.Detail echoed provider body: %q", workDetail)
+	}
+	if draft != "later-unsent-after-auth" {
+		t.Fatalf("later draft = %q", draft)
+	}
+	h.pump.do(func() {
+		found := false
+		for _, m := range h.app.contacts[0].Messages {
+			if m.Kind == msgUser && m.Text == "accepted-auth-boundary-check" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("accepted auth task history was lost: %+v", h.app.contacts[0].Messages)
+		}
+	})
+	tr := ui.NewTester(h.app.view, 1040, 720)
+	tr.Frame()
+	if strings.Contains(strings.Join(tr.Texts(), "\n"), "sk-sentinel-112-auth") {
+		t.Fatal("rendered UI leaked the provider body")
+	}
+	if provider.count() != 1 {
+		t.Fatalf("initial auth requests = %d, want 1", provider.count())
+	}
+
+	h.shutdown(t)
+	beforeRestart := provider.count()
+	h2 := restartGUIHarness(t, binary)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.wait(func() bool {
+		ct := h2.app.contacts[0]
+		return ct.Loaded && strings.Contains(ct.StatusDetail, "Provider authentication failed")
+	})
+	var restoredDetail, restoredDraft string
+	h2.snapshot(func() {
+		ct := h2.app.contacts[0]
+		restoredDetail, restoredDraft = ct.StatusDetail, ct.Draft
+	})
+	if strings.Contains(restoredDetail, "sk-sentinel-112-auth") || strings.Contains(restoredDetail, "Incorrect API key") {
+		t.Fatalf("restart history leaked provider body: %q", restoredDetail)
+	}
+	var restoredWorkDetail string
+	h2.snapshot(func() {
+		if w := h2.app.contacts[0].recentWork(); w != nil {
+			restoredWorkDetail = w.Detail
+		}
+	})
+	if strings.Contains(restoredWorkDetail, "sk-sentinel-112-auth") || strings.Contains(restoredWorkDetail, "Incorrect API key") {
+		t.Fatalf("restart Work.Detail leaked provider body: %q", restoredWorkDetail)
+	}
+	if restoredDraft != "later-unsent-after-auth" {
+		t.Fatalf("restored later draft = %q", restoredDraft)
+	}
+	h2.snapshot(func() {
+		found := false
+		for _, m := range h2.app.contacts[0].Messages {
+			if m.Kind == msgUser && m.Text == "accepted-auth-boundary-check" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("restored auth history lost accepted message: %+v", h2.app.contacts[0].Messages)
+		}
+	})
+	if provider.count() != beforeRestart {
+		t.Fatalf("restart issued model requests: %d -> %d", beforeRestart, provider.count())
+	}
+}
+
+func TestGUIAppStopSurvivesHistoryReload(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	hold := make(chan struct{})
+	defer close(hold)
+	arrived := make(chan struct{})
+	provider := &providerFixture{ToolFirst: true, Hold: hold, Arrived: arrived}
+	h := startGUIHarness(t, binary, provider, "saki-130-stop")
+	h.pump.do(func() {
+		ct := h.app.contacts[0]
+		ct.Draft = "stop-input"
+		h.app.sendCurrent()
+	})
+	select {
+	case <-arrived:
+	case <-time.After(15 * time.Second):
+		t.Fatal("controlled provider did not receive the first request")
+	}
+	// The socket count is external to the UI queue; wait on the UI event that
+	// establishes the accepted task, then cancel in the same UI callback.
+	h.pump.wait(func() bool {
+		return h.app.contacts[0].ActiveTaskID != ""
+	})
+	stoppingNow := false
+	h.pump.do(func() {
+		ct := h.app.contacts[0]
+		ct.Draft = "later-stop-draft"
+		h.app.cancelSelected()
+		w := ct.activeWork()
+		stoppingNow = w != nil && w.State == workStopping
+	})
+	if !stoppingNow {
+		t.Fatal("cancelSelected did not expose the immediate stopping state on the UI queue")
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.contacts[0]
+		return ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty &&
+			ct.recentWork() != nil && ct.Draft == "later-stop-draft"
+	})
+	var label string
+	h.pump.do(func() {
+		if w := h.app.contacts[0].recentWork(); w != nil {
+			label = workStateLabel(w)
+		}
+	})
+	if !strings.Contains(label, "Stopped") {
+		t.Fatalf("stopped label after auto reload = %q", label)
+	}
+	h.shutdown(t)
+	h2 := restartGUIHarness(t, binary)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.wait(func() bool {
+		ct := h2.app.contacts[0]
+		return ct.Loaded && ct.recentWork() != nil
+	})
+	h2.snapshot(func() {
+		ct := h2.app.contacts[0]
+		w := ct.recentWork()
+		if w == nil || workStateLabel(w) != "Interrupted" {
+			t.Fatalf("restart stop reason was invented: work=%+v label=%q", w, func() string {
+				if w == nil {
+					return ""
+				}
+				return workStateLabel(w)
+			}())
+		}
+		if ct.Draft != "later-stop-draft" {
+			t.Fatalf("restart stop draft = %q", ct.Draft)
+		}
+	})
+}
+
+func TestGUIAppIssueExecutionsPersistAndRestart(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startGUIHarness(t, binary, provider, "saki-issue-141")
+	issueID := ""
+	var createOK bool
+	var createErr, initialErr string
+	h.pump.do(func() {
+		createOK = h.app.createIssue("Implement login", "Must support SMS verification.")
+		createErr = h.app.issueFormError
+		if !createOK {
+			return
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		if issueID == "" || len(ct.Issues) != 1 || ct.Issues[0].Goal != "Implement login" {
+			initialErr = fmt.Sprintf("issue not created/selected: %+v", ct)
+			return
+		}
+		ct.Draft = "ordinary composer draft"
+	})
+	if !createOK {
+		t.Fatalf("createIssue failed: %s", createErr)
+	}
+	if initialErr != "" {
+		t.Fatal(initialErr)
+	}
+	run := func() {
+		var runOK bool
+		var runErr string
+		h.pump.do(func() {
+			runOK = h.app.runIssue(issueID)
+			if !runOK {
+				runErr = h.app.issueFormError
+			}
+		})
+		if !runOK {
+			t.Fatalf("runIssue failed: %s", runErr)
+		}
+		h.pump.wait(func() bool {
+			ct := h.app.selectedContact()
+			if len(ct.Issues) != 1 {
+				return false
+			}
+			issue := ct.Issues[0]
+			exec := issue.Executions
+			return issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+				issue.Work.Loaded && ct.ActiveTaskID == "" && ct.SendState == sendIdle &&
+				len(exec) > 0 && exec[len(exec)-1].Status == issueExecutionCompleted &&
+				h.app.canStartIssue(ct, issue) == ""
+		})
+	}
+	run()
+	var prompt string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		prompt = issuePrompt(ct.Issues[0])
+		ct.Draft = prompt
+	})
+	run()
+	var issue *productIssue
+	var draftAfterRun, workSession, conversationSession string
+	var executionSessions []string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		issue = ct.Issues[0]
+		draftAfterRun = ct.Draft
+		workSession, conversationSession = issue.WorkSessionID, ct.SessionID
+		for _, execution := range issue.Executions {
+			executionSessions = append(executionSessions, execution.SessionID)
+		}
+	})
+	if len(issue.Executions) != 2 {
+		t.Fatalf("executions = %+v", issue.Executions)
+	}
+	if issue.Executions[0].TaskID == issue.Executions[1].TaskID ||
+		issue.Executions[0].SessionID == "" || issue.Executions[1].MessageID == "" {
+		t.Fatalf("execution associations = %+v", issue.Executions)
+	}
+	if issue.Status != issueStatusInProgress {
+		t.Fatalf("runtime completion changed issue status: %q", issue.Status)
+	}
+	if !strings.Contains(issueEvidenceText(issue), "Completion not verified") {
+		t.Fatalf("completion evidence = %q", issueEvidenceText(issue))
+	}
+	if draftAfterRun != prompt {
+		t.Fatalf("issue run consumed a composer draft equal to its prompt: %q", draftAfterRun)
+	}
+	if workSession == "" || workSession == conversationSession {
+		t.Fatalf("issue work session was not independent: work=%q conversation=%q", workSession, conversationSession)
+	}
+	for _, sessionID := range executionSessions {
+		if sessionID != workSession {
+			t.Fatalf("execution session mapping = %v / work=%q", executionSessions, workSession)
+		}
+	}
+
+	if provider.count() != 2 {
+		t.Fatalf("issue runs made %d model requests, want 2", provider.count())
+	}
+	h.shutdown(t)
+	beforeRestart := provider.count()
+	h2 := restartGUIHarness(t, binary)
+	defer func() {
+		if !h2.closed {
+			h2.shutdown(t)
+		}
+	}()
+	h2.pump.wait(func() bool {
+		ct := h2.app.contacts[0]
+		return len(ct.Issues) == 1 && ct.Issues[0].Work.Loaded && len(ct.Issues[0].Executions) == 2
+	})
+	var restoredIssue *productIssue
+	var restoredDraft string
+	h2.snapshot(func() {
+		ct := h2.app.contacts[0]
+		restoredIssue = ct.Issues[0]
+		restoredDraft = ct.Draft
+	})
+	if restoredIssue.ID != issueID || restoredIssue.Status != issueStatusInProgress || len(restoredIssue.Executions) != 2 {
+		t.Fatalf("restored issue = %+v", restoredIssue)
+	}
+	if restoredIssue.Executions[0].TaskID == "" || restoredIssue.Executions[1].TaskID == "" {
+		t.Fatalf("restored execution IDs = %+v", restoredIssue.Executions)
+	}
+	if restoredDraft != prompt {
+		t.Fatalf("restart issue draft = %q", restoredDraft)
+	}
+
+	if provider.count() != beforeRestart {
+		t.Fatalf("restart issued model requests: %d -> %d", beforeRestart, provider.count())
+	}
+}
+
+func TestGUIAppIssueSaveFailureStopsBeforeDispatch(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startGUIHarness(t, binary, provider, "saki-issue-save-failure-141")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	var issueID string
+	h.pump.do(func() {
+		if !h.app.createIssue("Implement login", "Must use SMS.") {
+			t.Fatalf("createIssue failed: %s", h.app.issueFormError)
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		ct := h.app.selectedContact()
+		ct.Draft = "ordinary draft"
+	})
+	badParent := filepath.Join(h.root, "not-a-directory")
+	if err := os.WriteFile(badParent, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.app.store.path = filepath.Join(badParent, "contacts.json")
+	h.pump.do(func() {
+		if h.app.runIssue(issueID) {
+			t.Fatal("runIssue unexpectedly dispatched with failing store")
+		}
+	})
+	ct := h.app.selectedContact()
+	if len(ct.Issues[0].Executions) != 0 || ct.Issues[0].Status != issueStatusNotStarted {
+		t.Fatalf("failed pre-save issue state = %+v", ct.Issues[0])
+	}
+	if ct.Draft != "ordinary draft" || provider.count() != 0 {
+		t.Fatalf("pre-save failure draft/requests = %q/%d", ct.Draft, provider.count())
+	}
+	if !strings.Contains(h.app.issueFormError, "save") {
+		t.Fatalf("issue save error = %q", h.app.issueFormError)
+	}
+}
+
+func TestGUIAppIssueStopKeepsItemAndExecution(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	hold := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(hold) }) }
+	defer release()
+	arrived := make(chan struct{})
+	provider := &providerFixture{ToolFirst: true, Hold: hold, Arrived: arrived}
+	h := startGUIHarness(t, binary, provider, "saki-issue-stop-141")
+	var issueID string
+	h.pump.do(func() {
+		if !h.app.createIssue("Stop test", "Keep item after stop.") {
+			t.Fatalf("createIssue failed: %s", h.app.issueFormError)
+		}
+		issueID = h.app.selectedContact().SelectedIssueID
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue failed: %s", h.app.issueFormError)
+		}
+	})
+	select {
+	case <-arrived:
+	case <-time.After(15 * time.Second):
+		t.Fatal("issue provider did not receive first request")
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID != ""
+	})
+	stopping := false
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "later issue draft"
+		h.app.cancelSelected()
+		issue := ct.issueByID(issueID)
+		w := workFor(ct, issue.Work.ActiveTaskID)
+		stopping = w != nil && w.State == workStopping
+	})
+	if !stopping {
+		release()
+		t.Fatal("cancel did not expose stopping")
+	}
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		if ct.ActiveTaskID != "" || ct.SendState != sendIdle {
+			return false
+		}
+		issue := ct.issueByID(issueID)
+		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
+			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionInterrupted
+	})
+	ct := h.app.selectedContact()
+	issue := ct.issueByID(issueID)
+	if issue == nil || issue.Status != issueStatusInProgress || ct.Draft != "later issue draft" {
+		release()
+		t.Fatalf("stop issue/draft = %+v / %q", issue, ct.Draft)
+	}
+	release()
+	h.shutdown(t)
+}
+
 func TestGUIFirstCreateUsesProfileSnapshot(t *testing.T) {
 	binary := requireRuntimeBinary(t)
 	marker := "saki-profile-snapshot-63"
@@ -567,11 +1051,14 @@ func TestGUIFirstCreateUsesProfileSnapshot(t *testing.T) {
 		h.app.addDefaultContact()
 		ct := h.app.selectedContact()
 		h.app.openSettings()
-		h.app.settingsDraft.Name = "Writer"
-		h.app.settingsDraft.Purpose = "B purpose"
-		h.app.settingsDraft.Instructions = "B instructions"
-		h.app.settingsDraft.Workspace = h.root
-		h.app.saveSettings()
+		draft := h.app.contactProfile.Draft
+		draft.Name = "Writer"
+		draft.Purpose = "B purpose"
+		draft.Instructions = "B instructions"
+		draft.Workspace = h.root
+		if !h.app.saveContactProfileDraft(draft, false) {
+			t.Errorf("profile save failed: %s", h.app.contactProfile.Error)
+		}
 		ct.Draft = "hello profile"
 		h.app.sendCurrent()
 	})
@@ -655,15 +1142,22 @@ func TestGUIOnlineSmoke(t *testing.T) {
 	}, 180*time.Second)
 
 	var status contactStatus
-	var detail string
+	var detail, taskID string
 	var sawTool, sawFinal bool
 	pump.do(func() {
 		ct := app.contacts[0]
-		status, detail = ct.Status, ct.StatusDetail
-		for _, m := range ct.Messages {
-			if m.ToolOutput != "" && strings.Contains(m.ToolOutput, marker) {
-				sawTool = true
+		status, detail, taskID = ct.Status, ct.StatusDetail, ct.LastTaskID
+		for _, work := range ct.Works {
+			if work.TaskID != taskID {
+				continue
 			}
+			for _, tool := range work.Tools {
+				if tool.Finished && strings.Contains(tool.Output, marker) {
+					sawTool = true
+				}
+			}
+		}
+		for _, m := range ct.Messages {
 			if m.Kind == msgContact && strings.Contains(m.Text, marker) && m.ToolName == "" {
 				sawFinal = true
 			}
@@ -692,8 +1186,10 @@ func TestGUIAppPersistsMappingBeforeSend(t *testing.T) {
 	}()
 
 	manual := make(chan func(), 8)
+	var pumpHook func(func())
 	h.pump.do(func() {
-		h.app.uiHook = func(fn func()) { manual <- fn }
+		pumpHook = h.app.getUIHook()
+		h.app.setUIHook(func(fn func()) { manual <- fn })
 		ct := h.app.contacts[0]
 		ct.Draft = "mapping ordering"
 		h.app.sendCurrent()
@@ -707,9 +1203,8 @@ func TestGUIAppPersistsMappingBeforeSend(t *testing.T) {
 	if got := provider.count(); got != 0 {
 		t.Fatalf("task reached provider before mapping persisted: %d", got)
 	}
-	h.pump.close()
-	h.pump = newUIPump(t, h.app)
-	mapping() // set SessionID + persist, then unblock the worker
+	h.pump.do(func() { h.app.setUIHook(pumpHook) })
+	h.pump.do(mapping) // set SessionID + persist, then unblock the worker
 	h.pump.wait(func() bool {
 		ct := h.app.contacts[0]
 		return ct.LastTaskID != "" && ct.ActiveTaskID == "" && ct.SendState == sendIdle && !ct.HistoryDirty
@@ -746,8 +1241,10 @@ func TestGUIAppSaveFailureStopsBeforeSend(t *testing.T) {
 	}()
 
 	manual := make(chan func(), 8)
+	var pumpHook func(func())
 	h.pump.do(func() {
-		h.app.uiHook = func(fn func()) { manual <- fn }
+		pumpHook = h.app.getUIHook()
+		h.app.setUIHook(func(fn func()) { manual <- fn })
 		ct := h.app.contacts[0]
 		ct.Draft = "keep draft"
 		h.app.sendCurrent()
@@ -766,9 +1263,8 @@ func TestGUIAppSaveFailureStopsBeforeSend(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.app.store.path = filepath.Join(badParent, "contacts.json")
-	h.pump.close()
-	h.pump = newUIPump(t, h.app)
-	mapping()
+	h.pump.do(func() { h.app.setUIHook(pumpHook) })
+	h.pump.do(mapping)
 	h.pump.wait(func() bool {
 		ct := h.app.contacts[0]
 		return ct.SendState == sendIdle && strings.Contains(ct.SendError, "save")
@@ -798,4 +1294,156 @@ func TestGUIAppSaveFailureStopsBeforeSend(t *testing.T) {
 		t.Fatalf("bound send after save failure: requests=%d error=%q", provider.count(), errorText)
 	}
 	h.shutdown(t)
+}
+
+func TestGUIAppRejectedComposerSendKeepsInFlightIssueAssociation(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	provider := &providerFixture{ToolFirst: false}
+	h := startGUIHarness(t, binary, provider, "saki-issue-inflight-141")
+	defer func() {
+		if !h.closed {
+			h.shutdown(t)
+		}
+	}()
+	manual := make(chan func(), 8)
+	var issueID, executionID string
+	h.pump.do(func() {
+		if !h.app.createIssue("In-flight issue", "Keep the association while mapping is paused.") {
+			t.Fatalf("createIssue failed: %s", h.app.issueFormError)
+		}
+		ct := h.app.selectedContact()
+		issueID = ct.SelectedIssueID
+		ct.Draft = "ordinary composer attempt"
+		h.app.setUIHook(func(fn func()) { manual <- fn })
+		if !h.app.runIssue(issueID) {
+			t.Fatalf("runIssue failed: %s", h.app.issueFormError)
+		}
+	})
+	var mapping func()
+	select {
+	case mapping = <-manual:
+	case <-time.After(15 * time.Second):
+		t.Fatal("session mapping callback did not arrive")
+	}
+	if provider.count() != 0 {
+		t.Fatalf("provider received a task before mapping persisted: %d", provider.count())
+	}
+	var pending string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		if len(ct.Issues) != 1 || len(ct.Issues[0].Executions) != 1 {
+			t.Fatalf("in-flight issue state = %+v", ct.Issues)
+		}
+		executionID = ct.Issues[0].Executions[0].ID
+		if !h.app.sendCurrent() {
+			// expected: the in-flight task rejects a normal composer send
+		}
+		pending = ct.Issues[0].Work.pendingExecutionID
+	})
+	if pending != executionID {
+		t.Fatalf("rejected normal send consumed in-flight association: pending=%q want=%q", pending, executionID)
+	}
+	h.pump.do(func() {
+		h.app.setUIHook(func(fn func()) { h.pump.q <- fn })
+		mapping()
+	})
+	h.pump.wait(func() bool {
+		ct := h.app.selectedContact()
+		if len(ct.Issues) != 1 || len(ct.Issues[0].Executions) != 1 {
+			return false
+		}
+		issue := ct.Issues[0]
+		return issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle && issue.Work.Loaded &&
+			ct.ActiveTaskID == "" && ct.SendState == sendIdle &&
+			issue.Executions[0].Status == issueExecutionCompleted
+	})
+	ct := h.app.selectedContact()
+	execution := ct.Issues[0].Executions[0]
+	if execution.TaskID == "" || ct.Issues[0].Work.pendingExecutionID != "" || execution.ID != executionID {
+		t.Fatalf("accepted task lost its issue attribution: %+v pending=%q", execution, ct.Issues[0].Work.pendingExecutionID)
+	}
+	if len(ct.Issues[0].Executions) != 1 || ct.Issues[0].Status != issueStatusInProgress || ct.Draft != "ordinary composer attempt" {
+		t.Fatalf("issue/draft after in-flight rejection = %+v / %q", ct.Issues[0], ct.Draft)
+	}
+	if provider.count() != 1 {
+		t.Fatalf("in-flight issue produced %d provider requests, want 1", provider.count())
+	}
+	h.shutdown(t)
+}
+
+func TestGUIShutdownWaitsForFinalOwnerCallback(t *testing.T) {
+	for _, firstIndex := range []int{0, 1} {
+		firstIndex := firstIndex
+		t.Run(fmt.Sprintf("execute_collected_%d_first", firstIndex+1), func(t *testing.T) {
+			binary := requireRuntimeBinary(t)
+			h := startGUIHarness(t, binary, &providerFixture{ToolFirst: false}, fmt.Sprintf("shutdown-barrier-%d", firstIndex))
+			h.pump.wait(func() bool {
+				return h.app.runtimeStatus == runtimeStateReady && h.app.runtimeCapabilitiesLoaded
+			})
+			callbacks := make(chan func(), 8)
+			h.pump.do(func() {
+				h.app.setUIHook(func(fn func()) { callbacks <- fn })
+			})
+			var quitCount int
+			h.pump.do(func() {
+				h.app.requestQuit = func() { quitCount++ }
+				h.app.beginShutdown()
+			})
+
+			// finish() closes done before OnExit, but finishShutdown can enqueue the
+			// final callback before OnExit. Collect both owner callbacks without
+			// assuming their order; execute only one first.
+			var callbacksSeen [2]func()
+			for i := 0; i < len(callbacksSeen); i++ {
+				select {
+				case callbacksSeen[i] = <-callbacks:
+				case <-time.After(15 * time.Second):
+					t.Fatalf("shutdown owner callback %d did not arrive", i+1)
+				}
+			}
+			h.pump.do(callbacksSeen[firstIndex])
+			var exited, ready bool
+			h.pump.do(func() {
+				exited = h.app.runtimeStatus == runtimeStateExited
+				ready = h.app.quitReady
+			})
+			if exited == ready {
+				t.Fatalf("after first owner callback, expected exactly one completion fact: exited=%v quitReady=%v", exited, ready)
+			}
+			t.Logf("first executed owner point: exited=%v quitReady=%v", exited, ready)
+
+			cleanupDone := make(chan struct{})
+			go func() {
+				h.shutdown(t)
+				close(cleanupDone)
+			}()
+			select {
+			case <-cleanupDone:
+				t.Fatal("cleanup completed before both owner callbacks were applied")
+			default:
+			}
+			h.pump.do(func() {
+				callbacksSeen[1-firstIndex]()
+				exited = h.app.runtimeStatus == runtimeStateExited
+				ready = h.app.quitReady
+			})
+			select {
+			case <-cleanupDone:
+			case <-time.After(5 * time.Second):
+				t.Fatal("cleanup did not complete after both owner callbacks")
+			}
+			if !exited || !ready || quitCount != 1 || !h.closed {
+				t.Fatalf("final owner state: exited=%v quitReady=%v quitCount=%d closed=%v", exited, ready, quitCount, h.closed)
+			}
+			h.shutdown(t)
+			if quitCount != 1 {
+				t.Fatalf("idempotent cleanup changed quit callback count: %d", quitCount)
+			}
+			select {
+			case extra := <-callbacks:
+				t.Fatalf("unexpected callback after owner completion: %p", extra)
+			default:
+			}
+		})
+	}
 }

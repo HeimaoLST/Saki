@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -25,6 +26,16 @@ const (
 	msgActivity
 )
 
+type pendingSend struct {
+	Draft   string            `json:"draft,omitempty"`
+	Context []taskContextItem `json:"context,omitempty"`
+	State   string            `json:"state,omitempty"`
+	// ToolScopeRef binds the app-issued issue-tool scope to the one pending
+	// conversation turn. It is not a user-visible field and is cleared with the
+	// pending send after acceptance.
+	ToolScopeRef string `json:"tool_scope_ref,omitempty"`
+}
+
 type sendState int
 
 const (
@@ -35,10 +46,18 @@ const (
 )
 
 type historyEntry struct {
-	ID   string
-	Date string
-	From string // "me" or "contact"
-	Text string
+	ID      string
+	Date    string
+	From    string // "me" or "contact"
+	Text    string
+	Context []taskContextItem
+}
+
+type markdownLinkTarget struct {
+	Scope  string
+	Block  int
+	Inline int
+	Dest   string
 }
 
 type message struct {
@@ -66,51 +85,62 @@ type message struct {
 	ToolOutput string
 	History    bool
 	Streaming  bool
+	Context    []taskContextItem
 }
 
 type contact struct {
-	ID           string
-	Name         string
-	Role         string
-	Purpose      string
-	Instructions string
-	Workspace    string
-	Status       contactStatus
-	Unread       int
-	Work         string
-	WorkLabel    string
-	Messages     []*message
-	History      []historyEntry
-	Revealed     []string
-	Draft        string
-	replyIndex   int
-	list         ui.ListState
+	ID                    string
+	Name                  string
+	Role                  string
+	Purpose               string
+	Instructions          string
+	Workspace             string
+	Status                contactStatus
+	Unread                int
+	Work                  string
+	WorkLabel             string
+	Messages              []*message
+	History               []historyEntry
+	Revealed              []string
+	Draft                 string
+	Archived              bool
+	ArchivedAt            int64
+	PreviousSessions      []string
+	Context               taskContext
+	replyIndex            int
+	list                  ui.ListState
+	Works                 []*workItem
+	Issues                []*productIssue
+	SelectedIssueID       string
+	SelectedWorkTaskID    string
+	UnlinkedTools         []*workTool
+	issueView             issueViewState
+	StopRequestedTasks    map[string]bool
+	pendingIssueExecution string
 
 	// Runtime-backed state. Empty SessionID means the contact has no runtime
 	// session yet; it is created lazily before the first task.send.
-	SessionID      string
-	Loaded         bool
-	LoadErr        string
-	Unavailable    string
-	ActiveTaskID   string
-	LastTaskID     string
-	SendState      sendState
-	SendError      string
-	SubmittedDraft string
-	SubmittedRev   int
-	draftRev       int
-	HistoryDirty   bool
-	StatusDetail   string
-	historyGen     int
-	pendingEvents  []runtimeEventEnvelope
+	SessionID         string
+	Loaded            bool
+	LoadErr           string
+	Unavailable       string
+	ActiveTaskID      string
+	LastTaskID        string
+	SendState         sendState
+	SendError         string
+	SubmittedDraft    string
+	SubmittedRev      int
+	pendingSend       *pendingSend
+	draftRev          int
+	HistoryDirty      bool
+	StatusDetail      string
+	SessionWorkingDir string
+	SessionModel      string
+	SessionAPI        string
+	SessionState      string
+	historyGen        int
+	pendingEvents     []runtimeEventEnvelope
 }
-
-type viewMode int
-
-const (
-	viewChat viewMode = iota
-	viewHistory
-)
 
 type profileDraft struct {
 	Name         string
@@ -122,31 +152,180 @@ type profileDraft struct {
 type appModel struct {
 	contacts []*contact
 	selected int
-	screen   viewMode
 	aux      string // "", "sources", "settings"
 
-	auxMessage      int
-	defaultContactN int
-	focusComposer   bool
-	settingsDraft   profileDraft
-	settingsError   bool
+	detail           detailKind
+	historyByContact map[string]historyViewMemory
+	profileScrolls   map[string]*ui.ScrollState
+
+	auxMessage           int
+	defaultContactN      int
+	focusComposer        bool
+	composerHandle       ui.Handle
+	composerPanel        string
+	composerFocusModel   bool
+	composerFocusContext bool
+
+	settingsOpen         bool
+	settingsTab          string
+	settingsReturnFocus  string
+	settingsReturnLink   markdownLinkTarget
+	markdownLinkFocus    markdownLinkTarget
+	linkReturnTarget     markdownLinkTarget
+	linkReturnSeen       bool
+	settingsContactID    string
+	settingsProfiles     map[string]*contactProfileEditor
+	settingsPickerChoice string
+	settingsScroll       ui.ScrollState
+	settingsFocusBack    bool
+	settingsFocusTab     string
+	sourcesScroll        ui.ScrollState
+	modelScroll          ui.ScrollState
+	taskContextScroll    ui.ScrollState
+	issueResultScroll    ui.ScrollState
+	historyScroll        ui.ScrollState
+	historyFullScroll    ui.ScrollState
+
+	contactProfile           *contactProfileEditor
+	contactProfileID         string
+	contactSearch            string
+	contactScope             string
+	contactScopeChoice       string
+	contactHistory           *contactHistoryResult
+	contactHistoryFull       *contactHistoryFull
+	contactHistoryBusy       bool
+	contactHistoryDetailBusy bool
+	contactHistoryError      string
+	contactHistoryGen        int
+	contactHistoryDetailGen  int
+	contactHistoryInFlight   int
+	resultInFlight           int
+
+	appearanceMode   string
+	appearanceChoice string
+	appearanceStatus string
+	appearanceError  string
+	systemDark       bool
+	storeInitAllowed bool
+	localSaveErr     string
+	localSavePrevErr string
+
+	issueFormOpen                 bool
+	issueDetailOpen               map[string]bool
+	issueFormEditingID            string
+	issueFilterChoice             string
+	issueGoal                     string
+	issueRequirements             string
+	issueFormError                string
+	taskContextIssueID            string
+	focusIssueGoal                bool
+	focusIssueNew                 bool
+	issueActionError              string
+	issueRequirementDrafts        map[string]*string
+	issueCompletionDrafts         map[string]*string
+	issueSupplementDrafts         map[string]*string
+	issueSupplementFormID         string
+	issueSupplementPreviewID      string
+	issueSupplementShowAllBatches bool
 
 	// Runtime mode. demo keeps the local fixture path for tests/screenshots;
 	// the shipped app is runtime-backed.
-	demo            bool
-	store           *contactStore
-	rt              *runtimeClient
-	runtimeStatus   string
-	runtimeErr      string
-	workDir         string
-	sessionDir      string
-	storePath       string
-	uiHook          func(func()) // test seam for deterministic UI-thread ordering
-	requestQuit     func()       // set by main to mygo.App.Quit
-	quitReady       bool
-	shutdownStarted bool
-	historyQuery    string
-	highlight       string
+	demo                      bool
+	store                     *contactStore
+	rt                        *runtimeClient
+	runtimeStatus             string
+	runtimeErr                string
+	runtimeStage              string
+	runtimeHint               string
+	runtimeBinary             string
+	runtimeHelperChecked      bool
+	runtimeAPI                string
+	runtimeHandshake          bool
+	runtimeMaxActiveTasks     int
+	runtimeCapabilitiesLoaded bool
+	runtimeCapabilitiesErr    string
+	workDir                   string
+	sessionDir                string
+	storePath                 string
+	uiHookMu                  sync.Mutex
+	uiHook                    func(func()) // test seam for deterministic UI-thread ordering
+	requestQuit               func()       // set by main to mygo.App.Quit
+	quitReady                 bool
+	shutdownStarted           bool
+	historyQuery              string
+	highlight                 string
+
+	connectionPath         string
+	connectionForm         *connectionSettings
+	connectionSaved        *connectionConfig
+	connectionEffective    *connectionConfig
+	connectionLaunch       *connectionLaunch
+	connectionManaged      bool
+	connectionLegacy       bool
+	connectionGeneration   int
+	connectionApplying     bool
+	connectionDetailsOpen  map[string]bool
+	connectionSaveInFlight bool
+	connectionTesting      bool
+	connectionTestCancel   func()
+	startupDetailsOpen     bool
+	shutdownDrainStarted   bool
+
+	issueResult        issueResultPage
+	issueResultInspect func(issueResultFile) issueResultFileInspection
+	issueResultOpen    func(string) error
+	issueResultReveal  func(string) error
+
+	// #154 conversation issue tools. The scope/operation records live in the
+	// same contact store, not in a second database or queue.
+	issueToolLedger          *IssueToolOperationLedger
+	issueToolScopes          map[string]IssueToolScope
+	issueToolServer          *issueToolIPCServer
+	issueToolEndpoint        string
+	issueToolHelper          string
+	issueToolErr             string
+	issueToolWaiters         map[string]chan IssueToolReceipt
+	issueToolShutdown        chan struct{}
+	issueToolMu              sync.Mutex
+	issueToolRefresh         map[string]issueToolRefreshMark
+	issueToolReleaseInFlight int
+
+	modelForm         *modelSelection
+	modelPanelKind    string
+	modelOpenToken    int
+	modelPanelMessage string
+	modelPanelError   string
+	modelOpActive     bool
+	modelOpSessionID  string
+	modelRecovery     map[string]modelRecoveryState
+
+	// Layout is a GUI-wide preference, not a contact or runtime fact. Widths
+	// are persisted in the contact store; windowWidth is only the current
+	// native viewport and never overwrites a preferred width when it shrinks.
+	windowWidth          int
+	leftPaneWidth        float32
+	rightPaneWidth       float32
+	centerPaneWidth      float32
+	workspaceOpen        bool
+	railCollapsed        bool
+	focusWorkspace       bool
+	focusDetailClose     bool
+	focusRail            bool
+	focusHistory         bool
+	focusSettings        bool
+	focusContactProfile  bool
+	focusProfileEdit     bool
+	focusSources         bool
+	focusSourcesBack     bool
+	focusAuxBack         bool
+	focusIssueModel      bool
+	focusIssueContext    bool
+	focusHistoryFullID   string
+	focusHistoryFullBack bool
+	detailPageMode       bool
+	focusConnectionEntry bool
+	focusConfiguration   bool
+	workTheme            workbenchTheme
 
 	seq int
 	win *mygo.Window
@@ -241,10 +420,11 @@ func seededApp() *appModel {
 				},
 			},
 		},
-		selected: 0,
-		screen:   viewChat,
-		seq:      100,
-		scrollTo: -1,
+		selected:       0,
+		workspaceOpen:  false,
+		appearanceMode: appearanceSystem,
+		seq:            100,
+		scrollTo:       -1,
 	}
 }
 
@@ -267,22 +447,46 @@ func (a *appModel) contactByID(id string) *contact {
 	return nil
 }
 
+func (a *appModel) leaveIssueFormForSwitch() bool {
+	if !a.issueFormOpen {
+		return true
+	}
+	if strings.TrimSpace(a.issueGoal) != "" || strings.TrimSpace(a.issueRequirements) != "" {
+		a.issueFormError = "Finish or cancel the current issue form before switching contacts."
+		return false
+	}
+	a.issueFormOpen = false
+	a.issueFormError = ""
+	return true
+}
+
 func (a *appModel) selectContact(i int) {
 	if i < 0 || i >= len(a.contacts) || i == a.selected {
 		return
 	}
+	if !a.leaveIssueFormForSwitch() {
+		return
+	}
+	a.rememberHistoryView(a.selectedContact().ID)
+	a.contacts[i].Unread = 0
+	a.selected = i
+	a.restoreHistoryView(a.contacts[i].ID)
 	if !a.demo {
 		a.persist()
 	}
-	a.contacts[i].Unread = 0
-	a.selected = i
-	a.screen = viewChat
+	if a.issueResult.Open {
+		a.cancelIssueResultView()
+	}
+	a.contactHistoryFull = nil
 	a.aux = ""
+	a.composerPanel = ""
+	a.composerFocusModel = false
+	a.composerFocusContext = false
 	a.highlight = ""
 	if !a.demo {
 		ct := a.contacts[i]
 		if ct.SessionID != "" && (!ct.Loaded || ct.HistoryDirty) && ct.ActiveTaskID == "" {
-			a.reloadContactByID(ct.ID)
+			a.reloadContactByID(ct.ID, false)
 		}
 	}
 }
@@ -290,6 +494,9 @@ func (a *appModel) selectContact(i int) {
 func (a *appModel) snippet(c *contact) string {
 	if c.Status == statusWorking && c.Work != "" {
 		return c.Work
+	}
+	if !a.demo && c.SessionID != "" && !c.Loaded {
+		return "History not loaded"
 	}
 	for i := len(c.Messages) - 1; i >= 0; i-- {
 		m := c.Messages[i]
@@ -327,6 +534,9 @@ func (a *appModel) statusLabel(c *contact) string {
 // addDefaultContact creates and selects a ready contact with a usable
 // default name, then asks the composer to take focus once.
 func (a *appModel) addDefaultContact() {
+	if !a.leaveIssueFormForSwitch() {
+		return
+	}
 	if !a.demo {
 		a.addRuntimeContact()
 		return
@@ -340,78 +550,148 @@ func (a *appModel) addDefaultContact() {
 		Status:    statusReady,
 		WorkLabel: "Preparing a reply",
 	}
+	a.rememberHistoryView(a.selectedContact().ID)
 	a.contacts = append(a.contacts, c)
 	a.selected = len(a.contacts) - 1
-	a.screen = viewChat
+	a.restoreHistoryView(c.ID)
+	a.contactScope = "active"
+	a.contactSearch = ""
 	a.aux = ""
+	a.composerPanel = ""
+	a.composerFocusModel = false
+	a.composerFocusContext = false
 	a.focusComposer = true
 }
 
 func (a *appModel) openSettings() {
-	c := a.selectedContact()
-	a.settingsDraft = profileDraft{Name: c.Name, Purpose: c.Purpose, Instructions: c.Instructions, Workspace: c.Workspace}
-	a.settingsError = false
-	a.aux = "settings"
+	a.settingsContactID = a.selectedContact().ID
+	a.settingsPickerChoice = ""
+	a.openSettingsTab(settingsTabContact, settingsSourceRail)
 }
 
-func (a *appModel) saveSettings() bool {
-	name := strings.TrimSpace(a.settingsDraft.Name)
-	if name == "" {
-		a.settingsError = true
-		return false
+func (a *appModel) openAdvancedSettings() {
+	a.startupDetailsOpen = true
+	a.openSettingsTab(settingsTabAdvanced, settingsSourceConfiguration)
+}
+
+func (a *appModel) closeAux() {
+	if a.settingsOpen {
+		a.closeSettings()
+		return
 	}
-	c := a.selectedContact()
-	c.Name = name
-	// Once a runtime session exists (or its first create is in flight), the
-	// profile was already used for session.create and cannot be hot-applied.
-	// Keep the stored values unchanged and only update the product name.
-	if !a.profileLocked(c) {
-		c.Purpose = strings.TrimSpace(a.settingsDraft.Purpose)
-		c.Instructions = strings.TrimSpace(a.settingsDraft.Instructions)
-		c.Workspace = strings.TrimSpace(a.settingsDraft.Workspace)
+	if a.aux == "model" && a.modelOpActive {
+		return
+	}
+	was := a.aux
+	wasModelKind := a.modelPanelKind
+	wasContextIssue := a.taskContextIssueID
+	switch a.composerPanel {
+	case composerPanelModel:
+		a.composerFocusModel = true
+	case composerPanelContext:
+		a.composerFocusContext = true
+	}
+	a.composerPanel = ""
+	a.modelPanelKind = ""
+	switch was {
+	case "sources":
+		a.focusSources = true
+	case "model":
+		a.modelForm = nil
+		a.modelPanelMessage = ""
+		a.modelPanelError = ""
+		if wasModelKind == "work" {
+			a.focusIssueModel = true
+		}
+	case "task-context":
+		if wasContextIssue != "" {
+			a.focusIssueContext = true
+		}
+	case "issue-result":
+		a.closeIssueResult()
+		return
 	}
 	a.aux = ""
-	a.settingsError = false
-	a.persist()
-	return true
+	a.taskContextIssueID = ""
 }
-
-func (a *appModel) closeAux() { a.aux = "" }
 
 func (a *appModel) openSources(messageID int) {
 	a.aux = "sources"
+	a.composerPanel = ""
+	a.contactHistoryFull = nil
 	a.auxMessage = messageID
+	a.focusSources = false
 }
 
 func (a *appModel) openHistory() {
-	a.screen = viewHistory
 	a.aux = ""
-	a.historyQuery = ""
+	a.composerPanel = ""
+	a.contactHistoryFull = nil
+	a.openDetail(detailHistory)
 }
 
 func (a *appModel) backToChat() {
-	a.screen = viewChat
+	if a.linkReturnTarget == (markdownLinkTarget{}) {
+		a.markdownLinkFocus = markdownLinkTarget{}
+	}
+	if a.contactHistoryFull != nil {
+		a.contactHistoryFull = nil
+	}
+	if a.aux != "" {
+		a.closeAux()
+	}
+	if a.workspaceOpen {
+		a.closeDetail()
+	}
 	a.highlight = ""
+	a.focusHistory = true
 }
 
 func (a *appModel) historyMatches() []historyEntry {
 	c := a.selectedContact()
 	query := strings.ToLower(strings.TrimSpace(a.historyQuery))
-	out := make([]historyEntry, 0, len(c.History))
+	entries := make([]historyEntry, 0, len(c.History)+len(c.Messages))
+	seen := map[string]bool{}
 	for i := len(c.History) - 1; i >= 0; i-- {
 		e := c.History[i]
-		if query == "" {
-			out = append(out, e)
+		if !seen[e.ID] {
+			entries = append(entries, e)
+			seen[e.ID] = true
+		}
+	}
+	// Live text can exist before the journal projection is reloaded. Keep it
+	// readable in History without duplicating an already-projected item.
+	for _, m := range c.Messages {
+		if m.Kind != msgUser && m.Kind != msgContact || (strings.TrimSpace(m.Text) == "" && len(m.Context) == 0) {
 			continue
 		}
-		speaker := c.Name
-		if e.From == "me" {
-			speaker = "You"
+		id := m.Key
+		if id == "" {
+			id = fmt.Sprintf("message-%d", m.ID)
 		}
-		haystack := strings.ToLower(e.Text + " " + e.Date + " " + speaker)
-		if strings.Contains(haystack, query) {
-			out = append(out, e)
+		if seen[id] {
+			continue
 		}
+		from := "contact"
+		if m.Kind == msgUser {
+			from = "me"
+		}
+		entries = append(entries, historyEntry{ID: id, Date: m.Time, From: from, Text: m.Text, Context: m.Context})
+		seen[id] = true
+	}
+	out := make([]historyEntry, 0, len(entries))
+	for _, e := range entries {
+		if query != "" {
+			speaker := c.Name
+			if e.From == "me" {
+				speaker = "You"
+			}
+			haystack := strings.ToLower(e.Text + " " + e.Date + " " + speaker)
+			if !strings.Contains(haystack, query) {
+				continue
+			}
+		}
+		out = append(out, e)
 	}
 	return out
 }
@@ -425,7 +705,15 @@ func (a *appModel) viewInConversation(entryID string) {
 			continue
 		}
 		a.highlight = entryID
-		a.screen = viewChat
+		if a.contactHistoryFull != nil {
+			a.contactHistoryFull = nil
+		}
+		if a.aux != "" {
+			a.closeAux()
+		}
+		if a.workspaceOpen {
+			a.closeDetail()
+		}
 		a.scrollTo = len(a.revealedEntries()) + i
 		return
 	}
@@ -440,7 +728,15 @@ func (a *appModel) viewInConversation(entryID string) {
 		c.Revealed = append(c.Revealed, entryID)
 	}
 	a.highlight = entryID
-	a.screen = viewChat
+	if a.contactHistoryFull != nil {
+		a.contactHistoryFull = nil
+	}
+	if a.aux != "" {
+		a.closeAux()
+	}
+	if a.workspaceOpen {
+		a.closeDetail()
+	}
 	a.scrollTo = a.revealIndex()
 }
 
@@ -564,7 +860,7 @@ func (a *appModel) failRun(ct *contact) {
 	ct.Messages = append(ct.Messages, &message{
 		ID: a.seq, Kind: msgContact, Time: nowTime(),
 		Text:        "Two failures in parser_roundtrip: expected eof, got newline. The trailing-newline change is the likely cause.",
-		AlertTitle:  "Run failed · 2 failing tests",
+		AlertTitle:  "Run failed: 2 failing tests",
 		AlertDetail: "cargo test — parser_roundtrip",
 		Retry:       true,
 	})
