@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Nagi 工作台设计预览 v09</title>
+    <title>Nagi 工作台设计预览 v10</title>
     <style>
       :root {
         color-scheme: light;
@@ -328,7 +328,7 @@
         justify-content: space-between;
       }
       .brand strong {
-        font-size: 20px;
+        font-size: 16px;
       }
       .brand-mark {
         width: 22px;
@@ -416,7 +416,7 @@
         display: grid;
         place-items: center;
         font-weight: 500;
-        font-size: 16px;
+        font-size: 13px;
         color: var(--accent);
         background: var(--tint);
       }
@@ -517,8 +517,8 @@
         padding: 13px 16px;
         border-radius: 4px 15px 15px 15px;
         background: var(--bubble);
-        font-size: 16px;
-        line-height: 1.8;
+        font-size: 14px;
+        line-height: 1.5;
         overflow-wrap: anywhere;
       }
       .user .bubble {
@@ -551,7 +551,8 @@
       }
       .bubble h3 {
         margin-bottom: 8px;
-        font-size: 16px;
+        font-size: 14px;
+        font-weight: 500;
       }
       .bubble table {
         border-collapse: collapse;
@@ -631,8 +632,8 @@
         height: 82px;
         padding: 15px 16px 6px;
         outline: none;
-        font-size: 16px;
-        line-height: 1.6;
+        font-size: 14px;
+        line-height: 1.5;
       }
       .composer textarea::placeholder {
         color: var(--muted);
@@ -861,14 +862,14 @@
         min-height: 30px;
       }
       .detail-title {
-        font-size: 20px;
+        font-size: 16px;
         line-height: 1.5;
         margin: 10px 0;
       }
       .description {
-        font-size: 16px;
+        font-size: 14px;
         color: var(--muted);
-        line-height: 1.75;
+        line-height: 1.5;
       }
       .notice {
         margin-top: 18px;
@@ -1086,7 +1087,7 @@
       }
       .settings-sidebar h1 {
         padding: 0 10px;
-        font-size: 20px;
+        font-size: 16px;
         line-height: 1.3;
         font-weight: 600;
       }
@@ -1332,8 +1333,8 @@
         margin-bottom: 8px;
       }
       .reader {
-        font-size: 16px;
-        line-height: 1.8;
+        font-size: 14px;
+        line-height: 1.5;
         max-width: 680px;
         margin: auto;
       }
@@ -1410,7 +1411,7 @@
         padding: 0;
       }
       .app.settings-open.settings-narrow .settings-sidebar h1 {
-        font-size: 20px;
+        font-size: 16px;
       }
       .app.settings-open.settings-narrow .settings-nav {
         flex-direction: row;
@@ -1503,7 +1504,7 @@
         }
         .bubble {
           max-width: 100%;
-          font-size: 16px;
+          font-size: 14px;
         }
         .user .bubble {
           max-width: 95%;
@@ -1525,17 +1526,17 @@
 
       /* v09 content-first overrides. */
       .identity h1 {
-        font-size: 20px;
-        font-weight: 600;
-        line-height: 1.25;
+        font-size: 16px;
+        font-weight: 500;
+        line-height: 1.5;
       }
       .detail-title {
-        font-size: 20px;
-        font-weight: 600;
+        font-size: 16px;
+        font-weight: 500;
       }
       .settings-sidebar h1 {
-        font-size: 20px;
-        font-weight: 600;
+        font-size: 16px;
+        font-weight: 500;
       }
       .contact strong {
         font-size: 14px;
@@ -1794,8 +1795,8 @@
         display: none;
       }
       .work-head h2 {
-        font-size: 20px;
-        font-weight: 600;
+        font-size: 16px;
+        font-weight: 500;
       }
       .work-head p {
         font-size: 12px;
@@ -1824,9 +1825,9 @@
         border-bottom: 0.5px solid var(--line);
       }
       .page-head h2 {
-        font-size: 20px;
-        font-weight: 600;
-        line-height: 1.3;
+        font-size: 16px;
+        font-weight: 500;
+        line-height: 1.5;
       }
       .page-content {
         flex: 1;
@@ -1835,9 +1836,9 @@
         padding: 22px;
       }
       .page-content p {
-        font-size: 16px;
-        line-height: 1.75;
-        margin: 0 0 14px;
+        font-size: 14px;
+        line-height: 1.5;
+        margin: 0 0 8px;
       }
       .page-content h3 {
         margin: 18px 0 8px;
@@ -1911,8 +1912,8 @@
         margin-bottom: 18px;
       }
       .profile-summary h2 {
-        font-size: 20px;
-        font-weight: 600;
+        font-size: 16px;
+        font-weight: 500;
       }
       .profile-summary p {
         color: var(--muted);
@@ -1947,6 +1948,407 @@
       }
       .history-result:hover {
         background: var(--hover);
+      }
+
+      /* v10 compact density — first-round Nagi sample, based on user feedback. */
+      h1,
+      h2,
+      h3,
+      .brand strong,
+      .identity h1,
+      .settings-sidebar h1,
+      .page-head h2,
+      .work-head h2,
+      .detail-title,
+      .profile-summary h2,
+      .contact strong,
+      .task-row strong,
+      .result-file strong,
+      .timeline strong,
+      .appearance-card strong,
+      .settings-entry[aria-current="page"],
+      .settings-nav button[aria-current="page"],
+      .settings-advanced summary,
+      .appearance-check {
+        font-weight: 500;
+      }
+      .quiet,
+      .soft,
+      .primary,
+      .search input,
+      .rail-heading select,
+      .contact strong,
+      .tabs button,
+      .work-toolbar select,
+      .back,
+      .detail-back,
+      .result-file strong,
+      .disclosure summary,
+      .requirements li,
+      .run-line,
+      .timeline p,
+      .timeline button,
+      .settings-entry,
+      .model-select,
+      .stop-button,
+      .context-item,
+      .settings-nav button,
+      .connection-summary,
+      .settings-issue,
+      .settings-leave-note,
+      .settings-form label,
+      .field-error,
+      .settings-advanced summary,
+      .settings-status,
+      .settings-diagnostics,
+      .board-column h3,
+      .reader table,
+      .bubble table,
+      .toast,
+      .text-action,
+      .history-result,
+      .profile-summary p,
+      .profile-facts dd,
+      .small-action,
+      .appearance-card strong,
+      .task-row strong,
+      .notice {
+        font-size: 13px;
+      }
+      .bubble,
+      .reader,
+      .page-content p,
+      .description {
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .bubble h3,
+      .page-content h3 {
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .date {
+        margin-bottom: 12px;
+      }
+      .message {
+        margin-bottom: 12px;
+      }
+      .bubble {
+        padding: 8px 12px;
+      }
+      .message p + p {
+        margin-top: 8px;
+      }
+      .message-meta {
+        margin-top: 3px;
+      }
+      .message-meta button {
+        min-height: 32px;
+      }
+      .message p,
+      .bubble table,
+      .reader table,
+      .requirements li,
+      .run-line,
+      .timeline p,
+      .history-result,
+      .settings-status,
+      .settings-diagnostics,
+      .settings-help,
+      .settings-leave-note,
+      .settings-issue,
+      .notice,
+      .description {
+        line-height: 1.5;
+      }
+      .main-head {
+        height: 56px;
+        padding: 0 16px;
+        gap: 8px;
+      }
+      .main-head .avatar {
+        width: 28px;
+        height: 28px;
+      }
+      .identity h1 {
+        line-height: 1.5;
+      }
+      .identity p {
+        margin-top: 2px;
+      }
+      .rail {
+        padding: 12px 8px 8px;
+      }
+      .brand {
+        height: 36px;
+        padding: 0 8px;
+      }
+      .search {
+        height: 32px;
+        margin: 12px 4px 8px;
+        padding: 0 8px;
+        gap: 6px;
+      }
+      .contact {
+        min-height: 44px;
+        gap: 8px;
+        padding: 6px 8px;
+        margin-bottom: 2px;
+      }
+      .contact .avatar {
+        width: 32px;
+        height: 32px;
+      }
+      .rail-bottom {
+        padding: 8px 4px 0;
+      }
+      .conversation {
+        padding: 16px 16px 8px;
+      }
+      .composer-wrap {
+        padding: 8px 16px 12px;
+      }
+      .composer textarea {
+        height: 50px;
+        padding: 8px 12px 0;
+        line-height: 1.5;
+      }
+      .composer-toolbar {
+        min-height: 40px;
+        padding: 2px 8px 6px;
+      }
+      .composer-hint {
+        margin: 4px 14px 0;
+        padding: 0 0 6px;
+      }
+      .context-panel {
+        margin: 2px 8px 4px;
+        padding: 6px 8px;
+      }
+      .context-item {
+        padding: 3px 0;
+      }
+      .work-head {
+        height: 56px;
+        padding: 0 12px;
+      }
+      .work-head h2 {
+        line-height: 1.5;
+      }
+      .work-body {
+        padding: 16px;
+      }
+      .tabs {
+        margin-bottom: 12px;
+        padding: 2px;
+      }
+      .tabs button {
+        min-height: 32px;
+        padding: 4px 8px;
+      }
+      .section-heading {
+        margin: 16px 0 8px;
+      }
+      .task-row {
+        min-height: 44px;
+        padding: 6px 8px;
+      }
+      .task-row strong {
+        line-height: 1.5;
+      }
+      .task-row small {
+        margin-top: 2px;
+        line-height: 1.5;
+      }
+      .work-toolbar {
+        margin-bottom: 8px;
+      }
+      .back {
+        min-height: 32px;
+        margin: -4px 0 12px;
+        padding: 4px 0;
+      }
+      .detail-title {
+        margin: 8px 0;
+      }
+      .notice {
+        margin-top: 12px;
+        padding: 8px 12px;
+      }
+      .detail-action {
+        min-height: 32px;
+        margin: 8px 0 12px;
+      }
+      .result-file {
+        gap: 8px;
+        padding: 8px;
+      }
+      .result-file small {
+        margin-top: 2px;
+      }
+      .disclosure {
+        margin-top: 12px;
+        padding-top: 2px;
+      }
+      .disclosure summary {
+        padding: 8px 0;
+      }
+      .requirements li {
+        padding: 6px 0;
+      }
+      .run-line {
+        padding: 8px 0;
+      }
+      .view-note {
+        margin-bottom: 12px;
+      }
+      .settings-entry {
+        min-height: 32px;
+        padding: 4px 8px;
+      }
+      .settings-sidebar {
+        gap: 12px;
+        padding: 16px 12px;
+      }
+      .settings-sidebar h1 {
+        padding: 0 8px;
+        line-height: 1.5;
+      }
+      .settings-purpose {
+        padding: 0 8px;
+      }
+      .settings-nav {
+        gap: 2px;
+      }
+      .settings-nav button {
+        min-height: 32px;
+        padding: 6px 8px;
+      }
+      .settings-main {
+        padding: 16px;
+      }
+      .app.settings-open.settings-narrow .settings-main {
+        padding: 16px;
+      }
+      .appearance-cards {
+        gap: 8px;
+        margin-top: 0;
+      }
+      .appearance-card {
+        min-height: 96px;
+        gap: 4px;
+        padding: 8px;
+      }
+      .appearance-preview {
+        height: 48px;
+      }
+      .appearance-check {
+        min-height: 16px;
+      }
+      .connection-summary {
+        gap: 2px;
+        padding: 8px 10px;
+      }
+      .settings-form label {
+        margin: 10px 0 4px;
+      }
+      .settings-form .field {
+        min-height: 32px;
+      }
+      .settings-form small {
+        margin-top: 4px;
+      }
+      .settings-grid {
+        gap: 8px;
+      }
+      .settings-advanced {
+        margin-top: 12px;
+        padding-top: 8px;
+      }
+      .settings-actions {
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .settings-status {
+        min-height: 32px;
+        padding: 6px 0 0;
+      }
+      .settings-status:empty {
+        min-height: 32px;
+      }
+      .settings-diagnostics {
+        gap: 4px 12px;
+      }
+      .field {
+        padding: 6px 8px;
+        font-size: 13px;
+      }
+      .field + small {
+        margin-top: 4px;
+      }
+      .board {
+        gap: 12px;
+      }
+      .board-column {
+        padding: 8px;
+      }
+      .board-column h3 {
+        margin-bottom: 8px;
+      }
+      .reader table {
+        margin: 12px 0;
+      }
+      .reader th,
+      .reader td {
+        padding: 6px 8px;
+      }
+      .reader blockquote {
+        margin: 12px 0;
+        padding-left: 12px;
+      }
+      .toast {
+        padding: 8px 12px;
+      }
+      .profile-summary {
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .profile-summary h2 {
+        line-height: 1.5;
+      }
+      .profile-summary p {
+        margin-top: 2px;
+      }
+      .profile-facts {
+        gap: 4px;
+        margin-bottom: 12px;
+      }
+      .profile-facts div {
+        padding: 8px;
+      }
+      .profile-facts dd {
+        margin-top: 2px;
+      }
+      .small-action {
+        padding: 5px 8px;
+      }
+      .history-result {
+        gap: 6px;
+        padding: 8px 0;
+      }
+      .page-head {
+        min-height: 48px;
+        padding: 8px 16px;
+        gap: 8px;
+      }
+      .page-content {
+        padding: 16px;
+      }
+      .page-content h3 {
+        margin: 12px 0 6px;
+      }
+      .page-content label {
+        margin: 10px 0 4px;
       }
     </style>
   </head>
@@ -2042,7 +2444,7 @@
     </svg>
     <header class="proto-bar">
       <div>
-        <strong>Nagi</strong> 工作台设计预览 09
+        <strong>Nagi</strong> 工作台设计预览 10
         <span class="muted">，示例数据</span>
       </div>
       <div class="proto-tools">
