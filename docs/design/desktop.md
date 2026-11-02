@@ -247,7 +247,7 @@ v2 `8a04d63` 的原生修复证据（13..18）：
 
 ## 已知限制
 
-- 单 active task；并发/后台执行由 #61 承载，不承诺 UI 的并行观感。
+- **早期历史限制（首轮单执行槽）**：当时仅单 active task，并发/后台执行由 #61 承载；当前并发以本文后续 **#118 独立工作会话与事项 UI** 的已实现行为及容量边界为准。
 - `search_history`／`read_history` 未实现；History 只对已加载 transcript 做本地过滤，不是模型检索工具。
 - profile 热更新不支持；绑定后只有名字可改，purpose/instructions/workspace 不生效于既有 session。
 - 无自动重连；断连后重启应用重新加载 history。未知接纳不自动重发。
