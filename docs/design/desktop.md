@@ -624,23 +624,23 @@ type resolvedTheme struct {
 - **UI 边界**：右工作卡只展示当前事项的真实 work；事项结果预览使用工作会话消息，不把聊天记录当工作结果。普通对话 composer 与事项 Stop 不共享控制路径。容量未知提示不会在真实 1 槽时出现。
 - **未包含/后续**：settings 模块（`5551b76` 主责）未接入本 PR；#142 补充递交、#153 生命周期、#154 对话协作不随本阶段扩称完成。**1eb 固定包的 PM 原生 118 补验见 [1eb 记录](#native-1eb-acceptance-r3)，只覆盖所列本地合成流程，不扩成完整 118**；其余原生 CUA/窗口/输入法仍由父级验证；`Sky native pipe startup failed` 不得被 headless 截图替代。完整 Nagi MVP 仍需后续 issue 与真实试用。
 
-## #116 首用配置与安全重载（候选实现，2026-10-25）
+## #116 首用配置与安全重载（实现事实，2026-11-02）
 
-代码来源：PR158，保留独立模块 `5551b76`，在普通 merge `37a3b3d` 消费冻结组合 `021bf575`（#118/#113）后接线。需求依据 PR157 `a0d4af7` 的完整 MVP；本节不改变 #113/#118 已记录的事项、历史与路由语义。验证 SHA、命令结果与未验项以本单交付证据为准。
+代码来源：PR158，保留独立模块 `5551b76`，在普通 merge `37a3b3d` 消费冻结组合 `021bf575`（#118/#113）后接线；当前实现事实固定 dev `b111260c19259dd3adf8e03f9478ec44d168ad82`（`#257/PR258` 已收敛 Settings 页面与已应用默认摘要）。需求依据 PR157 `a0d4af7` 的完整 MVP；本节不改变 #113/#118 已记录的事项、历史与路由语义。旧候选 SHA/验证记录保留，但不作为当前实现状态。
 
 - **首次使用**：配置读取先于默认联系人持久化。没有 GUI 文件也没有既有外部配置时，显示可编辑设置；保存选定目录后才生成真实默认联系人。已有联系人的目录、草稿、会话与事项不被新默认值批量覆盖。可解析但失效的设置保留值供修正；坏文件保留并报错。
 - **唯一来源与凭据**：`connection.json` 通过同目录临时文件、sync、rename 原子保存，权限 0600；key 是本机私有明文，界面明确说明，不声称 Keychain 加密。凭据不存入联系人/事项文件。HostConfig 是不可编辑的派生启动快照，仅含凭据环境变量名称；实际 key 由独立 child env 注入。受管配置覆盖继承的旧连接与容量环境，不改变 GUI 进程的环境。
 - **保存与应用**：Save 只保存配置，失败保留原文件及编辑值；当前 helper 和有效默认值不随保存改变。Apply saved 验证候选 helper 的 ready 与 `connection.list` 后才替换旧 helper，失败保留原连接可用性。切换期间禁止新派发，切换成功重读真实 capabilities；配置与历史恢复均不自动发送任务。
 - **活动工作保护**：使用 #118 的 `activeTaskCount`/`sessionBusy` 与 `issueRunBlocked`，涵盖所有联系人对话、事项工作、派发中、取消中和未确认执行。保存可独立进行；有活动目标时 Apply 明确拒绝。未知派发使用现有 Check execution/确认未派发入口处置，不盲目重发；旧 helper 已实际退出时可启动新 helper 进行只读恢复。
 - **显式测试**：Test connection and model 使用表单中的值发起短模型测试；它不保存或应用设置，不改变当前联系人历史。测试在独立临时会话目录中运行、禁用工具，有时限；退出先取消测试 task，待临时 helper 和目录清理完成后再关闭窗口。ready、保存成功与 Apply 成功均不表示供应商已接受模型请求；测试结果与主 helper 生效状态分开显示。
-- **实际配置与旧会话**：连接来自 `connection.list`，模型/目录/容量来自临时会话的 `session.config.get`，并非把输入值直接标为生效。受管新对话和新事项工作使用同一个配置创建入口，显式 schema 2 与连接 ID，持久化 endpoint 身份。旧会话不隐式升级或重新绑定；绑定未知/endpoint 不兼容时保留历史查看，用户显式创建新上下文继续。旧联系人与事项不会为“应用设置”而被删除。
+- **实际配置与旧会话**：Settings 的 `Current:` 仅来自已应用 GUI 默认（`connectionCurrentSummary` 展示 model/endpoint/API），**不是已有 session 的 effective**。Apply 先按活动保护拒绝不安全工作，验证候选 helper ready 与 `connection.list`，成功安装后再沿既有路径恢复联系人/事项并读取 capabilities；#257/PR258 后不再额外启动临时 summary/probe session。受管新对话和新事项工作使用同一个配置创建入口，显式 schema 2 与连接 ID，持久化 endpoint 身份。已有会话的 Conversation/Issue model 详情沿 `session.config.get` 显示 Effective，未知读回显示 Last read，不把默认冒充已生效。旧会话不隐式升级或重新绑定；绑定未知/endpoint 不兼容时保留历史查看，用户显式创建新上下文继续。旧联系人与事项不会为“应用设置”而被删除。
 - **#115/#152 接点**：#115 负责已有会话内模型选择与 config revision，不能把宿主默认值当作所有旧 session 已更新；#152 继续联系人/历史的产品管理，已有 Workspace 保留，新联系人采用已应用默认目录。外部 HostConfig 的多连接/MCP 目录不会自动合并进本单单连接 GUI 来源，本单没有新增 MCP 管理器、OAuth、云同步或通用插件框架。
 - **验证范围**：`connection_app_test.go` 验证空配置不提前落盘、旧联系人保持、无效设置修复及联系人目录创建失败后可修复；`connection_app_integration_test.go` 通过实际 app.view/actions 和真实 Rust helper 验证 Save/Apply/Test、首次发送、重启、保存失败、后台事项保护、候选失败回退、未知恢复、换端点后的历史边界、测试错误修正和退出取消。`connection_integration_test.go` 继续覆盖 Responses/Chat 两协议。使用受控本地 endpoint，不代表任意外部 provider 均兼容。
-- **未验与外部缺口**：本轮原生 CUA 仍返回 `Sky Computer Use native pipe startup failed`，Finder 冷启动/原生键盘交互未验，headless 截图与真实进程测试不替代。#160 已复现 Runtime 把 provider 回显的当前 key 写入错误事件与历史；GUI 显示层处理不能修复服务端 journal，本单不宣称该全链路边界已通过。没有真实凭据用于该复现或候选包。
+- **未验与外部缺口（2026-10-25 早期记录）**：当轮原生 CUA 返回 `Sky Computer Use native pipe startup failed`，Finder 冷启动/原生键盘交互未验，headless 截图与真实进程测试不替代。保留 #160 的 fake-key 原始失败：provider 回显 key 曾进入错误事件与历史，GUI 显示层不能替代服务端修复。当前原生/Finder 有限补验见 [1eb 固定包原生记录](#native-1eb-acceptance-r3)；#160 由链接中的 [PR164@`722de4b`](https://github.com/HeimaoLST/Saki/issues/160#issuecomment-6407018343) 修复了当前 key 在 HTTP 错误正文中原样回显并进入事件/历史的边界，不宣称任意变换均已处理。该有限补验不扩称全部 native、外部 provider 或完整 MVP 已通过；没有真实凭据用于该复现或候选包。
 
-### #116 联系人内置工具默认值（候选实现，2026-11-02）
+### #116 联系人内置工具默认值（实现事实，2026-11-02）
 
-需求依据为 [tool-selection-r1](https://github.com/HeimaoLST/Saki/issues/116#issuecomment-6560886562)，代码来源为 `agent/gui/116-builtin-tool-selection`。本节补齐 G7-1 的工具选择；精确验证 SHA、逐项 AC 与集成状态以对应 PR／#116 交付为准，不代表 Finder 冷启动或整个 #116 已验收。
+需求依据为 [tool-selection-r1](https://github.com/HeimaoLST/Saki/issues/116#issuecomment-6560886562)，代码来源为 `agent/gui/116-builtin-tool-selection`。本节补齐 G7-1 的工具选择；精确验证 SHA、逐项 AC 与集成状态以对应 PR／#116 交付为准。**当轮 Finder 冷启动或整个 #116 未验收；后续仅引用 [1eb 固定包记录](#native-1eb-acceptance-r3) 的有限 Finder 冷首用，不扩称全部 native/provider/MVP。**
 
 - **唯一配置入口与目录**：现有 Settings → Contact profile 使用 MyGo 复选框选择内置工具，候选名称与说明读取当前 Runtime 的 `tool.list.builtin`；GUI 不维护另一份固定能力目录。宿主默认表示当前 Runtime 提供的默认内置工具。Nagi 的事项工具与 `issue_wait` 仍按对话／工作职责组装，不属于该复选组的可移除项。
 - **默认与明确空集合**：联系人／profile／contact store 的可选 `builtin_tools` 区分缺省和明确数组。缺字段仍使用宿主默认；`[]` 明确禁用所有内置工具，保存与重启不能回退到默认。沿用当前 store 版本，不强制迁移旧会话或改写 Runtime 存储；明确空集合不表示 Nagi 的内部事项工具也被移除。
@@ -648,7 +648,7 @@ type resolvedTheme struct {
 - **实际值与后续变更**：Conversation model／Issue model 的既有详情从 `session.config.get.effective_config.tool_selection` 显示有效内置工具。未知读回沿原 Last read 提示，不把联系人默认冒充已生效配置。模型修改、补齐 Nagi external 工具及恢复继续保留原 built-in 集合、外部工具别名和作用域。
 - **失败与兼容路径**：目录读取失败保留 profile 草稿和旧配置，Runtime 就绪后可重试；未配置或断连时不提供无效重试。保存失败沿原显式错误与回滚路径。旧环境启动没有受管连接时保持原默认会话行为，自定义工具要求先在 Connection & model 保存并应用连接；显式选择不得被旧创建路径静默忽略。读取目录、编辑、保存及读取有效配置不调用模型或执行业务工具。
 - **确定性验证**：`builtin_tool_selection_integration_test.go` 核对实际 GUI 子集／空集创建、Rust 有效配置与 provider 工具声明；暂停会话映射并修改 profile 后，首次派发及同 session 继续执行仍使用原选择。受控代理丢弃真实 Rust 的发送回复，重启与显式恢复保留旧 session／新 profile，`task.send` 计数保持一次。模型 A→B→A 与外部工具补齐保留自定义别名。`builtin_tool_selection_test.go` 覆盖旧 store、明确空集合、保存失败、单项键盘切换；目录失败／Retry 走既有受控 stdio helper 和真实客户端往返，属于协议消费证据，不冒充 Rust MCP 故障实验。
-- **证据边界**：回归复用实际 Contact profile 控件、既有 GUI／Runtime harness 与本地受控 provider，区分 UI Tester、真实 Rust 进程和原生窗口三类证据。本轮不调用在线模型、不启动用户应用；两色／宽窄截图与键盘验证属于 headless，Finder 和原生交互仍须单独验收。最终命令、失败记录、完整 Go／race／既有检查器和五项 macOS CI 结果随固定 SHA 发布，不用总测试数代替逐条验收。
+- **证据边界**：回归复用实际 Contact profile 控件、既有 GUI／Runtime harness 与本地受控 provider，区分 UI Tester、真实 Rust 进程和原生窗口三类证据。当轮不调用在线模型、不启动用户应用；两色／宽窄截图与键盘验证属于 headless。Finder/原生交互在当轮仍须单独验收；后续仅见 [1eb 固定包记录](#native-1eb-acceptance-r3) 的有限 Finder 冷首用，不扩大为全部 native/provider/MVP 已过。最终命令、失败记录、完整 Go／race／既有检查器和五项 macOS CI 结果随固定 SHA 发布，不用总测试数代替逐条验收。
 
 ## #153 事项生命周期、要求核对与归档（实现事实，2026-10-25）
 
