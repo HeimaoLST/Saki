@@ -240,7 +240,10 @@ v2 `8a04d63` 的原生修复证据（13..18）：
 - **#257 Appearance**：Dark/Light 实际选中并保存，值为 1 且显示 `Applied and saved`；Settings 返回不丢草稿；本项不扩称所有主题/系统外观组合。
 - **8 个本地合成 POST**：仅 hold 4、普通 conversation 2、write 工具闭环 2；没有 Magpie/Flash 真实模型请求，不能替代真实 A 改稿/B 双对象歧义或真人试用。
 - **证据身份**：根 `/private/tmp/saki-gui-native-1eb-prep-uyh2nhm5/pm-native/`（`before-minimize.json`、`after-minimize-before-raise.json`、`completed-before-restore.json` 等；固定 session 的 Runtime journal 路径见原报告）；tool transcript 是本轮实际交互/焦点/截图记录，未导出 PNG，不编造 `AXMinimized` 布尔。
-- **未验边界**：Finder 冷首用、186 非默认筛选/非零滚动、真实 Flash 更新/歧义，以及连续 3 日/两类真实任务/非开发者首用仍待验；不写完整 MVP 通过。
+- **Finder 冷首用补验（同日 PM 报告）**：按 [flash-followup-r3-execute-r4](https://github.com/HeimaoLST/Saki/issues/156#issuecomment-6572963121)，旧 GUI/Runtime 正常退出后，经 Finder 实际双击派生 `finder/Saki.app`，CUA 绑定前已见其进程；空 store 进入 Settings，GUI Save configuration→Apply saved→Back→首条本地普通对话完成，未点击 Test。派生包沿用源 `1eb7440e2f2003bbc0f4a2bf4adb312cda48c27f` 和上述 Runtime，因隔离路径注入与重签 GUI 为 `5d181c3676299a90001052e07a9ba2c967bb4261522a16fd6ae71f83a7cb37ac`；不改署原 zip/GUI `5a90…`。证据见同一根的 `finder-cold-start.json` 与 `finder-local-firsttask-ipc-evidence.json`。
+- **Finder 路径与挂载范围**：LaunchServices 实际 TMPDIR 为 49B，Save/Apply 后找到实际 socket 93B（含 NUL 94B≤104）；只查注入的短目录无 socket 不代表服务失败，不以 r2 的 71B TMPDIR 归因本轮。首用 session `1793609303774390000-54329` 的真实 journal 记录产品 workflow system、external `issue_action/issue_get/issue_list` 和四项内置工具，task 完成；此为已发生本地会话的挂载证据，Runtime live MCP 只读回执及新 Flash 会话首 POST 的验证仍须分别取证。
+- **请求数边界**：上述 Finder 首用为本地第 9 个 POST；此前 8 个 POST 仍只归前述固定包补验。该报告时真实 Magpie 仍 0、新 44 请求预算未动，不写真实模型或完整 #116 已通过。
+- **未验边界**：186 非默认筛选/非零滚动、真实 Flash 更新/歧义，以及连续 3 日/两类真实任务/非开发者首用仍待验；Finder 此次只覆盖上述本地冷首用路径，不写完整 MVP 通过。
 
 ## 已知限制
 
