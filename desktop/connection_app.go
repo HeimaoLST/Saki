@@ -403,7 +403,7 @@ func (a *appModel) applyConnectionWorker(gen int, path, sessionDir, helperHint s
 		if !a.shutdownStarted && a.runtimeStatus == runtimeStateReady {
 			a.restoreContacts(rt, gen)
 			a.restoreIssueWorks(rt, gen)
-			go a.loadCapabilities(rt, gen)
+			a.startCapabilitiesLoad(rt, gen)
 			if a.connectionManaged {
 				a.startBuiltinToolsLoad(rt, gen)
 			}
@@ -504,7 +504,7 @@ func (a *appModel) handleRuntimeReady(gen int, ready runtimeReady) {
 	a.runtimeHandshake = true
 	a.restoreContacts(a.rt, gen)
 	a.restoreIssueWorks(a.rt, gen)
-	go a.loadCapabilities(a.rt, gen)
+	a.startCapabilitiesLoad(a.rt, gen)
 	if a.connectionManaged {
 		a.startBuiltinToolsLoad(a.rt, gen)
 	}
@@ -635,11 +635,11 @@ func (c *runtimeClient) createConfiguredSessionWithTools(workingDir, systemPromp
 	return session, nil
 }
 
-// finishShutdown drains Runtime only after in-flight history reads and
-// admitted issue/conversation submissions have delivered their final UI
-// callbacks; those callbacks re-enter this function.
+// finishShutdown drains Runtime only after in-flight history, metadata,
+// issue/conversation submission, and result reads have delivered their final
+// UI callbacks; those callbacks re-enter this function.
 func (a *appModel) finishShutdown() {
-	if a.quitReady || a.shutdownDrainStarted || a.connectionSaveInFlight || a.connectionApplying || a.connectionTesting || a.modelOpActive || a.contactHistoryInFlight > 0 || a.resultInFlight > 0 || a.submissionInFlight > 0 || a.issueToolReleaseInFlight > 0 {
+	if a.quitReady || a.shutdownDrainStarted || a.connectionSaveInFlight || a.connectionApplying || a.connectionTesting || a.modelOpActive || a.contactHistoryInFlight > 0 || a.resultInFlight > 0 || a.submissionInFlight > 0 || a.issueToolReleaseInFlight > 0 || a.metadataInFlight > 0 {
 		return
 	}
 	if a.rt == nil {

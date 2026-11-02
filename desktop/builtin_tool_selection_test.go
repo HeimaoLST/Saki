@@ -379,8 +379,11 @@ func TestBuiltinCatalogRetryUsesRuntimeAndKeepsDraft(t *testing.T) {
 			t.Fatal("tool catalog RPC trace did not arrive")
 		}
 	}
-	a.loadBuiltinTools(runtime.client, a.connectionGeneration)
+	a.startBuiltinToolsLoad(runtime.client, a.connectionGeneration)
 	consume()
+	if a.metadataInFlight != 0 {
+		t.Fatalf("catalog error callback left metadata in flight: %d", a.metadataInFlight)
+	}
 	request("tool.list")
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
@@ -391,6 +394,9 @@ func TestBuiltinCatalogRetryUsesRuntimeAndKeepsDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	consume()
+	if a.metadataInFlight != 0 {
+		t.Fatalf("catalog success callback left metadata in flight: %d", a.metadataInFlight)
+	}
 	request("tool.list")
 	tr.Frame()
 	if !a.runtimeBuiltinToolsLoaded || a.runtimeBuiltinToolsErr != "" || !tr.HasText("fixture-read") || tr.HasText("Retry built-in tools") {

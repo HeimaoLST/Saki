@@ -552,3 +552,160 @@ func TestSettingsHelperDiagnosticsUseActualProbe(t *testing.T) {
 		}
 	})
 }
+
+func TestConnectionGUIShutdownWaitsForMetadataCallback(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	for _, tc := range []struct {
+		name  string
+		wait  func(*appModel) bool
+		start func(*appModel)
+	}{
+		{
+			name:  "capabilities",
+			wait:  func(a *appModel) bool { return a.runtimeCapabilitiesLoaded },
+			start: func(a *appModel) { a.retryCapabilities() },
+		},
+		{
+			name:  "builtin tools",
+			wait:  func(a *appModel) bool { return a.runtimeBuiltinToolsLoaded && !a.runtimeBuiltinToolsLoading },
+			start: func(a *appModel) { a.retryBuiltinTools() },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateConnectionApp(t, t.TempDir(), binary)
+			h := openConnectionHarness(t)
+			config := testConnectionConfig(t)
+			saveAppConnection(t, h, config)
+			applyAppConnection(t, h)
+			h.pump.wait(func() bool {
+				return h.app.metadataInFlight == 0 &&
+					(h.app.runtimeCapabilitiesLoaded || h.app.runtimeCapabilitiesErr != "") &&
+					(h.app.runtimeBuiltinToolsLoaded || h.app.runtimeBuiltinToolsErr != "")
+			})
+
+			callbacks := make(chan func(), 8)
+			quitCalls := make(chan struct{}, 4)
+			var metadataCallback func()
+			h.pump.do(func() {
+				h.app.setUIHook(func(fn func()) { callbacks <- fn })
+				h.app.requestQuit = func() { quitCalls <- struct{}{} }
+				tc.start(h.app)
+			})
+			select {
+			case metadataCallback = <-callbacks:
+			case <-time.After(10 * time.Second):
+				t.Fatal("metadata callback was not delivered")
+			}
+			var inFlight int
+			h.pump.do(func() { inFlight = h.app.metadataInFlight })
+			if inFlight != 1 {
+				t.Fatalf("metadata in-flight = %d, want 1", inFlight)
+			}
+			h.pump.do(func() {
+				h.app.beginShutdown()
+				if h.app.shutdownDrainStarted || h.app.quitReady {
+					t.Error("shutdown started before the admitted metadata callback completed")
+				}
+				h.app.retryCapabilities()
+				h.app.retryBuiltinTools()
+				if h.app.metadataInFlight != 1 {
+					t.Errorf("metadata admission changed during shutdown: %d", h.app.metadataInFlight)
+				}
+			})
+			h.pump.do(func() { metadataCallback() })
+			var remaining int
+			h.pump.do(func() { remaining = h.app.metadataInFlight })
+			if remaining != 0 {
+				t.Fatalf("metadata callback did not finish: inFlight=%d", remaining)
+			}
+			waitCallbacksForQuit(t, h, callbacks)
+			if got := len(quitCalls); got != 1 {
+				t.Fatalf("requestQuit calls = %d, want exactly 1", got)
+			}
+			h.closed = true
+			h.pump.close()
+		})
+	}
+}
+
+func TestConnectionGUIStaleMetadataCallbackFinishesPendingShutdown(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	isolateConnectionApp(t, t.TempDir(), binary)
+	h := openConnectionHarness(t)
+	config := testConnectionConfig(t)
+	saveAppConnection(t, h, config)
+	applyAppConnection(t, h)
+	h.pump.wait(func() bool {
+		return h.app.metadataInFlight == 0 && h.app.runtimeBuiltinToolsLoaded && !h.app.runtimeBuiltinToolsLoading
+	})
+
+	callbacks := make(chan func(), 8)
+	quitCalls := make(chan struct{}, 4)
+	var metadataCallback func()
+	h.pump.do(func() {
+		h.app.setUIHook(func(fn func()) { callbacks <- fn })
+		h.app.requestQuit = func() { quitCalls <- struct{}{} }
+		h.app.retryBuiltinTools()
+	})
+	select {
+	case metadataCallback = <-callbacks:
+	case <-time.After(10 * time.Second):
+		t.Fatal("built-in tools callback was not delivered")
+	}
+	h.pump.do(func() { h.app.beginShutdown() })
+	var drainStarted bool
+	h.pump.do(func() { drainStarted = h.app.shutdownDrainStarted })
+	if drainStarted {
+		t.Fatal("shutdown started before the admitted stale metadata callback completed")
+	}
+	h.pump.do(func() {
+		h.app.connectionGeneration++
+		h.app.runtimeBuiltinTools = []runtimeBuiltinTool{{Name: "kept-newer"}}
+		h.app.runtimeBuiltinToolsLoaded = true
+		h.app.runtimeBuiltinToolsLoading = true
+		h.app.runtimeBuiltinToolsErr = "newer generation"
+	})
+	h.pump.do(func() { metadataCallback() })
+	var remaining int
+	var kept string
+	var loaded, loading bool
+	var loadErr string
+	h.pump.do(func() {
+		remaining = h.app.metadataInFlight
+		loaded, loading, loadErr = h.app.runtimeBuiltinToolsLoaded, h.app.runtimeBuiltinToolsLoading, h.app.runtimeBuiltinToolsErr
+		if len(h.app.runtimeBuiltinTools) == 1 {
+			kept = h.app.runtimeBuiltinTools[0].Name
+		}
+	})
+	if remaining != 0 || kept != "kept-newer" || !loaded || !loading || loadErr != "newer generation" {
+		t.Fatalf("stale callback changed newer generation: inFlight=%d tool=%q loaded=%v loading=%v err=%q", remaining, kept, loaded, loading, loadErr)
+	}
+	waitCallbacksForQuit(t, h, callbacks)
+	if got := len(quitCalls); got != 1 {
+		t.Fatalf("requestQuit calls = %d, want exactly 1", got)
+	}
+	h.closed = true
+	h.pump.close()
+}
+
+func waitCallbacksForQuit(t *testing.T, h *guiHarness, callbacks <-chan func()) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var quitReady bool
+		h.pump.do(func() { quitReady = h.app.quitReady })
+		if quitReady {
+			return
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			t.Fatalf("shutdown did not become ready: quitReady=%v", quitReady)
+		}
+		select {
+		case callback := <-callbacks:
+			h.pump.do(func() { callback() })
+		case <-time.After(remaining):
+			t.Fatalf("shutdown callback was not delivered: quitReady=%v", quitReady)
+		}
+	}
+}
