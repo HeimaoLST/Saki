@@ -233,7 +233,7 @@ v2 `8a04d63` 的原生修复证据（13..18）：
 - **平台范围**：按 [macos-only-20261102-r2](https://github.com/HeimaoLST/Saki/issues/140#issuecomment-6572798320)，当前产品开发支持、CI 与验收仅对 macOS 负责；Linux/Windows 不纳入支持计划或未来待办，历史失败及未知根因仍按原记录保留。
 - **包/执行身份**：PM CUA 在同一既有隔离实例操作；此前 `cgWindowNotFound` 后既有绑定实际恢复，未重启或换包，不据恢复推断原环境根因。
 - **#114 键盘/焦点**：仅键盘 Tab 从 Search→Contact scope→Saki/A、New contact 2→B；Cmd+, 进入统一 Settings 且焦点 Back，Return 返回；Search 过滤、B 经 Settings/splitter/Work 到 composer 及反向 Shift+Tab 的焦点和编辑目标正确；A/B 草稿保留。多行中文粘贴、Shift+Enter 只换行且 provider 计数未增；这不是新中文 IME，G4-1 仍按 [6560358459 有限接受](https://github.com/HeimaoLST/Saki/issues/114#issuecomment-6560358459)，不扩称全部输入法。
-- **#130/#186 返回与窄窗**：宽窗 Work 打开时焦点在 Close，Close 后焦点回 Work；OS Window→Move & Resize→Left 后实际窄窗仅 Work、Back 可见并获得焦点，Return 回 Work 入口且草稿保留；分层 Escape 依次关闭系统 help、详情回事项概览原 WRITE 行、再关闭 Work 回 Work。未冒称精确 960/720 DIP；#186 本轮未测非默认筛选/非零滚动锚点。
+- **#130/#186 返回与窄窗**：宽窗 Work 打开时焦点在 Close，Close 后焦点回 Work；OS Window→Move & Resize→Left 后实际窄窗仅 Work、Back 可见并获得焦点，Return 回 Work 入口且草稿保留；分层 Escape 依次关闭系统 help、详情回事项概览原 WRITE 行、再关闭 Work 回 Work。未冒称精确 960/720 DIP；#186 本轮未测非默认筛选/非零滚动锚点。后续 [r5](#native-186-navigation-r5) 补验该末项；r3 结论保持当时范围。
 - **#118 独立执行**：同一联系人 A 的事项 hold 时，其普通对话先完成，事项仍 held；Stop issue 只中断工作、对话保留；Continue 产生新 execution；跨联系人 B 对话完成且不含 A 事项，A/B session IDs 分开。
 - **#118 最小化**：第三次 A 执行 held 时实际 Window→Minimize，之后**在再次观察/操作 Nagi 窗口或 Raise 前**释放本地 barrier；08:08:06Z 只读 store 已 completed、provider finished、事项仍 in_progress/要求 unverified；随后才 AX/Raise。execution completed 不等于事项 Done 或要求 verified。
 - **#156 工具成果**：write task 落盘 `native-output.md` 551B、SHA256 `5193b62b20807a830282854b49fe6177e73875c4c49e531a6778e5f7f633c502`；原生 Read file、Copy current file→Cmd+V、Show in Finder、默认 Obsidian 打开均按报告实际发生，未只凭模型文字声明成果。
@@ -243,7 +243,16 @@ v2 `8a04d63` 的原生修复证据（13..18）：
 - **Finder 冷首用补验（同日 PM 报告）**：按 [flash-followup-r3-execute-r4](https://github.com/HeimaoLST/Saki/issues/156#issuecomment-6572963121)，旧 GUI/Runtime 正常退出后，经 Finder 实际双击派生 `finder/Saki.app`，CUA 绑定前已见其进程；空 store 进入 Settings，GUI Save configuration→Apply saved→Back→首条本地普通对话完成，未点击 Test。派生包沿用源 `1eb7440e2f2003bbc0f4a2bf4adb312cda48c27f` 和上述 Runtime，因隔离路径注入与重签 GUI 为 `5d181c3676299a90001052e07a9ba2c967bb4261522a16fd6ae71f83a7cb37ac`；不改署原 zip/GUI `5a90…`。证据见同一根的 `finder-cold-start.json` 与 `finder-local-firsttask-ipc-evidence.json`。
 - **Finder 路径与挂载范围**：LaunchServices 实际 TMPDIR 为 49B，Save/Apply 后找到实际 socket 93B（含 NUL 94B≤104）；只查注入的短目录无 socket 不代表服务失败，不以 r2 的 71B TMPDIR 归因本轮。首用 session `1793609303774390000-54329` 的真实 journal 记录产品 workflow system、external `issue_action/issue_get/issue_list` 和四项内置工具，task 完成；此为已发生本地会话的挂载证据，Runtime live MCP 只读回执及新 Flash 会话首 POST 的验证仍须分别取证。
 - **请求数边界**：上述 Finder 首用为本地第 9 个 POST；此前 8 个 POST 仍只归前述固定包补验。该报告时真实 Magpie 仍 0、新 44 请求预算未动，不写真实模型或完整 #116 已通过。
-- **未验边界**：186 非默认筛选/非零滚动、真实 Flash 更新/歧义，以及连续 3 日/两类真实任务/非开发者首用仍待验；Finder 此次只覆盖上述本地冷首用路径，不写完整 MVP 通过。
+- **未验边界**：真实 Flash 更新/歧义，以及连续 3 日/两类真实任务/非开发者首用仍待验；#186 非默认筛选/非零滚动已由 [r5 记录](#native-186-navigation-r5) 覆盖（原 r3 当时未测保留）；Finder 此次只覆盖上述本地冷首用路径，不写完整 MVP 通过。
+
+<a id="native-186-navigation-r5"></a>
+
+**2026-11-02 #186 导航原生补验（PM 执行报告）**：依据 [native-186-navigation-r5](https://github.com/HeimaoLST/Saki/issues/186#issuecomment-6579076750)；实际执行 `agent:pm#mira`，文档整理者未重做原生验收；仅 macOS。这是 PM 实际操作报告，不是独立人类/QA 批准。
+
+- **固定身份**：包为当前 Finder 派生 1eb，source `1eb7440e2f2003bbc0f4a2bf4adb312cda48c27f`；隔离重签 GUI `5d181c3676299a90001052e07a9ba2c967bb4261522a16fd6ae71f83a7cb37ac`、helper `f98997398e366c26a54d9d8c2ecf2242400a16790d5356352641c7375c1277f5`。不声称原 zip GUI `5a90…` 重做此次动作；真实 A/B 联系人未改业务。
+- **实际步骤**：在独立测试联系人 `New contact3`（`contact-9f10eefec46f`）原生 Add contact，输入未发送草稿“186 导航检查草稿：返回后保留。”；通过原生 New issue 保存 12 个导航事项（只创建不 Start，未用 JSON 注入/模型造数据）。Work 概览默认 Unfinished，实际切为 All；初始截图顶端 `186-01`，在真实事项 scroll area 向下滚一页后顶端为 `186-05` 部分行，`186-06` 至 `186-12` 可见且滚动条在下部，确认非零滚动。
+- **返回与焦点**：从当前可见的 `186-10` 打开详情（`Not started`/`No execution yet`），点 `Back to issues`：AX 筛选仍 All、焦点明确原 `186-10`；实际返回截图仍以 `186-05` 部分行为顶锚，未跳回 `186-01`，草稿逐字保留。紧接真实键盘 Return 再次打开 `186-10` 详情；Escape 回概览，All 与 `186-10` 焦点仍在；再 Escape 关闭 Work，焦点回 Work 入口，原草稿仍在。
+- **只读核验与边界**：Finder store 中 12 项均 `not_started`、0 executions；新联系人没有已建立 session，`selected_issue_id` 指 `186-10` 对应 `issue-d47f01b148331dfd`；无 Start/Continue/Send 或模型请求。原生截图/AX 在 PM transcript，未导出 PNG，不编造内部 offset。早先 r3 的窄窗分层 Escape/Back/草稿证据保持原包范围；r5 只补这里列出的最后缺口，不倒写 r3 当时已验；真实 Flash 更新/歧义、真人/连续 3 日与整体 MVP 仍未验。
 
 ## 已知限制
 
@@ -822,7 +831,7 @@ type resolvedTheme struct {
 - **详情顺序与动作**：返回/当前 issue Stop/管理状态在目标标题之前；正在 stopping 时沿用 `Stopping issue…` 且按钮 disabled，不显示可再次 Stop；目标 20px/1.5；之后是真实问题、latest result、requirements/evidence、折叠的 More 与 execution history。Start/Continue 使用既有 lifecycle 条件和 dispatched snapshot；Edit、Issue model、Task context、Cancel、Archive/Restore、Reopen 和 Mark complete 仍在 More。Conversation work 有独立的局部入口，不成为事项，也不隐藏既有 conversation Stop/tools。
 - **终态与完成依据**：Runtime execution completed 仍只是 execution fact；事项未完成且仍有 unverified/unmet requirement 时显示“This execution ended; the issue remains open.”。显式 Mark complete 仍保留既有运行/unknown 限制，显示 `Marked by user · <evidence>`，不把未核实 requirement 改成 satisfied。pending/unknown 的 Check execution/Confirm not dispatched/Reload 继续复用现有路径。
 - **分层退出**：#187 reader 仍独立；当前 shared workspace 不改 reader files。aux Escape 先关闭 aux 并保留 detail/work；宽屏和窄窗 overlay 中 Escape 先从 execution 回 detail、再从 detail 回 overview，最后才关闭 work 抽屉；窄窗点击抽屉外 backdrop 仍是显式关闭，不触发 Back，保留 detail/filter/draft。Header `Close work` 仍是显式整体关闭，不改成返回。切换到其他 contact 时各自保留 detail/filter/scroll，主聊天阅读位置不被重置。
-- **验证边界**：`issue_navigation_test.go` 覆盖默认概览、三种筛选、概览/详情/返回的 row+scroll+focus、contact 隔离、accepted task 不抢详情、Escape 分层、窄 work 面板动作行不溢出、completed execution 与手动完成差异；既有 issue/detail/recovery/Stop/archive/complete 回归保留。`issues_preview_test.go` 的既有 preview 入口生成 `issue-overview`/`issue-detail`/`issue-back` 等 headless 图，当前 review 图在 `/private/tmp/saki-gui-186/previews-key/`。headless 不是原生窗口或 IME 验收。
+- **验证边界**：`issue_navigation_test.go` 覆盖默认概览、三种筛选、概览/详情/返回的 row+scroll+focus、contact 隔离、accepted task 不抢详情、Escape 分层、窄 work 面板动作行不溢出、completed execution 与手动完成差异；既有 issue/detail/recovery/Stop/archive/complete 回归保留。`issues_preview_test.go` 的既有 preview 入口生成 `issue-overview`/`issue-detail`/`issue-back` 等 headless 图，当前 review 图在 `/private/tmp/saki-gui-186/previews-key/`。headless 不是原生窗口或 IME 验收；后续 r5 原生补验见 [r5](#native-186-navigation-r5)。
 
 
 ## #187 成果文件阅读与原上下文返回（候选实现，2026-10-28）
