@@ -403,18 +403,132 @@ func restartGUIHarness(t *testing.T, binary string) *guiHarness {
 	return h
 }
 
+func shutdownChannelClosed(ch <-chan struct{}) bool {
+	if ch == nil {
+		return false
+	}
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+func shutdownChannelState(ch <-chan struct{}) string {
+	if ch == nil {
+		return "not-captured"
+	}
+	if shutdownChannelClosed(ch) {
+		return "closed"
+	}
+	return "open"
+}
+
+func runtimeClientShutdownDiagnostic(c *runtimeClient) string {
+	if c == nil {
+		return "client=nil"
+	}
+	var closed bool
+	var pending int
+	var failedCode string
+	c.stateMu.Lock()
+	closed = c.closed
+	pending = len(c.pending)
+	if c.failed != nil {
+		failedCode = c.failed.Code
+	}
+	c.stateMu.Unlock()
+	pid := "unknown"
+	if c.cmd != nil && c.cmd.Process != nil {
+		pid = fmt.Sprintf("%d", c.cmd.Process.Pid)
+	}
+	done := shutdownChannelClosed(c.done)
+	processState := "unknown"
+	exitErrPresent := "unknown"
+	if done {
+		processState = fmt.Sprintf("%v", c.cmd != nil && c.cmd.ProcessState != nil)
+		exitErrPresent = fmt.Sprintf("%v", c.exitErr != nil)
+	}
+	return fmt.Sprintf("client.closed=%v client.pending_requests=%d client.failed_code=%q client.done_at_capture=%s client.process_pid=%s client.process_state_present=%s client.exit_err_present=%s",
+		closed, pending, failedCode, shutdownChannelState(c.done), pid, processState, exitErrPresent)
+}
+
+func issueToolServerShutdownDiagnostic(s *issueToolIPCServer) string {
+	if s == nil {
+		return "issue_tool_server=nil"
+	}
+	s.mu.Lock()
+	closing := s.closing
+	conns := len(s.conns)
+	s.mu.Unlock()
+	return fmt.Sprintf("issue_tool_server.present=true closing=%v conns=%d done_closed=%v close_done_closed=%v",
+		closing, conns, shutdownChannelClosed(s.done), shutdownChannelClosed(s.closeDone))
+}
+
+type shutdownDiagnostic struct {
+	capturedAt time.Time
+	state      string
+	clientDone <-chan struct{}
+	toolDone   <-chan struct{}
+	toolClose  <-chan struct{}
+}
+
+// shutdownSnapshot runs only from the UI pump predicate. It must not be called
+// from the timeout/defer path, where app fields are not synchronized.
+func (h *guiHarness) shutdownSnapshot() shutdownDiagnostic {
+	a := h.app
+	var b strings.Builder
+	fmt.Fprintf(&b, "shutdown_started=%v quit_ready=%v drain_started=%v runtime_status=%q rt_nil=%v connection_launch_present=%v\n",
+		a.shutdownStarted, a.quitReady, a.shutdownDrainStarted, a.runtimeStatus, a.rt == nil, a.connectionLaunch != nil)
+	fmt.Fprintf(&b, "gates.connection_save_in_flight=%v connection_applying=%v connection_testing=%v model_op_active=%v contact_history_in_flight=%d result_in_flight=%d submission_in_flight=%d issue_tool_release_in_flight=%d\n",
+		a.connectionSaveInFlight, a.connectionApplying, a.connectionTesting, a.modelOpActive, a.contactHistoryInFlight, a.resultInFlight, a.submissionInFlight, a.issueToolReleaseInFlight)
+	b.WriteString(runtimeClientShutdownDiagnostic(a.rt))
+	b.WriteString("\n")
+	b.WriteString(issueToolServerShutdownDiagnostic(a.issueToolServer))
+	var clientDone, toolDone, toolClose <-chan struct{}
+	if a.rt != nil {
+		clientDone = a.rt.done
+	}
+	if a.issueToolServer != nil {
+		toolDone = a.issueToolServer.done
+		toolClose = a.issueToolServer.closeDone
+	}
+	return shutdownDiagnostic{capturedAt: time.Now(), state: b.String(), clientDone: clientDone, toolDone: toolDone, toolClose: toolClose}
+}
+
 func (h *guiHarness) shutdown(t *testing.T) {
 	t.Helper()
 	if h.closed {
 		return
 	}
+	var lastDiagnostic atomic.Value
+	completed := false
+	defer func() {
+		if completed {
+			return
+		}
+		diag, _ := lastDiagnostic.Load().(shutdownDiagnostic)
+		if diag.state == "" {
+			t.Log("shutdown diagnostics: no UI-pump snapshot was captured before the wait failed; app state at timeout is unknown")
+			return
+		}
+		captured := diag.capturedAt.UTC()
+		t.Logf("shutdown diagnostics: last UI-pump observation captured=%s age=%s; this is not a fresh app-state read at timeout:\n%s\ncurrent_channel_state.client_done=%s tool_done=%s tool_close_done=%s",
+			captured.Format(time.RFC3339Nano), time.Since(captured).Round(time.Millisecond), diag.state,
+			shutdownChannelState(diag.clientDone), shutdownChannelState(diag.toolDone), shutdownChannelState(diag.toolClose))
+	}()
 	h.pump.do(func() { h.app.beginShutdown() })
 	h.pump.waitTimeout(func() bool {
+		// This predicate is evaluated on the UI pump. Cache the whole
+		// observation tuple here, not from the timeout/defer goroutine.
+		lastDiagnostic.Store(h.shutdownSnapshot())
 		if !h.app.quitReady {
 			return false
 		}
 		return h.app.rt == nil || h.app.runtimeStatus == runtimeStateExited
 	}, 15*time.Second)
+	completed = true
 	h.pump.close()
 	h.closed = true
 }
