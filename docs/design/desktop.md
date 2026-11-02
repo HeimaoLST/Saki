@@ -230,6 +230,7 @@ v2 `8a04d63` 的原生修复证据（13..18）：
 
 **2026-11-02 1eb 固定包原生补验（PM 执行报告）**：实际执行 `agent:pm#mira`，文档整理者未重做原生验收；依据 [native-1eb-acceptance-r3](https://github.com/HeimaoLST/Saki/issues/156#issuecomment-6572343153)，不是独立人类/QA 批准。实际源 `1eb7440e2f2003bbc0f4a2bf4adb312cda48c27f`、artifact `13119785157`；GUI `5a90d11bd0dd520aac59a48b93d09996d00e9be57b9556131c13dc66a2607537`、Runtime `f98997398e366c26a54d9d8c2ecf2242400a16790d5356352641c7375c1277f5`。1eb→dev `7e3a7eb` 仅有 `integration_runtime_test.go` 差异，production 相同；以下仅记录该包，旧包身份及原失败记录保留。
 
+- **平台范围**：按 [macos-only-20261102-r2](https://github.com/HeimaoLST/Saki/issues/140#issuecomment-6572798320)，当前产品开发支持、CI 与验收仅对 macOS 负责；Linux/Windows 不纳入支持计划或未来待办，历史失败及未知根因仍按原记录保留。
 - **包/执行身份**：PM CUA 在同一既有隔离实例操作；此前 `cgWindowNotFound` 后既有绑定实际恢复，未重启或换包，不据恢复推断原环境根因。
 - **#114 键盘/焦点**：仅键盘 Tab 从 Search→Contact scope→Saki/A、New contact 2→B；Cmd+, 进入统一 Settings 且焦点 Back，Return 返回；Search 过滤、B 经 Settings/splitter/Work 到 composer 及反向 Shift+Tab 的焦点和编辑目标正确；A/B 草稿保留。多行中文粘贴、Shift+Enter 只换行且 provider 计数未增；这不是新中文 IME，G4-1 仍按 [6560358459 有限接受](https://github.com/HeimaoLST/Saki/issues/114#issuecomment-6560358459)，不扩称全部输入法。
 - **#130/#186 返回与窄窗**：宽窗 Work 打开时焦点在 Close，Close 后焦点回 Work；OS Window→Move & Resize→Left 后实际窄窗仅 Work、Back 可见并获得焦点，Return 回 Work 入口且草稿保留；分层 Escape 依次关闭系统 help、详情回事项概览原 WRITE 行、再关闭 Work 回 Work。未冒称精确 960/720 DIP；#186 本轮未测非默认筛选/非零滚动锚点。
