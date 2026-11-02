@@ -340,7 +340,7 @@ func (a *appModel) releaseIssueWorkSession(ct *contact, issue *productIssue) {
 	}()
 }
 
-func (a *appModel) issueToolNewWorkScope(contactID, issueID, executionID, sessionID string) (*IssueToolScope, error) {
+func (a *appModel) issueToolNewWorkScope(contactID, issueID, executionID, sessionID string, roleGuidanceAppended bool) (*IssueToolScope, error) {
 	ct := a.contactByID(contactID)
 	if ct == nil || issueForContact(ct, issueID) == nil {
 		return nil, errors.New("issue not found for work scope")
@@ -349,7 +349,8 @@ func (a *appModel) issueToolNewWorkScope(contactID, issueID, executionID, sessio
 		Ref: newIssueToolScopeRef(), Mode: issueToolModeWork,
 		ContactID: contactID, RuntimeSessionID: sessionID,
 		TurnID: executionID, AllowedIssueIDs: []string{issueID},
-		WorkIssueID: issueID, WorkExecutionID: executionID, CreatedAt: nowMillis(),
+		WorkIssueID: issueID, WorkExecutionID: executionID,
+		RoleGuidanceAppended: roleGuidanceAppended, CreatedAt: nowMillis(),
 	}
 	if err := scope.Validate(); err != nil {
 		return nil, err
@@ -577,7 +578,7 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 
 // issueToolNewScope issues one app-owned scope before a conversation task is
 // sent. The caller must persist it before the task.send.
-func (a *appModel) issueToolNewScope(contactID, sessionID, turnID string) (*IssueToolScope, error) {
+func (a *appModel) issueToolNewScope(contactID, sessionID, turnID string, roleGuidanceAppended bool) (*IssueToolScope, error) {
 	ct := a.contactByID(contactID)
 	if ct == nil {
 		return nil, errors.New("contact not found for issue tool scope")
@@ -590,7 +591,8 @@ func (a *appModel) issueToolNewScope(contactID, sessionID, turnID string) (*Issu
 	}
 	scope := IssueToolScope{
 		Ref: newIssueToolScopeRef(), ContactID: contactID, RuntimeSessionID: sessionID,
-		TurnID: turnID, AllowedIssueIDs: ids, AllowCreate: true, CreatedAt: nowMillis(),
+		TurnID: turnID, AllowedIssueIDs: ids, AllowCreate: true,
+		RoleGuidanceAppended: roleGuidanceAppended, CreatedAt: nowMillis(),
 	}
 	if err := scope.Validate(); err != nil {
 		return nil, err
@@ -765,11 +767,12 @@ func (a *appModel) issueToolReserveForTurn(scope IssueToolScope, request IssueTo
 }
 
 type issueToolScopeIdentity struct {
-	Ref              string
-	ContactID        string
-	RuntimeSessionID string
-	TurnID           string
-	CreatedAt        int64
+	Ref                  string
+	ContactID            string
+	RuntimeSessionID     string
+	TurnID               string
+	RoleGuidanceAppended bool
+	CreatedAt            int64
 }
 
 // issueToolScopeIndexSnapshot copies only immutable issued-scope identity. It
@@ -780,17 +783,11 @@ func (a *appModel) issueToolScopeIndexSnapshot() map[string]issueToolScopeIdenti
 		index[ref] = issueToolScopeIdentity{
 			Ref: ref, ContactID: scope.ContactID,
 			RuntimeSessionID: scope.RuntimeSession(),
-			TurnID:           scope.TurnID, CreatedAt: scope.CreatedAt,
+			TurnID:           scope.TurnID, RoleGuidanceAppended: scope.RoleGuidanceAppended,
+			CreatedAt: scope.CreatedAt,
 		}
 	}
 	return index
-}
-
-func isIssueToolCurrentRoleGuidance(item taskContextItem) bool {
-	if item.Name != issueToolRoleGuidanceContextName {
-		return false
-	}
-	return item.Text == issueToolConversationGuidance || item.Text == issueToolWorkGuidance
 }
 
 func filterIssueToolContextWithIndex(index map[string]issueToolScopeIdentity, sessionID string, items []taskContextItem) []taskContextItem {
@@ -802,24 +799,28 @@ func filterIssueToolContextWithIndex(index map[string]issueToolScopeIdentity, se
 		return items
 	}
 	text := strings.TrimSpace(last.Text)
+	var identity issueToolScopeIdentity
 	verified := false
 	var input IssueToolScope
 	if json.Unmarshal([]byte(text), &input) == nil && input.Validate() == nil {
-		identity, ok := index[input.Ref]
-		verified = ok && identity.ContactID == input.ContactID && identity.RuntimeSessionID == sessionID &&
+		identity, verified = index[input.Ref]
+		verified = verified && identity.ContactID == input.ContactID && identity.RuntimeSessionID == sessionID &&
 			identity.TurnID == input.TurnID && identity.CreatedAt == input.CreatedAt
 	} else {
 		// New wire form: the model-facing scope value is only the opaque ref.
 		// Legacy persisted JSON above is still recognized; unknown/same-named user
 		// material is never filtered merely by its name.
-		identity, ok := index[text]
+		var ok bool
+		identity, ok = index[text]
 		verified = ok && identity.ContactID != "" && identity.RuntimeSessionID == sessionID
 	}
 	if !verified {
 		return items
 	}
 	end := len(items) - 1
-	if end > 0 && isIssueToolCurrentRoleGuidance(items[end-1]) {
+	// The persisted provenance is true only when the app appended its guidance
+	// immediately before this scope during task assembly.
+	if identity.RoleGuidanceAppended && end > 0 {
 		end--
 	}
 	return append([]taskContextItem(nil), items[:end]...)

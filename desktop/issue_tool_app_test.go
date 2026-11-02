@@ -69,7 +69,7 @@ func issueToolResponseJSON(t *testing.T, response issueToolForwardResponse) []by
 func TestIssueToolOperationRepeatsAndPersistsAcrossReload(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-1", "turn-1")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-1", "turn-1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestIssueToolOperationRepeatsAndPersistsAcrossReload(t *testing.T) {
 func TestIssueToolSaveFailureDoesNotCreateIssue(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-2", "turn-2")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-2", "turn-2", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestIssueToolListUsesCursor(t *testing.T) {
 	if _, err := a.createIssueFor(ct, "B", "b"); err != nil {
 		t.Fatal(err)
 	}
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-3", "turn-3")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-3", "turn-3", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestIssueToolQueryDoesNotSwitchSelectedContactOrPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	ct.SelectedIssueID = issue.ID
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-4", "turn-4")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-4", "turn-4", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestIssueToolRunWithoutRuntimeRecordsUnknownAndDoesNotDuplicate(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-5", "turn-5")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-5", "turn-5", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestIssueToolScopeDeniesOtherContactIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.contacts = append(a.contacts, second)
-	scope, err := a.issueToolNewScope(first.ID, "conversation-6", "turn-6")
+	scope, err := a.issueToolNewScope(first.ID, "conversation-6", "turn-6", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestIssueToolCapturedCreateLeavesSelectedContactFormAndDraftAlone(t *testin
 	a.issueFormOpen = true
 	a.issueGoal = "form goal"
 	a.issueRequirements = "form requirements"
-	scope, err := a.issueToolNewScope(first.ID, "conversation-7", "turn-7")
+	scope, err := a.issueToolNewScope(first.ID, "conversation-7", "turn-7", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestIssueToolScopeUsesLatestTaskBinding(t *testing.T) {
 	ct.SessionID = "conversation-late"
 	ct.SendState = sendSubmitting
 	ct.pendingSend = &pendingSend{ToolScopeRef: ""}
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-late", "turn-late")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-late", "turn-late", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestIssueToolScopeUsesLatestTaskBinding(t *testing.T) {
 func TestIssueToolInactiveScopeKeepsOldReceiptButRejectsNewAction(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-old", "turn-old")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-old", "turn-old", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +374,7 @@ func TestIssueToolTruncatePreservesUTF8(t *testing.T) {
 func TestIssueToolConcurrentSameCreateDoesNotDuplicate(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-concurrent", "turn-concurrent")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-concurrent", "turn-concurrent", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +411,7 @@ func TestIssueToolConcurrentSameCreateDoesNotDuplicate(t *testing.T) {
 func TestIssueToolReservedActionRechecksOwnerBeforeSideEffect(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-atomic", "turn-atomic")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-atomic", "turn-atomic", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +496,7 @@ func TestIssueToolShutdownRejectsNewActionButKeepsReceipt(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	a.issueToolShutdown = make(chan struct{})
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-shutdown", "turn-shutdown")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-shutdown", "turn-shutdown", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +536,7 @@ func TestIssueToolWaitAnswerResumeUsesQuestionAnd142Ledger(t *testing.T) {
 		t.Fatal(err)
 	}
 	attachIssueToolTestExecution(issue)
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-q", "turn-q")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-q", "turn-q", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +595,7 @@ func TestIssueToolWaitAnswerResumeUsesQuestionAnd142Ledger(t *testing.T) {
 		t.Fatalf("duplicate answer = %+v err=%v pending=%d", duplicate, err, issue.Supplements.pendingCount())
 	}
 	// A new turn cannot answer the same open question twice.
-	secondScope, err := a.issueToolNewScope(ct.ID, "conversation-q2", "turn-q2")
+	secondScope, err := a.issueToolNewScope(ct.ID, "conversation-q2", "turn-q2", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -606,7 +606,7 @@ func TestIssueToolWaitAnswerResumeUsesQuestionAnd142Ledger(t *testing.T) {
 	if err != nil || crossTurn.IsError || issue.Supplements.pendingCount() != 1 {
 		t.Fatalf("cross-turn duplicate answer = %+v err=%v pending=%d", crossTurn, err, issue.Supplements.pendingCount())
 	}
-	changedScope, err := a.issueToolNewScope(ct.ID, "conversation-q3", "turn-q3")
+	changedScope, err := a.issueToolNewScope(ct.ID, "conversation-q3", "turn-q3", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,7 +642,7 @@ func TestIssueToolWrongOrStaleQuestionRefIsRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	attachIssueToolTestExecution(issue)
-	scope, _ := a.issueToolNewScope(ct.ID, "conversation-qe", "turn-qe")
+	scope, _ := a.issueToolNewScope(ct.ID, "conversation-qe", "turn-qe", false)
 	activateIssueToolTestScope(t, a, scope)
 	waitArgs := issueToolActionArgs(t, *scope, issueToolActionWait, map[string]any{
 		"issue_id": issue.ID, "expected_revision": issue.RequirementsRevision, "text": "Need input",
@@ -659,7 +659,7 @@ func TestIssueToolWrongOrStaleQuestionRefIsRejected(t *testing.T) {
 	}
 	question := issue.openQuestion()
 	question.RequirementsRevision = 0
-	staleScope, err := a.issueToolNewScope(ct.ID, "conversation-qe2", "turn-qe2")
+	staleScope, err := a.issueToolNewScope(ct.ID, "conversation-qe2", "turn-qe2", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -680,7 +680,7 @@ func TestIssueToolAnswerAfterProductCancelIsRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	attachIssueToolTestExecution(issue)
-	scope, _ := a.issueToolNewScope(ct.ID, "conversation-cancel", "turn-cancel")
+	scope, _ := a.issueToolNewScope(ct.ID, "conversation-cancel", "turn-cancel", false)
 	activateIssueToolTestScope(t, a, scope)
 	wait, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *scope, issueToolActionWait, map[string]any{
 		"issue_id": issue.ID, "expected_revision": issue.RequirementsRevision, "text": "need answer",
@@ -708,7 +708,7 @@ func TestIssueToolAnsweredQuestionMissingSupplementIsUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	attachIssueToolTestExecution(issue)
-	scope, _ := a.issueToolNewScope(ct.ID, "conversation-missing", "turn-missing")
+	scope, _ := a.issueToolNewScope(ct.ID, "conversation-missing", "turn-missing", false)
 	activateIssueToolTestScope(t, a, scope)
 	wait, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *scope, issueToolActionWait, map[string]any{
 		"issue_id": issue.ID, "expected_revision": issue.RequirementsRevision, "text": "question",
@@ -719,7 +719,7 @@ func TestIssueToolAnsweredQuestionMissingSupplementIsUnknown(t *testing.T) {
 	question := issue.openQuestion()
 	question.State = issueQuestionAnswered
 	question.AnswerSupplementID = "supplement-missing"
-	newScope, _ := a.issueToolNewScope(ct.ID, "conversation-missing2", "turn-missing2")
+	newScope, _ := a.issueToolNewScope(ct.ID, "conversation-missing2", "turn-missing2", false)
 	activateIssueToolTestScope(t, a, newScope)
 	answer, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *newScope, issueToolActionAddSupplement, map[string]any{
 		"issue_id": issue.ID, "text": "answer", "question_ref": question.Ref,
@@ -738,7 +738,7 @@ func TestIssueToolWaitSupersedesChangedQuestionAndRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	attachIssueToolTestExecution(issue)
-	scope, _ := a.issueToolNewScope(ct.ID, "conversation-sup", "turn-sup")
+	scope, _ := a.issueToolNewScope(ct.ID, "conversation-sup", "turn-sup", false)
 	activateIssueToolTestScope(t, a, scope)
 	wait := func(scope *IssueToolScope, text string, revision int) {
 		t.Helper()
@@ -751,7 +751,7 @@ func TestIssueToolWaitSupersedesChangedQuestionAndRevision(t *testing.T) {
 	}
 	wait(scope, "first question", issue.RequirementsRevision)
 	firstRef := issue.openQuestion().Ref
-	secondScope, _ := a.issueToolNewScope(ct.ID, "conversation-sup2", "turn-sup2")
+	secondScope, _ := a.issueToolNewScope(ct.ID, "conversation-sup2", "turn-sup2", false)
 	activateIssueToolTestScope(t, a, secondScope)
 	wait(secondScope, "corrected question", issue.RequirementsRevision)
 	if len(issue.Questions) != 2 || issue.Questions[0].Ref != firstRef || issue.Questions[0].State != issueQuestionSuperseded ||
@@ -762,7 +762,7 @@ func TestIssueToolWaitSupersedesChangedQuestionAndRevision(t *testing.T) {
 	if !a.editIssueFor(ct, issue.ID, issue.Goal, "second requirement") {
 		t.Fatalf("edit requirements: %s", a.issueFormError)
 	}
-	thirdScope, _ := a.issueToolNewScope(ct.ID, "conversation-sup3", "turn-sup3")
+	thirdScope, _ := a.issueToolNewScope(ct.ID, "conversation-sup3", "turn-sup3", false)
 	activateIssueToolTestScope(t, a, thirdScope)
 	wait(thirdScope, "new revision question", issue.RequirementsRevision)
 	if len(issue.Questions) != 3 || issue.questionByRef(secondRef).State != issueQuestionSuperseded {
@@ -785,7 +785,7 @@ func TestIssueToolResumeWithoutStructuredQuestionStillWorks(t *testing.T) {
 	if !a.markIssueWaitingFor(ct, issue.ID) || issue.Status != issueStatusWaitingUser || issue.openQuestion() != nil {
 		t.Fatalf("manual wait state = status=%q question=%+v", issue.Status, issue.openQuestion())
 	}
-	scope, _ := a.issueToolNewScope(ct.ID, "conversation-manual", "turn-manual")
+	scope, _ := a.issueToolNewScope(ct.ID, "conversation-manual", "turn-manual", false)
 	activateIssueToolTestScope(t, a, scope)
 	resume, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *scope, issueToolActionResume, map[string]any{"issue_id": issue.ID})})
 	if err != nil || resume.IsError || issue.Status != issueStatusInProgress {
@@ -801,7 +801,7 @@ func TestIssueToolReplacementQuestionSaveFailureKeepsOriginalOpen(t *testing.T) 
 		t.Fatal(err)
 	}
 	attachIssueToolTestExecution(issue)
-	scope, _ := a.issueToolNewScope(ct.ID, "conversation-atomic-q", "turn-atomic-q")
+	scope, _ := a.issueToolNewScope(ct.ID, "conversation-atomic-q", "turn-atomic-q", false)
 	activateIssueToolTestScope(t, a, scope)
 	wait, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *scope, issueToolActionWait, map[string]any{
 		"issue_id": issue.ID, "expected_revision": issue.RequirementsRevision, "text": "original question",
@@ -863,7 +863,7 @@ func TestIssueToolWaitBeforeTaskBindingUsesScopeThenRealTask(t *testing.T) {
 	ct.SessionID = "conversation-pre-bind"
 	ct.SendState = sendSubmitting
 	ct.pendingSend = &pendingSend{}
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-pre-bind", "turn-pre-bind")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-pre-bind", "turn-pre-bind", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -902,7 +902,7 @@ func TestIssueToolWaitBeforeTaskBindingUsesScopeThenRealTask(t *testing.T) {
 func TestIssueToolInternalScopeIsFilteredFromUserHistoryOnlyAtTail(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "history-session", "history-turn")
+	scope, err := a.issueToolNewScope(ct.ID, "history-session", "history-turn", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -937,11 +937,15 @@ func TestIssueToolInternalScopeIsFilteredFromUserHistoryOnlyAtTail(t *testing.T)
 func TestIssueToolRoleGuidanceFilteredOnlyBesideVerifiedTailScope(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "history-session", "history-turn")
+	appScope, err := a.issueToolNewScope(ct.ID, "history-session", "history-turn", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := a.issueToolNewScope(ct.ID, "other-session", "other-turn")
+	oldScope, err := a.issueToolNewScope(ct.ID, "history-session", "history-old-turn", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := a.issueToolNewScope(ct.ID, "other-session", "other-turn", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -949,7 +953,9 @@ func TestIssueToolRoleGuidanceFilteredOnlyBesideVerifiedTailScope(t *testing.T) 
 	guidance := taskContextItem{Name: issueToolRoleGuidanceContextName, Text: issueToolConversationGuidance, Revision: 1}
 	workGuidance := taskContextItem{Name: issueToolRoleGuidanceContextName, Text: issueToolWorkGuidance, Revision: 1}
 	different := taskContextItem{Name: issueToolRoleGuidanceContextName, Text: "same name, different text", Revision: 1}
-	scopeItem := taskContextItem{Name: issueToolScopeContextName, Text: scope.Ref, Revision: 1}
+	nonCurrent := taskContextItem{Name: issueToolRoleGuidanceContextName, Text: "app provenance, non-current body", Revision: 1}
+	appScopeItem := taskContextItem{Name: issueToolScopeContextName, Text: appScope.Ref, Revision: 1}
+	oldScopeItem := taskContextItem{Name: issueToolScopeContextName, Text: oldScope.Ref, Revision: 1}
 	unknown := taskContextItem{Name: issueToolScopeContextName, Text: "scope-unknown", Revision: 1}
 	otherSession := taskContextItem{Name: issueToolScopeContextName, Text: other.Ref, Revision: 1}
 	cases := []struct {
@@ -957,11 +963,13 @@ func TestIssueToolRoleGuidanceFilteredOnlyBesideVerifiedTailScope(t *testing.T) 
 		items []taskContextItem
 		want  []taskContextItem
 	}{
-		{"conversation guidance beside scope", []taskContextItem{user, guidance, scopeItem}, []taskContextItem{user}},
-		{"work guidance beside scope", []taskContextItem{user, workGuidance, scopeItem}, []taskContextItem{user}},
-		{"same name different text", []taskContextItem{user, different, scopeItem}, []taskContextItem{user, different}},
-		{"earlier guidance", []taskContextItem{guidance, user, scopeItem}, []taskContextItem{guidance, user}},
-		{"two guidance removes at most one", []taskContextItem{user, guidance, guidance, scopeItem}, []taskContextItem{user, guidance}},
+		{"conversation guidance beside app scope", []taskContextItem{user, guidance, appScopeItem}, []taskContextItem{user}},
+		{"work guidance beside app scope", []taskContextItem{user, workGuidance, appScopeItem}, []taskContextItem{user}},
+		{"app scope hides non-current body", []taskContextItem{user, nonCurrent, appScopeItem}, []taskContextItem{user}},
+		{"old scope keeps app-shaped user material", []taskContextItem{user, guidance, oldScopeItem}, []taskContextItem{user, guidance}},
+		{"same name different text", []taskContextItem{user, different, oldScopeItem}, []taskContextItem{user, different}},
+		{"earlier guidance", []taskContextItem{guidance, user, oldScopeItem}, []taskContextItem{guidance, user}},
+		{"two guidance removes at most one", []taskContextItem{user, guidance, guidance, appScopeItem}, []taskContextItem{user, guidance}},
 		{"unknown scope", []taskContextItem{user, guidance, unknown}, []taskContextItem{user, guidance, unknown}},
 		{"other session scope", []taskContextItem{user, guidance, otherSession}, []taskContextItem{user, guidance, otherSession}},
 	}
@@ -982,7 +990,7 @@ func TestIssueToolRoleGuidanceFilteredOnlyBesideVerifiedTailScope(t *testing.T) 
 func TestIssueToolScopeWireIsOpaqueToken(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "token-session", "token-turn")
+	scope, err := a.issueToolNewScope(ct.ID, "token-session", "token-turn", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1009,7 +1017,7 @@ func TestIssueToolScopeWireIsOpaqueToken(t *testing.T) {
 func TestIssueToolLegacyJSONScopeIsRejected(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "legacy-json-session", "legacy-json-turn")
+	scope, err := a.issueToolNewScope(ct.ID, "legacy-json-session", "legacy-json-turn", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1063,7 +1071,7 @@ func TestIssueToolAnswerBeforeWorkTerminalWaitsForRealTerminal(t *testing.T) {
 	issue.Supplements = newIssueSupplementLedger()
 	issue.Supplements.AutoContinue = false
 	ct.SessionID = "conversation-answer"
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-answer", "answer-turn")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-answer", "answer-turn", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1105,7 +1113,7 @@ func TestIssueToolWorkWaitBeforeAcceptLatchesRealTask(t *testing.T) {
 	issue.Work.SendState = sendSubmitting
 	execution := &issueExecution{ID: "execution-preaccept", SessionID: "work-preaccept", Status: issueExecutionPending}
 	issue.Executions = []*issueExecution{execution}
-	scope, err := a.issueToolNewWorkScope(ct.ID, issue.ID, execution.ID, issue.WorkSessionID)
+	scope, err := a.issueToolNewWorkScope(ct.ID, issue.ID, execution.ID, issue.WorkSessionID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1142,7 +1150,7 @@ func TestIssueToolWorkScopeRejectsConversationAndActionTools(t *testing.T) {
 	issue.Executions = []*issueExecution{execution}
 	issue.Work.ActiveTaskID = execution.TaskID
 	issue.Work.SendState = sendAccepted
-	scope, _ := a.issueToolNewWorkScope(ct.ID, issue.ID, execution.ID, issue.WorkSessionID)
+	scope, _ := a.issueToolNewWorkScope(ct.ID, issue.ID, execution.ID, issue.WorkSessionID, false)
 	scope.RuntimeTaskID = execution.TaskID
 	a.issueToolScopes[scope.Ref] = *scope
 	response, err := a.handleIssueToolForward(context.Background(), issueToolForwardRequest{Tool: "issue_action", Arguments: issueToolActionArgs(t, *scope, issueToolActionRun, map[string]any{"issue_id": issue.ID})})
@@ -1209,7 +1217,7 @@ func TestIssueToolQueryResponsesRespectByteBudgetAndUTF8(t *testing.T) {
 		})
 	}
 	issue.RequirementsRevision = 9
-	scope, err := a.issueToolNewScope(ct.ID, "query-budget-session", "query-budget-turn")
+	scope, err := a.issueToolNewScope(ct.ID, "query-budget-session", "query-budget-turn", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1311,7 +1319,7 @@ func TestIssueToolRevisionValidationIsActionableAndSideEffectFree(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-revision", "turn-revision")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-revision", "turn-revision", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1381,7 +1389,7 @@ func TestIssueToolRevisionValidationIsActionableAndSideEffectFree(t *testing.T) 
 func TestIssueToolCreateThenUnstartedWaitAndAnswerStayExplicit(t *testing.T) {
 	a, store := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "conversation-unstarted", "turn-unstarted")
+	scope, err := a.issueToolNewScope(ct.ID, "conversation-unstarted", "turn-unstarted", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1437,7 +1445,7 @@ func TestIssueToolCreateThenUnstartedWaitAndAnswerStayExplicit(t *testing.T) {
 	if err != nil || duplicateWait.IsError || len(issue.Questions) != 1 {
 		t.Fatalf("duplicate not-started wait = %+v err=%v questions=%d", duplicateWait, err, len(issue.Questions))
 	}
-	staleScope, err := a.issueToolNewScope(ct.ID, "conversation-unstarted-stale", "turn-unstarted-stale")
+	staleScope, err := a.issueToolNewScope(ct.ID, "conversation-unstarted-stale", "turn-unstarted-stale", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1462,7 +1470,7 @@ func TestIssueToolCreateThenUnstartedWaitAndAnswerStayExplicit(t *testing.T) {
 	if err != nil || duplicateAnswer.IsError || issue.Supplements.pendingCount() != 1 {
 		t.Fatalf("duplicate not-started answer = %+v err=%v pending=%d", duplicateAnswer, err, issue.Supplements.pendingCount())
 	}
-	updateScope, err := a.issueToolNewScope(ct.ID, "conversation-unstarted-update", "turn-unstarted-update")
+	updateScope, err := a.issueToolNewScope(ct.ID, "conversation-unstarted-update", "turn-unstarted-update", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1481,7 +1489,7 @@ func TestIssueToolCreateThenUnstartedWaitAndAnswerStayExplicit(t *testing.T) {
 	if updateReceipt.RequirementsRevision == nil || *updateReceipt.RequirementsRevision <= currentRevision || issue.RequirementsRevision != *updateReceipt.RequirementsRevision || issue.Goal != "updated after answer" {
 		t.Fatalf("update receipt/state = receipt=%+v issue=%+v", updateReceipt, issue)
 	}
-	staleUpdateScope, err := a.issueToolNewScope(ct.ID, "conversation-unstarted-stale-update", "turn-unstarted-stale-update")
+	staleUpdateScope, err := a.issueToolNewScope(ct.ID, "conversation-unstarted-stale-update", "turn-unstarted-stale-update", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1500,7 +1508,7 @@ func TestIssueToolCreateThenUnstartedWaitAndAnswerStayExplicit(t *testing.T) {
 		issue.Goal != "updated after answer" || len(issue.Questions) != 1 || len(issue.Executions) != 0 || issue.Supplements.pendingCount() != 1 {
 		t.Fatalf("stale update error/state = err=%+v issue=%+v", staleUpdateErr, issue)
 	}
-	staleWaitScope, err := a.issueToolNewScope(ct.ID, "conversation-unstarted-stale-wait", "turn-unstarted-stale-wait")
+	staleWaitScope, err := a.issueToolNewScope(ct.ID, "conversation-unstarted-stale-wait", "turn-unstarted-stale-wait", false)
 	if err != nil {
 		t.Fatal(err)
 	}

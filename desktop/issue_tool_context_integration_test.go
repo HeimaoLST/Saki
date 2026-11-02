@@ -438,7 +438,7 @@ func TestIssueToolCreateContextIsTurnScopedAndRestartSafe(t *testing.T) {
 func TestIssueToolCreateContextPreacceptAndRejectBoundary(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "session-context-boundary", "turn-context-boundary")
+	scope, err := a.issueToolNewScope(ct.ID, "session-context-boundary", "turn-context-boundary", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +471,7 @@ func TestIssueToolCreateContextPreacceptAndRejectBoundary(t *testing.T) {
 func TestIssueToolCreateContextPersistsOnceAndDoesNotDispatch(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "session-duplicate-context", "turn-duplicate-context")
+	scope, err := a.issueToolNewScope(ct.ID, "session-duplicate-context", "turn-duplicate-context", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,7 +500,7 @@ func TestIssueToolCreateContextPersistsOnceAndDoesNotDispatch(t *testing.T) {
 func TestIssueToolSupplementAndAnswerCarryTurnContext(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "session-supplement-context", "turn-supplement-context")
+	scope, err := a.issueToolNewScope(ct.ID, "session-supplement-context", "turn-supplement-context", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +534,7 @@ func TestIssueToolSupplementAndAnswerCarryTurnContext(t *testing.T) {
 	}
 	// A later turn carrying the same captured item must reuse the existing
 	// context ID/revision rather than append it again.
-	scope2, err := a.issueToolNewScope(ct.ID, "session-supplement-context", "turn-supplement-context-2")
+	scope2, err := a.issueToolNewScope(ct.ID, "session-supplement-context", "turn-supplement-context-2", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +554,7 @@ func TestIssueToolSupplementAndAnswerCarryTurnContext(t *testing.T) {
 	question := &issueQuestion{Ref: "question-context-test", Text: "which material?", RequirementsRevision: issue.RequirementsRevision, State: issueQuestionOpen}
 	issue.Questions = append(issue.Questions, question)
 	itemD := taskContextItem{ID: "material-D", Name: "answer-material", Text: "answer attachment", Revision: 1}
-	scope3, err := a.issueToolNewScope(ct.ID, "session-supplement-context", "turn-supplement-context-3")
+	scope3, err := a.issueToolNewScope(ct.ID, "session-supplement-context", "turn-supplement-context-3", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +581,7 @@ func TestIssueToolSupplementAndAnswerCarryTurnContext(t *testing.T) {
 func TestIssueToolSupplementAndAnswerSaveFailureRestoreContext(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()
-	scope, err := a.issueToolNewScope(ct.ID, "session-save-failure", "turn-save-failure")
+	scope, err := a.issueToolNewScope(ct.ID, "session-save-failure", "turn-save-failure", false)
 	if err != nil {
 		t.Fatal(err)
 	}

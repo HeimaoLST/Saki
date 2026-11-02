@@ -463,6 +463,7 @@ func TestIssueToolWorkRefreshUsesSameTypedMarker(t *testing.T) {
 type issueToolNativeBodyProvider struct {
 	mu     sync.Mutex
 	bodies []string
+	plain  bool
 }
 
 func (p *issueToolNativeBodyProvider) handler(w http.ResponseWriter, r *http.Request) {
@@ -471,6 +472,10 @@ func (p *issueToolNativeBodyProvider) handler(w http.ResponseWriter, r *http.Req
 	p.bodies = append(p.bodies, string(body))
 	p.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
+	if p.plain {
+		_, _ = w.Write([]byte(`{"id":"response","status":"completed","output":[{"type":"message","id":"answer","status":"completed","role":"assistant","content":[{"type":"output_text","text":"plain fixture answer"}]}]}`))
+		return
+	}
 	_, _ = w.Write([]byte(`{"id":"response","status":"completed","output":[{"type":"reasoning","id":"reasoning","status":"completed","content":[{"type":"reasoning_text","text":"opaque"}],"encrypted_content":"opaque-native"},{"type":"message","id":"answer","status":"completed","role":"assistant","content":[{"type":"output_text","text":"native fixture answer"}]}]}`))
 }
 
@@ -609,6 +614,93 @@ func TestAddWorkflowGuidancePreservesProfileContainingCurrentRole(t *testing.T) 
 	}
 }
 
+func TestIssueToolUserRoleGuidanceMaterialSurvivesNonNativeHistory(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	provider := &issueToolNativeBodyProvider{plain: true}
+	h := startIssueToolTestHarness(t, binary, http.HandlerFunc(provider.handler))
+	var material taskContextItem
+	var snapshotBefore []taskContextItem
+	var draft string
+	var sendErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		item, err := ct.Context.AddSnippet(issueToolRoleGuidanceContextName, issueToolConversationGuidance)
+		if err != nil {
+			sendErr = err.Error()
+			return
+		}
+		material = item
+		snapshotBefore = ct.Context.snapshot()
+		draft = "non-native same-form user material"
+		ct.Draft = draft
+		if !h.app.sendCurrent() {
+			sendErr = ct.SendError
+		}
+	})
+	if sendErr != "" {
+		t.Fatal(sendErr)
+	}
+	h.pump.waitTimeout(func() bool {
+		ct := h.app.selectedContact()
+		return ct.SendState == sendIdle && ct.ActiveTaskID == "" && ct.LastTaskID != ""
+	}, 15*time.Second)
+	var sessionID string
+	var index map[string]issueToolScopeIdentity
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		sessionID = ct.SessionID
+		index = h.app.issueToolScopeIndexSnapshot()
+	})
+	if sessionID == "" || len(snapshotBefore) != 1 || snapshotBefore[0].ID != material.ID || snapshotBefore[0].Name != issueToolRoleGuidanceContextName || snapshotBefore[0].Text != issueToolConversationGuidance {
+		t.Fatalf("saved user material changed before send: session=%q snapshot=%+v", sessionID, snapshotBefore)
+	}
+	body := provider.body(0)
+	var bodyGuidance int
+	for _, context := range issueToolCurrentUserCallerContexts(t, body) {
+		if context.Name == issueToolRoleGuidanceContextName && context.Text == issueToolConversationGuidance {
+			bodyGuidance++
+		}
+	}
+	if bodyGuidance != 1 {
+		t.Fatalf("actual non-native task user material count=%d body=%s", bodyGuidance, body)
+	}
+	raw, err := h.app.rt.historyPage(sessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rawGuidance int
+	for _, context := range taskContextHistoryCallerContexts(t, raw) {
+		if context.Name == issueToolRoleGuidanceContextName && context.Text == issueToolConversationGuidance {
+			rawGuidance++
+		}
+	}
+	if rawGuidance != 1 {
+		t.Fatalf("raw history user material count=%d", rawGuidance)
+	}
+	projection := parseHistoryWithIssueToolScopeFilter(sessionID, raw.Records, nil, index)
+	var projected *message
+	for _, message := range projection.messages {
+		if message.Text == draft {
+			projected = message
+			break
+		}
+	}
+	if projected == nil {
+		t.Fatalf("projected user message missing: %+v", projection.messages)
+	}
+	var projectedGuidance int
+	for _, context := range projected.Context {
+		if context.Name == issueToolRoleGuidanceContextName && context.Text == issueToolConversationGuidance {
+			projectedGuidance++
+		}
+	}
+	if projectedGuidance != 1 {
+		t.Fatalf("user material hidden by projection: contexts=%+v", projected.Context)
+	}
+}
+
 func TestIssueToolNativeConversationUsesOneCurrentRoleGuidanceContext(t *testing.T) {
 	binary := requireRuntimeBinary(t)
 	helper := ensureIssueToolTestHelper(t)
@@ -698,32 +790,48 @@ func TestIssueToolNativeConversationUsesOneCurrentRoleGuidanceContext(t *testing
 	if err != nil || !reflect.DeepEqual(configBefore, configAfterEnsure) {
 		t.Fatalf("native ensure changed config: err=%v before=%+v after=%+v", err, configBefore, configAfterEnsure)
 	}
-	checkCurrentGuidance := func(body string) {
+	checkCurrentGuidance := func(body string, want int) {
 		t.Helper()
 		if got := issueToolNativeRequestSystem(t, body); got != oldPrompt {
 			t.Fatalf("native task system prompt = %q", got)
 		}
 		var guidanceCount int
-		var guidance string
 		for _, context := range issueToolCurrentUserCallerContexts(t, body) {
-			if context.Name != issueToolRoleGuidanceContextName {
+			if context.Name != issueToolRoleGuidanceContextName || context.Text != issueToolConversationGuidance {
 				continue
 			}
 			guidanceCount++
-			guidance = context.Text
 		}
-		if guidanceCount != 1 || guidance != issueToolConversationGuidance {
-			t.Fatalf("native current task guidance contexts=%d text=%q", guidanceCount, guidance)
+		if guidanceCount != want {
+			t.Fatalf("native current task guidance contexts=%d, want %d", guidanceCount, want)
 		}
 	}
+	var firstMaterial taskContextItem
+	var firstSnapshot []taskContextItem
+	firstDraft := "native first task"
 	var sendOK bool
 	var sendErr string
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
-		ct.Draft = "native first task"
+		item, err := ct.Context.AddSnippet(issueToolRoleGuidanceContextName, issueToolConversationGuidance)
+		if err != nil {
+			setupErr = err
+			return
+		}
+		firstMaterial = item
+		firstSnapshot = ct.Context.snapshot()
+		ct.Draft = firstDraft
 		sendOK = h.app.sendCurrent()
 		sendErr = ct.SendError
 	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	if len(firstSnapshot) != 1 || firstSnapshot[0].ID != firstMaterial.ID ||
+		firstSnapshot[0].Name != issueToolRoleGuidanceContextName ||
+		firstSnapshot[0].Text != issueToolConversationGuidance {
+		t.Fatalf("native user material snapshot changed: %+v", firstSnapshot)
+	}
 	if !sendOK {
 		t.Fatalf("native first task rejected: %q", sendErr)
 	}
@@ -732,7 +840,11 @@ func TestIssueToolNativeConversationUsesOneCurrentRoleGuidanceContext(t *testing
 		return ct.SendState == sendIdle && ct.ActiveTaskID == "" && ct.LastTaskID != seedTask
 	}, 15*time.Second)
 	var firstTask string
-	h.pump.do(func() { firstTask = h.app.selectedContact().LastTaskID })
+	var firstIndex map[string]issueToolScopeIdentity
+	h.pump.do(func() {
+		firstTask = h.app.selectedContact().LastTaskID
+		firstIndex = h.app.issueToolScopeIndexSnapshot()
+	})
 	configAfterFirst, err := rt.connectionConfig(sessionID)
 	if err != nil {
 		t.Fatal(err)
@@ -750,7 +862,20 @@ func TestIssueToolNativeConversationUsesOneCurrentRoleGuidanceContext(t *testing
 	if provider.count() != 2 {
 		t.Fatalf("native first task requests=%d, want one seed + one task", provider.count())
 	}
-	checkCurrentGuidance(provider.body(1))
+	checkCurrentGuidance(provider.body(1), 2)
+	firstProjection := parseHistoryWithIssueToolScopeFilter(sessionID, historyAfterFirst.Records, nil, firstIndex)
+	var firstProjected *message
+	for _, message := range firstProjection.messages {
+		if message.Text == firstDraft {
+			firstProjected = message
+			break
+		}
+	}
+	if firstProjected == nil || len(firstProjected.Context) != 1 ||
+		firstProjected.Context[0].Name != issueToolRoleGuidanceContextName ||
+		firstProjected.Context[0].Text != issueToolConversationGuidance {
+		t.Fatalf("native user material projection = %+v", firstProjected)
+	}
 	beforeSecond, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false)
 	if err != nil || !beforeSecond.Ready || beforeSecond.TaskGuidance != issueToolConversationGuidance || provider.count() != 2 {
 		t.Fatalf("ensure before second task = %+v err=%v requests=%d", beforeSecond, err, provider.count())
@@ -759,9 +884,10 @@ func TestIssueToolNativeConversationUsesOneCurrentRoleGuidanceContext(t *testing
 	if err != nil || !reflect.DeepEqual(configBefore, configBeforeSecond) {
 		t.Fatalf("ensure before second task changed config: err=%v before=%+v after=%+v", err, configBefore, configBeforeSecond)
 	}
+	secondDraft := "native second task"
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
-		ct.Draft = "native second task"
+		ct.Draft = secondDraft
 		sendOK = h.app.sendCurrent()
 		sendErr = ct.SendError
 	})
@@ -789,15 +915,33 @@ func TestIssueToolNativeConversationUsesOneCurrentRoleGuidanceContext(t *testing
 	if provider.count() != 3 {
 		t.Fatalf("native repeat requests=%d, want seed + two sends", provider.count())
 	}
-	checkCurrentGuidance(provider.body(2))
+	checkCurrentGuidance(provider.body(2), 1)
 	allGuidance := 0
 	for _, context := range taskContextUserCallerContexts(t, provider.body(2)) {
-		if context.Name == issueToolRoleGuidanceContextName {
+		if context.Name == issueToolRoleGuidanceContextName && context.Text == issueToolConversationGuidance {
 			allGuidance++
 		}
 	}
-	if allGuidance != 2 {
-		t.Fatalf("historical guidance retained=%d, want previous + current", allGuidance)
+	if allGuidance != 3 {
+		t.Fatalf("historical guidance retained=%d, want user + previous app + current app", allGuidance)
+	}
+	reloadedStore, err := openContactStore(h.app.store.path, h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloadedApp := &appModel{issueToolScopes: reloadedStore.issueToolScopes}
+	secondProjection := parseHistoryWithIssueToolScopeFilter(sessionID, historyAfterSecond.Records, nil, reloadedApp.issueToolScopeIndexSnapshot())
+	var firstAfterSecond *message
+	for _, message := range secondProjection.messages {
+		if message.Text == firstDraft {
+			firstAfterSecond = message
+			break
+		}
+	}
+	if firstAfterSecond == nil || len(firstAfterSecond.Context) != 1 ||
+		firstAfterSecond.Context[0].Name != issueToolRoleGuidanceContextName ||
+		firstAfterSecond.Context[0].Text != issueToolConversationGuidance {
+		t.Fatalf("native second projection lost user material: %+v", firstAfterSecond)
 	}
 }
 

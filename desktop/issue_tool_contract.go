@@ -66,6 +66,7 @@ type IssueToolScope struct {
 	RuntimeTaskID         string   `json:"runtime_task_id,omitempty"`
 	WorkIssueID           string   `json:"work_issue_id,omitempty"`
 	WorkExecutionID       string   `json:"work_execution_id,omitempty"`
+	RoleGuidanceAppended  bool     `json:"role_guidance_appended,omitempty"`
 	CreatedAt             int64    `json:"created_at"`
 }
 
