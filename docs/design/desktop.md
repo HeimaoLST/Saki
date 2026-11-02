@@ -1,6 +1,6 @@
 # Desktop contacts：首版运行时接入
 
-更新日期：2026-11-02。当前设置页面见文末 **#199 独立设置页面**。本文保留各阶段的实现与验证记录；产品定义、联系人／事项／会话语义和 MVP-01–MVP-12 以 [Nagi 产品定义与需求](../requirements/desktop.md) 为唯一权威；当前视觉与交互以 [Desktop workbench](desktop-workbench.md) 为唯一规范。连接配置见 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118，资料快照与递交见 **#117 资料快照、阅读与递交**，联系人编辑、归档及旧对话访问见 **#152 联系人管理与已保存对话**。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
+更新日期：2026-11-03。当前设置页面见文末 **#199 独立设置页面**。本文保留各阶段的实现与验证记录；产品定义、联系人／事项／会话语义和 MVP-01–MVP-12 以 [Nagi 产品定义与需求](../requirements/desktop.md) 为唯一权威；当前视觉与交互以 [Desktop workbench](desktop-workbench.md) 为唯一规范。连接配置见 **#116 首用配置**，会话模型选择见 **#115 会话模型选择**，阅读与独立工作会话分别见 #113/#118，资料快照与递交见 **#117 资料快照、阅读与递交**，联系人编辑、归档及旧对话访问见 **#152 联系人管理与已保存对话**。早期原生窗口证据只适用于其注明的包，不代表新候选已完成原生验收。原生 MyGo 应用通过 `Saki --stdio` 消费 Runtime；GUI 维护联系人、事项与历史展示，执行历史由 Runtime 提供，GUI 不解析 Rust journal。最终集成状态以对应 PR 与 dev 为准。
 
 早期浏览器示意保留在 Git 历史（[7145225 的 desktop-contacts.html](https://github.com/HeimaoLST/Saki/blob/7145225c47b9b29c8011edbaefc410d0d6d46b61/docs/design/previews/desktop-contacts.html)），不是当前原生应用的验收对象，也不在仓库维护第二套现行预览；仓库内 `desktop/` 是当前可运行的原生应用，当前视觉与交互以 [Desktop workbench](desktop-workbench.md) 为准。当前主题事实见 `desktop/theme.go` 的 `resolveWorkbenchTheme`（Paper/Moss；light/dark 语义角色）；#92 的 Moon/Dawn 和 #90 的 11px/12px 数值只保留为历史设计/实现记录，不再作为当前规范。此前将这些能力或颜色列为后续独立任务的说明已失效，不再作为当前实现或未来承诺；具体状态以对应任务段、PR 和 `dev` 为准。
 
@@ -776,6 +776,12 @@ type resolvedTheme struct {
 - **可操作错误**：缺失、null、零或负数的 revision 沿原验证路径返回 `invalid_action`，说明字段、合法值和来源；JSON 类型不合法或整数溢出仍保留原解码错误码 `invalid_arguments`，仅为 `expected_revision` 补充相同修正信息。其他参数的解析、scope 检查、正数旧版本的 `revision_mismatch/current_revision` 与幂等预留路径不变。参数拒绝发生在操作预留和业务写入之前。
 - **先提问再运行**：现有路径已允许刚创建且没有 execution 的事项 wait。使用真实回执 revision 保存 `waiting_user`、开放问题和 `question_ref`，可从 store 重新读回；回答沿原 add_supplement / question_ref 保存，并回到 `not_started`，不创建 execution、不自动继续，仍需用户明确 run。此为工具请求/回执与持久化边界的确定性验证，没有强行运行或伪造执行记录，也没有为本单改状态机。
 - **证据边界**：保留原笼统错误 RED；定向 race 覆盖 update / wait 非法 revision 的无写入拒绝、合法未运行事项问答、真实版本变更后的旧 revision 拒绝、重复调用及 scope。工具列表通过既有 MCP helper 测试读取，不以提示字符串检查替代业务断言。最终命令、SHA 与限制写入 #210；全包和最终产物交 #200 组合后统一验证。本单不再发真实模型请求，不宣称任意模型或本修复已通过线上、原生或完整 MVP 验收。
+
+### #154 2026-11-03 工作流指导校准与 native 兼容边界（实现事实，软策略）
+
+实现源：`aa044b643897844512ed36e11c01a5d0f3c580b5`。2026-11-03 的 guidance 校准把既有工作流规则写清为软提示：先核对目标 issue 的真实 goal、requirements 与已捕获材料；小修正、澄清或有限变更只沿同一 issue 的 supplement/answer 路径提交用户原文的准确增量，保留既有 requirements、identity 与 history，不把澄清当作完整重定义授权；真正的完整重定义仍可使用既有 update，不自动新建 issue。work guidance 要求修改已有文件前先读当前内容，优先最小 edit，只有新文件或确需整体替换才 write。已知应用旧 role 只做精确前缀替换，保留其后用户 profile/custom prompt 的原始字节，不再以“包含当前规则”判定升级完成。以上是模型提示，不是硬分类器或语义保证。
+
+旧 native 会话仅在 Runtime 明确返回 `continuation_not_supported`、其自带配置读回成功且完整 effective config（session/revision/system prompt/tools/aliases/connection 等）与更新前完全一致、目标工具已就绪、且唯一差异是可精确识别的已发布应用 role 时，才走兼容接续：保持原 system/profile/tool selection/session/connection/history 与旧 journal 前缀，不写 config 升级；仅在本次 task.send 的既有 named caller_context 中附加一份当前 role guidance，每 task 至多一份。该低层输入不是 system 配置升级，不承诺与 system 同优先级，不计入用户附件或补充 ledger；历史投影只在既有 verified scope 边界隐藏紧邻的这一份应用项。其它错误、schema refresh、缺工具、读回失败、混合 prompt 或真实工具/别名/连接变化仍按原路径拒绝。新会话和非 native 会话继续使用既有 system guidance 路径。B-r7 原始失败与真实模型改稿仍未复验，本段不改变该边界，也不表示完整 154 或 MVP 已通过。
 
 ## #182 可读事项工作台与恢复边界（实现事实，2026-10-27）
 
