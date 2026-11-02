@@ -522,12 +522,34 @@ func (a *appModel) contactBySession(sessionID string) *contact {
 	return nil
 }
 
-func (a *appModel) loadCapabilities(rt *runtimeClient, gen int) {
-	if rt == nil {
+// metadataLoadStarted/Finished keep admitted catalog reads visible to the
+// shutdown drain until their final UI callback has run.
+func (a *appModel) metadataLoadStarted() bool {
+	if a.shutdownStarted {
+		return false
+	}
+	a.metadataInFlight++
+	return true
+}
+
+func (a *appModel) metadataLoadFinished() {
+	a.metadataInFlight--
+	if a.shutdownStarted && !a.quitReady {
+		a.finishShutdown()
+	}
+}
+
+func (a *appModel) startCapabilitiesLoad(rt *runtimeClient, gen int) {
+	if rt == nil || !a.metadataLoadStarted() {
 		return
 	}
+	go a.loadCapabilities(rt, gen)
+}
+
+func (a *appModel) loadCapabilities(rt *runtimeClient, gen int) {
 	capabilities, err := rt.capabilities()
 	a.updateUI(func() {
+		defer a.metadataLoadFinished()
 		if gen != a.connectionGeneration || a.rt != rt {
 			return
 		}
@@ -549,11 +571,9 @@ func (a *appModel) loadCapabilities(rt *runtimeClient, gen int) {
 }
 
 func (a *appModel) loadBuiltinTools(rt *runtimeClient, gen int) {
-	if rt == nil {
-		return
-	}
 	catalog, err := rt.tools()
 	a.updateUI(func() {
+		defer a.metadataLoadFinished()
 		if gen != a.connectionGeneration || a.rt != rt || a.runtimeStatus != runtimeStateReady {
 			return
 		}
@@ -571,7 +591,7 @@ func (a *appModel) loadBuiltinTools(rt *runtimeClient, gen int) {
 }
 
 func (a *appModel) startBuiltinToolsLoad(rt *runtimeClient, gen int) {
-	if rt == nil || a.runtimeBuiltinToolsLoading {
+	if rt == nil || a.runtimeBuiltinToolsLoading || !a.metadataLoadStarted() {
 		return
 	}
 	a.runtimeBuiltinToolsLoading = true
@@ -584,12 +604,7 @@ func (a *appModel) retryBuiltinTools() {
 		a.runtimeBuiltinToolsErr = "Built-in tools are available after Runtime is ready."
 		return
 	}
-	if a.runtimeBuiltinToolsLoading {
-		return
-	}
-	a.runtimeBuiltinToolsLoading = true
-	a.runtimeBuiltinToolsErr = ""
-	go a.loadBuiltinTools(a.rt, a.connectionGeneration)
+	a.startBuiltinToolsLoad(a.rt, a.connectionGeneration)
 }
 
 func (a *appModel) capacityKnown() bool {
@@ -602,7 +617,7 @@ func (a *appModel) retryCapabilities() {
 	}
 	rt, gen := a.rt, a.connectionGeneration
 	a.runtimeCapabilitiesErr = ""
-	go a.loadCapabilities(rt, gen)
+	a.startCapabilitiesLoad(rt, gen)
 }
 
 func (a *appModel) maxActiveTasks() int {

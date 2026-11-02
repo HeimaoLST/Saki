@@ -203,6 +203,7 @@ type appModel struct {
 	contactHistoryInFlight   int
 	resultInFlight           int
 	submissionInFlight       int
+	metadataInFlight         int
 
 	appearanceMode   string
 	appearanceChoice string

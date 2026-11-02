@@ -41,6 +41,7 @@
 - `task_finished` 是唯一终态；`failed/interrupted` 的已保存原因在历史刷新后仍可见。取消按 `(session,task)`，迟到 cancel 不会改写已完成或别的 task。
 - 断连/协议失败标记为未知；`sendUnknown` 只有在同一连接、`session.load/status` 确认 idle 且 history 取回后才恢复可发送状态。连接已退出时不提供“Reload”假恢复，明确提示重启应用；不做透明重连框架。
 - 退出（关窗与 Cmd+Q）先阻止默认关闭，持久化草稿，异步 `runtime.shutdown` 等待已接纳任务收尾和进程 Wait，再退出；退出前的 issue／conversation submit owner 完成最终 accept/reject/unknown UI 回调（含必要保存）后才开始 drain；不阻塞 UI 线程、不静默 Kill。
+- 元数据加载退出（#269，2026-11-02）：`runtime.capabilities` 与 `runtime.tools` 的已准入读取计入同一个 UI-owned `metadataInFlight`；准入在 UI 线程启动前写入，成功、错误或 stale-generation 的最终 UI 回调都必须归还计数后才允许 `finishShutdown` 启动 Runtime drain；`beginShutdown` 后两个 loader 均不再准入。该等待不依赖尚未发起的 Runtime shutdown RPC，避免新增关闭环。确定性 RED 在真实 Rust 读取已返回但最终 UI 回调被持有时复现旧路径提前 drain；修复后同一 barrier 通过，且原失败 `TestConnectionGUISaveFailureAndUnknownExecutionRecovery` 与容量/目录重试回归定向 `-race` 通过。此事实不宣称 #193/#259 旧退出超时或 #267 原生刷新已修复。
 
 ## 布局打磨（#90，历史证据；已被顶部当前规范替代）
 
