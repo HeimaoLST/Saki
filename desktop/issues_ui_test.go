@@ -291,8 +291,11 @@ func TestCapacityRetryButtonRecoversThroughRuntimeClient(t *testing.T) {
 		}
 	}
 
-	a.loadCapabilities(runtime.client, a.connectionGeneration)
+	a.startCapabilitiesLoad(runtime.client, a.connectionGeneration)
 	consumeCallback("initial capability failure")
+	if a.metadataInFlight != 0 {
+		t.Fatalf("capability error callback left metadata in flight: %d", a.metadataInFlight)
+	}
 	awaitStderr("runtime.capabilities:1:error")
 	if a.runtimeCapabilitiesLoaded || !strings.Contains(a.runtimeCapabilitiesErr, "Runtime capacity is not loaded") {
 		t.Fatalf("initial failure state = loaded=%v err=%q", a.runtimeCapabilitiesLoaded, a.runtimeCapabilitiesErr)
@@ -311,6 +314,9 @@ func TestCapacityRetryButtonRecoversThroughRuntimeClient(t *testing.T) {
 	}
 
 	consumeCallback("retry success")
+	if a.metadataInFlight != 0 {
+		t.Fatalf("capability success callback left metadata in flight: %d", a.metadataInFlight)
+	}
 	awaitStderr("runtime.capabilities:2:ok")
 	if !a.runtimeCapabilitiesLoaded || a.runtimeCapabilitiesErr != "" || a.runtimeMaxActiveTasks != 3 {
 		t.Fatalf("retry state = loaded=%v err=%q max=%d", a.runtimeCapabilitiesLoaded, a.runtimeCapabilitiesErr, a.runtimeMaxActiveTasks)
