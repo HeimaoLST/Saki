@@ -30,7 +30,12 @@ func TestConnectionSettingsRequireExplicitSaveAndTest(t *testing.T) {
 			}
 			s.Error = "Cannot save configuration. Your changes are still here."
 		},
-		Test: func(connectionConfig) { tested++ }, Apply: func() { applied++ },
+		Test: func(candidate connectionConfig) {
+			tested++
+			if candidate.Model != "changed-model" {
+				t.Fatal("test did not use the current edited draft")
+			}
+		}, Apply: func() { applied++ },
 	}, 580, 1600)
 	tr.Frame()
 	if saved != 0 || tested != 0 || applied != 0 {
@@ -75,8 +80,8 @@ func TestConnectionSettingsValidationKeepsDraftAndFocus(t *testing.T) {
 	}
 	tr.Frame()
 	tr.Frame()
-	if calls != 0 || s.Draft.ContextTokens != "not-a-number" || s.Errors["APIKey"] == "" || s.Errors["ContextTokens"] == "" {
-		t.Fatal("invalid form must retain every edit and report field errors without saving")
+	if calls != 0 || s.Draft.ContextTokens != "not-a-number" || s.Errors["APIKey"] == "" || s.Errors["ContextTokens"] == "" || !s.LimitsOpen {
+		t.Fatal("invalid form must retain every edit, open capacity for its error, and report field errors without saving")
 	}
 	tr.Type("replacement-key")
 	tr.Frame()

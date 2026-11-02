@@ -242,11 +242,19 @@ func (a *appModel) settingsSidebar(c *ui.Context, t *ui.Theme, narrow bool) {
 		column.FillHeight().Width(width)
 	}
 	column.Children(func() {
-		back := secondaryButton(c, "← Back to workbench").OnClick(func() { a.closeSettings() })
-		if a.settingsFocusBack {
-			back.Focus()
-			a.settingsFocusBack = false
-		}
+		ui.Toolbar(c, func() {
+			back := ui.Button(c, "").Label("← Back to workbench").
+				MinHeight(32).Height(32).Padding(4, 8).Gap(6)
+			back.Children(func() {
+				ui.Icon(c, navBackIcon).Width(16).Height(16).TextColor(t.TextMuted)
+				ui.Text(c, "Back").FontSize(typeAction).TextColor(t.Text)
+			})
+			back.OnClick(func() { a.closeSettings() })
+			if a.settingsFocusBack {
+				back.Focus()
+				a.settingsFocusBack = false
+			}
+		}).Label("Settings navigation").AlignSelf(ui.Start).Padding(0)
 		ui.Text(c, "Settings").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 		nav := func(label, tab string) {
 			selected := a.settingsTab == tab
@@ -317,38 +325,18 @@ func (a *appModel) settingsMain(c *ui.Context, t *ui.Theme, narrow bool) {
 
 func (a *appModel) settingsAppearanceContent(c *ui.Context, t *ui.Theme) {
 	ui.Text(c, "Appearance").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
-	ui.Text(c, "Changes apply immediately.").FontSize(typeBody).LineHeight(1.5).TextColor(t.TextMuted)
-	a.appearanceChoice = appearanceModeLabel(a.appearanceMode)
-	ui.Row(c).Gap(8).AlignItems(ui.Stretch).Children(func() {
-		for _, mode := range []struct{ label, value string }{
-			{"System", appearanceSystem}, {"Light", appearanceLight}, {"Dark", appearanceDark},
-		} {
-			mode := mode
-			button := ui.ButtonBase(c).Label(mode.label).Grow(1).MinWidth(120).Padding(8).Radius(t.Radius).AlignSelf(ui.Stretch).
-				Background(t.SurfaceHover).BorderWidth(1).BorderColor(t.Border)
-			if normalizeAppearanceMode(a.appearanceMode) == mode.value {
-				button.BorderColor(t.Accent).BorderWidth(2)
-			}
-			if button.Pressed() {
-				button.Background(t.SurfacePressed)
-			} else if button.Hovered() {
-				button.Background(t.SurfaceHover)
-			}
-			button.OnClick(func() { a.setAppearanceMode(mode.value) })
-			button.Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-					ui.Text(c, mode.label).FontSize(typeAction).FontWeight(500).TextColor(t.Text)
-					if mode.value == appearanceSystem {
-						system := "Light"
-						if a.systemDark {
-							system = "Dark"
-						}
-						ui.Text(c, system).FontSize(typeMeta).TextColor(t.TextMuted)
-					}
-				})
-			})
-		}
-	})
+	ui.Text(c, "Changes apply immediately.").FontSize(typeMeta).LineHeight(1.5).TextColor(t.TextMuted)
+	selected := 0
+	switch normalizeAppearanceMode(a.appearanceMode) {
+	case appearanceLight:
+		selected = 1
+	case appearanceDark:
+		selected = 2
+	}
+	appearance := ui.Segmented(c, &selected, "System", "Light", "Dark").Label("Appearance mode").FontSize(typeAction).Height(32)
+	if appearance.Changed() {
+		a.setAppearanceMode([]string{appearanceSystem, appearanceLight, appearanceDark}[selected])
+	}
 	if a.appearanceStatus != "" {
 		ui.Text(c, a.appearanceStatus).FontSize(typeAction).TextColor(t.Success)
 	}
@@ -360,27 +348,29 @@ func (a *appModel) settingsAppearanceContent(c *ui.Context, t *ui.Theme) {
 
 func (a *appModel) settingsConnectionContent(c *ui.Context, t *ui.Theme) {
 	form := a.connectionForm
-	ui.Text(c, "Connection & model").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
-	if a.connectionApplied() && a.connectionEffective != nil {
-		ui.Column(c).Padding(8, 12).Radius(t.Radius).Background(t.SurfaceHover).Gap(4).Children(func() {
-			ui.Text(c, "Current: "+connectionCurrentSummary(a.connectionEffective)).FontSize(typeBody).LineHeight(1.5).TextColor(t.Text)
-			if form.Error != "" {
-				ui.Text(c, "The current connection remains in use; this attempt did not replace it.").FontSize(typeBody).LineHeight(1.5).TextColor(t.Warning)
-			}
-		})
-	} else {
-		ui.Text(c, "No connection is currently applied.").FontSize(typeBody).LineHeight(1.5).TextColor(t.TextMuted)
-	}
-	if form.Dirty() {
-		ui.Text(c, "Unsaved form changes.").FontSize(typeBody).LineHeight(1.5).TextColor(t.Warning)
-	}
-	if a.connectionSavedPending() {
-		ui.Text(c, "Saved configuration is awaiting Apply.").FontSize(typeBody).LineHeight(1.5).TextColor(t.Warning)
-	}
-	form.ReloadBlocked = a.connectionReloadBlocked()
-	actions := a.connectionActions()
-	actions.Discard = func() { form.ResetDraft() }
-	form.view(c, t, actions)
+	ui.Column(c).FillWidth().MaxWidth(600).AlignItems(ui.Start).Gap(12).Children(func() {
+		ui.Text(c, "Connection & model").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
+		if a.connectionApplied() && a.connectionEffective != nil {
+			ui.Column(c).FillWidth().Gap(4).Children(func() {
+				ui.Text(c, "Current: "+connectionCurrentSummary(a.connectionEffective)).FontSize(typeBody).LineHeight(1.5).TextColor(t.Text)
+				if form.Error != "" {
+					ui.Text(c, "The current connection remains in use; this attempt did not replace it.").FontSize(typeAction).LineHeight(1.5).TextColor(t.Warning)
+				}
+			})
+		} else {
+			ui.Text(c, "No connection is currently applied.").FontSize(typeBody).LineHeight(1.5).TextColor(t.TextMuted)
+		}
+		if form.Dirty() {
+			ui.Text(c, "Unsaved form changes.").FontSize(typeAction).LineHeight(1.5).TextColor(t.Warning)
+		}
+		if a.connectionSavedPending() {
+			ui.Text(c, "Saved configuration is awaiting Apply.").FontSize(typeAction).LineHeight(1.5).TextColor(t.Warning)
+		}
+		form.ReloadBlocked = a.connectionReloadBlocked()
+		actions := a.connectionActions()
+		actions.Discard = func() { form.ResetDraft() }
+		form.view(c, t, actions)
+	})
 }
 
 func (a *appModel) settingsContactContent(c *ui.Context, t *ui.Theme) {

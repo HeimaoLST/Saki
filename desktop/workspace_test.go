@@ -32,7 +32,7 @@ func TestThreePaneBreakpointsAndToggles(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if tr.HasText("Hide") || !tr.HasText("Contacts") {
+	if _, visible := tr.Find("Hide"); visible || !tr.HasText("Contacts") {
 		t.Fatal("hiding the contact rail should expose a Contacts entry")
 	}
 	if !tr.Focused("Contacts") {
@@ -42,7 +42,7 @@ func TestThreePaneBreakpointsAndToggles(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if !tr.HasText("Hide") {
+	if _, visible := tr.Find("Hide"); !visible {
 		t.Fatal("Contacts did not reopen the rail")
 	}
 

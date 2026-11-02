@@ -24,6 +24,9 @@ var (
 	composerAttachIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a6 6 0 0 1-8.5-8.5l9.3-9.3a4 4 0 0 1 5.7 5.7l-9.3 9.3a2 2 0 0 1-2.8-2.8l8.6-8.6"/></svg>`))
 	composerSendIcon   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>`))
 	composerStopIcon   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>`))
+	railHideIcon       = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M16 9l-3 3 3 3"/></svg>`))
+	railAddIcon        = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>`))
+	railSettingsIcon   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>`))
 )
 
 func messageReaderOptions(plain bool) markdownReaderOptions {
@@ -199,19 +202,35 @@ func (a *appModel) finishMarkdownLinkReturn() {
 
 func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
 	ui.Column(c).FillWidth().FillHeight().Padding(8).Gap(8).Background(a.workTheme.Rail).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			ui.Text(c, "Saki").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 			ui.Spacer(c)
-			hide := secondaryButton(c, "Hide").OnClick(func() { a.toggleRail() })
-			if a.focusRail {
-				hide.Focus()
-				a.focusRail = false
-			}
+			ui.Toolbar(c, func() {
+				hide := appTooltip(c, ui.Button(c, "").Label("Hide"), "Hide contacts").
+					MinWidth(32).MinHeight(32).Width(32).Height(32).Padding(0).Justify(ui.Center)
+				hide.Children(func() {
+					ui.Icon(c, railHideIcon).Width(18).Height(18).TextColor(t.TextMuted)
+				})
+				hide.OnClick(func() { a.toggleRail() })
+				if a.focusRail {
+					hide.Focus()
+					a.focusRail = false
+				}
+			}).Label("Window actions").Padding(0)
 		})
-		ui.Text(c, "Contacts").FontSize(typeGroupTitle).FontWeight(500).TextColor(t.TextMuted)
-		secondaryButton(c, "Add contact").FontWeight(500).FillWidth().Radius(999).OnClick(func() { a.addDefaultContact() })
+		ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+			ui.Text(c, "Contacts").FontSize(typeGroupTitle).FontWeight(500).TextColor(t.TextMuted)
+			ui.Spacer(c)
+			ui.Toolbar(c, func() {
+				add := appTooltip(c, ui.Button(c, "").Label("Add contact"), "Add contact").
+					MinWidth(32).MinHeight(32).Width(32).Height(32).Padding(0).Justify(ui.Center)
+				add.Children(func() {
+					ui.Icon(c, railAddIcon).Width(18).Height(18).TextColor(t.TextMuted)
+				})
+				add.OnClick(func() { a.addDefaultContact() })
+			}).Label("Contact list actions").Padding(0)
+		})
 		ui.TextInput(c, &a.contactSearch).Label("Search contacts").FontSize(typeAction).Placeholder("Name or purpose")
-		ui.Text(c, "Contact scope").FontSize(typeGroupTitle).FontWeight(500).TextColor(t.TextMuted)
 		a.contactScopeSelect(c)
 		visible := a.visibleContactIndices()
 		if len(visible) == 0 {
@@ -224,11 +243,19 @@ func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
 				}
 			})
 		}
-		settings := secondaryButton(c, "Settings").FillWidth().OnClick(func() { a.openSettingsTab(settingsTabAppearance, settingsSourceRail) })
-		if a.focusSettings {
-			settings.Focus()
-			a.focusSettings = false
-		}
+		ui.Toolbar(c, func() {
+			settings := appTooltip(c, ui.Button(c, "").Label("Settings"), "Open Settings").
+				FillWidth().MinHeight(32).Height(32).Padding(4, 8).Gap(8).Justify(ui.Start)
+			settings.Children(func() {
+				ui.Icon(c, railSettingsIcon).Width(16).Height(16).TextColor(t.TextMuted)
+				ui.Text(c, "Settings").FontSize(typeAction).TextColor(t.Text)
+			})
+			settings.OnClick(func() { a.openSettingsTab(settingsTabAppearance, settingsSourceRail) })
+			if a.focusSettings {
+				settings.Focus()
+				a.focusSettings = false
+			}
+		}).Label("App actions").Padding(0).FillWidth()
 	})
 }
 
@@ -264,7 +291,7 @@ func (a *appModel) contactScopeSelect(c *ui.Context) {
 
 func (a *appModel) railRow(c *ui.Context, t *ui.Theme, i int) {
 	ct := a.contacts[i]
-	row := ui.ButtonBase(c).Label("Contact " + ct.Name).Gap(8).Padding(6).Radius(8).AlignItems(ui.Start).Background(ui.Transparent).BorderWidth(0)
+	row := ui.ButtonBase(c).Label("Contact " + ct.Name).Gap(8).Padding(6).MinHeight(44).Radius(8).AlignItems(ui.Start).Background(ui.Transparent).BorderWidth(0)
 	if i == a.selected {
 		row.Background(t.SurfaceHover)
 	}
@@ -658,11 +685,11 @@ func (a *appModel) emptyState(c *ui.Context, t *ui.Theme) {
 			return
 		}
 		ui.Text(c, "No messages yet").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
+		hint := "Start a conversation with " + ct.Name + "."
 		if a.demo {
-			ui.Text(c, "Start typing below to talk with "+ct.Name+"; you can personalize name, purpose, instructions and workspace any time in Settings.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
-		} else {
-			ui.Text(c, "Start a conversation with "+ct.Name+". Edit this contact in Settings. Changes apply to new conversations.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
+			hint = "Start typing below to talk with " + ct.Name + "."
 		}
+		ui.Text(c, hint).FontSize(typeBody).LineHeight(1.5).TextColor(t.TextMuted)
 	})
 }
 

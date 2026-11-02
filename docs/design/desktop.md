@@ -936,3 +936,17 @@ type resolvedTheme struct {
 - **原生限定证据（父 GUI 主责实际操作，Pi 仅汇总，不作独立验收；reader 按 #156 formal 6555789905 持有 CUA）**：实际逻辑尺寸 **1040×720 / 757×641**（不声称精确 960）；图片为 CUA 会话 raw JPEG（wide 2080×1440、narrow 1514×1282），真实显示于工具/CUA 会话，不造磁盘 PNG 路径。仅一组本地 fixture：一次 PM-HOLD-A hold/stop，provider `request_count=1`、`canceled=true`；未切 Work 即见 Working、已接纳输入清空和 Stop，3 次 Tab 到 Stop、Return 得 interrupted。Scope 下拉使用物理点击后键盘（Down/Down/Return 选 All；Space 再开、Escape 保留选择、Tab 到联系人）；Settings 保存后两行草稿/焦点返回；Profile Escape 返回原控件；模型无 session 说明/A effective 表单 Cancel 回模型焦点；Task context Add snippet → Cancel/Close 回 Task context，无保存/模型更新。
 - **真实 IME（有界）**：`ni` marked 下 Return 只提交 literal `ni` 且 provider 请求仍为 0；`ni` + Space 确认“你”；`hao` + Escape 取消未确认组合、已确认草稿保留；ShiftEnter 插入换行且无请求。仅当前输入法基础流程通过；候选列表、更多 IME 与真人长文未全验，不以粘贴替代 IME。
 - **边界**：原始 Ready/Sending 观察本次未复现、仍未定因，本样本不证明已修复；未 online、未 full MVP、未完整 IME/候选/真人质量；不把 headless/定向通过扩称为 native 全通过。6 对原始 Tester 前后图仍为第一片证据，固定在 `/private/tmp/saki-gui-233-compact-20261101/freeze-bc1a04057cff004dd3727b2c4b8b18dceafcf2a2f970c143cf952c5a632675bb/key/`；before 在 `.../before/key/`。完整证据在 `/private/tmp/saki-gui-233-final/3d01a83/`（race/checker/build/PACKAGE-READY/native receipt）与上述 freeze；源码/包在 docs-only 收尾后仍为 3d01/同一五个包 hash。
+
+<a id="unslop-257"></a>
+
+## #257 侧栏、Appearance 与 Connection 局部 polish（候选实现，2026-11-02）
+
+代码来源：`agent/gui/257-unslop-sidebar-settings`，基于 `5342f8e07a15c80fb95eb325e993461e46212265`。本节只记录本轮实现事实；总体视觉规范仍以 [Desktop workbench](desktop-workbench.md) 为唯一现行规范，本轮只同步其中的 #257 小范围规则，不新增第二份规范。
+
+- **侧栏**：Contacts 标题行内放置官方 Toolbar 模式的无边框 Add `+`；Hide 改为同套描边图标；底部 Settings 为 32 高、左对齐的图标+文字安静行。保留搜索与 Active/Archived/All 当前值；移除重复的 Contact scope 标题和整行 Add pill。三个动作保持原 `.OnClick` 事件时序；图标按钮有不小于 32 的命中区、可访问名称、tooltip 和键盘焦点。联系人行按实际内容设 44 最小高度，不压缩两行摘要。
+- **Settings Back**：宽窄窗口使用同一官方 Toolbar 模式的 `ui.Button`，左对齐、内容宽，16 图标 + `Back` 文字，32 高；默认透明，保留官方 hover/pressed 与焦点环，不使用整行描边。AX 名称仍为 `← Back to workbench`，`OnClick`、返回焦点、草稿和分类恢复未改。
+- **Appearance**：三选一使用 MyGo v0.7.3 官方 `ui.Segmented`，32 高、控件字号 13；“Changes apply immediately.”为 12 辅助说明。每帧由 `appearanceMode` 映射到独立 local index，`Changed` 后才调用既有 `setAppearanceMode`，不先改写持久化字段，保存失败/Retry 与草稿保持原路径。选中态使用官方 pressed face 与阴影，焦点环独立可见，不使用 2px 外框。
+- **Connection & model**：设置内容最大 600、左对齐；字段组内 label→input→helper 为 4，组间 16，主要动作区 24。表单 label 13、输入 14、辅助说明 12；既有当前连接值、未保存、待 Apply、阻塞、字段/操作错误和测试状态保持完整可读，当前连接不再使用整块绿色底。
+- **Capacity 与动作**：Capacity 改为官方 Toolbar 模式的安静 disclosure 行，箭头 16；数值限制错误仍自动展开该区，字段和错误文本不折叠。Save 是唯一 PrimaryButton；Save/Apply/Discard 与 Test 使用可换行动作行，限制在表单内容宽度内。Test 继续使用当前表单值、可能计费且不 save/apply；Apply 仍读取已保存值；三者业务状态机、错误处理、旧会话作用域和 API 密钥本地明文说明未改。
+- **空态**：正常会话空态保留一个标题和一句开始提示，不再重复 Settings 的作用范围说明；完整资料与默认值说明仍在 Settings。
+- **验证边界**：headless `ui.Tester` 覆盖 1040×720、720×640 和 800 宽断点的字段/动作边界、长错误、Capacity 自动展开、Test 当前草稿和原有 Save/Apply/Test 语义；预览与日志由本轮交付记录列出。未声称原生窗口、最终 full/race/CI 或集成完成；旧 #114 包/窗口未触碰。

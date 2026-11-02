@@ -560,7 +560,7 @@ func TestPreviewSettingsPage(t *testing.T) {
 				tr := ui.NewTester(a.view, size.width, size.height)
 				tr.SetDark(dark)
 				tr.Frame()
-				if !tr.HasText("Settings") || !tr.HasText("← Back to workbench") {
+				if _, back := tr.Find("← Back to workbench"); !tr.HasText("Settings") || !back {
 					t.Fatalf("settings preview missing page shell for %s %dx%d", tab, size.width, size.height)
 				}
 				if tab == settingsTabConnection {
@@ -605,24 +605,28 @@ func TestFirstLaunchOpensConnectionSettingsPageWithoutEmptyOverlay(t *testing.T)
 }
 
 func TestSettingsLongConnectionScrollsThenPrimaryActionIsVisible(t *testing.T) {
-	a, _ := workspaceTestApp(t)
-	config := connectionConfig{Version: 1, API: connectionAPIChatCompletions, Endpoint: "https://provider.example.invalid/v1/very/long/endpoint", APIKey: "fixture", Model: "fixture", ContextTokens: 1000, OutputTokens: 100, WorkingDirectory: t.TempDir(), MaxActiveTasks: 2}
-	a.connectionForm = newConnectionSettings(&config, config.WorkingDirectory)
-	a.connectionSaved = &config
-	a.connectionEffective = &config
-	a.connectionForm.Error = strings.Repeat("A long form error that wraps without pushing controls out of the page. ", 8)
-	a.windowWidth = 720
-	a.openSettingsTab(settingsTabConnection, settingsSourceRail)
-	tr := ui.NewTester(a.view, 720, 640)
-	tr.Frame()
-	tr.Scroll(500, 400, 0, 700)
-	tr.Frame()
-	if a.settingsScroll.Y <= 0 {
-		t.Fatalf("long settings content did not scroll: %v", a.settingsScroll.Y)
-	}
-	r, ok := tr.Find("Save configuration")
-	if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 720 || r.Y < 0 || r.Y+r.H > 640 {
-		t.Fatalf("primary action not reachable after scroll: %+v ok=%v", r, ok)
+	for _, width := range []int{720, 800} {
+		a, _ := workspaceTestApp(t)
+		config := connectionConfig{Version: 1, API: connectionAPIChatCompletions, Endpoint: "https://provider.example.invalid/v1/very/long/endpoint", APIKey: "fixture", Model: "fixture", ContextTokens: 1000, OutputTokens: 100, WorkingDirectory: t.TempDir(), MaxActiveTasks: 2}
+		a.connectionForm = newConnectionSettings(&config, config.WorkingDirectory)
+		a.connectionSaved = &config
+		a.connectionEffective = &config
+		a.connectionForm.Error = strings.Repeat("A long form error that wraps without pushing controls out of the page. ", 8)
+		a.windowWidth = width
+		a.openSettingsTab(settingsTabConnection, settingsSourceRail)
+		tr := ui.NewTester(a.view, width, 640)
+		tr.Frame()
+		tr.Scroll(float32(width/2), 400, 0, 2000)
+		tr.Frame()
+		if a.settingsScroll.Y <= 0 {
+			t.Fatalf("%d long settings content did not scroll: %v", width, a.settingsScroll.Y)
+		}
+		for _, label := range []string{"Save configuration", "Apply saved", "Test connection and model"} {
+			r, ok := tr.Find(label)
+			if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > float32(width) || r.Y < 0 || r.Y+r.H > 640 {
+				t.Fatalf("%d action %q not reachable after scroll: %+v ok=%v", width, label, r, ok)
+			}
+		}
 	}
 }
 
