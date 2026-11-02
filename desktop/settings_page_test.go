@@ -191,7 +191,6 @@ func TestSettingsConnectionDirtyDiscardAndAppliedReopen(t *testing.T) {
 	a.connectionEffective = &config
 	a.rt = &runtimeClient{}
 	a.runtimeStatus = runtimeStateReady
-	a.connectionForm.EffectiveSummary = connectionSummary(&config)
 	a.openSettingsTab(settingsTabConnection, settingsSourceRail)
 	if !a.connectionApplied() || a.connectionForm.Dirty() {
 		t.Fatalf("applied reopen = applied=%v dirty=%v", a.connectionApplied(), a.connectionForm.Dirty())
@@ -535,9 +534,7 @@ func TestPreviewSettingsPage(t *testing.T) {
 					a.connectionSaved = &config
 					a.connectionEffective = &config
 					a.connectionForm.HasSaved = true
-					a.connectionForm.SavedSummary = connectionSummary(&config)
 					a.connectionForm.Error = longError
-					a.connectionForm.EffectiveSummary = connectionSummary(&config)
 					a.runtimeStatus = runtimeStateReady
 					a.rt = &runtimeClient{}
 				case settingsTabContact:

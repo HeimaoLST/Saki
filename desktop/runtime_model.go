@@ -108,25 +108,17 @@ func newRuntimeApp() (*appModel, error) {
 		a.connectionForm.HasSaved = false
 		switch {
 		case startup.LoadErr != nil:
-			a.connectionForm.Source = "Saved connection settings need repair"
 			a.connectionForm.Error = "Saved connection settings need repair. Check the values and save again."
 			a.runtimeStatus = runtimeStateFailed
 			a.runtimeStage = "Connection configuration"
 			a.runtimeErr = "Saved connection settings need repair."
 			a.runtimeHint = "Fix the saved values in Connection settings, then save and apply."
-		case startup.External:
-			a.connectionForm.Source = "Environment configuration"
-		default:
-			a.connectionForm.Source = "Not configured in Nagi"
+		case !startup.External:
 			a.runtimeStatus = runtimeStateFailed
 			a.runtimeStage = "Connection configuration"
 			a.runtimeErr = "Connection settings are required before the runtime can start."
 			a.runtimeHint = "Enter a connection, model and working directory, then save and apply."
 		}
-	}
-	if startup.Config != nil {
-		a.connectionForm.Source = "Nagi connection settings"
-		a.connectionForm.SavedSummary = connectionSummary(startup.Config)
 	}
 	if startup.LoadErr != nil || (startup.Config == nil && !startup.External) {
 		a.openSettingsTab(settingsTabConnection, settingsSourceConnection)

@@ -129,14 +129,6 @@ func applyStoreSelection(a *appModel, store *contactStore) {
 	a.appearanceMode = normalizeAppearanceMode(store.state.Appearance)
 }
 
-func connectionSummary(config *connectionConfig) string {
-	if config == nil {
-		return ""
-	}
-	return fmt.Sprintf("%s, %s, cwd %s, context %d / output %d, %d slots",
-		config.Model, config.API, config.WorkingDirectory, config.ContextTokens, config.OutputTokens, config.MaxActiveTasks)
-}
-
 func (a *appModel) ensureConnectionForm() {
 	if a.connectionForm != nil {
 		return
@@ -145,9 +137,6 @@ func (a *appModel) ensureConnectionForm() {
 	a.connectionForm = newConnectionSettings(config, a.workDir)
 	if config == nil {
 		a.connectionForm.HasSaved = false
-		if a.connectionLegacy {
-			a.connectionForm.Source = "Environment configuration"
-		}
 	}
 }
 
@@ -200,8 +189,6 @@ func (a *appModel) saveConnection(config connectionConfig) {
 			a.connectionSaved = &config
 			a.connectionForm.HasSaved = true
 			a.connectionForm.initial = a.connectionForm.Draft
-			a.connectionForm.Source = "Nagi connection settings"
-			a.connectionForm.SavedSummary = connectionSummary(&config)
 			a.connectionForm.Status = "Saved. Apply saved to use this connection."
 			if a.connectionApplied() && *a.connectionEffective == config {
 				a.connectionForm.Status = "Saved. This configuration is already applied."
@@ -360,12 +347,6 @@ func (a *appModel) applyConnectionWorker(gen int, path, sessionDir, helperHint s
 		return
 	default:
 	}
-	capabilities, _ := rt.capabilities()
-	observed, observedErr := probeRuntimeConfig(binary, config, os.Environ(), os.TempDir())
-	effectiveSummary := observedConnectionSummary(connections[0], observed, capabilities.MaxActiveTasks)
-	if observedErr != nil {
-		effectiveSummary = connections[0].DefaultModel + ": " + connections[0].Endpoint
-	}
 	installed := false
 	a.runOnUI(func() {
 		if runtimeHasExited(rt) {
@@ -391,9 +372,6 @@ func (a *appModel) applyConnectionWorker(gen int, path, sessionDir, helperHint s
 		a.runtimeHint = ""
 		a.connectionForm.Error = ""
 		a.connectionForm.ReloadBlocked = ""
-		a.connectionForm.SavedSummary = connectionSummary(&config)
-		a.connectionForm.EffectiveSummary = effectiveSummary
-		a.connectionForm.Source = "Nagi connection settings"
 		a.runtimeCapabilitiesLoaded = false
 		a.runtimeMaxActiveTasks = 0
 		a.runtimeCapabilitiesErr = ""
@@ -421,9 +399,6 @@ func (a *appModel) applyConnectionWorker(gen int, path, sessionDir, helperHint s
 			a.connectionForm.Status = ""
 		} else {
 			a.connectionForm.Status = "Applied. New work uses this connection."
-			if observedErr != nil {
-				a.connectionForm.Status += " Effective details could not be fully read back."
-			}
 		}
 		if !a.shutdownStarted && a.runtimeStatus == runtimeStateReady {
 			a.restoreContacts(rt, gen)
@@ -527,9 +502,6 @@ func (a *appModel) handleRuntimeReady(gen int, ready runtimeReady) {
 	a.runtimeHint = ""
 	a.runtimeAPI = ready.API
 	a.runtimeHandshake = true
-	if a.connectionForm != nil && a.connectionEffective != nil {
-		a.connectionForm.Source = "Nagi connection settings"
-	}
 	a.restoreContacts(a.rt, gen)
 	a.restoreIssueWorks(a.rt, gen)
 	go a.loadCapabilities(a.rt, gen)
@@ -626,56 +598,6 @@ func (a *appModel) configuredWorkCreate(rt *runtimeClient, configured bool, work
 		return runtimeSession{}, errors.New("Built-in tool selection requires a managed Nagi connection; save and Apply a connection before creating a new work session.")
 	}
 	return rt.createSession(workspace, system)
-}
-
-func observedConnectionSummary(connection runtimeConnection, config runtimeConnectionConfig, maxActiveTasks int) string {
-	effective := config.EffectiveConfig
-	summary := fmt.Sprintf("%s, %s, cwd %s, context %d / output %d",
-		effective.Model, connection.Endpoint, effective.WorkingDirectory,
-		effective.Compaction.ContextTokens, effective.Compaction.OutputTokens)
-	if maxActiveTasks > 0 {
-		summary += fmt.Sprintf(", %d slots", maxActiveTasks)
-	}
-	return summary
-}
-
-func probeRuntimeConfig(binary string, config connectionConfig, parentEnv []string, tempRoot string) (runtimeConnectionConfig, error) {
-	root, err := os.MkdirTemp(tempRoot, "nagi-effective-")
-	if err != nil {
-		return runtimeConnectionConfig{}, err
-	}
-	defer os.RemoveAll(root)
-	launch, err := prepareConnectionLaunch(config, parentEnv, filepath.Join(root, "sessions"), root)
-	if err != nil {
-		return runtimeConnectionConfig{}, err
-	}
-	defer launch.Cleanup()
-	ready := make(chan struct{}, 1)
-	rt, err := startRuntime(runtimeOptions{
-		Binary: binary, Dir: launch.Dir, Env: launch.Env,
-		Handlers: runtimeHandlers{OnReady: func(runtimeReady) {
-			select {
-			case ready <- struct{}{}:
-			default:
-			}
-		}},
-	})
-	if err != nil {
-		return runtimeConnectionConfig{}, err
-	}
-	defer rt.shutdown()
-	select {
-	case <-ready:
-	case <-rt.done:
-		return runtimeConnectionConfig{}, errors.New("effective configuration helper exited before ready")
-	case <-time.After(runtimeControlTimeout):
-		return runtimeConnectionConfig{}, errors.New("effective configuration helper did not become ready")
-	}
-	session, err := rt.createConfiguredSession(config.WorkingDirectory, "")
-	if err != nil {
-		return runtimeConnectionConfig{}, err
-	}
-	return rt.connectionConfig(session.SessionID)
 }
 
 func (c *runtimeClient) createConfiguredSession(workingDir, systemPrompt string) (runtimeSession, error) {

@@ -13,19 +13,16 @@ type connectionDraft struct {
 }
 
 type connectionSettings struct {
-	Draft            connectionDraft
-	initial          connectionDraft
-	Errors           map[string]string
-	Source           string
-	SavedSummary     string
-	EffectiveSummary string
-	Status           string
-	Error            string
-	ReloadBlocked    string
-	Busy             bool
-	HasSaved         bool
-	LimitsOpen       bool
-	focusField       string
+	Draft         connectionDraft
+	initial       connectionDraft
+	Errors        map[string]string
+	Status        string
+	Error         string
+	ReloadBlocked string
+	Busy          bool
+	HasSaved      bool
+	LimitsOpen    bool
+	focusField    string
 }
 
 type connectionSettingsActions struct {
@@ -36,7 +33,7 @@ type connectionSettingsActions struct {
 }
 
 func newConnectionSettings(config *connectionConfig, workDir string) *connectionSettings {
-	s := &connectionSettings{Source: "Not configured in Nagi", Draft: connectionDraft{
+	s := &connectionSettings{Draft: connectionDraft{
 		API: "openai-chat-completions", ContextTokens: "131072", OutputTokens: "8192",
 		WorkingDirectory: workDir, Slots: "2",
 	}, focusField: "Endpoint"}
@@ -47,7 +44,6 @@ func newConnectionSettings(config *connectionConfig, workDir string) *connection
 			WorkingDirectory: config.WorkingDirectory, Slots: strconv.Itoa(config.MaxActiveTasks),
 		}
 		s.HasSaved = true
-		s.Source = "Nagi connection settings"
 	}
 	s.initial = s.Draft
 	return s
