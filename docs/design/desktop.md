@@ -117,7 +117,7 @@ Finder 启动不继承 shell 环境。空配置时通过 Connection settings 保
 
 ## 原生工作台（#130，历史实现事实；固定布局比例已由 #184 替代）
 
-更新于 2026-10-23。当前实现/测试 HEAD `c1b804e`（栈上合并 112 `31d3cff`；产品 formatter merge `4ec3ad5`）；本条只保留当轮 GUI 实现事实。当前布局规范和宽度偏好以顶部 [GUI 设计约束（当前规范）](#gui-design-constraints) 为准；当轮的固定 1120/960 列宽已由 [#184 可调三栏具体值](#adjustable-layout-values) 替代。
+更新于 2026-10-23。当前实现/测试 HEAD `c1b804e`（栈上合并 112 `31d3cff`；产品 formatter merge `4ec3ad5`）；本条只保留当轮 GUI 实现事实。当前布局规范和宽度偏好以顶部 [GUI 设计约束（当前规范）](#gui-design-constraints) 为准；当轮的固定 1120/960 列宽已由 [#184 可调三栏具体值](#adjustable-layout-values) 替代。后续宽窄返回的有限原生补验见 [1eb 固定包记录](#native-1eb-acceptance-r3)，不回填为旧 v3 包的通过结果。
 
 - 三栏布局（历史，已由 #184 可调三栏替代）：宽度 ≥1120 时联系人栏 200px、工作区 360px；960–1119 使用 160px／320px 紧凑列；低于 960 时工作区通过带遮罩的模态覆盖打开，Close 始终可见。原生窗口最低宽度调整为 720px（高度仍 640px），使 900px 的覆盖分支可由实际 `ContentSize` 到达；960/1040/宽屏同样由实际内容宽度分类，headless 显式设置对应宽度。联系人栏可收起并由页头 Contacts 重开；工作区可收起并由 Work 重开；收起、覆盖、关闭和 Escape 后恢复入口焦点，侧栏/工作区状态不停止任务。
 - 颜色：按 PM 固定 `2182c1a` 的 root/night 数值，一次解析为小型 `workbenchTheme`（既有 `ui.Theme` + `Rail`/`BubbleUser`/`WorkSurface`/`WorkText`/`WorkMuted`/`WorkAttention`），组件不写 hex、不按品牌分支。用户气泡使用 `BubbleUser`，联系人栏使用 `Rail`，当前工作卡使用深色 `WorkSurface` hero（#96 已替换为中性工作面；Appearance 模式与持久化见 #96，联系人设置不承载应用外观）。
@@ -225,6 +225,21 @@ v2 `8a04d63` 的原生修复证据（13..18）：
 - 以上是主责 CUA 验收，不是用户试用完成或最终产品验收；最终包未重复旧包的全部交互项。
 - 本机验收 env：`SAKI_GUI_WORKDIR=/Users/heimaolst/Workspace/Rust/Saki`，`SAKI_GUI_STORE=/private/tmp/saki-gui-63-native-review/contacts.json`，`SAKI_SESSION_DIR=/private/tmp/saki-gui-63-native-review/sessions`，`SAKI_API=openai-chat-completions`，root 已有 `.env`；重启时 unset `SAKI_RUNTIME_BIN`，应用包内 helper 可直接恢复。
 - **未验范围**：CUA 的 typeText 对中文有工具注入限制，因此不能宣称真实系统 IME 组合期已验；VoiceOver 与 light 系统主题也未实测（light/dark 只有 headless 覆盖）。Shift+Enter 与 Unicode 粘贴已验。
+
+<a id="native-1eb-acceptance-r3"></a>
+
+**2026-11-02 1eb 固定包原生补验（PM 执行报告）**：实际执行 `agent:pm#mira`，文档整理者未重做原生验收；依据 [native-1eb-acceptance-r3](https://github.com/HeimaoLST/Saki/issues/156#issuecomment-6572343153)，不是独立人类/QA 批准。实际源 `1eb7440e2f2003bbc0f4a2bf4adb312cda48c27f`、artifact `13119785157`；GUI `5a90d11bd0dd520aac59a48b93d09996d00e9be57b9556131c13dc66a2607537`、Runtime `f98997398e366c26a54d9d8c2ecf2242400a16790d5356352641c7375c1277f5`。1eb→dev `7e3a7eb` 仅有 `integration_runtime_test.go` 差异，production 相同；以下仅记录该包，旧包身份及原失败记录保留。
+
+- **包/执行身份**：PM CUA 在同一既有隔离实例操作；此前 `cgWindowNotFound` 后既有绑定实际恢复，未重启或换包，不据恢复推断原环境根因。
+- **#114 键盘/焦点**：仅键盘 Tab 从 Search→Contact scope→Saki/A、New contact 2→B；Cmd+, 进入统一 Settings 且焦点 Back，Return 返回；Search 过滤、B 经 Settings/splitter/Work 到 composer 及反向 Shift+Tab 的焦点和编辑目标正确；A/B 草稿保留。多行中文粘贴、Shift+Enter 只换行且 provider 计数未增；这不是新中文 IME，G4-1 仍按 [6560358459 有限接受](https://github.com/HeimaoLST/Saki/issues/114#issuecomment-6560358459)，不扩称全部输入法。
+- **#130/#186 返回与窄窗**：宽窗 Work 打开时焦点在 Close，Close 后焦点回 Work；OS Window→Move & Resize→Left 后实际窄窗仅 Work、Back 可见并获得焦点，Return 回 Work 入口且草稿保留；分层 Escape 依次关闭系统 help、详情回事项概览原 WRITE 行、再关闭 Work 回 Work。未冒称精确 960/720 DIP；#186 本轮未测非默认筛选/非零滚动锚点。
+- **#118 独立执行**：同一联系人 A 的事项 hold 时，其普通对话先完成，事项仍 held；Stop issue 只中断工作、对话保留；Continue 产生新 execution；跨联系人 B 对话完成且不含 A 事项，A/B session IDs 分开。
+- **#118 最小化**：第三次 A 执行 held 时实际 Window→Minimize，之后**在再次观察/操作 Nagi 窗口或 Raise 前**释放本地 barrier；08:08:06Z 只读 store 已 completed、provider finished、事项仍 in_progress/要求 unverified；随后才 AX/Raise。execution completed 不等于事项 Done 或要求 verified。
+- **#156 工具成果**：write task 落盘 `native-output.md` 551B、SHA256 `5193b62b20807a830282854b49fe6177e73875c4c49e531a6778e5f7f633c502`；原生 Read file、Copy current file→Cmd+V、Show in Finder、默认 Obsidian 打开均按报告实际发生，未只凭模型文字声明成果。
+- **#257 Appearance**：Dark/Light 实际选中并保存，值为 1 且显示 `Applied and saved`；Settings 返回不丢草稿；本项不扩称所有主题/系统外观组合。
+- **8 个本地合成 POST**：仅 hold 4、普通 conversation 2、write 工具闭环 2；没有 Magpie/Flash 真实模型请求，不能替代真实 A 改稿/B 双对象歧义或真人试用。
+- **证据身份**：根 `/private/tmp/saki-gui-native-1eb-prep-uyh2nhm5/pm-native/`（`before-minimize.json`、`after-minimize-before-raise.json`、`completed-before-restore.json` 等；固定 session 的 Runtime journal 路径见原报告）；tool transcript 是本轮实际交互/焦点/截图记录，未导出 PNG，不编造 `AXMinimized` 布尔。
+- **未验边界**：Finder 冷首用、186 非默认筛选/非零滚动、真实 Flash 更新/歧义，以及连续 3 日/两类真实任务/非开发者首用仍待验；不写完整 MVP 通过。
 
 ## 已知限制
 
@@ -594,7 +609,7 @@ type resolvedTheme struct {
 - **注意提示确认**（attention-r1，2026-11-02）：失败/未知/中断只在用户通过现有入口实际看到该 execution 的状态与原因后确认：`View execution` 只在 Work 卡状态匹配且展示的原因与 `execution.Detail` 相同（非空）时确认；结果页展示 `RunStatus` 与该 execution 的真实 Detail，Detail 为空时明确显示“未记录执行原因”，因此无 TaskID/空 Detail 的异常也有可达确认路径。用户主动 Reload 当前可见、owner/generation 匹配的结果页并展示新异常后确认；后台 load/reload history、过期回调、切换联系人/事项、Close 或普通 render 不确认。已看按 contact/issue/execution 持久化并匹配异常状态：同状态历史重放不重复提示，已看 unknown 后真实状态转为 failed/interrupted 会重新提示，A 不清 B，后来成功不抹掉未看的旧异常。保存失败回滚已看字段，并在结果页显式显示既有 `localSaveErr`（后台结果页 load 返回不清除该错误）；执行终态、事项 needs_attention、requirements、Unread 与派发状态不变。
 - **验证（当前代码承诺范围）**：`go test ./...`、`go vet ./...`、真实 Runtime 受控双 gate 的 A/B 会话隔离、对话/事项双在途 Stop、max1/max2/max3 容量、跨联系人/事项历史、profile admission snapshot、未知恢复、quit 多 session；最新完整 Go race 为 157 PASS / 0 FAIL / 7 SKIP（固定到合并后的工作树；具体 SHA 与日志由 #118 交付评论记录）。测试使用本地 fixture，不连接付费在线模型。
 - **UI 边界**：右工作卡只展示当前事项的真实 work；事项结果预览使用工作会话消息，不把聊天记录当工作结果。普通对话 composer 与事项 Stop 不共享控制路径。容量未知提示不会在真实 1 槽时出现。
-- **未包含/后续**：settings 模块（`5551b76` 主责）未接入本 PR；#142 补充递交、#153 生命周期、#154 对话协作不随本阶段扩称完成。原生 CUA/窗口/输入法仍由父级验证；`Sky native pipe startup failed` 不得被 headless 截图替代。完整 Nagi MVP 仍需后续 issue 与真实试用。
+- **未包含/后续**：settings 模块（`5551b76` 主责）未接入本 PR；#142 补充递交、#153 生命周期、#154 对话协作不随本阶段扩称完成。**1eb 固定包的 PM 原生 118 补验见 [1eb 记录](#native-1eb-acceptance-r3)，只覆盖所列本地合成流程，不扩成完整 118**；其余原生 CUA/窗口/输入法仍由父级验证；`Sky native pipe startup failed` 不得被 headless 截图替代。完整 Nagi MVP 仍需后续 issue 与真实试用。
 
 ## #116 首用配置与安全重载（候选实现，2026-10-25）
 
@@ -825,8 +840,8 @@ type resolvedTheme struct {
 - **已定位的同一批次边界**：固定 MyGo 的编辑器把 pointer down 的 anchor/caret 立即设置，但同一批次里的 pointer move 只记录 drag 位移；`editor.drag` 仅在下一帧且 `state.pressed` 时运行，而 `pointerUp` 会先调用 `editor.release()`。同一 Down/Move/Up（以及 Down 后一帧再 Move/Up）因此可能只留下点击 caret。已在临时固定 MyGo 副本用单行/多行、正向/反向、跨行和分帧同坐标对照证明 RED；将最后位置在 release 前消费一次的 7 行 `ui/input.go` hunk 后，所有对照 PASS。该实验没有改写 module cache 或 `desktop/go.mod`。
 - **正式单入口**：`desktop/patches/editor-release.patch` 使用相对 `a/ui/input.go` / `b/ui/input.go`，并带可发现的 `ui/editor_selection_test.go` 回归；`scripts/gui-go.py` 仍只接受 `test`/`vet`/`build`/`run`，先用 `go list -m -json` 核 selected 版本且无 Replace，再用 `go mod download -json` 核固定目录；Split patch 原文件未改，Editor patch 另加，前后分别核 `ui/split.go` 和 `ui/input.go` 的生产 SHA；具名 editor 回归由 patch 非零失败和测试结果核验。临时 `-modfile`、JSON stdout、含空格 TMPDIR、patch 失败与 post-SHA 失败均保持显式非零；模块 cache 和真实源码不写。
 - **应用层回归**：`desktop/input_test.go` 使用真实 1040×720 composer bounds，覆盖单/多行中文拖选的复制、正反向、拖选替换、CmdA/CmdC、Shift+Left、多行粘贴不发送及草稿/消息不变。公开 `ui.Tester` 的 Press/Move/Release 会逐步 settle，因此应用级同批次由固定 MyGo 的控件回归证明，不把测试器的分帧 PASS 当作同批次 PASS。
-- **G4 现状**：G4-2 的 Shift+Enter、多行粘贴、Add contact 焦点和 Settings/History 焦点走已有测试；G4-3 的 A/B 草稿、拒收/保存失败草稿与重启路径沿用已有测试和 d7 helper；G4-4 现有 Enter、Escape、Tab、焦点恢复覆盖，完整键盘-only 联系人/发送/停止串联仍无单一回归。**G4-1 真实 macOS 中文 IME 尚未验证**。
-- **IME 证据边界**：现有 `TestComposerCompositionDoesNotSendUntilCommit` 是 Compose→结束 composition→Type→Enter 的事件级回归，不能证明 active composition 的 Enter。`ui.Tester.Compose` 只注入 `TextComposition`，`Tester.Key` 直接注入按键；Darwin `internal/darwin/surface.go` 的 `keyDown` 在 `ime && hasMarkedText` 时不发送 KeyPressed，而走 `interpretKeyEvents`（`doCommandBySelector` 为空）。因此 synthetic active-composition Enter 可能发送，和真实 macOS IME 路径不同；本单不据此改发送逻辑，也不声称 IME 通过。真实 IME、原生窗口和剪贴板仍需 PM/原生隔离验收。
+- **2026-10-28 阶段 G4 测试与后续补验**：G4-2 的 Shift+Enter、多行粘贴、Add contact 焦点和 Settings/History 焦点走已有测试；G4-3 的 A/B 草稿、拒收/保存失败草稿与重启路径沿用已有测试和 d7 helper；G4-4 当时有 Enter、Escape、Tab、焦点恢复的控件覆盖；后续纯键盘切联系人、打开设置与 Search↔composer 的实际补验见 [1eb 记录](#native-1eb-acceptance-r3)。**G4-1 按 [#114 有限 IME 接受](https://github.com/HeimaoLST/Saki/issues/114#issuecomment-6560358459) 与本文件 [1eb 记录](#native-1eb-acceptance-r3) 处理：3d01 已有当前输入法组合期/commit/一次发送的有界证据；1eb 的中文粘贴、ShiftEnter 不误发不是新 IME，候选列表/更多输入法仍未验。**
+- **IME 证据边界**：现有 `TestComposerCompositionDoesNotSendUntilCommit` 是 Compose→结束 composition→Type→Enter 的事件级回归，不能证明 active composition 的 Enter。`ui.Tester.Compose` 只注入 `TextComposition`，`Tester.Key` 直接注入按键；Darwin `internal/darwin/surface.go` 的 `keyDown` 在 `ime && hasMarkedText` 时不发送 KeyPressed，而走 `interpretKeyEvents`（`doCommandBySelector` 为空）。因此 synthetic active-composition Enter 可能发送，和真实 macOS IME 路径不同；本单不据此改发送逻辑。后续 G4-1 的有限接受见上条；1eb 未重测 IME，原生窗口/剪贴板的实际覆盖见 [1eb 记录](#native-1eb-acceptance-r3)。
 - **验证边界**：正式 Editor 回归在 patched MyGo 上 PASS，未 patch 的同源副本保留 RED；`scripts/gui-go.py test github.com/egoist/mygo/ui -run '^TestEditorSelectionReleaseBeforeFrame$'`、应用 `TestComposer*`、既有 G4/G5 helper 子集和普通 Go 包均通过。以上是 headless/event-level 证据；没有 native/CUA/系统 IME、没有在线模型调用，也不把旧包或旧图转记为当前候选通过。
 
 - **历史44b限定原生证据**：PM [#114 comment 6468384981](https://github.com/HeimaoLST/Saki/issues/114#issuecomment-6468384981) 已验证冻结 `44b81c1` 的 1040×720 浅色真实双向/跨行准确复制及局部替换、A/B 草稿、同版退出恢复、Shift+Enter 不误发 PASS；真实 IME marked text、完整 Send/Stop 串联及所有宽度/主题仍未验，不能作为本组合的 native PASS。
