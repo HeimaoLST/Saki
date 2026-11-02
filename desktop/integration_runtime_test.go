@@ -342,6 +342,9 @@ type guiHarness struct {
 	provider *providerFixture
 	root     string
 	closed   bool
+
+	// Test-only observer for the first evaluation of the shutdown predicate.
+	shutdownFirstResult chan<- bool
 }
 
 func requireRuntimeBinary(t *testing.T) string {
@@ -523,10 +526,14 @@ func (h *guiHarness) shutdown(t *testing.T) {
 		// This predicate is evaluated on the UI pump. Cache the whole
 		// observation tuple here, not from the timeout/defer goroutine.
 		lastDiagnostic.Store(h.shutdownSnapshot())
-		if !h.app.quitReady {
-			return false
+		satisfied := h.app.quitReady && (h.app.rt == nil || h.app.runtimeStatus == runtimeStateExited)
+		if h.shutdownFirstResult != nil {
+			select {
+			case h.shutdownFirstResult <- satisfied:
+			default:
+			}
 		}
-		return h.app.rt == nil || h.app.runtimeStatus == runtimeStateExited
+		return satisfied
 	}, 15*time.Second)
 	completed = true
 	h.pump.close()
@@ -1545,6 +1552,7 @@ func TestGUIShutdownWaitsForFinalOwnerCallback(t *testing.T) {
 		firstIndex := firstIndex
 		t.Run(fmt.Sprintf("execute_collected_%d_first", firstIndex+1), func(t *testing.T) {
 			binary := requireRuntimeBinary(t)
+			t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", ensureIssueToolTestHelper(t))
 			h := startGUIHarness(t, binary, &providerFixture{ToolFirst: false}, fmt.Sprintf("shutdown-barrier-%d", firstIndex))
 			h.pump.wait(func() bool {
 				return h.app.runtimeStatus == runtimeStateReady && h.app.runtimeCapabilitiesLoaded
@@ -1553,23 +1561,48 @@ func TestGUIShutdownWaitsForFinalOwnerCallback(t *testing.T) {
 			h.pump.do(func() {
 				h.app.setUIHook(func(fn func()) { callbacks <- fn })
 			})
+
+			// Reuse the actual issue-tool service that startup created from the
+			// fixed helper override. Hold its mutex so finishShutdown blocks in
+			// closeIssueToolService while OnExit queues the first owner callback.
+			var gate *issueToolIPCServer
+			h.pump.do(func() { gate = h.app.issueToolServer })
+			if gate == nil {
+				t.Fatal("issue-tool server was not started")
+			}
+			gate.mu.Lock()
+			gateLocked := true
+			defer func() {
+				if gateLocked {
+					gate.mu.Unlock()
+				}
+				if !shutdownChannelClosed(gate.closeDone) {
+					_ = gate.Close()
+				}
+			}()
+
 			var quitCount int
 			h.pump.do(func() {
 				h.app.requestQuit = func() { quitCount++ }
 				h.app.beginShutdown()
 			})
 
-			// finish() closes done before OnExit, but finishShutdown can enqueue the
-			// final callback before OnExit. Collect both owner callbacks without
-			// assuming their order; execute only one first.
+			// The gate makes the first owner callback the Exited fact. The
+			// quitReady callback cannot be queued until the gate is released.
 			var callbacksSeen [2]func()
-			for i := 0; i < len(callbacksSeen); i++ {
-				select {
-				case callbacksSeen[i] = <-callbacks:
-				case <-time.After(15 * time.Second):
-					t.Fatalf("shutdown owner callback %d did not arrive", i+1)
-				}
+			select {
+			case callbacksSeen[0] = <-callbacks:
+			case <-time.After(15 * time.Second):
+				t.Fatal("first shutdown owner callback did not arrive")
 			}
+			gate.mu.Unlock()
+			gateLocked = false
+			select {
+			case callbacksSeen[1] = <-callbacks:
+			case <-time.After(15 * time.Second):
+				t.Fatal("second shutdown owner callback did not arrive")
+			}
+
 			h.pump.do(callbacksSeen[firstIndex])
 			var exited, ready bool
 			h.pump.do(func() {
@@ -1579,13 +1612,35 @@ func TestGUIShutdownWaitsForFinalOwnerCallback(t *testing.T) {
 			if exited == ready {
 				t.Fatalf("after first owner callback, expected exactly one completion fact: exited=%v quitReady=%v", exited, ready)
 			}
+			if firstIndex == 0 && (!exited || ready) {
+				t.Fatalf("normalized first fact is not Exited-only: exited=%v quitReady=%v", exited, ready)
+			}
+			if firstIndex == 1 && (exited || !ready) {
+				t.Fatalf("normalized first fact is not ready-only: exited=%v quitReady=%v", exited, ready)
+			}
 			t.Logf("first executed owner point: exited=%v quitReady=%v", exited, ready)
 
+			firstResult := make(chan bool, 1)
+			h.shutdownFirstResult = firstResult
 			cleanupDone := make(chan struct{})
 			go func() {
 				h.shutdown(t)
 				close(cleanupDone)
 			}()
+			var firstSatisfied bool
+			select {
+			case firstSatisfied = <-firstResult:
+			case <-time.After(15 * time.Second):
+				t.Fatal("shutdown completion predicate was not evaluated")
+			}
+			if firstSatisfied {
+				select {
+				case <-cleanupDone:
+				case <-time.After(15 * time.Second):
+					t.Fatal("cleanup did not complete after premature completion predicate")
+				}
+				t.Fatal("cleanup completion predicate was satisfied while only one owner fact was applied")
+			}
 			select {
 			case <-cleanupDone:
 				t.Fatal("cleanup completed before both owner callbacks were applied")
