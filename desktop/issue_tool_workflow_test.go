@@ -8,6 +8,31 @@ import (
 	"time"
 )
 
+func TestAddWorkflowGuidanceUpgradesReleasedPrefixesWithoutProfileLoss(t *testing.T) {
+	profile := "Purpose: Keep the custom brief.\nInstructions: Preserve this exact text."
+	cases := []struct {
+		name     string
+		current  string
+		guidance string
+	}{
+		{"conversation-initial", previousIssueToolConversationGuidance, issueToolConversationGuidance},
+		{"conversation-207", previousIssueToolConversationGuidanceV2, issueToolConversationGuidance},
+		{"work-released", previousIssueToolWorkGuidance, issueToolWorkGuidance},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			want := tc.guidance + "\n\n" + profile
+			got := addWorkflowGuidance(tc.current+"\n\n"+profile, tc.guidance)
+			if got != want {
+				t.Fatalf("upgrade lost profile or stacked the old role:\n%s", got)
+			}
+			if again := addWorkflowGuidance(got, tc.guidance); again != got {
+				t.Fatal("repeated ensure changed an already-current prompt")
+			}
+		})
+	}
+}
+
 func TestIssueToolExistingSessionGetsRoleWithoutRebindingProfile(t *testing.T) {
 	binary := requireRuntimeBinary(t)
 	helper := ensureIssueToolTestHelper(t)
@@ -202,7 +227,7 @@ func TestIssueToolExistingWorkSessionGetsRoleWithoutRebindingProfile(t *testing.
 	var setupErr error
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
-		session, err := h.app.rt.createConfiguredConversationSession(h.root, "OLD WORK PROMPT", nil)
+		session, err := h.app.rt.createConfiguredConversationSession(h.root, previousIssueToolWorkGuidance+"\n\nOLD WORK PROMPT", nil)
 		if err != nil {
 			setupErr = err
 			return
