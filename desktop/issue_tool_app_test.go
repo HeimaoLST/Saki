@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -930,6 +931,51 @@ func TestIssueToolInternalScopeIsFilteredFromUserHistoryOnlyAtTail(t *testing.T)
 	filtered = parseHistoryWithIssueToolScopeFilter("history-session", records, nil, a.issueToolScopeIndexSnapshot())
 	if len(filtered.messages[0].Context) != 2 {
 		t.Fatalf("non-tail same-named user context was removed: %+v", filtered.messages[0].Context)
+	}
+}
+
+func TestIssueToolRoleGuidanceFilteredOnlyBesideVerifiedTailScope(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	scope, err := a.issueToolNewScope(ct.ID, "history-session", "history-turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := a.issueToolNewScope(ct.ID, "other-session", "other-turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := taskContextItem{Name: "user-note", Text: "user material", Revision: 1}
+	guidance := taskContextItem{Name: issueToolRoleGuidanceContextName, Text: issueToolConversationGuidance, Revision: 1}
+	workGuidance := taskContextItem{Name: issueToolRoleGuidanceContextName, Text: issueToolWorkGuidance, Revision: 1}
+	different := taskContextItem{Name: issueToolRoleGuidanceContextName, Text: "same name, different text", Revision: 1}
+	scopeItem := taskContextItem{Name: issueToolScopeContextName, Text: scope.Ref, Revision: 1}
+	unknown := taskContextItem{Name: issueToolScopeContextName, Text: "scope-unknown", Revision: 1}
+	otherSession := taskContextItem{Name: issueToolScopeContextName, Text: other.Ref, Revision: 1}
+	cases := []struct {
+		name  string
+		items []taskContextItem
+		want  []taskContextItem
+	}{
+		{"conversation guidance beside scope", []taskContextItem{user, guidance, scopeItem}, []taskContextItem{user}},
+		{"work guidance beside scope", []taskContextItem{user, workGuidance, scopeItem}, []taskContextItem{user}},
+		{"same name different text", []taskContextItem{user, different, scopeItem}, []taskContextItem{user, different}},
+		{"earlier guidance", []taskContextItem{guidance, user, scopeItem}, []taskContextItem{guidance, user}},
+		{"two guidance removes at most one", []taskContextItem{user, guidance, guidance, scopeItem}, []taskContextItem{user, guidance}},
+		{"unknown scope", []taskContextItem{user, guidance, unknown}, []taskContextItem{user, guidance, unknown}},
+		{"other session scope", []taskContextItem{user, guidance, otherSession}, []taskContextItem{user, guidance, otherSession}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			records := supplementRawHistoryRecords(t, "history-task", "history-message", "body", tc.items, true)
+			filtered := parseHistoryWithIssueToolScopeFilter("history-session", records, nil, a.issueToolScopeIndexSnapshot())
+			if len(filtered.messages) != 1 {
+				t.Fatalf("filtered messages = %+v", filtered.messages)
+			}
+			if !reflect.DeepEqual(filtered.messages[0].Context, tc.want) {
+				t.Fatalf("filtered contexts = %+v, want %+v", filtered.messages[0].Context, tc.want)
+			}
+		})
 	}
 }
 

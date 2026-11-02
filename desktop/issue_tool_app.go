@@ -14,20 +14,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	issueToolSourceID           = "nagi_issue_tools"
-	issueToolScopeContextName   = "nagi.issue_tools.scope"
-	issueToolWaitTimeout        = 25 * time.Second
-	issueToolResultExcerptSize  = 4096
-	issueToolResultFilesLimit   = 50
-	issueToolQueryMaxBytes      = 16 * 1024
-	issueToolMCPEnvelopeReserve = 512
-	issueToolQueryTextLimit     = 512
+	issueToolSourceID                = "nagi_issue_tools"
+	issueToolScopeContextName        = "nagi.issue_tools.scope"
+	issueToolRoleGuidanceContextName = "nagi.issue_tools.role_guidance"
+	issueToolWaitTimeout             = 25 * time.Second
+	issueToolResultExcerptSize       = 4096
+	issueToolResultFilesLimit        = 50
+	issueToolQueryMaxBytes           = 16 * 1024
+	issueToolMCPEnvelopeReserve      = 512
+	issueToolQueryTextLimit          = 512
 )
 
 func newIssueToolTurnID() string {
@@ -238,33 +240,33 @@ func (a *appModel) issueToolMergedWorkSelection(current runtimeToolSelection) (m
 	return selection, nil
 }
 
-func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID, roleGuidance string, created bool) (bool, error) {
+func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID, roleGuidance string, created bool) (issueToolEnsureResult, error) {
 	if created {
-		return true, nil
+		return issueToolEnsureResult{Ready: true}, nil
 	}
 	if rt == nil || sessionID == "" {
-		return false, errRuntimeDisconnected
+		return issueToolEnsureResult{}, errRuntimeDisconnected
 	}
 	config, err := rt.connectionConfig(sessionID)
 	if err != nil {
-		return false, fmt.Errorf("read work tool selection: %w", err)
+		return issueToolEnsureResult{}, fmt.Errorf("read work tool selection: %w", err)
 	}
 	if config.StorageSchema < 2 {
-		return false, nil
+		return issueToolEnsureResult{}, nil
 	}
 	toolsReady := runtimeSelectionHasWorkWait(config.EffectiveConfig.ToolSelection)
 	desiredPrompt := addWorkflowGuidance(config.EffectiveConfig.SystemPrompt, roleGuidance)
 	promptReady := desiredPrompt == config.EffectiveConfig.SystemPrompt
 	refresh := a.issueToolRefreshRequired(rt, sessionID)
 	if toolsReady && promptReady && !refresh {
-		return true, nil
+		return issueToolEnsureResult{Ready: true}, nil
 	}
 	selection, mergeErr := a.issueToolMergedWorkSelection(config.EffectiveConfig.ToolSelection)
 	if mergeErr != nil {
-		return false, mergeErr
+		return issueToolEnsureResult{}, mergeErr
 	}
 	if selection == nil {
-		return false, nil
+		return issueToolEnsureResult{}, nil
 	}
 	if toolsReady && !refresh {
 		selection = nil
@@ -275,19 +277,22 @@ func (a *appModel) issueToolEnsureWorkSession(rt *runtimeClient, sessionID, role
 	}
 	updated, err := rt.updateSessionConfiguration(sessionID, config.ConfigRevision, selection, promptPatch)
 	if err != nil {
-		return false, fmt.Errorf("enable or refresh issue work workflow: %w", err)
+		if guidance := issueToolNativeTaskGuidance(config, updated, err, roleGuidance, toolsReady, refresh); guidance != "" {
+			return issueToolEnsureResult{Ready: true, TaskGuidance: guidance}, nil
+		}
+		return issueToolEnsureResult{}, fmt.Errorf("enable or refresh issue work workflow: %w", err)
 	}
 	if updated.ReadbackError != nil {
-		return false, fmt.Errorf("read back work configuration: %w", updated.ReadbackError)
+		return issueToolEnsureResult{}, fmt.Errorf("read back work configuration: %w", updated.ReadbackError)
 	}
 	if !runtimeSelectionHasWorkWait(updated.EffectiveConfig.ToolSelection) {
-		return false, errors.New("Runtime did not confirm the work wait tool")
+		return issueToolEnsureResult{}, errors.New("Runtime did not confirm the work wait tool")
 	}
 	if updated.EffectiveConfig.SystemPrompt != desiredPrompt {
-		return false, errors.New("Runtime did not confirm the work workflow prompt")
+		return issueToolEnsureResult{}, errors.New("Runtime did not confirm the work workflow prompt")
 	}
 	a.clearIssueToolRefresh(sessionID)
-	return true, nil
+	return issueToolEnsureResult{Ready: true}, nil
 }
 
 func (a *appModel) releaseIssueWorkSession(ct *contact, issue *productIssue) {
@@ -414,6 +419,59 @@ func (a *appModel) issueToolMergedSelection(current runtimeToolSelection) (map[s
 	return selection, nil
 }
 
+// issueToolEnsureResult reports whether the session can run this task and, for
+// the exact native compatibility path, the one current-role guidance to attach
+// to this task's caller context. It never represents a system-config upgrade.
+type issueToolEnsureResult struct {
+	Ready        bool
+	TaskGuidance string
+}
+
+func issueToolRoleGuidanceInput(guidance string) (runtimeContextInput, bool) {
+	if strings.TrimSpace(guidance) == "" {
+		return runtimeContextInput{}, false
+	}
+	return runtimeContextInput{Name: issueToolRoleGuidanceContextName, Text: guidance}, true
+}
+
+func issueToolConnectionReady(config runtimeConnectionConfig) bool {
+	effective := config.EffectiveConfig
+	if effective.ConnectionBinding.State != "bound" {
+		return false
+	}
+	id, execution := effective.ConnectionID, effective.ExecutionConnectionID
+	return id != nil && strings.TrimSpace(*id) != "" && execution != nil && *execution == *id
+}
+
+// issueToolNativeTaskGuidance accepts only the readback-proven case where an
+// exact released role differs from the current role and everything else is
+// already configured. The typed error is not swallowed; any other shape returns
+// empty and the caller keeps the original failure.
+func issueToolNativeTaskGuidance(config runtimeConnectionConfig, updated runtimeConfigUpdated, updateErr error, roleGuidance string, toolsReady, refresh bool) string {
+	if refresh || !toolsReady || updateErr == nil || updated.ReadbackError != nil {
+		return ""
+	}
+	var runtimeErr *runtimeError
+	if !errors.As(updateErr, &runtimeErr) || runtimeErr.Code != "continuation_not_supported" {
+		return ""
+	}
+	if !issueToolConnectionReady(config) || !reflect.DeepEqual(config, updated.runtimeConnectionConfig) {
+		return ""
+	}
+	profile, ok := releasedWorkflowPromptProfile(config.EffectiveConfig.SystemPrompt, roleGuidance)
+	if !ok {
+		return ""
+	}
+	desired := roleGuidance
+	if profile != "" {
+		desired += "\n\n" + profile
+	}
+	if addWorkflowGuidance(config.EffectiveConfig.SystemPrompt, roleGuidance) != desired {
+		return ""
+	}
+	return roleGuidance
+}
+
 // issueToolEnsureConversationSession checks an existing schema-2 session and
 // adds only the issue-tool bindings when absent. It deliberately does not
 // migrate schema 1 or guessed legacy ownership; those paths remain explicit
@@ -455,19 +513,19 @@ func (a *appModel) clearIssueToolRefresh(sessionID string) {
 	a.issueToolMu.Unlock()
 }
 
-func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, sessionID, roleGuidance string, created bool) (bool, error) {
+func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, sessionID, roleGuidance string, created bool) (issueToolEnsureResult, error) {
 	if created {
-		return true, nil
+		return issueToolEnsureResult{Ready: true}, nil
 	}
 	if rt == nil || sessionID == "" {
-		return false, errRuntimeDisconnected
+		return issueToolEnsureResult{}, errRuntimeDisconnected
 	}
 	config, err := rt.connectionConfig(sessionID)
 	if err != nil {
-		return false, fmt.Errorf("read conversation tool selection: %w", err)
+		return issueToolEnsureResult{}, fmt.Errorf("read conversation tool selection: %w", err)
 	}
 	if config.StorageSchema < 2 {
-		return false, nil
+		return issueToolEnsureResult{}, nil
 	}
 	toolsReady := runtimeSelectionHasIssueTools(config.EffectiveConfig.ToolSelection)
 	desiredPrompt := addWorkflowGuidance(config.EffectiveConfig.SystemPrompt, roleGuidance)
@@ -477,14 +535,14 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 		// The session already has the exact selection and prompt. A no-op
 		// config.update after restart can be rejected for native continuation,
 		// so do not touch Runtime configuration.
-		return true, nil
+		return issueToolEnsureResult{Ready: true}, nil
 	}
 	selection, mergeErr := a.issueToolMergedSelection(config.EffectiveConfig.ToolSelection)
 	if mergeErr != nil {
-		return false, mergeErr
+		return issueToolEnsureResult{}, mergeErr
 	}
 	if selection == nil {
-		return false, nil
+		return issueToolEnsureResult{}, nil
 	}
 	if toolsReady && !refresh {
 		selection = nil
@@ -499,19 +557,22 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 	}
 	updated, err := rt.updateSessionConfiguration(sessionID, config.ConfigRevision, selection, promptPatch)
 	if err != nil {
-		return false, fmt.Errorf("enable or refresh conversation issue workflow: %w", err)
+		if guidance := issueToolNativeTaskGuidance(config, updated, err, roleGuidance, toolsReady, refresh); guidance != "" {
+			return issueToolEnsureResult{Ready: true, TaskGuidance: guidance}, nil
+		}
+		return issueToolEnsureResult{}, fmt.Errorf("enable or refresh conversation issue workflow: %w", err)
 	}
 	if updated.ReadbackError != nil {
-		return false, fmt.Errorf("read back conversation configuration: %w", updated.ReadbackError)
+		return issueToolEnsureResult{}, fmt.Errorf("read back conversation configuration: %w", updated.ReadbackError)
 	}
 	if !runtimeSelectionHasIssueTools(updated.EffectiveConfig.ToolSelection) {
-		return false, errors.New("Runtime did not confirm the conversation issue-tool selection")
+		return issueToolEnsureResult{}, errors.New("Runtime did not confirm the conversation issue-tool selection")
 	}
 	if updated.EffectiveConfig.SystemPrompt != desiredPrompt {
-		return false, errors.New("Runtime did not confirm the conversation workflow prompt")
+		return issueToolEnsureResult{}, errors.New("Runtime did not confirm the conversation workflow prompt")
 	}
 	a.clearIssueToolRefresh(sessionID)
-	return true, nil
+	return issueToolEnsureResult{Ready: true}, nil
 }
 
 // issueToolNewScope issues one app-owned scope before a conversation task is
@@ -725,6 +786,13 @@ func (a *appModel) issueToolScopeIndexSnapshot() map[string]issueToolScopeIdenti
 	return index
 }
 
+func isIssueToolCurrentRoleGuidance(item taskContextItem) bool {
+	if item.Name != issueToolRoleGuidanceContextName {
+		return false
+	}
+	return item.Text == issueToolConversationGuidance || item.Text == issueToolWorkGuidance
+}
+
 func filterIssueToolContextWithIndex(index map[string]issueToolScopeIdentity, sessionID string, items []taskContextItem) []taskContextItem {
 	if len(items) == 0 {
 		return items
@@ -734,23 +802,27 @@ func filterIssueToolContextWithIndex(index map[string]issueToolScopeIdentity, se
 		return items
 	}
 	text := strings.TrimSpace(last.Text)
+	verified := false
 	var input IssueToolScope
 	if json.Unmarshal([]byte(text), &input) == nil && input.Validate() == nil {
 		identity, ok := index[input.Ref]
-		if !ok || identity.ContactID != input.ContactID || identity.RuntimeSessionID != sessionID ||
-			identity.TurnID != input.TurnID || identity.CreatedAt != input.CreatedAt {
-			return items
-		}
-		return append([]taskContextItem(nil), items[:len(items)-1]...)
+		verified = ok && identity.ContactID == input.ContactID && identity.RuntimeSessionID == sessionID &&
+			identity.TurnID == input.TurnID && identity.CreatedAt == input.CreatedAt
+	} else {
+		// New wire form: the model-facing scope value is only the opaque ref.
+		// Legacy persisted JSON above is still recognized; unknown/same-named user
+		// material is never filtered merely by its name.
+		identity, ok := index[text]
+		verified = ok && identity.ContactID != "" && identity.RuntimeSessionID == sessionID
 	}
-	// New wire form: the model-facing scope value is only the opaque ref.
-	// Legacy persisted JSON above is still recognized; unknown/same-named user
-	// material is never filtered merely by its name.
-	identity, ok := index[text]
-	if !ok || identity.ContactID == "" || identity.RuntimeSessionID != sessionID {
+	if !verified {
 		return items
 	}
-	return append([]taskContextItem(nil), items[:len(items)-1]...)
+	end := len(items) - 1
+	if end > 0 && isIssueToolCurrentRoleGuidance(items[end-1]) {
+		end--
+	}
+	return append([]taskContextItem(nil), items[:end]...)
 }
 
 func parseHistoryWithIssueToolScopeFilter(sessionID string, records []historyRecord, stopRequested map[string]bool, index map[string]issueToolScopeIdentity) historyProjection {

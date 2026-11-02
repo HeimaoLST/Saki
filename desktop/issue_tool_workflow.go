@@ -32,31 +32,46 @@ func (a *appModel) issueToolWorkSystemPrompt(ct *contact) string {
 	return combineWorkflowPrompt(issueToolWorkGuidance, profileSystemPrompt(ct), a.issueToolWorkflowEnabled())
 }
 
+func releasedWorkflowPrefixes(guidance string) []string {
+	switch guidance {
+	case issueToolConversationGuidance:
+		return []string{previousIssueToolConversationGuidance, previousIssueToolConversationGuidanceV2}
+	case issueToolWorkGuidance:
+		return []string{previousIssueToolWorkGuidance}
+	}
+	return nil
+}
+
+// releasedWorkflowPromptProfile returns the exact user profile after a known
+// released role, or false when the prompt is not that shape.
+func releasedWorkflowPromptProfile(current, guidance string) (string, bool) {
+	for _, previous := range releasedWorkflowPrefixes(guidance) {
+		if current == previous {
+			return "", true
+		}
+		if prefix := previous + "\n\n"; strings.HasPrefix(current, prefix) {
+			return strings.TrimPrefix(current, prefix), true
+		}
+	}
+	return "", false
+}
+
 func addWorkflowGuidance(current, guidance string) string {
 	if strings.TrimSpace(guidance) == "" {
 		return current
 	}
+	if current == guidance || strings.HasPrefix(current, guidance+"\n\n") {
+		return current
+	}
 	// Replace an exact released app role while retaining the user profile/custom
 	// prompt; never stack old roles. This is the one ensure* upgrade path.
-	var previousPrefixes []string
-	switch guidance {
-	case issueToolConversationGuidance:
-		previousPrefixes = []string{previousIssueToolConversationGuidance, previousIssueToolConversationGuidanceV2}
-	case issueToolWorkGuidance:
-		previousPrefixes = []string{previousIssueToolWorkGuidance}
-	}
-	for _, previous := range previousPrefixes {
+	for _, previous := range releasedWorkflowPrefixes(guidance) {
 		if current == previous {
-			current = ""
-			break
+			return guidance
 		}
 		if prefix := previous + "\n\n"; strings.HasPrefix(current, prefix) {
-			current = strings.TrimPrefix(current, prefix)
-			break
+			return guidance + "\n\n" + strings.TrimPrefix(current, prefix)
 		}
-	}
-	if strings.Contains(current, guidance) {
-		return current
 	}
 	if strings.TrimSpace(current) == "" {
 		return guidance

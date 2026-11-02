@@ -2,8 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -76,9 +80,9 @@ func TestIssueToolExistingSessionGetsRoleWithoutRebindingProfile(t *testing.T) {
 	if promptBefore != previousIssueToolConversationGuidance+"\n\n"+userPrompt || runtimeSelectionHasIssueTools(configBefore.EffectiveConfig.ToolSelection) {
 		t.Fatalf("precondition = prompt=%q issueTools=%v", promptBefore, runtimeSelectionHasIssueTools(configBefore.EffectiveConfig.ToolSelection))
 	}
-	configured, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false)
-	if err != nil || !configured {
-		t.Fatalf("ensure existing session = %v err=%v", configured, err)
+	ensured, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false)
+	if err != nil || !ensured.Ready {
+		t.Fatalf("ensure existing session = %+v err=%v", ensured, err)
 	}
 	configAfter, err := rt.connectionConfig(sessionID)
 	if err != nil {
@@ -118,8 +122,8 @@ func TestIssueToolExistingSessionGetsRoleWithoutRebindingProfile(t *testing.T) {
 	}
 	// A second idle ensure is a no-op and does not create a replacement session.
 	again, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false)
-	if err != nil || !again {
-		t.Fatalf("second ensure = %v err=%v", again, err)
+	if err != nil || !again.Ready {
+		t.Fatalf("second ensure = %+v err=%v", again, err)
 	}
 	configAgain, err := rt.connectionConfig(sessionID)
 	if err != nil || configAgain.SessionID != sessionID || configAgain.EffectiveConfig.SystemPrompt != wantPrompt {
@@ -242,8 +246,8 @@ func TestIssueToolExistingWorkSessionGetsRoleWithoutRebindingProfile(t *testing.
 	if setupErr != nil {
 		t.Fatal(setupErr)
 	}
-	if configured, err := h.app.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, false); err != nil || !configured {
-		t.Fatalf("ensure work = %v err=%v", configured, err)
+	if ensured, err := h.app.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, false); err != nil || !ensured.Ready {
+		t.Fatalf("ensure work = %+v err=%v", ensured, err)
 	}
 	config, err := rt.connectionConfig(sessionID)
 	if err != nil {
@@ -294,8 +298,8 @@ func TestIssueToolEnsureSkipsNoOpConfigUpdate(t *testing.T) {
 	// A new Runtime/app instance has no in-memory ready mark. Because the
 	// persisted selection/prompt are already exact, ensure must not issue a
 	// no-op session.config.update (which native continuation rejects).
-	if configured, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false); err != nil || !configured {
-		t.Fatalf("ensure = %v err=%v", configured, err)
+	if ensured, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false); err != nil || !ensured.Ready {
+		t.Fatalf("ensure = %+v err=%v", ensured, err)
 	}
 	after, err := rt.connectionConfig(sessionID)
 	if err != nil {
@@ -312,8 +316,8 @@ func TestIssueToolEnsureSkipsNoOpConfigUpdate(t *testing.T) {
 	if !h.app.issueToolRefreshRequired(rt, sessionID) {
 		t.Fatal("typed tool_schema_changed did not mark refresh required")
 	}
-	if configured, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false); err != nil || !configured {
-		t.Fatalf("refresh ensure = %v err=%v", configured, err)
+	if ensured, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false); err != nil || !ensured.Ready {
+		t.Fatalf("refresh ensure = %+v err=%v", ensured, err)
 	}
 	refreshed, err := rt.connectionConfig(sessionID)
 	if err != nil {
@@ -433,8 +437,8 @@ func TestIssueToolWorkRefreshUsesSameTypedMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if configured, err := h.app.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, false); err != nil || !configured {
-		t.Fatalf("work no-op ensure = %v err=%v", configured, err)
+	if ensured, err := h.app.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, false); err != nil || !ensured.Ready {
+		t.Fatalf("work no-op ensure = %+v err=%v", ensured, err)
 	}
 	after, err := rt.connectionConfig(sessionID)
 	if err != nil || after.ConfigRevision != before.ConfigRevision {
@@ -444,8 +448,8 @@ func TestIssueToolWorkRefreshUsesSameTypedMarker(t *testing.T) {
 	if !h.app.issueToolRefreshRequired(rt, sessionID) {
 		t.Fatal("work typed schema error did not mark refresh")
 	}
-	if configured, err := h.app.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, false); err != nil || !configured {
-		t.Fatalf("work refresh ensure = %v err=%v", configured, err)
+	if ensured, err := h.app.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, false); err != nil || !ensured.Ready {
+		t.Fatalf("work refresh ensure = %+v err=%v", ensured, err)
 	}
 	refreshed, err := rt.connectionConfig(sessionID)
 	if err != nil {
@@ -453,5 +457,556 @@ func TestIssueToolWorkRefreshUsesSameTypedMarker(t *testing.T) {
 	}
 	if h.app.issueToolRefreshRequired(rt, sessionID) {
 		t.Fatalf("work refresh did not clear marker: revision=%d/%d", after.ConfigRevision, refreshed.ConfigRevision)
+	}
+}
+
+type issueToolNativeBodyProvider struct {
+	mu     sync.Mutex
+	bodies []string
+}
+
+func (p *issueToolNativeBodyProvider) handler(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	p.mu.Lock()
+	p.bodies = append(p.bodies, string(body))
+	p.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"id":"response","status":"completed","output":[{"type":"reasoning","id":"reasoning","status":"completed","content":[{"type":"reasoning_text","text":"opaque"}],"encrypted_content":"opaque-native"},{"type":"message","id":"answer","status":"completed","role":"assistant","content":[{"type":"output_text","text":"native fixture answer"}]}]}`))
+}
+
+func (p *issueToolNativeBodyProvider) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.bodies)
+}
+
+func (p *issueToolNativeBodyProvider) body(index int) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if index < 0 || index >= len(p.bodies) {
+		return ""
+	}
+	return p.bodies[index]
+}
+
+func issueToolNativeRequestSystem(t *testing.T, body string) string {
+	t.Helper()
+	var request struct {
+		Input []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal([]byte(body), &request); err != nil {
+		t.Fatalf("native request is not JSON: %v", err)
+	}
+	for _, item := range request.Input {
+		if item.Role != "system" {
+			continue
+		}
+		var text string
+		if json.Unmarshal(item.Content, &text) == nil {
+			return text
+		}
+		var parts []struct {
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(item.Content, &parts) == nil {
+			var joined []string
+			for _, part := range parts {
+				joined = append(joined, part.Text)
+			}
+			return strings.Join(joined, "")
+		}
+	}
+	t.Fatal("native request has no system prompt")
+	return ""
+}
+
+func issueToolCurrentUserCallerContexts(t *testing.T, body string) []taskContextCallerContext {
+	t.Helper()
+	users := taskContextUserTexts(t, body)
+	if len(users) == 0 {
+		t.Fatal("model request had no user input")
+	}
+	var contexts []taskContextCallerContext
+	for index, segment := range users[len(users)-1] {
+		if index == 0 {
+			continue
+		}
+		if context, ok := taskContextParseCallerContext(segment); ok {
+			contexts = append(contexts, context)
+		}
+	}
+	return contexts
+}
+
+func TestIssueToolNativeTaskGuidanceRequiresExactReadback(t *testing.T) {
+	connectionID, executionID := "connection-native", "connection-native"
+	base := runtimeConnectionConfig{SessionID: "native-session", ConfigRevision: 7, StorageSchema: 2}
+	base.EffectiveConfig.SystemPrompt = previousIssueToolConversationGuidanceV2 + "\n\nPROFILE BYTES"
+	base.EffectiveConfig.ConnectionID = &connectionID
+	base.EffectiveConfig.ExecutionConnectionID = &executionID
+	base.EffectiveConfig.ConnectionBinding.State = "bound"
+	base.EffectiveConfig.ToolSelection = runtimeToolSelection{
+		Builtin: []string{"read"},
+		External: []runtimeExternalToolBinding{{
+			SourceID: issueToolSourceID, ToolName: "issue_get", ExposedName: "issue_get",
+		}},
+	}
+	updated := runtimeConfigUpdated{runtimeConnectionConfig: base}
+	nativeErr := &runtimeError{Code: "continuation_not_supported", Message: "native"}
+	if got := issueToolNativeTaskGuidance(base, updated, nativeErr, issueToolConversationGuidance, true, false); got != issueToolConversationGuidance {
+		t.Fatalf("valid native guidance = %q", got)
+	}
+	withReadbackError := updated
+	withReadbackError.ReadbackError = errors.New("readback failed")
+	if got := issueToolNativeTaskGuidance(base, withReadbackError, nativeErr, issueToolConversationGuidance, true, false); got != "" {
+		t.Fatalf("readback error accepted: %q", got)
+	}
+	withRevision := updated
+	withRevision.ConfigRevision++
+	if got := issueToolNativeTaskGuidance(base, withRevision, nativeErr, issueToolConversationGuidance, true, false); got != "" {
+		t.Fatalf("revision change accepted: %q", got)
+	}
+	withPrompt := updated
+	withPrompt.EffectiveConfig.SystemPrompt += " changed"
+	if got := issueToolNativeTaskGuidance(base, withPrompt, nativeErr, issueToolConversationGuidance, true, false); got != "" {
+		t.Fatalf("readback prompt change accepted: %q", got)
+	}
+	withTools := updated
+	withTools.EffectiveConfig.ToolSelection.Builtin = append([]string{}, withTools.EffectiveConfig.ToolSelection.Builtin...)
+	withTools.EffectiveConfig.ToolSelection.Builtin = append(withTools.EffectiveConfig.ToolSelection.Builtin, "edit")
+	if got := issueToolNativeTaskGuidance(base, withTools, nativeErr, issueToolConversationGuidance, true, false); got != "" {
+		t.Fatalf("readback tool change accepted: %q", got)
+	}
+	if got := issueToolNativeTaskGuidance(base, updated, &runtimeError{Code: "tool_schema_changed", Message: "schema"}, issueToolConversationGuidance, true, false); got != "" {
+		t.Fatalf("non-native error accepted: %q", got)
+	}
+	if got := issueToolNativeTaskGuidance(base, updated, nativeErr, issueToolConversationGuidance, false, false); got != "" {
+		t.Fatalf("missing tools accepted: %q", got)
+	}
+	if got := issueToolNativeTaskGuidance(base, updated, nativeErr, issueToolConversationGuidance, true, true); got != "" {
+		t.Fatalf("refresh accepted: %q", got)
+	}
+	mixed := base
+	mixed.EffectiveConfig.SystemPrompt = previousIssueToolConversationGuidanceV2 + " trailing mixed text"
+	if got := issueToolNativeTaskGuidance(mixed, runtimeConfigUpdated{runtimeConnectionConfig: mixed}, nativeErr, issueToolConversationGuidance, true, false); got != "" {
+		t.Fatalf("mixed prompt accepted: %q", got)
+	}
+	quoted := base
+	quoted.EffectiveConfig.SystemPrompt = previousIssueToolConversationGuidanceV2 + "\n\nPROFILE: quote " + issueToolConversationGuidance
+	if got := issueToolNativeTaskGuidance(quoted, runtimeConfigUpdated{runtimeConnectionConfig: quoted}, nativeErr, issueToolConversationGuidance, true, false); got != issueToolConversationGuidance {
+		t.Fatalf("profile containing current role rejected: %q", got)
+	}
+}
+
+func TestAddWorkflowGuidancePreservesProfileContainingCurrentRole(t *testing.T) {
+	profile := "Purpose: quote the current rule without replacing it: " + issueToolConversationGuidance
+	want := issueToolConversationGuidance + "\n\n" + profile
+	if got := addWorkflowGuidance(previousIssueToolConversationGuidanceV2+"\n\n"+profile, issueToolConversationGuidance); got != want {
+		t.Fatalf("profile containing current role was not preserved: %q", got)
+	}
+}
+
+func TestIssueToolNativeConversationUsesOneCurrentRoleGuidanceContext(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	provider := &issueToolNativeBodyProvider{}
+	h := startIssueToolTestHarness(t, binary, http.HandlerFunc(provider.handler))
+	oldPrompt := previousIssueToolConversationGuidanceV2 + "\n\nCUSTOM PROFILE: keep these exact bytes"
+	seedSelection := runtimeToolSelection{
+		Builtin: []string{"read", "bash"},
+		External: []runtimeExternalToolBinding{{
+			SourceID: issueToolSourceID, ToolName: "issue_get", ExposedName: "alias_issue_get",
+		}},
+	}
+	var sessionID string
+	var rt *runtimeClient
+	var setupErr error
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		selection, err := h.app.issueToolMergedSelection(seedSelection)
+		if err != nil {
+			setupErr = err
+			return
+		}
+		session, err := h.app.rt.createConfiguredConversationSession(h.root, oldPrompt, selection)
+		if err != nil {
+			setupErr = err
+			return
+		}
+		sessionID, rt = session.SessionID, h.app.rt
+		ct.SessionID, ct.Loaded = sessionID, true
+		ct.Purpose, ct.Instructions = "CURRENT CONTACT PROFILE", "CURRENT CONTACT INSTRUCTIONS"
+		if err := h.app.persist(); err != nil {
+			setupErr = err
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	var seedTask string
+	h.pump.do(func() {
+		result, err := rt.sendTask(sessionID, "native seed")
+		if err != nil {
+			setupErr = err
+			return
+		}
+		seedTask = result.TaskID
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	h.pump.waitTimeout(func() bool {
+		ct := h.app.selectedContact()
+		return ct.LastTaskID == seedTask && ct.ActiveTaskID == ""
+	}, 15*time.Second)
+	configBefore, err := rt.connectionConfig(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyBefore, err := rt.historyPage(sessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	builtin := map[string]bool{}
+	for _, name := range configBefore.EffectiveConfig.ToolSelection.Builtin {
+		builtin[name] = true
+	}
+	alias := false
+	for _, binding := range configBefore.EffectiveConfig.ToolSelection.External {
+		if binding.SourceID == issueToolSourceID && binding.ToolName == "issue_get" && binding.ExposedName == "alias_issue_get" {
+			alias = true
+		}
+	}
+	if provider.count() != 1 || configBefore.EffectiveConfig.SystemPrompt != oldPrompt ||
+		len(builtin) != 2 || !builtin["read"] || !builtin["bash"] || !alias ||
+		!runtimeSelectionHasIssueTools(configBefore.EffectiveConfig.ToolSelection) {
+		t.Fatalf("native seed precondition requests=%d prompt=%q builtin=%v alias=%v", provider.count(), configBefore.EffectiveConfig.SystemPrompt, builtin, alias)
+	}
+	ensured, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false)
+	if err != nil || !ensured.Ready || ensured.TaskGuidance != issueToolConversationGuidance {
+		t.Fatalf("native ensure = %+v err=%v", ensured, err)
+	}
+	again, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false)
+	if err != nil || !again.Ready || again.TaskGuidance != issueToolConversationGuidance || provider.count() != 1 {
+		t.Fatalf("repeated native ensure = %+v err=%v requests=%d", again, err, provider.count())
+	}
+	configAfterEnsure, err := rt.connectionConfig(sessionID)
+	if err != nil || !reflect.DeepEqual(configBefore, configAfterEnsure) {
+		t.Fatalf("native ensure changed config: err=%v before=%+v after=%+v", err, configBefore, configAfterEnsure)
+	}
+	checkCurrentGuidance := func(body string) {
+		t.Helper()
+		if got := issueToolNativeRequestSystem(t, body); got != oldPrompt {
+			t.Fatalf("native task system prompt = %q", got)
+		}
+		var guidanceCount int
+		var guidance string
+		for _, context := range issueToolCurrentUserCallerContexts(t, body) {
+			if context.Name != issueToolRoleGuidanceContextName {
+				continue
+			}
+			guidanceCount++
+			guidance = context.Text
+		}
+		if guidanceCount != 1 || guidance != issueToolConversationGuidance {
+			t.Fatalf("native current task guidance contexts=%d text=%q", guidanceCount, guidance)
+		}
+	}
+	var sendOK bool
+	var sendErr string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "native first task"
+		sendOK = h.app.sendCurrent()
+		sendErr = ct.SendError
+	})
+	if !sendOK {
+		t.Fatalf("native first task rejected: %q", sendErr)
+	}
+	h.pump.waitTimeout(func() bool {
+		ct := h.app.selectedContact()
+		return ct.SendState == sendIdle && ct.ActiveTaskID == "" && ct.LastTaskID != seedTask
+	}, 15*time.Second)
+	var firstTask string
+	h.pump.do(func() { firstTask = h.app.selectedContact().LastTaskID })
+	configAfterFirst, err := rt.connectionConfig(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyAfterFirst, err := rt.historyPage(sessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(configBefore, configAfterFirst) {
+		t.Fatalf("native first task changed config: before=%+v after=%+v", configBefore, configAfterFirst)
+	}
+	if len(historyAfterFirst.Records) <= len(historyBefore.Records) || !reflect.DeepEqual(historyAfterFirst.Records[:len(historyBefore.Records)], historyBefore.Records) {
+		t.Fatalf("native first task changed journal prefix: before=%d after=%d", len(historyBefore.Records), len(historyAfterFirst.Records))
+	}
+	if provider.count() != 2 {
+		t.Fatalf("native first task requests=%d, want one seed + one task", provider.count())
+	}
+	checkCurrentGuidance(provider.body(1))
+	beforeSecond, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false)
+	if err != nil || !beforeSecond.Ready || beforeSecond.TaskGuidance != issueToolConversationGuidance || provider.count() != 2 {
+		t.Fatalf("ensure before second task = %+v err=%v requests=%d", beforeSecond, err, provider.count())
+	}
+	configBeforeSecond, err := rt.connectionConfig(sessionID)
+	if err != nil || !reflect.DeepEqual(configBefore, configBeforeSecond) {
+		t.Fatalf("ensure before second task changed config: err=%v before=%+v after=%+v", err, configBefore, configBeforeSecond)
+	}
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		ct.Draft = "native second task"
+		sendOK = h.app.sendCurrent()
+		sendErr = ct.SendError
+	})
+	if !sendOK {
+		t.Fatalf("native second task rejected: %q", sendErr)
+	}
+	h.pump.waitTimeout(func() bool {
+		ct := h.app.selectedContact()
+		return ct.SendState == sendIdle && ct.ActiveTaskID == "" && ct.LastTaskID != firstTask
+	}, 15*time.Second)
+	configAfterSecond, err := rt.connectionConfig(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyAfterSecond, err := rt.historyPage(sessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(configBefore, configAfterSecond) {
+		t.Fatalf("native second task changed config: before=%+v after=%+v", configBefore, configAfterSecond)
+	}
+	if len(historyAfterSecond.Records) <= len(historyAfterFirst.Records) || !reflect.DeepEqual(historyAfterSecond.Records[:len(historyAfterFirst.Records)], historyAfterFirst.Records) {
+		t.Fatalf("native second task changed journal prefix: before=%d after=%d", len(historyAfterFirst.Records), len(historyAfterSecond.Records))
+	}
+	if provider.count() != 3 {
+		t.Fatalf("native repeat requests=%d, want seed + two sends", provider.count())
+	}
+	checkCurrentGuidance(provider.body(2))
+	allGuidance := 0
+	for _, context := range taskContextUserCallerContexts(t, provider.body(2)) {
+		if context.Name == issueToolRoleGuidanceContextName {
+			allGuidance++
+		}
+	}
+	if allGuidance != 2 {
+		t.Fatalf("historical guidance retained=%d, want previous + current", allGuidance)
+	}
+}
+
+func TestIssueToolNativeWorkUsesOneCurrentRoleGuidanceContext(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	provider := &issueToolNativeBodyProvider{}
+	h := startIssueToolTestHarness(t, binary, http.HandlerFunc(provider.handler))
+	oldPrompt := previousIssueToolWorkGuidance + "\n\nWORK PROFILE: keep these exact bytes"
+	selection := map[string]any{
+		"builtin":  []string{"read", "bash", "edit", "write"},
+		"external": issueToolWorkExternal(),
+	}
+	var sessionID, seedTask string
+	var rt *runtimeClient
+	var setupErr error
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		session, err := h.app.rt.createConfiguredConversationSession(h.root, oldPrompt, selection)
+		if err != nil {
+			setupErr = err
+			return
+		}
+		sessionID, rt = session.SessionID, h.app.rt
+		ct.SessionID, ct.Loaded = sessionID, true
+		result, err := rt.sendTask(sessionID, "native work seed")
+		if err != nil {
+			setupErr = err
+			return
+		}
+		seedTask = result.TaskID
+		if err := h.app.persist(); err != nil {
+			setupErr = err
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	h.pump.waitTimeout(func() bool {
+		ct := h.app.selectedContact()
+		return ct.LastTaskID == seedTask && ct.ActiveTaskID == ""
+	}, 15*time.Second)
+	configBefore, err := rt.connectionConfig(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyBefore, err := rt.historyPage(sessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.count() != 1 || configBefore.EffectiveConfig.SystemPrompt != oldPrompt {
+		t.Fatalf("native work seed precondition requests=%d prompt=%q", provider.count(), configBefore.EffectiveConfig.SystemPrompt)
+	}
+	var issueID string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		// The seed used the contact slot only to observe events. Give the work
+		// session its single issue owner before creating/dispatching the issue.
+		ct.SessionID, ct.Loaded, ct.ActiveTaskID, ct.SendState = "", false, "", sendIdle
+		if !h.app.createIssue("NATIVE-WORK-GOAL", "") {
+			setupErr = errors.New(h.app.issueFormError)
+			return
+		}
+		issueID = ct.SelectedIssueID
+		issue := ct.issueByID(issueID)
+		issue.WorkSessionID = sessionID
+		issue.Work.Loaded = true
+		issue.Work.SendState = sendIdle
+		if err := h.app.persist(); err != nil {
+			setupErr = err
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	ensured, err := h.app.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, false)
+	if err != nil || !ensured.Ready || ensured.TaskGuidance != issueToolWorkGuidance {
+		t.Fatalf("native work ensure = %+v err=%v", ensured, err)
+	}
+	again, err := h.app.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, false)
+	if err != nil || !again.Ready || again.TaskGuidance != issueToolWorkGuidance || provider.count() != 1 {
+		t.Fatalf("repeated native work ensure = %+v err=%v requests=%d", again, err, provider.count())
+	}
+	configAfterEnsure, err := rt.connectionConfig(sessionID)
+	if err != nil || !reflect.DeepEqual(configBefore, configAfterEnsure) {
+		t.Fatalf("native work ensure changed config: err=%v before=%+v after=%+v", err, configBefore, configAfterEnsure)
+	}
+	var runOK bool
+	var runErr string
+	h.pump.do(func() {
+		runOK = h.app.runIssue(issueID)
+		if !runOK {
+			runErr = h.app.issueFormError
+		}
+	})
+	if !runOK {
+		t.Fatalf("native work task rejected: %q", runErr)
+	}
+	h.pump.waitTimeout(func() bool {
+		ct := h.app.selectedContact()
+		issue := ct.issueByID(issueID)
+		return issue != nil && issue.Work.SendState == sendIdle && issue.Work.ActiveTaskID == "" &&
+			(issue.Work.SendError != "" || issue.Work.LastTaskID != seedTask)
+	}, 15*time.Second)
+	var workState string
+	var workExecutions int
+	var workStatus string
+	h.pump.do(func() {
+		issue := h.app.selectedContact().issueByID(issueID)
+		workState = issue.Work.SendError
+		workExecutions = len(issue.Executions)
+		if len(issue.Executions) > 0 {
+			workStatus = issue.Executions[0].Status
+		}
+	})
+	if workState != "" || workExecutions != 1 || workStatus != issueExecutionCompleted {
+		t.Fatalf("native work result: error=%q executions=%d status=%q", workState, workExecutions, workStatus)
+	}
+	configAfter, err := rt.connectionConfig(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyAfter, err := rt.historyPage(sessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(configBefore, configAfter) {
+		t.Fatalf("native work task changed config: before=%+v after=%+v", configBefore, configAfter)
+	}
+	if len(historyAfter.Records) <= len(historyBefore.Records) || !reflect.DeepEqual(historyAfter.Records[:len(historyBefore.Records)], historyBefore.Records) {
+		t.Fatalf("native work task changed journal prefix: before=%d after=%d", len(historyBefore.Records), len(historyAfter.Records))
+	}
+	if provider.count() != 2 {
+		t.Fatalf("native work requests=%d, want one seed + one task", provider.count())
+	}
+	body := provider.body(1)
+	if got := issueToolNativeRequestSystem(t, body); got != oldPrompt {
+		t.Fatalf("native work system prompt = %q", got)
+	}
+	var guidanceCount int
+	var guidance string
+	for _, context := range issueToolCurrentUserCallerContexts(t, body) {
+		if context.Name != issueToolRoleGuidanceContextName {
+			continue
+		}
+		guidanceCount++
+		guidance = context.Text
+	}
+	if guidanceCount != 1 || guidance != issueToolWorkGuidance {
+		t.Fatalf("native work guidance contexts=%d text=%q", guidanceCount, guidance)
+	}
+}
+
+func TestIssueToolNativeToolChangeStillRefused(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	provider := &issueToolNativeBodyProvider{}
+	h := startIssueToolTestHarness(t, binary, http.HandlerFunc(provider.handler))
+	oldPrompt := previousIssueToolConversationGuidanceV2 + "\n\nCUSTOM PROFILE"
+	var sessionID string
+	var rt *runtimeClient
+	var setupErr error
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		session, err := h.app.rt.createConfiguredConversationSession(h.root, oldPrompt, map[string]any{
+			"builtin":  []string{"read"},
+			"external": []map[string]string{},
+		})
+		if err != nil {
+			setupErr = err
+			return
+		}
+		sessionID, rt = session.SessionID, h.app.rt
+		ct.SessionID, ct.Loaded = sessionID, true
+		result, err := rt.sendTask(sessionID, "native seed")
+		if err != nil {
+			setupErr = err
+			return
+		}
+		ct.Draft = result.TaskID
+		if err := h.app.persist(); err != nil {
+			setupErr = err
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	var seedTask string
+	h.pump.do(func() {
+		ct := h.app.selectedContact()
+		seedTask = ct.Draft
+		ct.Draft = ""
+	})
+	h.pump.waitTimeout(func() bool {
+		ct := h.app.selectedContact()
+		return ct.LastTaskID == seedTask && ct.ActiveTaskID == ""
+	}, 15*time.Second)
+	configBefore, err := rt.connectionConfig(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ensured, err := h.app.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, false)
+	if err == nil || ensured.TaskGuidance != "" || !strings.Contains(err.Error(), "continuation_not_supported") {
+		t.Fatalf("native tool change result = %+v err=%v", ensured, err)
+	}
+	configAfter, err := rt.connectionConfig(sessionID)
+	if err != nil || !reflect.DeepEqual(configBefore, configAfter) || provider.count() != 1 {
+		t.Fatalf("refused native tool change modified state: err=%v before=%+v after=%+v requests=%d", err, configBefore, configAfter, provider.count())
 	}
 }

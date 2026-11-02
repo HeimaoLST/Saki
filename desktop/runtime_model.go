@@ -1950,12 +1950,15 @@ func (a *appModel) submitIssueTask(rt *runtimeClient, configured bool, contactID
 	}
 	wireContext := taskContextInputs(context)
 	if workTools {
-		configuredTools, err := a.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, createdSession)
+		ensured, err := a.issueToolEnsureWorkSession(rt, sessionID, issueToolWorkGuidance, createdSession)
 		if err != nil {
 			a.failIssueSubmit(contactID, issueID, err, false)
 			return
 		}
-		if configuredTools {
+		if input, ok := issueToolRoleGuidanceInput(ensured.TaskGuidance); ok {
+			wireContext = append(wireContext, input)
+		}
+		if ensured.Ready {
 			var scope *IssueToolScope
 			var scopeErr error
 			a.runOnUI(func() {
@@ -2324,12 +2327,15 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 	}
 	wireContext := taskContextInputs(context)
 	if issueTools {
-		configuredTools, err := a.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, createdSession)
+		ensured, err := a.issueToolEnsureConversationSession(rt, sessionID, issueToolConversationGuidance, createdSession)
 		if err != nil {
 			a.failSubmit(contactID, err, false)
 			return
 		}
-		issueTools = configuredTools
+		issueTools = ensured.Ready
+		if input, ok := issueToolRoleGuidanceInput(ensured.TaskGuidance); ok {
+			wireContext = append(wireContext, input)
+		}
 	}
 	if issueTools {
 		var scope *IssueToolScope
