@@ -1,0 +1,135 @@
+{
+  "@@locale": "en",
+  "settingsTitle": "Settings",
+  "settingsOpenTooltip": "Open Settings",
+  "@settingsOpenTooltip": {
+    "description": "The tooltip of the Settings action."
+  },
+  "settingsRailActions": "App actions",
+  "@settingsRailActions": {
+    "description": "The accessible name of the toolbar holding the Settings action."
+  },
+  "@settingsTitle": {
+    "description": "The Settings page and the action that opens it."
+  },
+  "settingsBack": "Back",
+  "settingsBackAccessible": "← Back to workbench",
+  "@settingsBackAccessible": {
+    "description": "The accessible name of the Settings back action."
+  },
+  "@settingsBack": {
+    "description": "The visible label of the Settings back action."
+  },
+  "settingsAppearance": "Appearance",
+  "@settingsAppearance": {
+    "description": "The Appearance category in Settings."
+  },
+  "settingsConnection": "Connection & model",
+  "@settingsConnection": {
+    "description": "The Connection & model category in Settings."
+  },
+  "settingsContact": "Contact profile",
+  "settingsContactTitle": "Contact profile: {name}",
+  "@settingsContactTitle": {
+    "description": "The heading of the selected Contact profile.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Saki"
+      }
+    }
+  },
+  "@settingsContact": {
+    "description": "The Contact profile category in Settings."
+  },
+  "settingsAdvanced": "Advanced",
+  "settingsNavigationLabel": "Settings navigation",
+  "@settingsNavigationLabel": {
+    "description": "The accessible name of the Settings category navigation."
+  },
+  "@settingsAdvanced": {
+    "description": "The Advanced category in Settings."
+  },
+  "settingsAppearanceHint": "Changes apply immediately.",
+  "@settingsAppearanceHint": {
+    "description": "The hint below the Appearance heading."
+  },
+  "copyMessageLabel": "Copy message",
+  "@copyMessageLabel": {
+    "description": "The accessible name of the copy control for a conversation message."
+  },
+  "copySavedMessageLabel": "Copy saved message",
+  "@copySavedMessageLabel": {
+    "description": "The accessible name of the copy control for a full saved message."
+  },
+  "copyHistoryMessageLabel": "Copy history message",
+  "@copyHistoryMessageLabel": {
+    "description": "The accessible name of the copy control for a history entry."
+  },
+  "copySourceMessageLabel": "Copy source message",
+  "@copySourceMessageLabel": {
+    "description": "The accessible name of the copy control for a source message."
+  },
+  "copyContextTextLabel": "Copy context text",
+  "@copyContextTextLabel": {
+    "description": "The accessible name of the copy control for Context text."
+  },
+  "copyReceivedOutputLabel": "Copy received output",
+  "@copyReceivedOutputLabel": {
+    "description": "The accessible name of the copy control for received tool output."
+  },
+  "copySupplementTextLabel": "Copy supplement text",
+  "@copySupplementTextLabel": {
+    "description": "The accessible name of the copy control for supplement text."
+  },
+  "copyResultLabel": "Copy result",
+  "@copyResultLabel": {
+    "description": "The accessible name of the copy control for an issue result."
+  },
+  "copyPathLabel": "Copy path",
+  "@copyPathLabel": {
+    "description": "The accessible name of the copy control for a file path."
+  },
+  "copyCurrentFileLabel": "Copy current file",
+  "@copyCurrentFileLabel": {
+    "description": "The accessible name of the copy control for the current file preview."
+  },
+  "copyToolRecordLabel": "Copy tool record",
+  "@copyToolRecordLabel": {
+    "description": "The accessible name of the copy control for a raw tool record."
+  },
+  "copyErrorDetailsLabel": "Copy error details",
+  "@copyErrorDetailsLabel": {
+    "description": "The accessible name of the copy control for raw error details."
+  },
+  "copyCodeLabel": "Copy code",
+  "@copyCodeLabel": {
+    "description": "The accessible name of the copy control for a finished code block."
+  },
+  "copyReceivedCodeLabel": "Copy received code",
+  "@copyReceivedCodeLabel": {
+    "description": "The accessible name of the copy control for a streaming code block."
+  },
+  "copyActionLabel": "Copy",
+  "@copyActionLabel": {
+    "description": "The short label of a code block copy action."
+  },
+  "copiedReceivedOutput": "Copied received output",
+  "copied": "Copied",
+  "@copied": {
+    "description": "The tooltip after a copy succeeds."
+  },
+  "@copiedReceivedOutput": {
+    "description": "The confirmation after copied tool output."
+  },
+  "copyFailed": "Copy failed: {error}",
+  "@copyFailed": {
+    "description": "The failure message after copying tool output.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "clipboard unavailable"
+      }
+    }
+  }
+}

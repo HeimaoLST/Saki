@@ -8,6 +8,8 @@ import (
 	"fmt"
 
 	"github.com/egoist/mygo/ui"
+
+	"saki/desktop/locales"
 )
 
 func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue, editable bool) {
@@ -81,7 +83,7 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 						ui.Row(c).Children(func() {
 							secondaryButton(c, "Close preview").OnClick(func() { a.issueSupplementPreviewID = "" })
 						})
-						markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy supplement text"}).
+						markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: locales.In(c.Locale()).CopySupplementTextLabel()}).
 							FontSize(14).LineHeight(1.5).TextColor(t.Text)
 					} else {
 						secondaryButton(c, "Preview full text").OnClick(func() { a.issueSupplementPreviewID = item.ID })
@@ -164,7 +166,7 @@ func (a *appModel) issueSupplementSection(c *ui.Context, t *ui.Theme, ct *contac
 							FontSize(14).LineHeight(1.5).TextColor(t.Text)
 						if a.issueSupplementPreviewID == item.ID {
 							secondaryButton(c, "Close preview").OnClick(func() { a.issueSupplementPreviewID = "" })
-							markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy supplement text"}).
+							markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: locales.In(c.Locale()).CopySupplementTextLabel()}).
 								FontSize(14).LineHeight(1.5).TextColor(t.Text)
 						} else {
 							secondaryButton(c, "Preview full text").OnClick(func() { a.issueSupplementPreviewID = item.ID })

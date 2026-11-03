@@ -18,6 +18,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
+
+	"saki/desktop/locales"
 )
 
 // The runtime bounds the sum of serialized caller-context wrappers carried by
@@ -500,7 +502,7 @@ func taskContextReadOnlyView(c *ui.Context, theme workbenchTheme, items []taskCo
 					ui.Text(c, "File: "+item.Source).FontSize(typeMeta).LineHeight(1.35).TextColor(t.TextMuted)
 				}
 				ui.Scroll(c).Height(96).Padding(6).Radius(5).Background(t.SurfaceHover).Children(func() {
-					markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy context text"}).
+					markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: locales.In(c.Locale()).CopyContextTextLabel()}).
 						FontSize(14).LineHeight(1.5).TextColor(t.Text)
 				})
 			})
@@ -617,7 +619,7 @@ func (tc *taskContext) previewView(c *ui.Context, theme workbenchTheme, item tas
 			ui.Text(c, item.Source).FontSize(14).TextColor(t.TextMuted)
 		}
 		ui.Scroll(c).Height(220).Padding(8).Radius(6).Background(t.Surface).Children(func() {
-			markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy context text"}).
+			markdownReader(c, item.Text, markdownReaderOptions{PlainText: true, CopyLabel: locales.In(c.Locale()).CopyContextTextLabel()}).
 				FontSize(14).LineHeight(1.5).TextColor(t.Text)
 		})
 	})

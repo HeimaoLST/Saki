@@ -21,6 +21,8 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
+	"saki/desktop/locales"
 )
 
 // issueResultPreviewLimit bounds the current-file preview. A larger file is
@@ -381,7 +383,7 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 				return
 			}
 			markdownReader(c, state.Response, markdownReaderOptions{
-				CopyLabel:       "Copy result",
+				CopyLabel:       locales.In(c.Locale()).CopyResultLabel(),
 				CopyText:        actions.CopyText,
 				CopyHandle:      &state.CopyResultHandle,
 				CodeCopyHandles: state.ResultCodeHandles,
@@ -526,7 +528,7 @@ func issueResultReaderPage(c *ui.Context, th *ui.Theme, state *issueResultPanelS
 		ui.Scroll(c).Grow(1).TrackScroll(&state.ReaderScroll).Padding(0, 16).Children(func() {
 			ui.Column(c).AlignSelf(ui.Stretch).MaxWidth(760).MinWidth(0).Gap(10).Children(func() {
 				markdownReader(c, file.Path, markdownReaderOptions{
-					PlainText: true, CopyLabel: "Copy path", CopyText: actions.CopyText,
+					PlainText: true, CopyLabel: locales.In(c.Locale()).CopyPathLabel(), CopyText: actions.CopyText,
 					CopyHandle: &state.CopyPathHandle,
 				})
 				issueResultReaderActions(c, th, state, actions, file)
@@ -617,7 +619,7 @@ func issueResultReaderPreview(c *ui.Context, th *ui.Theme, state *issueResultPan
 	}
 	markdownReader(c, inspection.Preview, markdownReaderOptions{
 		PlainText:       !issueResultMarkdownFile(file.Path),
-		CopyLabel:       "Copy current file",
+		CopyLabel:       locales.In(c.Locale()).CopyCurrentFileLabel(),
 		CopyText:        actions.CopyText,
 		CopyHandle:      &state.CopyCurrentHandle,
 		CodeCopyHandles: state.ReaderCodeHandles,
@@ -639,7 +641,7 @@ func issueResultSourceView(c *ui.Context, th *ui.Theme, state *issueResultPanelS
 		ui.Text(c, "Call: "+file.CallID).FontSize(typeAction).TextColor(th.TextMuted).MaxLines(2)
 		ui.Scroll(c).MaxHeight(160).AlignSelf(ui.Stretch).Children(func() {
 			markdownReader(c, file.RawResult, markdownReaderOptions{
-				PlainText: true, CopyLabel: "Copy tool record", CopyText: actions.CopyText,
+				PlainText: true, CopyLabel: locales.In(c.Locale()).CopyToolRecordLabel(), CopyText: actions.CopyText,
 				CopyHandle: &state.CopyRawHandle,
 			})
 		})

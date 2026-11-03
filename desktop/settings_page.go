@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+
+	"saki/desktop/locales"
 )
 
 const (
@@ -231,6 +233,7 @@ func (a *appModel) settingsPage(c *ui.Context, t *ui.Theme) {
 }
 
 func (a *appModel) settingsSidebar(c *ui.Context, t *ui.Theme, narrow bool) {
+	msgs := locales.In(c.Locale())
 	width := float32(200)
 	if narrow {
 		width = 0
@@ -243,19 +246,19 @@ func (a *appModel) settingsSidebar(c *ui.Context, t *ui.Theme, narrow bool) {
 	}
 	column.Children(func() {
 		ui.Toolbar(c, func() {
-			back := ui.Button(c, "").Label("← Back to workbench").
+			back := ui.Button(c, "").Label(msgs.SettingsBackAccessible()).
 				MinHeight(32).Height(32).Padding(4, 8).Gap(6)
 			back.Children(func() {
 				ui.Icon(c, navBackIcon).Width(16).Height(16).TextColor(t.TextMuted)
-				ui.Text(c, "Back").FontSize(typeAction).TextColor(t.Text)
+				ui.Text(c, msgs.SettingsBack()).FontSize(typeAction).TextColor(t.Text)
 			})
 			back.OnClick(func() { a.closeSettings() })
 			if a.settingsFocusBack {
 				back.Focus()
 				a.settingsFocusBack = false
 			}
-		}).Label("Settings navigation").AlignSelf(ui.Start).Padding(0)
-		ui.Text(c, "Settings").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
+		}).Label(msgs.SettingsNavigationLabel()).AlignSelf(ui.Start).Padding(0)
+		ui.Text(c, msgs.SettingsTitle()).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 		nav := func(label, tab string) {
 			selected := a.settingsTab == tab
 			button := ui.ButtonBase(c).Label(label).FontSize(typeAction).MinHeight(32).
@@ -284,17 +287,17 @@ func (a *appModel) settingsSidebar(c *ui.Context, t *ui.Theme, narrow bool) {
 		}
 		if narrow {
 			ui.Row(c).Gap(4).Wrap().Children(func() {
-				nav("Appearance", settingsTabAppearance)
-				nav("Connection & model", settingsTabConnection)
-				nav("Contact profile", settingsTabContact)
-				nav("Advanced", settingsTabAdvanced)
+				nav(msgs.SettingsAppearance(), settingsTabAppearance)
+				nav(msgs.SettingsConnection(), settingsTabConnection)
+				nav(msgs.SettingsContact(), settingsTabContact)
+				nav(msgs.SettingsAdvanced(), settingsTabAdvanced)
 			})
 		} else {
 			ui.Column(c).Gap(4).Children(func() {
-				nav("Appearance", settingsTabAppearance)
-				nav("Connection & model", settingsTabConnection)
-				nav("Contact profile", settingsTabContact)
-				nav("Advanced", settingsTabAdvanced)
+				nav(msgs.SettingsAppearance(), settingsTabAppearance)
+				nav(msgs.SettingsConnection(), settingsTabConnection)
+				nav(msgs.SettingsContact(), settingsTabContact)
+				nav(msgs.SettingsAdvanced(), settingsTabAdvanced)
 			})
 		}
 	})
@@ -324,8 +327,9 @@ func (a *appModel) settingsMain(c *ui.Context, t *ui.Theme, narrow bool) {
 }
 
 func (a *appModel) settingsAppearanceContent(c *ui.Context, t *ui.Theme) {
-	ui.Text(c, "Appearance").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
-	ui.Text(c, "Changes apply immediately.").FontSize(typeMeta).LineHeight(1.5).TextColor(t.TextMuted)
+	msgs := locales.In(c.Locale())
+	ui.Text(c, msgs.SettingsAppearance()).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
+	ui.Text(c, msgs.SettingsAppearanceHint()).FontSize(typeMeta).LineHeight(1.5).TextColor(t.TextMuted)
 	selected := 0
 	switch normalizeAppearanceMode(a.appearanceMode) {
 	case appearanceLight:
@@ -349,7 +353,7 @@ func (a *appModel) settingsAppearanceContent(c *ui.Context, t *ui.Theme) {
 func (a *appModel) settingsConnectionContent(c *ui.Context, t *ui.Theme) {
 	form := a.connectionForm
 	ui.Column(c).FillWidth().MaxWidth(600).AlignItems(ui.Start).Gap(12).Children(func() {
-		ui.Text(c, "Connection & model").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, locales.In(c.Locale()).SettingsConnection()).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 		if a.connectionApplied() && a.connectionEffective != nil {
 			ui.Column(c).FillWidth().Gap(4).Children(func() {
 				ui.Text(c, "Current: "+connectionCurrentSummary(a.connectionEffective)).FontSize(typeBody).LineHeight(1.5).TextColor(t.Text)
@@ -374,9 +378,10 @@ func (a *appModel) settingsConnectionContent(c *ui.Context, t *ui.Theme) {
 }
 
 func (a *appModel) settingsContactContent(c *ui.Context, t *ui.Theme) {
+	msgs := locales.In(c.Locale())
 	editor := a.settingsContactEditor()
 	if editor == nil {
-		ui.Text(c, "Contact profile").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, msgs.SettingsContact()).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 		ui.Text(c, "No contact is available to edit.").FontSize(14).TextColor(t.Warning)
 		return
 	}
@@ -404,7 +409,7 @@ func (a *appModel) settingsContactContent(c *ui.Context, t *ui.Theme) {
 	var ct *contact
 	ct = a.contactByID(a.settingsContactID)
 	editor = a.settingsContactEditor()
-	ui.Text(c, "Contact profile: "+a.settingsContactChoice(ct)).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
+	ui.Text(c, msgs.SettingsContactTitle(a.settingsContactChoice(ct))).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 	if !profileDraftEqual(editor.Draft, editor.initial) {
 		ui.Text(c, "Unsaved changes.").FontSize(typeMeta).LineHeight(1.5).TextColor(t.Warning)
 	}
@@ -491,7 +496,7 @@ func containsString(values []string, want string) bool {
 }
 
 func (a *appModel) settingsAdvancedContent(c *ui.Context, t *ui.Theme) {
-	ui.Text(c, "Advanced").FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
+	ui.Text(c, locales.In(c.Locale()).SettingsAdvanced()).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 	ui.Text(c, "Read-only Runtime and startup diagnostics. Open connection settings to repair configuration.").FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	ui.Text(c, "Startup & configuration").FontSize(typeGroupTitle).FontWeight(500).TextColor(t.Text)
 	label := "Show runtime, paths and session"

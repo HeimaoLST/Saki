@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+
+	"saki/desktop/locales"
 )
 
 type detailKind string
@@ -368,7 +370,7 @@ func (a *appModel) historyFullPage(c *ui.Context, t *ui.Theme) {
 		ui.Scroll(c).Grow(1).TrackScroll(&a.historyFullScroll).Padding(0, 16).Children(func() {
 			ui.Column(c).FillWidth().MaxWidth(760).AlignItems(ui.Start).Gap(8).Children(func() {
 				ui.Text(c, from+". "+full.Date+". "+full.SessionID).FontSize(typeMeta).LineHeight(1.4).TextColor(t.TextMuted)
-				markdownReader(c, full.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy saved message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "full:"+full.SessionID, full.EntryID))).FontSize(typeBody).LineHeight(1.6).TextColor(t.Text)
+				markdownReader(c, full.Text, a.readerOptions(markdownReaderOptions{CopyLabel: locales.In(c.Locale()).CopySavedMessageLabel(), Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "full:"+full.SessionID, full.EntryID))).FontSize(typeBody).LineHeight(1.6).TextColor(t.Text)
 				taskContextReadOnlyView(c, a.workTheme, full.Context)
 			})
 		})

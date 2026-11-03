@@ -8,6 +8,8 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
 	"github.com/egoist/mygo/ui/markdown/parser"
+
+	"saki/desktop/locales"
 )
 
 // markdownReaderOptions configures markdownReader. The source is the only
@@ -141,7 +143,7 @@ func markdownReader(c *ui.Context, source string, options markdownReaderOptions)
 
 	label := options.CopyLabel
 	if label == "" {
-		label = "Copy message"
+		label = locales.In(c.Locale()).CopyMessageLabel()
 	}
 
 	root.Children(func() {
@@ -182,9 +184,9 @@ func markdownReaderCodeBlock(c *ui.Context, b *markdown.CodeBlockView, st *markd
 				ui.Text(c, b.Language).FontSize(typeMeta).TextColor(th.Muted).Unselectable()
 			}
 			ui.Spacer(c)
-			accessible := "Copy code"
+			accessible := locales.In(c.Locale()).CopyCodeLabel()
 			if st.streaming && b.Open {
-				accessible = "Copy received code"
+				accessible = locales.In(c.Locale()).CopyReceivedCodeLabel()
 			}
 			// b.Code returns the fenced block's content without its fences,
 			// with each line ending in LF as CommonMark normalizes it. The
@@ -197,7 +199,7 @@ func markdownReaderCodeBlock(c *ui.Context, b *markdown.CodeBlockView, st *markd
 					st.codeCopyHandles[b.Index] = handle
 				}
 			}
-			st.copyButton(c, c.Now(), accessible, "Copy", b.Code, st.codeFeedbackFor(b.Index), th, handle)
+			st.copyButton(c, c.Now(), accessible, locales.In(c.Locale()).CopyActionLabel(), b.Code, st.codeFeedbackFor(b.Index), th, handle)
 		})
 		b.Body(c)
 	})
@@ -295,10 +297,10 @@ func (st *markdownReaderState) sourceCopyButton(c *ui.Context, now time.Time, ac
 	if feedbackVisible {
 		if failed {
 			color, icon = theme.Danger, markdownCopyFailedIcon
-			tooltip = fb.err.Error()
+			tooltip = locales.In(c.Locale()).CopyFailed(fb.err.Error())
 		} else {
 			color, icon = theme.Success, markdownCopiedIcon
-			tooltip = "Copied"
+			tooltip = locales.In(c.Locale()).Copied()
 		}
 	}
 	appTooltip(c, btn, tooltip)
@@ -345,7 +347,7 @@ func (st *markdownReaderState) copyButton(c *ui.Context, now time.Time, accessib
 		tooltip := idle
 		if fb.err != nil {
 			if visibleNow, failed := fb.show(now); visibleNow && failed {
-				tooltip = fb.err.Error()
+				tooltip = locales.In(c.Locale()).CopyFailed(fb.err.Error())
 			}
 		}
 		appTooltip(c, btn, tooltip)

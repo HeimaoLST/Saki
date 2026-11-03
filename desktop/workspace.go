@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+
+	"saki/desktop/locales"
 )
 
 // A workItem is the GUI projection of one runtime task. User/assistant text
@@ -1180,18 +1182,18 @@ func (a *appModel) toolCalls(c *ui.Context, t *ui.Theme, tools []*workTool) {
 				}
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 					if !call.Expanded {
-						secondaryButton(c, "Copy received output").OnClick(func() {
+						secondaryButton(c, locales.In(c.Locale()).CopyReceivedOutputLabel()).OnClick(func() {
 							if err := writeClipboardText(call.Output, c.Services().WriteClipboard, c.Services().ReadClipboard); err != nil {
-								c.Toast("Copy failed: " + err.Error())
+								c.Toast(locales.In(c.Locale()).CopyFailed(err.Error()))
 							} else {
-								c.Toast("Copied received output")
+								c.Toast(locales.In(c.Locale()).CopiedReceivedOutput())
 							}
 						})
 					}
 					secondaryButton(c, label).OnClick(func() { call.Expanded = !call.Expanded })
 				})
 				if call.Expanded {
-					markdownReader(c, call.Output, markdownReaderOptions{PlainText: true, CopyLabel: "Copy received output"}).
+					markdownReader(c, call.Output, markdownReaderOptions{PlainText: true, CopyLabel: locales.In(c.Locale()).CopyReceivedOutputLabel()}).
 						FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 				}
 			} else if call.Started && !call.Finished {

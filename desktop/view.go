@@ -7,6 +7,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
+
+	"saki/desktop/locales"
 )
 
 // Message typography is supplied at the view call site so the reader's
@@ -29,8 +31,8 @@ var (
 	railSettingsIcon   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>`))
 )
 
-func messageReaderOptions(plain bool) markdownReaderOptions {
-	return markdownReaderOptions{PlainText: plain, CopyLabel: "Copy message", Theme: messageMarkdownTheme}
+func messageReaderOptions(c *ui.Context, plain bool) markdownReaderOptions {
+	return markdownReaderOptions{PlainText: plain, CopyLabel: locales.In(c.Locale()).CopyMessageLabel(), Theme: messageMarkdownTheme}
 }
 
 func (a *appModel) view(c *ui.Context) {
@@ -244,18 +246,19 @@ func (a *appModel) rail(c *ui.Context, t *ui.Theme) {
 			})
 		}
 		ui.Toolbar(c, func() {
-			settings := appTooltip(c, ui.Button(c, "").Label("Settings"), "Open Settings").
+			settingsLabel := locales.In(c.Locale()).SettingsTitle()
+			settings := appTooltip(c, ui.Button(c, "").Label(settingsLabel), locales.In(c.Locale()).SettingsOpenTooltip()).
 				FillWidth().MinHeight(32).Height(32).Padding(4, 8).Gap(8).Justify(ui.Start)
 			settings.Children(func() {
 				ui.Icon(c, railSettingsIcon).Width(16).Height(16).TextColor(t.TextMuted)
-				ui.Text(c, "Settings").FontSize(typeAction).TextColor(t.Text)
+				ui.Text(c, settingsLabel).FontSize(typeAction).TextColor(t.Text)
 			})
 			settings.OnClick(func() { a.openSettingsTab(settingsTabAppearance, settingsSourceRail) })
 			if a.focusSettings {
 				settings.Focus()
 				a.focusSettings = false
 			}
-		}).Label("App actions").Padding(0).FillWidth()
+		}).Label(locales.In(c.Locale()).SettingsRailActions()).Padding(0).FillWidth()
 	})
 }
 
@@ -543,7 +546,7 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 		ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
 			ui.Column(c).MaxWidth(460).MinWidth(0).Gap(4).Children(func() {
 				if e.Text != "" {
-					markdownReader(c, e.Text, messageReaderOptions(true)).
+					markdownReader(c, e.Text, messageReaderOptions(c, true)).
 						FontSize(typeBody).LineHeight(1.5).Padding(8, 12).Radius(12).Background(bg).TextColor(t.Text)
 				}
 				taskContextReadOnlyView(c, a.workTheme, e.Context)
@@ -555,7 +558,7 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 		a.avatarTile(c, t, 28)
 		ui.Column(c).MaxWidth(680).MinWidth(0).Shrink(1).Padding(10, 14).Radius(14).Background(bg).Gap(4).Children(func() {
 			ui.Text(c, a.selectedContact().Name+"  "+e.Date).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted)
-			markdownReader(c, e.Text, a.readerOptions(messageReaderOptions(false), historyLinkScope(a.selectedContact().ID, "conversation", e.ID))).
+			markdownReader(c, e.Text, a.readerOptions(messageReaderOptions(c, false), historyLinkScope(a.selectedContact().ID, "conversation", e.ID))).
 				FontSize(typeBody).LineHeight(1.6)
 		})
 	})
@@ -625,7 +628,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 					ui.Text(c, "Located in history").FontSize(14).TextColor(t.TextMuted)
 				}
 				if m.Text != "" {
-					markdownReader(c, m.Text, messageReaderOptions(true)).
+					markdownReader(c, m.Text, messageReaderOptions(c, true)).
 						FontSize(typeBody).LineHeight(1.5).Padding(8, 12).Radius(12).Background(a.workTheme.BubbleUser).TextColor(t.Text)
 				}
 				taskContextReadOnlyView(c, a.workTheme, m.Context)
@@ -638,7 +641,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 				if m.Key != "" && m.Key == a.highlight {
 					ui.Text(c, "Located in history").FontSize(14).TextColor(t.TextMuted)
 				}
-				markdownReader(c, m.Text, a.readerOptions(markdownReaderOptions{Streaming: m.Streaming, CopyLabel: "Copy message", Theme: messageMarkdownTheme}, messageLinkScope(ct.ID, m))).
+				markdownReader(c, m.Text, a.readerOptions(markdownReaderOptions{Streaming: m.Streaming, CopyLabel: locales.In(c.Locale()).CopyMessageLabel(), Theme: messageMarkdownTheme}, messageLinkScope(ct.ID, m))).
 					FontSize(typeBody).LineHeight(1.6)
 				if m.AlertTitle != "" {
 					a.alert(c, t, m)
@@ -750,7 +753,7 @@ func (a *appModel) connectionErrorBanner(c *ui.Context, t *ui.Theme, ct *contact
 			})
 		})
 		if expanded && details != "" {
-			markdownReader(c, details, markdownReaderOptions{PlainText: true, CopyLabel: "Copy error details"}).
+			markdownReader(c, details, markdownReaderOptions{PlainText: true, CopyLabel: locales.In(c.Locale()).CopyErrorDetailsLabel()}).
 				FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 		}
 	})
@@ -1005,9 +1008,9 @@ func (a *appModel) historyDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 						ui.Text(c, e.Date+". "+speakerLabel(ct, e)).FontSize(typeMeta).LineHeight(1.4).TextColor(t.Success)
 						if len([]rune(e.Text)) <= 180 {
 							if e.From == "me" {
-								markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy history message", Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.6).TextColor(t.Text)
+								markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: locales.In(c.Locale()).CopyHistoryMessageLabel(), Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.6).TextColor(t.Text)
 							} else {
-								markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy history message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "history", e.ID))).FontSize(typeBody).LineHeight(1.6)
+								markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: locales.In(c.Locale()).CopyHistoryMessageLabel(), Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "history", e.ID))).FontSize(typeBody).LineHeight(1.6)
 							}
 						} else {
 							ui.Text(c, truncate(e.Text, 150)).FontSize(14).LineHeight(1.5).MaxLines(3).TextColor(t.Text)
@@ -1048,9 +1051,9 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 		ui.Column(c).FillWidth().MinWidth(0).Padding(8).Radius(8).Background(t.SurfaceHover).Gap(4).Children(func() {
 			ui.Text(c, e.Date+". "+speakerLabel(ct, e)).FontSize(typeMeta).LineHeight(1.4).TextColor(t.Success)
 			if e.From == "me" {
-				markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: "Copy source message", Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.6).TextColor(t.Text)
+				markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: locales.In(c.Locale()).CopySourceMessageLabel(), Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.6).TextColor(t.Text)
 			} else {
-				markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: "Copy source message", Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "sources", e.ID))).FontSize(typeBody).LineHeight(1.6)
+				markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: locales.In(c.Locale()).CopySourceMessageLabel(), Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "sources", e.ID))).FontSize(typeBody).LineHeight(1.6)
 			}
 			ui.Row(c).Children(func() {
 				secondaryButton(c, "View in conversation").OnClick(func() { a.viewInConversation(e.ID) })
