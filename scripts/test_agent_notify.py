@@ -22,6 +22,7 @@ def pane(
     command: str = "node",
     pane_id: str = "%1",
     task: str = "#236",
+    pane_pid: str = "123",
 ) -> notify.Pane:
     return notify.Pane(
         pane_id=pane_id,
@@ -30,7 +31,7 @@ def pane(
         task=task,
         session="0",
         window="@1",
-        pane_pid="123",
+        pane_pid=pane_pid,
         command=command,
         cwd="/tmp/worktree",
     )
@@ -87,6 +88,45 @@ class InspectTests(unittest.TestCase):
                 notify.inspect(unknown.agent_id)
 
 
+WORKING_14 = (
+    "› status\n\n"
+    "• Working (25m 14s • esc to interrupt)\n\n"
+    "› ready\n"
+)
+WORKING_15 = WORKING_14.replace("25m 14s", "25m 15s")
+WORKING_UNKNOWN = WORKING_14.replace("esc to interrupt", "esc to cancel")
+
+
+class FingerprintTests(unittest.TestCase):
+    def test_working_elapsed_timer_only_keeps_fingerprint(self) -> None:
+        target = pane()
+        self.assertEqual(
+            target.fingerprint(WORKING_14),
+            target.fingerprint(WORKING_15),
+        )
+
+    def test_working_line_and_other_body_are_preserved(self) -> None:
+        normalized = notify._normalized(WORKING_14)
+        self.assertIn("Working (<elapsed> • esc to interrupt)", normalized)
+        self.assertIn("› status", normalized)
+        self.assertIn("› ready", normalized)
+
+    def test_unknown_working_format_keeps_original_elapsed_text(self) -> None:
+        self.assertIn(
+            "Working (25m 14s • esc to cancel)",
+            notify._normalized(WORKING_UNKNOWN),
+        )
+
+    def test_semantic_changes_still_change_fingerprint(self) -> None:
+        target = pane()
+        baseline = target.fingerprint(WORKING_14)
+        self.assertNotEqual(baseline, target.fingerprint(WORKING_14.replace("ready", "blocked")))
+        self.assertNotEqual(baseline, target.fingerprint(WORKING_14.replace("Working", "Waiting")))
+        self.assertNotEqual(baseline, pane(task="#other").fingerprint(WORKING_14))
+        self.assertNotEqual(baseline, pane(pane_pid="456").fingerprint(WORKING_14))
+
+
+
 class SendTests(unittest.TestCase):
     def setUp(self) -> None:
         self.comments = [comment()]
@@ -111,6 +151,25 @@ class SendTests(unittest.TestCase):
                         with self.assertRaisesRegex(notify.NotifyError, "state fingerprint"):
                             notify.send(target.agent_id, target.fingerprint("ready"), URL)
         run.assert_not_called()
+
+    def test_semantic_capture_or_identity_change_sends_nothing(self) -> None:
+        target = pane()
+        fingerprint = target.fingerprint(WORKING_14)
+        cases = (
+            ("body", WORKING_14.replace("ready", "blocked"), [target]),
+            ("status", WORKING_14.replace("Working", "Waiting"), [target]),
+            ("task", WORKING_14, [pane(task="#other")]),
+            ("identity", WORKING_14, [pane(pane_pid="456")]),
+        )
+        for name, capture, panes in cases:
+            with self.subTest(case=name):
+                with mock.patch.object(notify, "_comments", return_value=self.comments):
+                    with mock.patch.object(notify, "_tmux_panes", return_value=panes):
+                        with mock.patch.object(notify, "_tmux_capture", return_value=capture):
+                            with mock.patch.object(notify, "_run") as run:
+                                with self.assertRaisesRegex(notify.NotifyError, "state fingerprint"):
+                                    notify.send(target.agent_id, fingerprint, URL)
+                run.assert_not_called()
 
     def test_duplicate_notice_sends_nothing(self) -> None:
         target = pane()

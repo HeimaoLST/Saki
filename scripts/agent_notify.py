@@ -180,7 +180,13 @@ def fixed_message(agent_id: str, comment_url: str) -> str:
     return f"TO: {agent_id} 固定评论：{comment_url}；请按 AGENTS.md 在 GitHub 回 ACK。"
 
 
+WORKING_ELAPSED = re.compile(
+    r"(?m)(^[ \t]*(?:[•●*][ \t]+)?Working \()[0-9]+m [0-9]+s(?= • esc to interrupt\))"
+)
+
+
 def _normalized(text: str) -> str:
+    text = WORKING_ELAPSED.sub(r"\1<elapsed>", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
