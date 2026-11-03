@@ -1,10 +1,10 @@
 # Nagi：GUI 产品定义与需求
 
-更新日期：2026-10-25。状态：**当前产品定义与行为需求，待分阶段实施与验收**。依据用户本轮关于开源产品、长期联系人、事项与工作分身的讨论修订；Nagi 是 GUI 暂定名。本文件是 GUI 产品定义的权威位置，设计稿和实现文档引用本文。需求不表示功能已经完成；完整 MVP 的行为范围已在下文明确；具体接口、迁移和后续版本仍按实际设计处理。
+更新日期：2026-11-03。状态：**当前产品定义与行为需求，待分阶段实施与验收**。依据用户本轮关于开源产品、长期联系人、事项与工作分身的讨论修订；Nagi 是 GUI 暂定名。本文件是 GUI 产品定义的权威位置，设计稿和实现文档引用本文。需求不表示功能已经完成；完整 MVP 的行为范围已在下文明确；具体接口、迁移和后续版本仍按实际设计处理。
 
 本次定义修订见 [#134](https://github.com/HeimaoLST/Saki/issues/134)，完整 MVP 范围修订见 [#151](https://github.com/HeimaoLST/Saki/issues/151)，交付由 [#140](https://github.com/HeimaoLST/Saki/issues/140) 和 [Nagi MVP 里程碑](https://github.com/HeimaoLST/Saki/milestone/3) 统筹，已有工程交接见 [#111](https://github.com/HeimaoLST/Saki/issues/111)。优先级、执行顺序、负责人和实时状态只在 GitHub 维护。具体实现及已验证限制见 [Desktop design](../design/desktop.md)，公共执行契约见 [Runtime API](../design/runtime-api.md)。
 
-现行视觉与交互以 [Desktop workbench](../design/desktop-workbench.md) 为唯一来源：纸白/夜林、三栏、真实消息气泡、独立 Agent 工作区。#130 实施阶段性的原生闭环；事项/看板/长期轨迹的界面与实现继续细化，原型 fixture 不作为生产功能。旧配色、工具附在聊天回复下的要求不再生效。
+现行视觉与交互以 [Desktop workbench](../design/desktop-workbench.md) 为唯一来源：纸白/夜林、默认联系人栏 + 对话、详情按需打开，真实消息气泡、独立 Agent 工作区；宽屏三域与窄窗行为按[规范断点](../design/desktop-workbench.md#布局与右侧详情)执行。#130 实施阶段性的原生闭环；事项/看板/长期轨迹的界面与实现继续细化，原型 fixture 不作为生产功能。旧配色、工具附在聊天回复下的要求不再生效。
 
 ## 产品定义
 
