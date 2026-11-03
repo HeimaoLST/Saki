@@ -43,7 +43,7 @@
 - Settings 的 `通用 / General` 分类包含 `外观 / Appearance` 与 `语言 / Language` 两组。语言选项为「跟随系统（当前：简体中文） / System (currently English)」「简体中文」「English」；每种语言名用自身语言书写。切换立即生效，保留草稿、焦点、滚动位置、已打开详情和设置分类；重启后保持所选语言。若只有部分系统菜单需重启才切换，在语言组下方用一行事实说明。
 - 采用 MyGo 内置 i18n 路线：ARB 风格翻译、ICU MessageFormat、CLDR 复数／语言匹配及生成函数，按实际 API 生成和读取；不引入 go-i18n、另一套 locale 框架或第二份语言权威，也不另写第二套语言判定算法。当前只记录设计约束，框架接入、`SetLocale` 持久化、菜单和伪语言验证仍由 GUI 实现并另验。
 - 界面语言不修改 system／instructions、联系人职责、会话快照或 Agent 的回复语言；不翻译用户／Agent 原始内容、已有联系人名称、模型/provider 名称、协议值、文件路径、代码和工具原始输出。原始诊断保留原文，面向用户的主文案另给“发生了什么 + 怎么办 + 入口”。
-- 新 UI 的品牌名一律为 **Nagi**；改软件名不等于替换用户内容、对话或事项文本、或联系人名。内部数据目录 `Application Support/Saki/`、bundle ID、`SAKI_*`、`Saki-runtime` 及已有联系人名 `Saki` 不改；`Saki` 只在诊断中以 `Saki Runtime` 出现。
+- 新 UI 的品牌名一律为 **Nagi**；改软件名不等于替换用户内容、对话或事项文本、或联系人名。内部数据目录 `Application Support/Saki/`、bundle ID、`SAKI_*`、`Saki-runtime` 及已有联系人名 `Saki` 不改。软件名 Saki 只在诊断中以 Saki Runtime 出现；用户／联系人原文中的 Saki 按上一条保持原样。
 
 ### 术语定稿
 
@@ -65,22 +65,21 @@
 
 `Issue`、`Execution` 仅保留在内部协议、原始诊断或历史实现事实中；普通界面统一使用 Task／Run。
 
-### 状态词与显示投影
+### 状态显示词与映射
 
-事项管理状态、Run 状态、要求核对状态与补充递交状态是不同事实，不能互相倒写。联系人运行状态另行显示。事项主状态表中的“需处理／等你回答”是为了当前交互形成的**显示投影**，不是新增的持久管理状态或新 enum。
+事项状态词、Run 状态、要求核对状态与补充递交状态是不同事实，不能互相倒写。联系人运行状态另行显示。下表的“事项显示词”只是 UI 词汇与优先级设计，基于现有 `Status`／`Archived`、Run 和问题事实做显示映射；不是新增的持久管理状态或新 enum。
 
 | 类别 | 中文 | English |
 | --- | --- | --- |
-| 事项基础管理状态（持久） | 未开始／进行中／已完成／已取消／已归档 | Not started／In progress／Done／Canceled／Archived |
-| 事项主状态显示投影（派生） | 需处理／等你回答／进行中／未开始／已完成／已取消／已归档 | Needs attention／Waiting for you／In progress／Not started／Done／Canceled／Archived |
+| 事项显示词（UI 投影） | 需处理／等你回答／进行中／未开始／已完成／已取消／已归档 | Needs attention／Waiting for you／In progress／Not started／Done／Canceled／Archived |
 | Run | 等待开始／运行中／已结束／失败／已中断／结果未知／已停止 | Waiting to start／Running／Finished／Failed／Interrupted／Result unknown／Stopped |
 | 要求核对 | 未核实／已满足／未满足 | Unverified／Met／Not met |
 | 补充递交 | 已收到／待递交／已递交／待核对 | Received／Waiting to send／Sent／Needs check |
 | 联系人运行 | 就绪／工作中／未连接 | Ready／Working／Not connected |
 
-- 事项基础管理状态才是持久事实；显示投影可以在基础状态上叠加“需处理／等你回答”，但不得新增 item 生命周期状态、写回 Runtime 或改变持久管理状态。Run、要求核对和补充递交仍分开；不把旧失败 Run 反写成事项失败，也不把 Run completed 当成事项 Done。
-- 没有活动、没有活动 Run、没有聊天消息或没有新事件都不等于 Done；已完成、已取消、已归档等终态不因旧失败 Run 被覆盖。联系人聚合只统计相关且可见的未归档事项，优先级为需处理 → 等你回答 → 进行中 → 未开始；无活动不标 Done。
-- 具体代码 enum／字段未逐项核对前，不得把本表写成实现事实；实现必须按真实状态映射，不猜 Runtime 成功或新造持久状态。
+- 以上事项显示词是 UI 词汇与优先级设计，基于现有 `Status`／`Archived`、Run 与问题事实做显示映射；不新增、删除或改动持久状态，不要求数据迁移。`desktop/issues.go:14,156` 的 `Status` 已含 `waiting_user`／`needs_attention`，`desktop/issue_lifecycle.go:201` 会持久化 `waiting_user`；`desktop/store.go:82` 的 `Archived` 是独立 bool，不是 status enum。
+- Run、要求核对和补充递交仍分开；不把旧失败 Run 反写成事项失败，也不把 Run completed 当成事项 Done。没有活动、没有活动 Run、没有聊天消息或没有新事件都不等于 Done；已完成、已取消、已归档等终态不因旧失败 Run 被覆盖。联系人聚合只统计相关且可见的未归档事项，优先级为需处理 → 等你回答 → 进行中 → 未开始；无活动不标 Done。
+- 本表不是实现枚举：`Run` 等其余 enum／字段未全部逐项核过，继续按设计边界保留；实现必须按真实状态映射，不猜 Runtime 成功或新造持久状态。
 
 ### 完整句与文案
 
