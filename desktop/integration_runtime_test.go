@@ -17,10 +17,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -469,6 +471,35 @@ func issueToolServerShutdownDiagnostic(s *issueToolIPCServer) string {
 		closing, conns, shutdownChannelClosed(s.done), shutdownChannelClosed(s.closeDone))
 }
 
+const shutdownStackLimit = 256 * 1024
+
+type shutdownStackTrace struct {
+	capturedAt time.Time
+	bytes      int
+	capacity   int
+	atLimit    bool
+	text       string
+}
+
+func captureShutdownStack(buf []byte) shutdownStackTrace {
+	at := time.Now().UTC()
+	n := runtime.Stack(buf, true)
+	return shutdownStackTrace{
+		capturedAt: at,
+		bytes:      n,
+		capacity:   len(buf),
+		atLimit:    n >= len(buf),
+		text:       string(buf[:n]),
+	}
+}
+
+func logShutdownStack(t *testing.T, trace shutdownStackTrace) {
+	t.Helper()
+	t.Logf("shutdown goroutine stack: captured_at=%s bytes=%d capacity=%d at_limit=%v possible_truncation=%v",
+		trace.capturedAt.Format(time.RFC3339Nano), trace.bytes, trace.capacity, trace.atLimit, trace.atLimit)
+	t.Logf("shutdown goroutine stack:\n%s", trace.text)
+}
+
 type shutdownDiagnostic struct {
 	capturedAt time.Time
 	state      string
@@ -500,6 +531,55 @@ func (h *guiHarness) shutdownSnapshot() shutdownDiagnostic {
 	return shutdownDiagnostic{capturedAt: time.Now(), state: b.String(), clientDone: clientDone, toolDone: toolDone, toolClose: toolClose}
 }
 
+func shutdownStackBlockedWorker(started chan<- struct{}, release <-chan struct{}) {
+	close(started)
+	<-release
+}
+
+func TestShutdownStackDiagnosticCapturesBlockedGoroutine(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		defer close(release)
+		go shutdownStackBlockedWorker(started, release)
+		<-started
+		synctest.Wait()
+
+		trace := captureShutdownStack(make([]byte, shutdownStackLimit))
+		if trace.capacity != shutdownStackLimit || trace.bytes > trace.capacity || trace.bytes != len(trace.text) {
+			t.Fatalf("stack trace bounds = bytes %d capacity %d text %d", trace.bytes, trace.capacity, len(trace.text))
+		}
+		if trace.atLimit != (trace.bytes == trace.capacity) {
+			t.Fatalf("at_limit=%v does not match bytes=%d capacity=%d", trace.atLimit, trace.bytes, trace.capacity)
+		}
+		if !strings.Contains(trace.text, "shutdownStackBlockedWorker") {
+			t.Fatalf("stack trace does not contain the blocked worker: %s", trace.text)
+		}
+	})
+}
+
+func TestShutdownStackDiagnosticMarksBoundedTruncation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		defer close(release)
+		go shutdownStackBlockedWorker(started, release)
+		<-started
+		synctest.Wait()
+
+		trace := captureShutdownStack(make([]byte, 128))
+		if trace.capacity != 128 || trace.bytes > trace.capacity || trace.bytes != len(trace.text) {
+			t.Fatalf("bounded trace = bytes %d capacity %d text %d", trace.bytes, trace.capacity, len(trace.text))
+		}
+		if trace.atLimit != (trace.bytes == trace.capacity) {
+			t.Fatalf("at_limit=%v does not match bytes=%d capacity=%d", trace.atLimit, trace.bytes, trace.capacity)
+		}
+		if trace.bytes != 128 || !trace.atLimit {
+			t.Fatalf("128-byte trace did not truncate: bytes=%d at_limit=%v", trace.bytes, trace.atLimit)
+		}
+	})
+}
+
 func (h *guiHarness) shutdown(t *testing.T) {
 	t.Helper()
 	if h.closed {
@@ -514,12 +594,13 @@ func (h *guiHarness) shutdown(t *testing.T) {
 		diag, _ := lastDiagnostic.Load().(shutdownDiagnostic)
 		if diag.state == "" {
 			t.Log("shutdown diagnostics: no UI-pump snapshot was captured before the wait failed; app state at timeout is unknown")
-			return
+		} else {
+			captured := diag.capturedAt.UTC()
+			t.Logf("shutdown diagnostics: last UI-pump observation captured=%s age=%s; this is not a fresh app-state read at timeout:\n%s\ncurrent_channel_state.client_done=%s tool_done=%s tool_close_done=%s",
+				captured.Format(time.RFC3339Nano), time.Since(captured).Round(time.Millisecond), diag.state,
+				shutdownChannelState(diag.clientDone), shutdownChannelState(diag.toolDone), shutdownChannelState(diag.toolClose))
 		}
-		captured := diag.capturedAt.UTC()
-		t.Logf("shutdown diagnostics: last UI-pump observation captured=%s age=%s; this is not a fresh app-state read at timeout:\n%s\ncurrent_channel_state.client_done=%s tool_done=%s tool_close_done=%s",
-			captured.Format(time.RFC3339Nano), time.Since(captured).Round(time.Millisecond), diag.state,
-			shutdownChannelState(diag.clientDone), shutdownChannelState(diag.toolDone), shutdownChannelState(diag.toolClose))
+		logShutdownStack(t, captureShutdownStack(make([]byte, shutdownStackLimit)))
 	}()
 	h.pump.do(func() { h.app.beginShutdown() })
 	h.pump.waitTimeout(func() bool {
