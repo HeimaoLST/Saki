@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strconv"
 	"sync"
@@ -497,8 +496,7 @@ func (c *runtimeClient) failProtocol(message string) {
 func (c *runtimeClient) closeStdin() {
 	c.stdinOnce.Do(func() {
 		if c.stdin != nil {
-			err := c.stdin.Close()
-			fmt.Fprintf(os.Stderr, "R6_SHUTDOWN time=%s client=%p stage=stdin_close err=%q\n", time.Now().UTC().Format(time.RFC3339Nano), c, safeDiagnostic(fmt.Sprint(err)))
+			_ = c.stdin.Close()
 		}
 	})
 }
@@ -529,13 +527,7 @@ func (c *runtimeClient) finish(err error) {
 	})
 }
 
-func (c *runtimeClient) call(method string, params any, result any, timeout time.Duration) (callErr error) {
-	shutdownID := ""
-	if method == "runtime.shutdown" {
-		defer func() {
-			fmt.Fprintf(os.Stderr, "R6_SHUTDOWN time=%s client=%p stage=call_return id=%q err=%q\n", time.Now().UTC().Format(time.RFC3339Nano), c, shutdownID, safeDiagnostic(fmt.Sprint(callErr)))
-		}()
-	}
+func (c *runtimeClient) call(method string, params any, result any, timeout time.Duration) error {
 	c.stateMu.Lock()
 	if c.failed != nil {
 		err := c.failed
@@ -548,16 +540,10 @@ func (c *runtimeClient) call(method string, params any, result any, timeout time
 	}
 	c.nextID++
 	id := "g" + strconv.Itoa(c.nextID)
-	if method == "runtime.shutdown" {
-		shutdownID = id
-	}
 	ch := make(chan runtimeResponse, 1)
 	c.pending[id] = ch
 	c.issued[id] = true
 	c.stateMu.Unlock()
-	if method == "runtime.shutdown" {
-		fmt.Fprintf(os.Stderr, "R6_SHUTDOWN time=%s client=%p stage=request_assigned id=%q\n", time.Now().UTC().Format(time.RFC3339Nano), c, id)
-	}
 	defer func() {
 		c.stateMu.Lock()
 		delete(c.pending, id)
@@ -585,9 +571,6 @@ func (c *runtimeClient) call(method string, params any, result any, timeout time
 	for {
 		select {
 		case resp, ok := <-ch:
-			if method == "runtime.shutdown" && ok {
-				fmt.Fprintf(os.Stderr, "R6_SHUTDOWN time=%s client=%p stage=response id=%q result=%q err=%q\n", time.Now().UTC().Format(time.RFC3339Nano), c, resp.ID, safeDiagnostic(string(resp.Result)), safeDiagnostic(fmt.Sprint(resp.Error)))
-			}
 			if !ok {
 				return errRuntimeDisconnected
 			}
@@ -603,9 +586,6 @@ func (c *runtimeClient) call(method string, params any, result any, timeout time
 		case <-c.done:
 			select {
 			case resp, ok := <-ch:
-				if method == "runtime.shutdown" && ok {
-					fmt.Fprintf(os.Stderr, "R6_SHUTDOWN time=%s client=%p stage=response_on_done id=%q result=%q err=%q\n", time.Now().UTC().Format(time.RFC3339Nano), c, resp.ID, safeDiagnostic(string(resp.Result)), safeDiagnostic(fmt.Sprint(resp.Error)))
-				}
 				if ok && resp.Error == nil {
 					if result != nil && len(resp.Result) > 0 {
 						return json.Unmarshal(resp.Result, result)
