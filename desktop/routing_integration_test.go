@@ -533,20 +533,27 @@ func TestCapacityTwoReservesOneSlotForConversation(t *testing.T) {
 	provider := &providerFixture{ToolFirst: false, Hold: hold, Arrived: arrived}
 	h := startRoutingHarness(t, binary, provider, 2)
 	var issueA, issueB string
+	var setupStage, setupErr string
 	h.pump.do(func() {
 		ct := h.app.selectedContact()
 		if !h.app.createIssue("Issue A", "First work.") {
-			t.Fatalf("create A: %s", h.app.issueFormError)
+			setupStage, setupErr = "create A", h.app.issueFormError
+			return
 		}
 		issueA = ct.SelectedIssueID
 		if !h.app.createIssue("Issue B", "Second work.") {
-			t.Fatalf("create B: %s", h.app.issueFormError)
+			setupStage, setupErr = "create B", h.app.issueFormError
+			return
 		}
 		issueB = ct.SelectedIssueID
 		if !h.app.runIssue(issueA) {
-			t.Fatalf("run A: %s", h.app.issueFormError)
+			setupStage, setupErr = "run A", h.app.issueFormError
+			return
 		}
 	})
+	if setupStage != "" {
+		t.Fatalf("%s: %s", setupStage, setupErr)
+	}
 	select {
 	case <-arrived:
 	case <-time.After(15 * time.Second):
@@ -557,15 +564,25 @@ func TestCapacityTwoReservesOneSlotForConversation(t *testing.T) {
 		issue := ct.issueByID(issueA)
 		return issue != nil && issue.Work.ActiveTaskID != ""
 	})
+	var rejectAccepted bool
+	var rejectExecCount int
+	var rejectErr string
 	h.pump.do(func() {
-		if h.app.runIssue(issueB) {
-			t.Fatal("second work execution was admitted at capacity 2")
-		}
+		rejectAccepted = h.app.runIssue(issueB)
 		issue := h.app.selectedContact().issueByID(issueB)
-		if len(issue.Executions) != 0 || !strings.Contains(issue.Work.SendError, "Work capacity") {
-			t.Fatalf("second work admission = exec=%+v error=%q", issue.Executions, issue.Work.SendError)
+		if issue == nil {
+			rejectErr = "issue B missing"
+			return
 		}
+		rejectExecCount = len(issue.Executions)
+		rejectErr = issue.Work.SendError
 	})
+	if rejectAccepted {
+		t.Fatal("second work execution was admitted at capacity 2")
+	}
+	if rejectExecCount != 0 || !strings.Contains(rejectErr, "Work capacity") {
+		t.Fatalf("second work admission = exec=%d error=%q", rejectExecCount, rejectErr)
+	}
 	release()
 	h.pump.wait(func() bool {
 		ct := h.app.selectedContact()
@@ -573,11 +590,17 @@ func TestCapacityTwoReservesOneSlotForConversation(t *testing.T) {
 		return issue != nil && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle &&
 			len(issue.Executions) == 1 && issue.Executions[0].Status == issueExecutionCompleted
 	})
+	var runBOK bool
+	var runBErr string
 	h.pump.do(func() {
-		if !h.app.runIssue(issueB) {
-			t.Fatalf("second work did not run after A released: %s", h.app.issueFormError)
+		runBOK = h.app.runIssue(issueB)
+		if !runBOK {
+			runBErr = h.app.issueFormError
 		}
 	})
+	if !runBOK {
+		t.Fatalf("second work did not run after A released: %s", runBErr)
+	}
 	h.pump.wait(func() bool {
 		ct := h.app.selectedContact()
 		issue := ct.issueByID(issueB)
