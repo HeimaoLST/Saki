@@ -1208,3 +1208,65 @@ async fn drain_observation_waits_for_business_but_not_for_terminal_delivery() {
     actor.await.unwrap().unwrap();
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn shutdown_waits_for_terminal_ack_after_the_terminal_is_consumed() {
+    let workspace = Workspace::new();
+    let (client, server) = scripted_http(vec![(200, completed("done"))]).await;
+    let (handle, actor) = runtime(client, &workspace).start();
+    let id = create_session(&handle).await;
+    let mut task = accepted(
+        handle
+            .call(RuntimeCommand::Send {
+                session_id: id.clone(),
+                message: UserMessage::text("Send restored context."),
+            })
+            .await
+            .unwrap(),
+    );
+    task.events.defer_terminal_ack();
+    let mut terminals = 0;
+    while let Some(event) = tokio::time::timeout(Duration::from_secs(5), task.events.next())
+        .await
+        .expect("task did not finish")
+    {
+        if let TaskEvent::Finished(result) = event {
+            assert_eq!(result.status, "completed");
+            terminals += 1;
+        }
+    }
+    assert_eq!(terminals, 1);
+    assert!(matches!(
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            handle.call(RuntimeCommand::Shutdown)
+        )
+        .await
+        .expect("shutdown response waited for terminal ack")
+        .unwrap(),
+        RuntimeReply::Shutdown { state: "draining" }
+    ));
+    let mut drained = handle.work_drained();
+    tokio::time::timeout(Duration::from_secs(5), drained.wait_for(|value| *value))
+        .await
+        .expect("business/resources did not drain before terminal ack")
+        .unwrap();
+    assert!(
+        !actor.is_finished(),
+        "actor discarded the unreleased terminal"
+    );
+    eprintln!("actor reports work_drained; terminal consumed but explicit ack still held");
+    task.events.acknowledge_finished();
+    drop(task);
+    drop(handle);
+    tokio::time::timeout(Duration::from_secs(5), actor)
+        .await
+        .expect("actor did not exit after explicit terminal ack")
+        .unwrap()
+        .unwrap();
+    assert_eq!(server.await.unwrap().len(), 1);
+    let restored = workspace.store().open(&id).unwrap();
+    assert_eq!(restored.replay.status, TaskStatus::Completed);
+    assert!(restored.replay.active_task.is_none());
+    eprintln!("explicit terminal ack released: actor returned without dropping completed work");
+}

@@ -7,7 +7,7 @@ use crate::{
     },
     client::ModelClient,
     session::store::SessionStore,
-    test_support::{completed, read_request, scripted_stream, sse},
+    test_support::{completed, read_request, scripted_http, scripted_stream, sse},
 };
 use serde_json::Value;
 use std::{
@@ -124,6 +124,7 @@ async fn blocked_stdout_accepts_cancel_and_eof_then_drains_after_write_timeout()
             max_frame_bytes: 2048,
             output_bytes: 4096,
             output_messages: 1,
+            ..StdioOptions::default()
         },
     ));
     let mut output = BufReader::new(output).lines();
@@ -635,6 +636,7 @@ async fn two_task_pipeline_backpressure_keeps_control_independent_and_releases_a
                 events.clone(),
                 Some(format!("send-{index}")),
                 Ok(RuntimeReply::Accepted(task)),
+                None,
             ));
         }
         arrived.await.unwrap();
@@ -936,4 +938,114 @@ async fn eof_drains_both_accepted_tasks_with_open_blocked_and_disconnected_outpu
             );
         }
     }
+}
+
+#[tokio::test]
+async fn shutdown_waits_for_terminal_ack_after_reply_and_stdin_eof() {
+    let workspace = Workspace::new();
+    let (client, server) = scripted_http(vec![(200, completed("done"))]).await;
+    let gate = Arc::new(TerminalAckGate::default());
+    let (mut input, runtime_input) = tokio::io::duplex(16384);
+    let (runtime_output, output) = tokio::io::duplex(65536);
+    let worker = tokio::spawn(run_with_options(
+        workspace.runtime(client),
+        BufReader::new(runtime_input),
+        runtime_output,
+        StdioOptions {
+            terminal_ack_gate: Some(gate.clone()),
+            ..StdioOptions::default()
+        },
+    ));
+    let mut output = BufReader::new(output).lines();
+    assert_eq!(row(&mut output).await["type"], "ready");
+    command(&mut input, "create", "session.create", json!({})).await;
+    let session_id = row(&mut output).await["result"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    command(
+        &mut input,
+        "send",
+        "task.send",
+        json!({
+            "session_id": session_id,
+            "message": {"text": "Send restored context."},
+            "context": [
+                {"name": "Restart notes", "text": "restart snippet"},
+                {"name": "restart-brief.txt", "text": "restart snapshot\nsecond line"}
+            ]
+        }),
+    )
+    .await;
+    let accepted = row(&mut output).await;
+    assert_eq!(accepted["id"], "send");
+    let task_id = accepted["result"]["task_id"].as_str().unwrap();
+    let mut terminals = Vec::new();
+    loop {
+        let value = row(&mut output).await;
+        if value["event"]["type"] == "task_finished" {
+            assert_eq!(value["task_id"], task_id);
+            assert_eq!(value["event"]["status"], "completed");
+            terminals.push(value);
+            break;
+        }
+    }
+    tokio::time::timeout(Duration::from_secs(5), gate.queued.notified())
+        .await
+        .expect("terminal did not reach the pre-ack gate");
+    command(
+        &mut input,
+        "shutdown-before-ack",
+        "runtime.shutdown",
+        json!({}),
+    )
+    .await;
+    let response = row(&mut output).await;
+    assert_eq!(response["id"], "shutdown-before-ack");
+    assert_eq!(response["result"]["state"], "draining");
+    assert!(response.get("error").is_none(), "{response}");
+    eprintln!("shutdown response before terminal ack: {response}");
+    input.shutdown().await.expect("stdin EOF failed");
+    assert!(!worker.is_finished(), "stdio returned before terminal ack");
+    eprintln!("stdin EOF accepted while terminal ack remains held");
+    gate.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(line) = output.next_line().await.unwrap() {
+            let value: Value = serde_json::from_str(&line).unwrap();
+            if value["event"]["type"] == "task_finished" {
+                terminals.push(value);
+            }
+        }
+    })
+    .await
+    .expect("stdio writer did not reach EOF after terminal ack");
+    tokio::time::timeout(Duration::from_secs(5), worker)
+        .await
+        .expect("stdio jobs/actor/writer did not finish")
+        .unwrap()
+        .unwrap();
+    assert_eq!(terminals.len(), 1, "terminal must be emitted exactly once");
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let restored = workspace.store().open(&session_id).unwrap();
+    assert_eq!(restored.replay.status, TaskStatus::Completed);
+    assert!(restored.replay.active_task.is_none());
+    assert_eq!(
+        restored
+            .replay
+            .history
+            .iter()
+            .filter(|record| matches!(
+                record,
+                JournalRecord::TaskFinished {
+                    status: TaskStatus::Completed,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    eprintln!(
+        "terminal ack released: actor/delivery jobs/writer returned; one completed task restored"
+    );
 }

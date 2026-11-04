@@ -23,12 +23,22 @@ const OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const OUTPUT_MESSAGES: usize = 32;
 const MAX_REQUESTS: usize = 32;
 
-#[derive(Clone, Copy)]
+#[cfg(test)]
+#[derive(Default)]
+struct TerminalAckGate {
+    queued: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[derive(Clone)]
+#[cfg_attr(not(test), derive(Copy))]
 pub struct StdioOptions {
     pub write_timeout: Duration,
     pub max_frame_bytes: usize,
     pub output_bytes: usize,
     pub output_messages: usize,
+    #[cfg(test)]
+    terminal_ack_gate: Option<std::sync::Arc<TerminalAckGate>>,
 }
 
 impl Default for StdioOptions {
@@ -38,6 +48,8 @@ impl Default for StdioOptions {
             max_frame_bytes: MAX_FRAME_BYTES,
             output_bytes: OUTPUT_BYTES,
             output_messages: OUTPUT_MESSAGES,
+            #[cfg(test)]
+            terminal_ack_gate: None,
         }
     }
 }
@@ -424,6 +436,7 @@ async fn deliver(
     events: Output,
     id: Option<String>,
     result: Result<RuntimeReply, RuntimeError>,
+    #[cfg(test)] terminal_ack_gate: Option<std::sync::Arc<TerminalAckGate>>,
 ) {
     let response = match result {
         Ok(result) => result,
@@ -618,6 +631,11 @@ async fn deliver(
                             )
                             .await;
                         if sent {
+                            #[cfg(test)]
+                            if let Some(gate) = &terminal_ack_gate {
+                                gate.queued.notify_one();
+                                gate.release.notified().await;
+                            }
                             accepted.events.acknowledge_finished();
                         }
                         return;
@@ -805,6 +823,8 @@ where
         let response = command.and_then(|command| handle.submit(command));
         let output = control.clone();
         let task_events = events.clone();
+        #[cfg(test)]
+        let terminal_ack_gate = options.terminal_ack_gate.clone();
         jobs.spawn(async move {
             let result = match response {
                 Ok(receiver) => receiver.await.unwrap_or_else(|_| {
@@ -815,7 +835,15 @@ where
                 }),
                 Err(error) => Err(error),
             };
-            deliver(output, task_events, id, result).await;
+            deliver(
+                output,
+                task_events,
+                id,
+                result,
+                #[cfg(test)]
+                terminal_ack_gate,
+            )
+            .await;
         });
     }
     let _ = handle.call(RuntimeCommand::Shutdown).await;
