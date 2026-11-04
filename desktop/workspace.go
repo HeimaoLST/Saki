@@ -292,11 +292,12 @@ func (a *appModel) workspaceContent(c *ui.Context, t *ui.Theme, narrow bool) {
 	if nav.DetailID != "" && issue == nil {
 		nav.DetailID = ""
 	}
-	title := "Issues"
-	if issue != nil {
-		title = "Issue"
-	} else if nav.ShowConversationWork {
-		title = "Conversation work"
+	msgs := locales.In(c.Locale())
+	title := msgs.WorkTasksTab()
+	if nav.ShowConversationWork {
+		title = msgs.WorkChatRunsTab()
+	} else if issue != nil {
+		title = msgs.WorkTask()
 	}
 	newIssueAction := func() {
 		if issue != nil || nav.ShowConversationWork || a.issueFormOpen {
@@ -317,7 +318,20 @@ func (a *appModel) workspaceContent(c *ui.Context, t *ui.Theme, narrow bool) {
 	ui.Column(c).FillWidth().Padding(12).Gap(8).Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
 			if narrow {
-				back := detailBackButton(c, t, "Close work", "Back from Work").OnClick(func() { a.closeDetail() })
+				backAction := func() { a.closeDetail() }
+				backLabel, backTip, backVisible := msgs.WorkBackToChat(), msgs.WorkBackToChat(), msgs.WorkBackToChat()
+				if nav.ShowConversationWork {
+					backAction = func() { a.backFromConversationWork() }
+					backLabel, backTip, backVisible = msgs.WorkBackToIssues(), msgs.WorkBackToIssues(), msgs.WorkBackToIssues()
+				} else if issue != nil {
+					backAction = func() { a.backToIssueOverview() }
+					backLabel, backTip, backVisible = msgs.WorkBackToIssues(), msgs.WorkBackToIssues(), msgs.WorkBackToIssues()
+				}
+				back := detailBackButton(c, t, backLabel, backTip, backVisible).OnClick(backAction)
+				if nav.FocusBack {
+					back.Focus()
+					nav.FocusBack = false
+				}
 				a.focusDetailControl(c, back)
 				ui.Text(c, title).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text).Grow(1).MaxLines(2)
 				newIssueAction()
@@ -325,15 +339,30 @@ func (a *appModel) workspaceContent(c *ui.Context, t *ui.Theme, narrow bool) {
 			}
 			ui.Text(c, title).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text).Grow(1)
 			newIssueAction()
-			close := appTooltip(c, secondaryButton(c, "Close work"), "Back from Work").OnClick(func() { a.closeDetail() })
+			close := ui.Button(c, "").Label(msgs.WorkClose()).MinWidth(32).Width(32).Height(32).Padding(0)
+			close = appTooltip(c, close, msgs.WorkCloseTooltip()).OnClick(func() { a.closeDetail() })
+			close.Children(func() { ui.Icon(c, navCloseIcon).Width(18).Height(18).TextColor(t.TextMuted) })
 			a.focusDetailControl(c, close)
 		})
+		tab := 0
+		if nav.ShowConversationWork {
+			tab = 1
+		}
+		tabs := ui.Segmented(c, &tab, msgs.WorkTasksTab(), msgs.WorkChatRunsTab()).Label(msgs.WorkTabs()).
+			FontSize(typeAction).Height(32).MaxWidth(360).FillWidth()
+		if nav.FocusConversation {
+			tabs.Focus()
+			nav.FocusConversation = false
+		}
+		if tabs.Changed() {
+			nav.ShowConversationWork = tab == 1
+		}
 	})
 	switch {
-	case nav.ShowConversationWork && issue == nil:
-		a.conversationWorkView(c, t, ct)
+	case nav.ShowConversationWork:
+		a.conversationWorkView(c, t, ct, narrow)
 	case issue != nil:
-		a.issueDetailView(c, t, ct, issue, nav)
+		a.issueDetailView(c, t, ct, issue, nav, narrow)
 	default:
 		a.issueOverviewView(c, t, ct, nav)
 	}
@@ -343,25 +372,19 @@ func (a *appModel) issueOverviewView(c *ui.Context, t *ui.Theme, ct *contact, na
 	if a.issueFormOpen {
 		a.issueFormView(c, t)
 	}
-	a.issueFilterChoice = issueFilterChoiceLabel(nav.Filter)
-	filter := selectWithoutChevron(c, &a.issueFilterChoice, []string{"Unfinished", "Completed", "All"}, "Issue filter")
-	if filter.Changed() {
-		a.setIssueFilter(ct, issueFilterFromChoice(a.issueFilterChoice))
-		nav = ct.issueNavigation()
-	}
-	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(&nav.OverviewScroll).Children(func() {
-		ui.Column(c).Gap(3).Children(func() {
-			a.issueList(c, t, ct)
+	ui.Column(c).FillWidth().Grow(1).Padding(12).Gap(8).Children(func() {
+		a.issueFilterChoice = issueFilterChoiceLabel(nav.Filter)
+		filter := selectWithoutChevron(c, &a.issueFilterChoice, []string{"Unfinished", "Completed", "All"}, "Issue filter")
+		if filter.Changed() {
+			a.setIssueFilter(ct, issueFilterFromChoice(a.issueFilterChoice))
+			nav = ct.issueNavigation()
+		}
+		ui.Scroll(c).Grow(1).FillWidth().TrackScroll(&nav.OverviewScroll).Children(func() {
+			ui.Column(c).Gap(3).Children(func() {
+				a.issueList(c, t, ct)
+			})
 		})
 	})
-	button := secondaryButton(c, "Conversation work").OnClick(func() {
-		nav.ShowConversationWork = true
-		nav.FocusConversation = false
-	})
-	if nav.FocusConversation {
-		button.Focus()
-		nav.FocusConversation = false
-	}
 }
 
 func issueRunLabel(msgs locales.Messages, status string) string {
@@ -475,59 +498,19 @@ func (a *appModel) issueOverviewRow(c *ui.Context, t *ui.Theme, ct *contact, iss
 	}
 }
 
-func issueOverviewManagedLabel(issue *productIssue) string {
-	if issue == nil {
-		return "Unknown"
-	}
-	if issue.Archived {
-		return "Archived: " + issueStatusLabel(issue)
-	}
-	return issueStatusLabel(issue)
-}
-
-func issueOverviewRecent(ct *contact, issue *productIssue) string {
-	if issue == nil {
-		return "Unknown"
-	}
-	if question := issue.openQuestion(); question != nil {
-		return "Waiting for your answer"
-	}
-	latest := latestIssueExecution(issue)
-	if latest != nil {
-		// A terminal/uncertain/pending execution keeps its own label even if an
-		// older or even matching work item has finished tools. Tool activity is
-		// only a recent-work summary while this execution is actually running.
-		if latest.Status == issueExecutionAccepted || latest.Status == issueExecutionRunning {
-			if work := workFor(ct, latest.TaskID); work != nil && issue.Work.ActiveTaskID == latest.TaskID {
-				if len(work.Tools) > 0 {
-					last := work.Tools[len(work.Tools)-1]
-					if last.Finished {
-						return "Last action: " + last.Name
-					}
-					return "Running " + last.Name
-				}
-				return workStateLabel(work)
-			}
-		}
-		return issueExecutionLabel(latest)
-	}
-	if issue.Archived {
-		return "Archived; restore from All to reopen"
-	}
-	return issueStatusLabel(issue)
-}
-
-func (a *appModel) issueDetailView(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue, nav *issueViewState) {
+func (a *appModel) issueDetailView(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue, nav *issueViewState, narrow bool) {
 	work := ct.issueWork(issue)
 	active := work != nil && issue.Work.ActiveTaskID == work.TaskID
 	explicit := work != nil && ct.SelectedWorkTaskID != "" && ct.SelectedWorkTaskID == work.TaskID
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(&nav.DetailScroll).Padding(0, 12).Children(func() {
 		ui.Column(c).Gap(8).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-				back := secondaryButton(c, "Back to issues").OnClick(func() { a.backToIssueOverview() })
-				if nav.FocusBack {
-					back.Focus()
-					nav.FocusBack = false
+				if !narrow {
+					back := detailBackButton(c, t, locales.In(c.Locale()).WorkBackToIssues(), locales.In(c.Locale()).WorkBackToIssues(), locales.In(c.Locale()).WorkBackToIssues()).OnClick(func() { a.backToIssueOverview() })
+					if nav.FocusBack {
+						back.Focus()
+						nav.FocusBack = false
+					}
 				}
 				ui.Spacer(c)
 				if active {
@@ -555,7 +538,9 @@ func (a *appModel) issueDetailView(c *ui.Context, t *ui.Theme, ct *contact, issu
 				ui.Text(c, "Current run: "+workStateLabel(work)).FontSize(12).LineHeight(1.4).MaxLines(2).TextColor(a.workStateColor(work.State))
 			}
 			display := issueDisplayStatusFor(issue)
-			ui.Text(c, issueDisplayLabel(locales.In(c.Locale()), display)).FontSize(12).FontWeight(500).TextColor(issueDisplayColor(t, display))
+			if issue.openQuestion() == nil {
+				ui.Text(c, issueDisplayLabel(locales.In(c.Locale()), display)).FontSize(12).FontWeight(500).TextColor(issueDisplayColor(t, display))
+			}
 			if issue.Status == issueStatusCompleted {
 				ui.Text(c, "Marked by user: "+issueEvidenceText(issue)).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted).MaxLines(3)
 			}
@@ -573,15 +558,17 @@ func (a *appModel) issueDetailView(c *ui.Context, t *ui.Theme, ct *contact, issu
 	})
 }
 
-func (a *appModel) conversationWorkView(c *ui.Context, t *ui.Theme, ct *contact) {
+func (a *appModel) conversationWorkView(c *ui.Context, t *ui.Theme, ct *contact, narrow bool) {
 	nav := ct.issueNavigation()
 	ui.Scroll(c).Grow(1).FillWidth().Padding(0, 12).Children(func() {
 		ui.Column(c).Gap(8).Children(func() {
 			ui.Row(c).Children(func() {
-				back := secondaryButton(c, "Back to issues").OnClick(func() { a.backFromConversationWork() })
-				if nav.FocusBack {
-					back.Focus()
-					nav.FocusBack = false
+				if !narrow {
+					back := detailBackButton(c, t, locales.In(c.Locale()).WorkBackToIssues(), locales.In(c.Locale()).WorkBackToIssues(), locales.In(c.Locale()).WorkBackToIssues()).OnClick(func() { a.backFromConversationWork() })
+					if nav.FocusBack {
+						back.Focus()
+						nav.FocusBack = false
+					}
 				}
 			})
 			work := conversationWork(ct)
@@ -705,6 +692,131 @@ func latestIssueExecution(issue *productIssue) *issueExecution {
 	return nil
 }
 
+func issueHasReadableResult(ct *contact, execution *issueExecution) bool {
+	if execution == nil || execution.Status != issueExecutionCompleted {
+		return false
+	}
+	if strings.TrimSpace(ct.resultTextForExecution(execution)) != "" {
+		return true
+	}
+	work := workFor(ct, execution.TaskID)
+	if work == nil {
+		return false
+	}
+	for _, tool := range work.Tools {
+		if tool != nil && tool.Finished && strings.TrimSpace(tool.Output) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *appModel) issuePrimaryAction(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue) string {
+	msgs := locales.In(c.Locale())
+	editable := !issue.Archived && issue.Status != issueStatusCompleted && issue.Status != issueStatusCanceled
+	if issue.openQuestion() != nil && editable {
+		ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+			secondaryButton(c, msgs.WorkAnswer()).FontWeight(500).OnClick(func() { a.openIssueSupplementForm(issue.ID) })
+		})
+		return "answer"
+	}
+	startReason := ""
+	if !issueManagementTerminal(issue) && !issue.Archived {
+		startReason = issueLifecycleStartBlocked(issue)
+		if startReason == "" {
+			startReason = a.canStartIssue(ct, issue)
+		}
+		if startReason == "" {
+			startReason = issueRunBlocked(issue)
+		}
+		if startReason == "" {
+			label := msgs.WorkStart()
+			if len(issue.Executions) > 0 {
+				label = msgs.WorkContinue()
+			}
+			if issue.Supplements != nil && issue.Supplements.pendingCount() > 0 {
+				if len(issue.Executions) == 0 {
+					label = msgs.WorkStartWithSupplement()
+				} else {
+					label = msgs.WorkContinueWithSupplement()
+				}
+			}
+			ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+				secondaryButton(c, label).FontWeight(500).OnClick(func() {
+					if !a.runIssue(issue.ID) {
+						a.issueActionError = a.issueFormError
+					}
+				})
+			})
+			return "continue"
+		}
+	}
+	if latest := latestIssueExecution(issue); issueHasReadableResult(ct, latest) {
+		ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+			read := secondaryButton(c, msgs.WorkReadResult()).FontWeight(500).OnClick(func() {
+				a.openIssueResultFromLatest(issue.ID, latest.ID)
+			})
+			if a.issueResultShouldFocus(issue.ID, latest.ID, true) {
+				read.Focus()
+				a.consumeIssueResultReturnFocus()
+			}
+		})
+		return "read"
+	}
+	if startReason != "" {
+		ui.Text(c, msgs.WorkNextActionUnavailable(startReason)).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted).MaxLines(2)
+	}
+	return ""
+}
+
+func (a *appModel) issueLifecycleActions(c *ui.Context, t *ui.Theme, issue *productIssue) {
+	msgs := locales.In(c.Locale())
+	if issue.Archived {
+		ui.Row(c).Wrap().Gap(6).Children(func() {
+			secondaryButton(c, msgs.WorkRestore()).OnClick(func() {
+				if !a.restoreIssue(issue.ID) {
+					a.issueActionError = "Could not restore this issue."
+				}
+			})
+		})
+		return
+	}
+	editable := issue.Status != issueStatusCompleted && issue.Status != issueStatusCanceled
+	if !editable {
+		if reason := issueRunBlocked(issue); reason == "" {
+			ui.Row(c).Wrap().Gap(6).Children(func() {
+				secondaryButton(c, msgs.WorkReopen()).OnClick(func() {
+					if !a.reopenIssue(issue.ID) {
+						a.issueActionError = "Could not reopen this issue."
+					}
+				})
+			})
+		} else {
+			ui.Text(c, msgs.WorkNextActionUnavailable(reason)).FontSize(12).LineHeight(1.4).TextColor(t.TextMuted).MaxLines(2)
+		}
+		return
+	}
+	ui.Row(c).Wrap().AlignItems(ui.Center).Gap(6).Children(func() {
+		secondaryButton(c, msgs.WorkCancel()).TextColor(t.Warning).OnClick(func() {
+			if !a.cancelIssueProduct(issue.ID) {
+				a.issueActionError = "Could not cancel this issue; its state was not changed."
+			}
+		})
+	})
+	if issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle && issueRunBlocked(issue) == "" {
+		ui.Text(c, msgs.WorkCompletionEvidence()).FontSize(12).TextColor(t.TextMuted)
+		draft := a.completionDraft(issue)
+		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+			ui.TextInput(c, draft).Label(msgs.WorkCompletionEvidence()).FontSize(14).Placeholder(msgs.WorkCompletionEvidencePlaceholder()).Grow(1)
+			secondaryButton(c, msgs.WorkComplete()).OnClick(func() {
+				if !a.completeIssue(issue.ID, *draft) {
+					a.issueActionError = "Could not complete this issue."
+				}
+			})
+		})
+	}
+}
+
 func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue) {
 	editable := !issue.Archived && issue.Status != issueStatusCompleted && issue.Status != issueStatusCanceled
 	expanded := a.issueDetailOpen[issue.ID]
@@ -716,46 +828,47 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 			ui.Text(c, a.issueActionError).FontSize(14).LineHeight(1.5).TextColor(t.Warning)
 		}
 		if question := issue.openQuestion(); question != nil {
+			display := issueDisplayStatusFor(issue)
 			ui.Column(c).Padding(8).Radius(8).Background(t.Surface).Gap(3).Children(func() {
-				ui.Text(c, "Waiting for your answer").FontSize(typeAction).FontWeight(500).TextColor(t.Warning)
+				ui.Text(c, issueDisplayLabel(locales.In(c.Locale()), display)).FontSize(typeAction).FontWeight(500).TextColor(issueDisplayColor(t, display))
 				ui.Text(c, question.Text).FontSize(14).LineHeight(1.5).TextColor(t.Text)
-				if editable {
-					secondaryButton(c, "Answer question").TextColor(t.Text).OnClick(func() { a.openIssueSupplementForm(issue.ID) })
-				}
 			})
 		}
-		a.issueLatestResult(c, t, ct, issue)
+		primaryKind := a.issuePrimaryAction(c, t, ct, issue)
+		a.issueLatestResult(c, t, ct, issue, primaryKind != "read")
 		if latest := latestIssueExecution(issue); latest != nil && latest.Status == issueExecutionCompleted &&
 			issue.Status != issueStatusCompleted && issue.Status != issueStatusCanceled && issueHasRemainingRequirements(issue) {
 			ui.Text(c, "This execution ended; the issue remains open.").FontSize(typeAction).LineHeight(1.4).TextColor(t.TextMuted)
 		}
 		a.issueRequirementSummary(c, t, issue)
-		if editable {
-			a.issueStartAction(c, t, ct, issue)
-		}
+		a.issueLifecycleActions(c, t, issue)
 		label := "More issue actions"
 		if expanded {
 			label = "Hide issue actions"
 		}
-		secondaryButton(c, label).OnClick(func() {
-			if a.issueDetailOpen == nil {
-				a.issueDetailOpen = map[string]bool{}
-			}
-			a.issueDetailOpen[issue.ID] = !a.issueDetailOpen[issue.ID]
+		ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+			secondaryButton(c, label).OnClick(func() {
+				if a.issueDetailOpen == nil {
+					a.issueDetailOpen = map[string]bool{}
+				}
+				a.issueDetailOpen[issue.ID] = !a.issueDetailOpen[issue.ID]
+			})
 		})
 		if expanded {
-			if editable {
-				secondaryButton(c, "Edit issue").OnClick(func() { a.openEditIssueForm(issue) })
-			}
-			if issue.WorkSessionID != "" {
-				modelButton := secondaryButton(c, "Issue model").OnClick(func() {
-					a.openSessionModel(issue.WorkSessionID, "work", issue.Goal)
-				})
-				if a.focusIssueModel {
-					modelButton.Focus()
-					a.focusIssueModel = false
+			ui.Row(c).Wrap().Gap(6).Children(func() {
+				if editable {
+					secondaryButton(c, "Edit issue").OnClick(func() { a.openEditIssueForm(issue) })
 				}
-			}
+				if issue.WorkSessionID != "" {
+					modelButton := secondaryButton(c, "Issue model").OnClick(func() {
+						a.openSessionModel(issue.WorkSessionID, "work", issue.Goal)
+					})
+					if a.focusIssueModel {
+						modelButton.Focus()
+						a.focusIssueModel = false
+					}
+				}
+			})
 			a.issueActions(c, t, ct, issue, editable)
 			evidence := issueEvidenceText(issue)
 			if issue.Evidence != "" && issue.Status != issueStatusCompleted {
@@ -775,7 +888,7 @@ func (a *appModel) issueCard(c *ui.Context, t *ui.Theme, ct *contact, issue *pro
 	})
 }
 
-func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue) {
+func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue, showRead bool) {
 	execution := latestIssueExecution(issue)
 	if execution == nil {
 		ui.Text(c, "No execution yet").FontSize(typeAction).FontWeight(500).TextColor(t.TextMuted)
@@ -825,21 +938,17 @@ func (a *appModel) issueLatestResult(c *ui.Context, t *ui.Theme, ct *contact, is
 		}
 		ui.Text(c, truncate(reason, 180)).FontSize(14).LineHeight(1.5).TextColor(t.Warning).MaxLines(3)
 	}
-	read := ui.ButtonBase(c).Label("Read latest result").
-		AlignSelf(ui.Stretch).Padding(8).Radius(t.Radius).Border(0.5, t.Border).Background(a.workTheme.Well).Gap(6)
-	read.OnClick(func() { a.openIssueResultFromLatest(issue.ID, execution.ID) })
-	read.Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, "Read latest result").FontSize(typeAction).FontWeight(500).TextColor(t.Text).Grow(1)
-			ui.Text(c, "→").FontSize(16).TextColor(t.TextMuted)
+	if showRead {
+		ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+			read := secondaryButton(c, locales.In(c.Locale()).WorkReadResult()).OnClick(func() { a.openIssueResultFromLatest(issue.ID, execution.ID) })
+			if a.issueResultShouldFocus(issue.ID, execution.ID, true) {
+				read.Focus()
+				a.consumeIssueResultReturnFocus()
+			}
 		})
-	})
-	if a.issueResultShouldFocus(issue.ID, execution.ID, true) {
-		read.Focus()
-		a.consumeIssueResultReturnFocus()
 	}
 	if work != nil {
-		ui.Row(c).Gap(8).Children(func() {
+		ui.Row(c).Wrap().Gap(6).Children(func() {
 			secondaryButton(c, "View execution").OnClick(func() { a.showIssueWork(issue.ID, execution.TaskID) })
 		})
 	}
@@ -861,39 +970,6 @@ func (a *appModel) issueRequirementSummary(c *ui.Context, t *ui.Theme, issue *pr
 			ui.Text(c, requirementStateLabel(requirement.State)).FontSize(14).TextColor(requirementStateColor(t, requirement.State))
 		})
 	}
-}
-
-func (a *appModel) issueStartAction(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue) {
-	if issue.Archived || issue.Status == issueStatusCompleted || issue.Status == issueStatusCanceled {
-		return
-	}
-	reason := issueLifecycleStartBlocked(issue)
-	if reason == "" {
-		reason = a.canStartIssue(ct, issue)
-	}
-	if reason == "" {
-		reason = issueRunBlocked(issue)
-	}
-	if reason != "" {
-		ui.Text(c, "Next action unavailable: "+reason).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted).MaxLines(2)
-		return
-	}
-	label := "Start issue"
-	if len(issue.Executions) > 0 {
-		label = "Continue issue"
-	}
-	if issue.Supplements != nil && issue.Supplements.pendingCount() > 0 {
-		if len(issue.Executions) == 0 {
-			label = "Start with supplement"
-		} else {
-			label = "Continue with supplement"
-		}
-	}
-	ui.PrimaryButton(c, label).FontSize(typeAction).MinHeight(32).OnClick(func() {
-		if !a.runIssue(issue.ID) {
-			a.issueActionError = a.issueFormError
-		}
-	})
 }
 
 func (a *appModel) issueRequirementEvidence(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue, editable bool) {
@@ -1007,11 +1083,6 @@ func (a *appModel) issueExecutions(c *ui.Context, t *ui.Theme, ct *contact, issu
 
 func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *productIssue, editable bool) {
 	if issue.Archived {
-		secondaryButton(c, "Restore issue").OnClick(func() {
-			if !a.restoreIssue(issue.ID) {
-				a.issueActionError = "Could not restore this issue."
-			}
-		})
 		return
 	}
 	if editable {
@@ -1052,45 +1123,20 @@ func (a *appModel) issueActions(c *ui.Context, t *ui.Theme, ct *contact, issue *
 			}
 		}
 
-		ui.Row(c).Gap(6).Children(func() {
+		ui.Row(c).Wrap().Gap(6).Children(func() {
 			taskContextButton()
 			addSupplementButton()
 		})
-		ui.Row(c).Gap(6).Children(waitButton)
+		ui.Row(c).Wrap().Gap(6).Children(waitButton)
 	}
 
-	ui.Row(c).Gap(6).Children(func() {
-		if editable {
-			secondaryButton(c, "Cancel issue").TextColor(t.Warning).OnClick(func() {
-				if !a.cancelIssueProduct(issue.ID) {
-					a.issueActionError = "Could not cancel this issue; its state was not changed."
-				}
-			})
-		}
+	ui.Row(c).Wrap().AlignItems(ui.Center).Gap(6).Children(func() {
 		secondaryButton(c, "Archive").OnClick(func() {
 			if !a.archiveIssue(issue.ID) {
 				a.issueActionError = "Could not archive this issue."
 			}
 		})
 	})
-	if issue.Status == issueStatusCompleted || issue.Status == issueStatusCanceled {
-		secondaryButton(c, "Reopen issue").OnClick(func() {
-			if !a.reopenIssue(issue.ID) {
-				a.issueActionError = "Could not reopen this issue."
-			}
-		})
-		return
-	}
-	if editable && issue.Work.ActiveTaskID == "" && issue.Work.SendState == sendIdle && issueRunBlocked(issue) == "" {
-		ui.Text(c, "Completion evidence").FontSize(14).TextColor(t.TextMuted)
-		draft := a.completionDraft(issue)
-		ui.TextInput(c, draft).Label("Completion evidence").FontSize(14).Placeholder("What proves this issue is complete?")
-		secondaryButton(c, "Mark complete").OnClick(func() {
-			if !a.completeIssue(issue.ID, *draft) {
-				a.issueActionError = "Could not complete this issue."
-			}
-		})
-	}
 }
 
 func (a *appModel) issueList(c *ui.Context, t *ui.Theme, ct *contact) {
@@ -1178,7 +1224,7 @@ func (a *appModel) workCard(c *ui.Context, t *ui.Theme, w *workItem, isCurrent, 
 			}
 		})
 		if w.Prompt != "" {
-			ui.Text(c, w.Prompt).FontSize(typeBody).LineHeight(1.6).MaxLines(4).TextColor(a.workTheme.WorkText)
+			ui.Text(c, w.Prompt).FontSize(typeBody).LineHeight(1.5).MaxLines(4).TextColor(a.workTheme.WorkText)
 		}
 		if len(w.Tools) > 0 {
 			last := w.Tools[len(w.Tools)-1]

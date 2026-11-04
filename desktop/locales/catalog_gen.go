@@ -1055,3 +1055,301 @@ func TaskRunRejected() string { return In(i18n.Locale()).TaskRunRejected() }
 func (msgs Messages) TaskRunRejected() string {
 	return Catalog.Format(msgs.locale, "taskRunRejected", nil)
 }
+
+// WorkTabs says "Task view"
+// in the language the app shows.
+//
+// Nagi workTabs UI copy.
+func WorkTabs() string { return In(i18n.Locale()).WorkTabs() }
+
+// WorkTabs says "Task view"
+// in the language of msgs.
+//
+// Nagi workTabs UI copy.
+func (msgs Messages) WorkTabs() string {
+	return Catalog.Format(msgs.locale, "workTabs", nil)
+}
+
+// WorkTasksTab says "Tasks"
+// in the language the app shows.
+//
+// Nagi workTasksTab UI copy.
+func WorkTasksTab() string { return In(i18n.Locale()).WorkTasksTab() }
+
+// WorkTasksTab says "Tasks"
+// in the language of msgs.
+//
+// Nagi workTasksTab UI copy.
+func (msgs Messages) WorkTasksTab() string {
+	return Catalog.Format(msgs.locale, "workTasksTab", nil)
+}
+
+// WorkChatRunsTab says "Chat runs"
+// in the language the app shows.
+//
+// Nagi workChatRunsTab UI copy.
+func WorkChatRunsTab() string { return In(i18n.Locale()).WorkChatRunsTab() }
+
+// WorkChatRunsTab says "Chat runs"
+// in the language of msgs.
+//
+// Nagi workChatRunsTab UI copy.
+func (msgs Messages) WorkChatRunsTab() string {
+	return Catalog.Format(msgs.locale, "workChatRunsTab", nil)
+}
+
+// WorkClose says "Close workspace"
+// in the language the app shows.
+//
+// Nagi workClose UI copy.
+func WorkClose() string { return In(i18n.Locale()).WorkClose() }
+
+// WorkClose says "Close workspace"
+// in the language of msgs.
+//
+// Nagi workClose UI copy.
+func (msgs Messages) WorkClose() string {
+	return Catalog.Format(msgs.locale, "workClose", nil)
+}
+
+// WorkCloseTooltip says "Close workspace"
+// in the language the app shows.
+//
+// Nagi workCloseTooltip UI copy.
+func WorkCloseTooltip() string { return In(i18n.Locale()).WorkCloseTooltip() }
+
+// WorkCloseTooltip says "Close workspace"
+// in the language of msgs.
+//
+// Nagi workCloseTooltip UI copy.
+func (msgs Messages) WorkCloseTooltip() string {
+	return Catalog.Format(msgs.locale, "workCloseTooltip", nil)
+}
+
+// WorkAnswer says "Answer question"
+// in the language the app shows.
+//
+// Nagi workAnswer UI copy.
+func WorkAnswer() string { return In(i18n.Locale()).WorkAnswer() }
+
+// WorkAnswer says "Answer question"
+// in the language of msgs.
+//
+// Nagi workAnswer UI copy.
+func (msgs Messages) WorkAnswer() string {
+	return Catalog.Format(msgs.locale, "workAnswer", nil)
+}
+
+// WorkContinue says "Continue task"
+// in the language the app shows.
+//
+// Nagi workContinue UI copy.
+func WorkContinue() string { return In(i18n.Locale()).WorkContinue() }
+
+// WorkContinue says "Continue task"
+// in the language of msgs.
+//
+// Nagi workContinue UI copy.
+func (msgs Messages) WorkContinue() string {
+	return Catalog.Format(msgs.locale, "workContinue", nil)
+}
+
+// WorkStart says "Start task"
+// in the language the app shows.
+//
+// Nagi workStart UI copy.
+func WorkStart() string { return In(i18n.Locale()).WorkStart() }
+
+// WorkStart says "Start task"
+// in the language of msgs.
+//
+// Nagi workStart UI copy.
+func (msgs Messages) WorkStart() string {
+	return Catalog.Format(msgs.locale, "workStart", nil)
+}
+
+// WorkContinueWithSupplement says "Continue with follow-up"
+// in the language the app shows.
+//
+// Nagi workContinueWithSupplement UI copy.
+func WorkContinueWithSupplement() string { return In(i18n.Locale()).WorkContinueWithSupplement() }
+
+// WorkContinueWithSupplement says "Continue with follow-up"
+// in the language of msgs.
+//
+// Nagi workContinueWithSupplement UI copy.
+func (msgs Messages) WorkContinueWithSupplement() string {
+	return Catalog.Format(msgs.locale, "workContinueWithSupplement", nil)
+}
+
+// WorkStartWithSupplement says "Start with follow-up"
+// in the language the app shows.
+//
+// Nagi workStartWithSupplement UI copy.
+func WorkStartWithSupplement() string { return In(i18n.Locale()).WorkStartWithSupplement() }
+
+// WorkStartWithSupplement says "Start with follow-up"
+// in the language of msgs.
+//
+// Nagi workStartWithSupplement UI copy.
+func (msgs Messages) WorkStartWithSupplement() string {
+	return Catalog.Format(msgs.locale, "workStartWithSupplement", nil)
+}
+
+// WorkReadResult says "Read latest result"
+// in the language the app shows.
+//
+// Nagi workReadResult UI copy.
+func WorkReadResult() string { return In(i18n.Locale()).WorkReadResult() }
+
+// WorkReadResult says "Read latest result"
+// in the language of msgs.
+//
+// Nagi workReadResult UI copy.
+func (msgs Messages) WorkReadResult() string {
+	return Catalog.Format(msgs.locale, "workReadResult", nil)
+}
+
+// WorkComplete says "Mark complete"
+// in the language the app shows.
+//
+// Nagi workComplete UI copy.
+func WorkComplete() string { return In(i18n.Locale()).WorkComplete() }
+
+// WorkComplete says "Mark complete"
+// in the language of msgs.
+//
+// Nagi workComplete UI copy.
+func (msgs Messages) WorkComplete() string {
+	return Catalog.Format(msgs.locale, "workComplete", nil)
+}
+
+// WorkCancel says "Cancel task"
+// in the language the app shows.
+//
+// Nagi workCancel UI copy.
+func WorkCancel() string { return In(i18n.Locale()).WorkCancel() }
+
+// WorkCancel says "Cancel task"
+// in the language of msgs.
+//
+// Nagi workCancel UI copy.
+func (msgs Messages) WorkCancel() string {
+	return Catalog.Format(msgs.locale, "workCancel", nil)
+}
+
+// WorkReopen says "Reopen task"
+// in the language the app shows.
+//
+// Nagi workReopen UI copy.
+func WorkReopen() string { return In(i18n.Locale()).WorkReopen() }
+
+// WorkReopen says "Reopen task"
+// in the language of msgs.
+//
+// Nagi workReopen UI copy.
+func (msgs Messages) WorkReopen() string {
+	return Catalog.Format(msgs.locale, "workReopen", nil)
+}
+
+// WorkRestore says "Restore task"
+// in the language the app shows.
+//
+// Nagi workRestore UI copy.
+func WorkRestore() string { return In(i18n.Locale()).WorkRestore() }
+
+// WorkRestore says "Restore task"
+// in the language of msgs.
+//
+// Nagi workRestore UI copy.
+func (msgs Messages) WorkRestore() string {
+	return Catalog.Format(msgs.locale, "workRestore", nil)
+}
+
+// WorkBackToIssues says "Back to tasks"
+// in the language the app shows.
+//
+// Nagi workBackToIssues UI copy.
+func WorkBackToIssues() string { return In(i18n.Locale()).WorkBackToIssues() }
+
+// WorkBackToIssues says "Back to tasks"
+// in the language of msgs.
+//
+// Nagi workBackToIssues UI copy.
+func (msgs Messages) WorkBackToIssues() string {
+	return Catalog.Format(msgs.locale, "workBackToIssues", nil)
+}
+
+// WorkBackToChat says "Back to chat"
+// in the language the app shows.
+//
+// Nagi workBackToChat UI copy.
+func WorkBackToChat() string { return In(i18n.Locale()).WorkBackToChat() }
+
+// WorkBackToChat says "Back to chat"
+// in the language of msgs.
+//
+// Nagi workBackToChat UI copy.
+func (msgs Messages) WorkBackToChat() string {
+	return Catalog.Format(msgs.locale, "workBackToChat", nil)
+}
+
+// WorkNextActionUnavailable says "Next action unavailable: {reason}"
+// in the language the app shows.
+//
+// Nagi workNextActionUnavailable UI copy.
+func WorkNextActionUnavailable(reason string) string {
+	return In(i18n.Locale()).WorkNextActionUnavailable(reason)
+}
+
+// WorkNextActionUnavailable says "Next action unavailable: {reason}"
+// in the language of msgs.
+//
+// Nagi workNextActionUnavailable UI copy.
+func (msgs Messages) WorkNextActionUnavailable(reason string) string {
+	return Catalog.Format(msgs.locale, "workNextActionUnavailable", map[string]any{"reason": reason})
+}
+
+// WorkCompletionEvidence says "Completion evidence"
+// in the language the app shows.
+//
+// Nagi workCompletionEvidence UI copy.
+func WorkCompletionEvidence() string { return In(i18n.Locale()).WorkCompletionEvidence() }
+
+// WorkCompletionEvidence says "Completion evidence"
+// in the language of msgs.
+//
+// Nagi workCompletionEvidence UI copy.
+func (msgs Messages) WorkCompletionEvidence() string {
+	return Catalog.Format(msgs.locale, "workCompletionEvidence", nil)
+}
+
+// WorkCompletionEvidencePlaceholder says "What proves this task is complete?"
+// in the language the app shows.
+//
+// Nagi workCompletionEvidencePlaceholder UI copy.
+func WorkCompletionEvidencePlaceholder() string {
+	return In(i18n.Locale()).WorkCompletionEvidencePlaceholder()
+}
+
+// WorkCompletionEvidencePlaceholder says "What proves this task is complete?"
+// in the language of msgs.
+//
+// Nagi workCompletionEvidencePlaceholder UI copy.
+func (msgs Messages) WorkCompletionEvidencePlaceholder() string {
+	return Catalog.Format(msgs.locale, "workCompletionEvidencePlaceholder", nil)
+}
+
+// WorkTask says "Task"
+// in the language the app shows.
+//
+// Nagi workTask UI copy.
+func WorkTask() string { return In(i18n.Locale()).WorkTask() }
+
+// WorkTask says "Task"
+// in the language of msgs.
+//
+// Nagi workTask UI copy.
+func (msgs Messages) WorkTask() string {
+	return Catalog.Format(msgs.locale, "workTask", nil)
+}

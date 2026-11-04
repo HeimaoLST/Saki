@@ -89,6 +89,10 @@ func (a *appModel) escapeWorkspaceLayer() bool {
 		return false
 	}
 	nav := ct.issueNavigation()
+	if nav.ShowConversationWork {
+		a.backFromConversationWork()
+		return true
+	}
 	if ct.SelectedWorkTaskID != "" {
 		ct.SelectedWorkTaskID = ""
 		nav.FocusBack = true
@@ -96,10 +100,6 @@ func (a *appModel) escapeWorkspaceLayer() bool {
 	}
 	if nav.DetailID != "" {
 		a.backToIssueOverview()
-		return true
-	}
-	if nav.ShowConversationWork {
-		a.backFromConversationWork()
 		return true
 	}
 	if a.workspaceOpen {

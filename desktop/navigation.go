@@ -33,6 +33,7 @@ var (
 	navProfileIcon  = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>`))
 	navBackIcon     = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>`))
 	navContactsIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M17 8h4M19 6v4M17 20h4"/></svg>`))
+	navCloseIcon    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`))
 )
 
 func (a *appModel) activeDetail() detailKind {
@@ -497,12 +498,16 @@ func (a *appModel) syncDetailPageMode() {
 	}
 }
 
-func detailBackButton(c *ui.Context, t *ui.Theme, accessible, tooltip string) ui.Element {
+func detailBackButton(c *ui.Context, t *ui.Theme, accessible, tooltip string, visible ...string) ui.Element {
+	label := "Back"
+	if len(visible) > 0 && visible[0] != "" {
+		label = visible[0]
+	}
 	button := appTooltip(c, secondaryButton(c, "").Label(accessible), tooltip).Padding(4, 8)
 	button.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
 			ui.Icon(c, navBackIcon).Width(16).Height(16).TextColor(t.TextMuted)
-			ui.Text(c, "Back").FontSize(typeAction).LineHeight(1.3).TextColor(t.Text)
+			ui.Text(c, label).FontSize(typeAction).LineHeight(1.3).TextColor(t.Text)
 		})
 	})
 	return button

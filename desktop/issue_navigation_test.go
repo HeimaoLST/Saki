@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -31,7 +32,7 @@ func openConversationWorkForTest(ct *contact) {
 
 func openConversationWorkPanel(t *testing.T, tr *ui.Tester) {
 	t.Helper()
-	if err := tr.Click("Conversation work"); err != nil {
+	if err := tr.Click("Chat runs"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
@@ -113,10 +114,10 @@ func TestIssueOverviewDetailBackKeepsRowScrollFocusAndDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if nav.DetailID != "i-15" || ct.SelectedIssueID != "i-15" || !tr.HasText("Back to issues") {
+	if nav.DetailID != "i-15" || ct.SelectedIssueID != "i-15" || !tr.HasText("Back to tasks") {
 		t.Fatalf("detail open = nav=%q selected=%q texts=%v", nav.DetailID, ct.SelectedIssueID, tr.Texts())
 	}
-	if err := tr.Click("Back to issues"); err != nil {
+	if err := tr.Click("Back to tasks"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
@@ -194,8 +195,8 @@ func TestIssueEscapeLayersInWideAndOverlayWork(t *testing.T) {
 			openIssueDetailForTest(a, ct, issue.ID)
 			tr := ui.NewTester(a.view, tc.width, 640)
 			tr.Frame()
-			if (a.workOverlay() != tc.overlay) || !tr.HasText("Back to issues") {
-				t.Fatalf("setup = overlay=%v detail=%v", a.workOverlay(), tr.HasText("Back to issues"))
+			if (a.workOverlay() != tc.overlay) || !tr.HasText("Back to tasks") {
+				t.Fatalf("setup = overlay=%v detail=%v", a.workOverlay(), tr.HasText("Back to tasks"))
 			}
 			tr.Key(0, ui.KeyEscape)
 			tr.Frame()
@@ -352,7 +353,7 @@ func TestIssueDetailTopRowFitsNarrowWorkPanel(t *testing.T) {
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
 	panel := float32(1040) - a.workWidth() - paneSeparatorWidth
-	back, backOK := tr.Find("Back to issues")
+	back, backOK := tr.Find("Back to tasks")
 	stop, stopOK := tr.Find("Stop issue task")
 	if !backOK || !stopOK || back.W <= 0 || stop.W <= 0 || back.X < panel || stop.X+stop.W > 1040 ||
 		back.X+back.W > stop.X {
@@ -390,7 +391,7 @@ func TestIssueNarrowPageHasNoBackdropAndBackKeepsNavigation(t *testing.T) {
 	ct.SelectedIssueID = issue.ID
 	tr := ui.NewTester(a.view, 720, 640)
 	tr.Frame()
-	if !a.workOverlay() || !tr.HasText("Back to issues") {
+	if !a.workOverlay() || !tr.HasText("Back to tasks") {
 		t.Fatal("overlay detail did not open")
 	}
 	tr.ClickAt(50, 300) // outside content must not act like a modal backdrop
@@ -398,16 +399,24 @@ func TestIssueNarrowPageHasNoBackdropAndBackKeepsNavigation(t *testing.T) {
 	if !a.workspaceOpen {
 		t.Fatal("a click outside the non-modal page closed it")
 	}
-	if err := tr.Click("Close work"); err != nil {
+	if err := tr.Click("Back to tasks"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !a.workspaceOpen || nav.DetailID != "" || nav.Filter != issueFilterAll ||
+		ct.SelectedIssueID != issue.ID || ct.Draft != "draft survives backdrop" {
+		t.Fatalf("narrow Back changed navigation/draft: open=%v detail=%q filter=%q selected=%q draft=%q",
+			a.workspaceOpen, nav.DetailID, nav.Filter, ct.SelectedIssueID, ct.Draft)
+	}
+	if err := tr.Click("Back to chat"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
 	if a.workspaceOpen {
-		t.Fatal("Back did not close the detail page")
+		t.Fatal("Back to chat did not close the detail page")
 	}
-	if nav.DetailID != issue.ID || nav.Filter != issueFilterAll || ct.SelectedIssueID != issue.ID || ct.Draft != "draft survives backdrop" {
-		t.Fatalf("Back changed navigation/draft: detail=%q filter=%q selected=%q draft=%q",
-			nav.DetailID, nav.Filter, ct.SelectedIssueID, ct.Draft)
+	if nav.Filter != issueFilterAll || ct.SelectedIssueID != issue.ID || ct.Draft != "draft survives backdrop" {
+		t.Fatalf("close changed navigation/draft: filter=%q selected=%q draft=%q", nav.Filter, ct.SelectedIssueID, ct.Draft)
 	}
 }
 
@@ -505,6 +514,308 @@ func TestClosedChatWaitingOrInterruptedShowsTaskFactAndView(t *testing.T) {
 	t.Run("interrupted", func(t *testing.T) { caseRun(t, true) })
 }
 
+func TestIssuePrimaryActionsAndPersistentLifecycle(t *testing.T) {
+	cases := []struct {
+		name        string
+		issue       *productIssue
+		wantPrimary string
+		wantLife    string
+	}{
+		{
+			name: "question",
+			issue: &productIssue{ID: "issue-action-question", Goal: "Question action", Status: issueStatusWaitingUser,
+				Questions: []*issueQuestion{{Ref: "q-action", Text: "answer", State: issueQuestionOpen}}},
+			wantPrimary: "Answer question", wantLife: "Cancel task",
+		},
+		{
+			name: "continue",
+			issue: &productIssue{ID: "issue-action-continue", Goal: "Continue action", Status: issueStatusInProgress,
+				Executions: []*issueExecution{{ID: "run-continue", Status: issueExecutionCompleted}}},
+			wantPrimary: "Continue task", wantLife: "Mark complete",
+		},
+		{
+			name: "question-attention",
+			issue: &productIssue{ID: "issue-action-question-attention", Goal: "Question attention", Status: issueStatusWaitingUser,
+				Questions:  []*issueQuestion{{Ref: "q-attention", Text: "answer despite attention", State: issueQuestionOpen}},
+				Executions: []*issueExecution{{ID: "run-attention", Status: issueExecutionFailed, Detail: "unseen failure"}}},
+			wantPrimary: "Answer question", wantLife: "Cancel task",
+		},
+		{
+			name: "result",
+			issue: &productIssue{ID: "issue-action-result", Goal: "Result action", Status: issueStatusCompleted,
+				Evidence: "done", Executions: []*issueExecution{{ID: "run-result", TaskID: "task-result", Status: issueExecutionCompleted}},
+				Work: issueWorkSession{Messages: []*message{{Kind: msgContact, TaskID: "task-result", Text: "readable result"}}}},
+			wantPrimary: "Read latest result", wantLife: "Reopen task",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a, ct := workspaceTestApp(t)
+			a.windowWidth = 1040
+			a.rt = &runtimeClient{}
+			a.runtimeCapabilitiesLoaded = true
+			a.runtimeMaxActiveTasks = 2
+			tc.issue.ContactID = ct.ID
+			ct.Issues = []*productIssue{tc.issue}
+			ct.SelectedIssueID = tc.issue.ID
+			openIssueDetailForTest(a, ct, tc.issue.ID)
+			tr := ui.NewTester(a.view, 1040, 720)
+			tr.Frame()
+			if !tr.HasText(tc.wantPrimary) || !tr.HasText(tc.wantLife) {
+				t.Fatalf("primary/lifecycle = %v, want %q / %q", tr.Texts(), tc.wantPrimary, tc.wantLife)
+			}
+			if tc.name == "question" {
+				ct.Draft = "question draft"
+				beforeID, beforeDetail, beforeSession := ct.SelectedIssueID, ct.issueNavigation().DetailID, ct.SessionID
+				beforeExecutions := len(tc.issue.Executions)
+				if err := tr.Click("Answer question"); err != nil {
+					t.Fatal(err)
+				}
+				tr.Frame()
+				if a.issueSupplementFormID != tc.issue.ID || ct.SelectedIssueID != beforeID ||
+					ct.issueNavigation().DetailID != beforeDetail || ct.Draft != "question draft" {
+					t.Fatalf("Answer question changed owner/draft: form=%q selected=%q detail=%q draft=%q",
+						a.issueSupplementFormID, ct.SelectedIssueID, ct.issueNavigation().DetailID, ct.Draft)
+				}
+				if err := tr.Click("Cancel task"); err != nil {
+					t.Fatal(err)
+				}
+				tr.Frame()
+				if tc.issue.Status != issueStatusCanceled || len(tc.issue.Executions) != beforeExecutions || ct.SessionID != beforeSession {
+					t.Fatalf("Cancel task boundary: status=%q executions=%d session=%q (before %d/%q)",
+						tc.issue.Status, len(tc.issue.Executions), ct.SessionID, beforeExecutions, beforeSession)
+				}
+			}
+		})
+	}
+
+	a, ct := workspaceTestApp(t)
+	a.windowWidth = 720
+	qAttention := &productIssue{ID: "issue-action-question-attention-visible", ContactID: ct.ID, Goal: "Question attention visible",
+		Status:     issueStatusWaitingUser,
+		Questions:  []*issueQuestion{{Ref: "q-attention-visible", Text: "answer", State: issueQuestionOpen}},
+		Executions: []*issueExecution{{ID: "run-attention-visible", Status: issueExecutionFailed, Detail: "unseen failure"}}}
+	ct.Issues = []*productIssue{qAttention}
+	ct.SelectedIssueID = qAttention.ID
+	openIssueDetailForTest(a, ct, qAttention.ID)
+	trAttention := ui.NewTester(a.view, 720, 640)
+	trAttention.Frame()
+	if !trAttention.HasText("Needs attention") || trAttention.HasText("Waiting for your answer") || !trAttention.HasText("Answer question") {
+		t.Fatalf("question+attention projection = %v", trAttention.Texts())
+	}
+	if count := strings.Count(strings.Join(trAttention.Texts(), "\n"), "Needs attention"); count != 1 {
+		t.Fatalf("question+attention rendered %d main statuses: %v", count, trAttention.Texts())
+	}
+
+	a.windowWidth = 1040
+	active := &productIssue{ID: "issue-action-active", ContactID: ct.ID, Goal: "Active action", Status: issueStatusInProgress,
+		Work:       issueWorkSession{Loaded: true, ActiveTaskID: "run-action-active", SendState: sendAccepted},
+		Executions: []*issueExecution{{ID: "run-action-active", Status: issueExecutionRunning}}}
+	ct.Issues = []*productIssue{active}
+	ct.SelectedIssueID = active.ID
+	openIssueDetailForTest(a, ct, active.ID)
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if !tr.HasText("Next action unavailable:") || tr.HasText("Continue task") {
+		t.Fatalf("active action should preserve reason without Continue: %v", tr.Texts())
+	}
+}
+
+func TestPrimaryReadReturnFocusConsumesExactResultOwner(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.windowWidth = 1040
+	a.rt = nil
+	issue := &productIssue{ID: "issue-primary-read", ContactID: ct.ID, Goal: "Primary readable result",
+		Status: issueStatusCompleted, Evidence: "user completed",
+		Executions: []*issueExecution{{ID: "run-primary-read", TaskID: "task-primary-read", Status: issueExecutionCompleted}},
+		Work: issueWorkSession{Loaded: true, Messages: []*message{{
+			Kind: msgContact, TaskID: "task-primary-read", Text: "readable primary result"}}}}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	openIssueDetailForTest(a, ct, issue.ID)
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+
+	openRead := func() {
+		t.Helper()
+		if err := tr.Click("Read latest result"); err != nil {
+			t.Fatal(err)
+		}
+		tr.Frame()
+		if !a.issueResult.Open || a.issueResult.OwnerContactID != ct.ID ||
+			a.issueResult.IssueID != issue.ID || a.issueResult.ExecutionID != "run-primary-read" || !a.issueResult.ReturnLatest {
+			t.Fatalf("primary Read owner/result = %+v", a.issueResult)
+		}
+	}
+	assertReturned := func(label string) {
+		t.Helper()
+		tr.Frame()
+		if !tr.Focused("Read latest result") {
+			t.Fatalf("%s did not regain focus: pending=%v texts=%v", label, a.issueResult.ReturnFocusPending, tr.Texts())
+		}
+		if a.issueResult.ReturnFocusPending {
+			t.Fatalf("%s left ReturnFocusPending set", label)
+		}
+	}
+
+	openRead()
+	if err := tr.Click("Close results"); err != nil {
+		t.Fatal(err)
+	}
+	assertReturned("Back")
+
+	openRead()
+	tr.Key(0, ui.KeyEscape)
+	assertReturned("Escape")
+
+	// Move focus off Read before checking mismatches. These are visible renders
+	// of the primary Read branch; a mismatch must leave the exact pending owner/
+	// issue/execution/latest intent untouched and must not consume it.
+	if err := tr.Click("More issue actions"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	cases := []struct {
+		name   string
+		mutate func()
+	}{
+		{name: "owner", mutate: func() { a.issueResult.OwnerContactID = "other-contact" }},
+		{name: "issue", mutate: func() { a.issueResult.IssueID = "other-issue" }},
+		{name: "execution", mutate: func() { a.issueResult.ExecutionID = "other-execution" }},
+	}
+	for _, tc := range cases {
+		t.Run("mismatch-"+tc.name, func(t *testing.T) {
+			a.issueResult.ReturnFocusPending = true
+			a.issueResult.OwnerContactID = ct.ID
+			a.issueResult.IssueID = issue.ID
+			a.issueResult.ExecutionID = "run-primary-read"
+			a.issueResult.ReturnLatest = true
+			tc.mutate()
+			tr.Frame()
+			if !tr.HasText("Read latest result") {
+				t.Fatalf("primary Read not rendered for mismatch %s: %v", tc.name, tr.Texts())
+			}
+			if !a.issueResult.ReturnFocusPending {
+				t.Fatalf("mismatch %s consumed ReturnFocusPending", tc.name)
+			}
+		})
+	}
+}
+
+func TestNarrowChatRunsBackUsesVisibleLayerAndKeepsHiddenDetail(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.windowWidth = 720
+	a.workspaceOpen = true
+	issue := &productIssue{ID: "issue-visible-layer", ContactID: ct.ID, Goal: "Segment issue", Status: issueStatusInProgress}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	nav := ct.issueNavigation()
+	nav.DetailID = issue.ID
+	tr := ui.NewTester(a.view, 720, 640)
+	tr.Frame()
+	if err := tr.Click("Chat runs"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	a.escapeWorkspaceLayer()
+	if nav.ShowConversationWork || nav.DetailID != issue.ID {
+		t.Fatalf("Escape changed hidden detail: nav=%+v", nav)
+	}
+	tr.Frame()
+	if nav.FocusConversation {
+		t.Fatal("FocusConversation was not consumed by the visible segmented entry")
+	}
+	if !tr.Focused("Tasks") {
+		t.Fatalf("Chat runs Back did not focus the Tasks segment: %v", tr.Texts())
+	}
+	nav.FocusBack = true
+	tr.Frame()
+	if nav.FocusBack {
+		t.Fatal("FocusBack was not consumed by the single narrow Back")
+	}
+	if !tr.Focused("Back to tasks") {
+		t.Fatalf("detail Back flag did not focus Back to tasks: %v", tr.Texts())
+	}
+	if err := tr.Click("Chat runs"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if err := tr.Click("Back to tasks"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if nav.ShowConversationWork || nav.DetailID != issue.ID || !tr.HasText("Segment issue") {
+		t.Fatalf("Chat runs Back did not return to the retained detail: nav=%+v", nav)
+	}
+	if err := tr.Click("Back to tasks"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if nav.DetailID != "" {
+		t.Fatalf("detail Back did not return to the issue list: %+v", nav)
+	}
+	if err := tr.Click("Back to chat"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if a.workspaceOpen {
+		t.Fatal("Back to chat did not close the narrow work panel")
+	}
+}
+
+func TestIssueHasReadableResultRequiresActualOutput(t *testing.T) {
+	ct := &contact{ID: "c-readable", Works: []*workItem{
+		{TaskID: "task-message"}, {TaskID: "task-output"}, {TaskID: "task-unfinished"}, {TaskID: "task-failed"},
+	}}
+	issue := &productIssue{ID: "issue-readable", Work: issueWorkSession{Messages: []*message{{Kind: msgContact, TaskID: "task-message", Text: "readable"}}}}
+	ct.Issues = []*productIssue{issue}
+	completed := &issueExecution{TaskID: "task-message", Status: issueExecutionCompleted}
+	if !issueHasReadableResult(ct, completed) {
+		t.Fatal("completed assistant message should be readable")
+	}
+	completed = &issueExecution{TaskID: "task-output", Status: issueExecutionCompleted}
+	ct.Works[1].Tools = []*workTool{{Finished: true, Output: "file content"}}
+	if !issueHasReadableResult(ct, completed) {
+		t.Fatal("finished tool output should be readable")
+	}
+	ct.Works[2].Tools = []*workTool{{Finished: false, Output: "not final"}}
+	if issueHasReadableResult(ct, &issueExecution{TaskID: "task-unfinished", Status: issueExecutionCompleted}) {
+		t.Fatal("unfinished tool output must not become a primary result")
+	}
+	if issueHasReadableResult(ct, &issueExecution{TaskID: "task-failed", Status: issueExecutionFailed, Detail: "failed detail"}) {
+		t.Fatal("failure detail alone must not become a primary result")
+	}
+}
+
+func TestTasksChatRunsSegmentKeepsDetailAndState(t *testing.T) {
+	a, ct := workspaceTestApp(t)
+	a.windowWidth = 1040
+	issue := &productIssue{ID: "issue-segment", ContactID: ct.ID, Goal: "Segment issue", Status: issueStatusInProgress}
+	ct.Issues = []*productIssue{issue}
+	ct.SelectedIssueID = issue.ID
+	ct.Draft = "segment draft"
+	ct.issueNavigation().DetailID = issue.ID
+	ct.issueNavigation().Filter = issueFilterAll
+	beforeTask, beforeSession := ct.LastTaskID, ct.SessionID
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.Frame()
+	if err := tr.Click("Chat runs"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if !ct.issueNavigation().ShowConversationWork || ct.issueNavigation().DetailID != issue.ID ||
+		ct.SelectedIssueID != issue.ID || ct.Draft != "segment draft" || ct.LastTaskID != beforeTask || ct.SessionID != beforeSession {
+		t.Fatalf("Chat runs changed detail/state: nav=%+v selected=%q draft=%q", ct.issueNavigation(), ct.SelectedIssueID, ct.Draft)
+	}
+	if err := tr.Click("Tasks"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if ct.issueNavigation().ShowConversationWork || ct.issueNavigation().DetailID != issue.ID || ct.Draft != "segment draft" {
+		t.Fatalf("Tasks did not restore detail: nav=%+v draft=%q", ct.issueNavigation(), ct.Draft)
+	}
+}
+
 func TestIssueBackFocusesDisplayedDetailNotBackgroundSelection(t *testing.T) {
 	a, ct := workspaceTestApp(t)
 	a.windowWidth = 1040
@@ -523,7 +834,7 @@ func TestIssueBackFocusesDisplayedDetailNotBackgroundSelection(t *testing.T) {
 	if !tr.HasText("A displayed issue") || tr.HasText("B background issue") {
 		t.Fatalf("displayed detail = %v", tr.Texts())
 	}
-	if err := tr.Click("Back to issues"); err != nil {
+	if err := tr.Click("Back to tasks"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()

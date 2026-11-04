@@ -305,5 +305,89 @@
   "taskRunRejected": "Run rejected",
   "@taskRunRejected": {
     "description": "Nagi taskRunRejected UI copy."
+  },
+  "workTabs": "Task view",
+  "@workTabs": {
+    "description": "Nagi workTabs UI copy."
+  },
+  "workTasksTab": "Tasks",
+  "@workTasksTab": {
+    "description": "Nagi workTasksTab UI copy."
+  },
+  "workChatRunsTab": "Chat runs",
+  "@workChatRunsTab": {
+    "description": "Nagi workChatRunsTab UI copy."
+  },
+  "workClose": "Close workspace",
+  "@workClose": {
+    "description": "Nagi workClose UI copy."
+  },
+  "workCloseTooltip": "Close workspace",
+  "@workCloseTooltip": {
+    "description": "Nagi workCloseTooltip UI copy."
+  },
+  "workAnswer": "Answer question",
+  "@workAnswer": {
+    "description": "Nagi workAnswer UI copy."
+  },
+  "workContinue": "Continue task",
+  "@workContinue": {
+    "description": "Nagi workContinue UI copy."
+  },
+  "workStart": "Start task",
+  "@workStart": {
+    "description": "Nagi workStart UI copy."
+  },
+  "workContinueWithSupplement": "Continue with follow-up",
+  "@workContinueWithSupplement": {
+    "description": "Nagi workContinueWithSupplement UI copy."
+  },
+  "workStartWithSupplement": "Start with follow-up",
+  "@workStartWithSupplement": {
+    "description": "Nagi workStartWithSupplement UI copy."
+  },
+  "workReadResult": "Read latest result",
+  "@workReadResult": {
+    "description": "Nagi workReadResult UI copy."
+  },
+  "workComplete": "Mark complete",
+  "@workComplete": {
+    "description": "Nagi workComplete UI copy."
+  },
+  "workCancel": "Cancel task",
+  "@workCancel": {
+    "description": "Nagi workCancel UI copy."
+  },
+  "workReopen": "Reopen task",
+  "@workReopen": {
+    "description": "Nagi workReopen UI copy."
+  },
+  "workRestore": "Restore task",
+  "@workRestore": {
+    "description": "Nagi workRestore UI copy."
+  },
+  "workBackToIssues": "Back to tasks",
+  "@workBackToIssues": {
+    "description": "Nagi workBackToIssues UI copy."
+  },
+  "workBackToChat": "Back to chat",
+  "@workBackToChat": {
+    "description": "Nagi workBackToChat UI copy."
+  },
+  "workNextActionUnavailable": "Next action unavailable: {reason}",
+  "@workNextActionUnavailable": {
+    "description": "Nagi workNextActionUnavailable UI copy."
+  },
+  "workCompletionEvidence": "Completion evidence",
+  "@workCompletionEvidence": {
+    "description": "Nagi workCompletionEvidence UI copy."
+  },
+  "workCompletionEvidencePlaceholder": "What proves this task is complete?",
+  "@workCompletionEvidencePlaceholder": {
+    "description": "Nagi workCompletionEvidencePlaceholder UI copy."
+  },
+  "workTask": "Task",
+  "@workTask": {
+    "description": "Nagi workTask UI copy."
   }
 }

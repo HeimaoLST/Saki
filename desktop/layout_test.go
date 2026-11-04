@@ -124,8 +124,8 @@ func TestLayoutDragClampsBothEdgesAndKeepsCenterWidest(t *testing.T) {
 	if ct.Draft != "keep this draft" || ct.ActiveTaskID != "task-keep" || len(ct.Messages) != 1 {
 		t.Fatal("left divider drag changed chat/task state")
 	}
-	if r, ok := tr.Find("Close work"); !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 1040 {
-		t.Fatalf("close-work control after left drag = ok=%v rect=%+v", ok, r)
+	if r, ok := tr.Find("Close workspace"); !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 1040 {
+		t.Fatalf("close-workspace control after left drag = ok=%v rect=%+v", ok, r)
 	}
 
 	a, ct = layoutAppAt(t, 1040)
@@ -181,7 +181,7 @@ func TestLayoutOverlayAt960And720ClosesWithEscape(t *testing.T) {
 		a, _ := layoutAppAt(t, width)
 		tr := ui.NewTester(a.view, width, 640)
 		tr.Frame()
-		if !a.workOverlay() || !tr.HasText("Close work") {
+		if !a.workOverlay() || !tr.HasText("Back to chat") {
 			t.Fatalf("%d overlay missing: overlay=%v", width, a.workOverlay())
 		}
 		tr.Key(0, ui.KeyEscape)

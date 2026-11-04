@@ -26,8 +26,8 @@ func TestNavigationSurfacesStayMutuallyExclusiveAndKeepState(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if !a.detailIs(detailWork) || !tr.HasText("navigable issue") || !tr.Focused("Close work") {
-		t.Fatalf("Work entry = detail=%q focusedClose=%v", a.activeDetail(), tr.Focused("Close work"))
+	if !a.detailIs(detailWork) || !tr.HasText("navigable issue") || !tr.Focused("Close workspace") {
+		t.Fatalf("Work entry = detail=%q focusedClose=%v", a.activeDetail(), tr.Focused("Close workspace"))
 	}
 
 	if err := tr.Click("History"); err != nil {
@@ -109,7 +109,7 @@ func TestNarrowDetailPageFocusesVisibleBackAcrossWidthChange(t *testing.T) {
 			a.openDetail(kind)
 			tr := ui.NewTester(a.view, 1040, 720)
 			tr.Frame()
-			closeLabel := "Close work"
+			closeLabel := "Close workspace"
 			switch kind {
 			case detailHistory:
 				closeLabel = "Close history"
@@ -123,11 +123,15 @@ func TestNarrowDetailPageFocusesVisibleBackAcrossWidthChange(t *testing.T) {
 			a.windowWidth = 720
 			tr.SetSize(720, 640)
 			tr.Frame()
-			back, ok := tr.Find(closeLabel)
+			narrowLabel := closeLabel
+			if kind == detailWork {
+				narrowLabel = "Back to chat"
+			}
+			back, ok := tr.Find(narrowLabel)
 			if !ok || back.W <= 0 || back.H <= 0 || back.X < 0 || back.Y < 0 || back.X+back.W > 720 || back.Y+back.H > 640 {
 				t.Fatalf("narrow %s Back rect = %+v/%v", kind, back, ok)
 			}
-			if !a.detailPageActive() || !tr.Focused(closeLabel) {
+			if !a.detailPageActive() || !tr.Focused(narrowLabel) {
 				t.Fatalf("narrow %s did not focus the visible Back", kind)
 			}
 			if tr.HasText("Composer for Saki") || tr.HasText("Add contact") {
@@ -567,7 +571,7 @@ func TestPreviewNavigation219(t *testing.T) {
 						if !tr.HasText("整理发布证据与未完成事项") || !tr.HasText("Requirements") {
 							t.Fatalf("work preview lacks real issue content: %v", tr.Texts())
 						}
-					} else if !tr.HasText("New issue") || !tr.HasText("Issue filter") || !tr.HasText("Conversation work") {
+					} else if !tr.HasText("New issue") || !tr.HasText("Issue filter") || !tr.HasText("Chat runs") {
 						t.Fatalf("narrow work preview lost creation/overview content: %v", tr.Texts())
 					}
 				case detailHistory:
@@ -687,7 +691,7 @@ func TestWorkSettingsReturnUsesVisibleCloseOrWorkEntry(t *testing.T) {
 		}
 		tr.Frame()
 		if width == 720 {
-			if !a.detailIs(detailWork) || !tr.Focused("Close work") {
+			if !a.detailIs(detailWork) || !tr.Focused("Back to chat") {
 				t.Fatalf("narrow Work settings return did not focus visible Back")
 			}
 		} else if !tr.Focused("Work") {

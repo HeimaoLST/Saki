@@ -226,10 +226,10 @@ func TestIssueFormCreatesExplicitItemWithoutTouchingComposer(t *testing.T) {
 	if ct.Draft != "ordinary composer draft" {
 		t.Fatalf("issue form changed composer draft: %q", ct.Draft)
 	}
-	if !tr.Focused("Back to issues") {
+	if !tr.Focused("Back to tasks") {
 		t.Fatal("saving the issue did not open detail with Back focus")
 	}
-	for _, want := range []string{"Implement login", "Must use SMS.", "Requirements", "Unverified", "Start issue"} {
+	for _, want := range []string{"Implement login", "Must use SMS.", "Requirements", "Unverified", "Start task"} {
 		if !tr.HasText(want) {
 			t.Errorf("workspace missing %q", want)
 		}
@@ -339,7 +339,7 @@ func TestIssueResultAttributionFollowsSelectedIssue(t *testing.T) {
 	if tr.HasText("No current work") {
 		t.Fatal("selected issue fell back to unrelated empty work")
 	}
-	if err := tr.Click("Back to issues"); err != nil {
+	if err := tr.Click("Back to tasks"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()

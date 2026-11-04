@@ -39,7 +39,7 @@ func TestIssueDetailDefaultsToResultAndKeepsSecondaryDetailsCollapsed(t *testing
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	for _, want := range []string{"Latest execution", "readable result body", "Requirements", "Continue issue", "More issue actions"} {
+	for _, want := range []string{"Latest execution", "readable result body", "Requirements", "Continue task", "More issue actions"} {
 		if !tr.HasText(want) {
 			t.Fatalf("default issue detail missing %q: %v", want, tr.Texts())
 		}
@@ -50,10 +50,10 @@ func TestIssueDetailDefaultsToResultAndKeepsSecondaryDetailsCollapsed(t *testing
 	goal, _ := tr.Find("prepare the readable summary")
 	latest, _ := tr.Find("Latest execution")
 	requirements, _ := tr.Find("Requirements")
-	primary, _ := tr.Find("Continue issue")
+	primary, _ := tr.Find("Continue task")
 	more, _ := tr.Find("More issue actions")
-	if !(goal.Y < latest.Y && latest.Y < requirements.Y && requirements.Y < primary.Y && primary.Y < more.Y) {
-		t.Fatalf("default issue detail order = goal %.1f latest %.1f requirements %.1f primary %.1f more %.1f", goal.Y, latest.Y, requirements.Y, primary.Y, more.Y)
+	if !(goal.Y < primary.Y && primary.Y < latest.Y && latest.Y < requirements.Y && requirements.Y < more.Y) {
+		t.Fatalf("default issue detail order = goal %.1f primary %.1f latest %.1f requirements %.1f more %.1f", goal.Y, primary.Y, latest.Y, requirements.Y, more.Y)
 	}
 	if err := tr.Click("More issue actions"); err != nil {
 		t.Fatal(err)

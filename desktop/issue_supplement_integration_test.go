@@ -590,7 +590,7 @@ func TestIssueSupplementCancelKeepsPendingAndRequiresReopenResume(t *testing.T) 
 	var canceled bool
 	h.pump.do(func() { canceled = h.app.cancelIssueProduct(issueID) })
 	if !canceled {
-		t.Fatal("Cancel issue failed")
+		t.Fatal("Cancel task failed")
 	}
 	h.pump.wait(func() bool {
 		issue := h.app.selectedContact().issueByID(issueID)
@@ -1031,7 +1031,7 @@ func TestIssueSupplementUIStartWithSupplementActuallyDispatches(t *testing.T) {
 		}
 		tr.Frame()
 		workOpen = h.app.workspaceOpen
-		if r, ok := tr.Find("Close work"); !workOpen || !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 1040 || r.Y < 0 || r.Y+r.H > 720 {
+		if r, ok := tr.Find("Close workspace"); !workOpen || !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 1040 || r.Y < 0 || r.Y+r.H > 720 {
 			clickErr = fmt.Errorf("Work open geometry = open=%v rect=%+v ok=%v", workOpen, r, ok)
 		}
 	})
@@ -1043,11 +1043,11 @@ func TestIssueSupplementUIStartWithSupplementActuallyDispatches(t *testing.T) {
 	}
 	h.pump.do(func() {
 		tr.Frame()
-		clickErr = tr.Click("Start with supplement")
+		clickErr = tr.Click("Start with follow-up")
 		tr.Frame()
 	})
 	if clickErr != nil {
-		t.Fatalf("UI Start with supplement: %v", clickErr)
+		t.Fatalf("UI Start with follow-up: %v", clickErr)
 	}
 	h.pump.wait(func() bool {
 		issue := h.app.selectedContact().issueByID(issueID)
@@ -1055,9 +1055,9 @@ func TestIssueSupplementUIStartWithSupplementActuallyDispatches(t *testing.T) {
 			issue.Executions[0].Status == issueExecutionCompleted && issue.Supplements.pendingCount() == 0
 	})
 	if provider.count() != 1 {
-		t.Fatalf("UI Start with supplement provider requests = %d", provider.count())
+		t.Fatalf("UI Start with follow-up provider requests = %d", provider.count())
 	}
 	if !strings.Contains(taskContextLastUserText(t, provider.body(0)), "UI start supplement") {
-		t.Fatalf("UI Start with supplement provider body missing supplement: %s", provider.body(0))
+		t.Fatalf("UI Start with follow-up provider body missing supplement: %s", provider.body(0))
 	}
 }

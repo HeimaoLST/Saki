@@ -812,7 +812,7 @@ func TestIssueResultPageFromActualIssueRunsAndRestart(t *testing.T) {
 		}
 		tr.Frame()
 		workOpen = h.app.workspaceOpen
-		if r, ok := tr.Find("Close work"); !workOpen || !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 1040 || r.Y < 0 || r.Y+r.H > 720 {
+		if r, ok := tr.Find("Close workspace"); !workOpen || !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 1040 || r.Y < 0 || r.Y+r.H > 720 {
 			workErr = fmt.Errorf("Work open geometry = open=%v rect=%+v ok=%v", workOpen, r, ok)
 		}
 	})
@@ -987,7 +987,7 @@ func TestIssueResultNavigationEntryAndReturnWideNarrow(t *testing.T) {
 	if err := issueResultClick(h, "Work"); err != nil {
 		t.Fatal(err)
 	}
-	if err := issueResultClick(h, "Back to issues"); err != nil {
+	if err := issueResultClick(h, "Back to tasks"); err != nil {
 		t.Fatal(err)
 	}
 	h.pump.do(func() {
@@ -1153,7 +1153,7 @@ func TestIssueResultNavigationEntryAndReturnWideNarrow(t *testing.T) {
 			t.Fatalf("width %d run return changed origin: closed=%v focused=%v beforeScroll=%v after=%+v before=%+v", width, runClosed, runFocused, runBeforeScrollY, runAfter, before)
 		}
 		t.Logf("width=%d viewport=%dx720 run_rect=%+v detail_scroll_before=%.1f detail_scroll_after=%.1f run_focus=%v selected_work_task=%q", width, width, runRect, runBeforeScrollY, runAfter.scrollY, runFocused, runAfter.selectedTask)
-		if err := issueResultClickAt(h, width, 720, "Back to issues"); err != nil {
+		if err := issueResultClickAt(h, width, 720, "Back to tasks"); err != nil {
 			t.Fatalf("width %d back to issues: %v", width, err)
 		}
 	}
@@ -1499,7 +1499,7 @@ func TestIssueResultAppPreviewsAlwaysWriteHeadlessPNGs(t *testing.T) {
 			"readerror":  {"permission denied"},
 			"source":     {"Source & raw record"},
 			"long":       {"很长的中文结果文件名"},
-			"navigation": {"Issue", "Read latest result", "Open result: run 1"},
+			"navigation": {"Task", "Read latest result", "Open result: run 1"},
 		}
 		for _, want := range readerWant[scene.name] {
 			if !tr.HasText(want) {

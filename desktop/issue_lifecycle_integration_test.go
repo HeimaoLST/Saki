@@ -173,13 +173,13 @@ func TestIssueUITargetsLifecycleActions(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	for _, want := range []string{"In progress", "Requirements", "Unverified", "Continue issue"} {
+	for _, want := range []string{"In progress", "Requirements", "Unverified", "Continue task"} {
 		if !tr.HasText(want) {
 			t.Errorf("lifecycle default UI missing %q: %v", want, tr.Texts())
 		}
 	}
 	expandIssueDetails(t, tr)
-	for _, want := range []string{"Satisfied", "Unmet", "Unverified", "Mark waiting", "Cancel issue", "Archive", "Mark complete"} {
+	for _, want := range []string{"Satisfied", "Unmet", "Unverified", "Mark waiting", "Cancel task", "Archive", "Mark complete"} {
 		if !tr.HasText(want) {
 			t.Errorf("lifecycle details UI missing %q: %v", want, tr.Texts())
 		}
@@ -211,10 +211,10 @@ func TestIssueUIFilterArchiveAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if !issue.Archived || ct.issueNavigation().Filter != issueFilterUnfinished || !tr.HasText("Restore issue") || !tr.HasText("Archived") {
+	if !issue.Archived || ct.issueNavigation().Filter != issueFilterUnfinished || !tr.HasText("Restore task") || !tr.HasText("Archived") {
 		t.Fatalf("archive UI = archived=%v filter=%q texts=%v", issue.Archived, ct.issueNavigation().Filter, tr.Texts())
 	}
-	if err := tr.Click("Restore issue"); err != nil {
+	if err := tr.Click("Restore task"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
@@ -463,7 +463,7 @@ func TestIssueUICompleteAndReopenActions(t *testing.T) {
 	if !tr.HasText("Completion evidence") || !tr.HasText("user verified the saved result") {
 		t.Fatalf("completion evidence is not readable after completion: %v", tr.Texts())
 	}
-	if err := tr.Click("Reopen issue"); err != nil {
+	if err := tr.Click("Reopen task"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
@@ -506,7 +506,7 @@ func TestIssueUIStatusFilterSelection(t *testing.T) {
 	a.windowWidth = 1040
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	if err := tr.Click("Back to issues"); err != nil {
+	if err := tr.Click("Back to tasks"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()

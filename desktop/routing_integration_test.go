@@ -1265,8 +1265,8 @@ func TestIssueWorkStopButtonStopsIssueNotConversation(t *testing.T) {
 			issueClickErr = fmt.Errorf("Work click did not open the work panel")
 			return
 		}
-		if r, ok := tr.Find("Close work"); !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 1040 || r.Y < 0 || r.Y+r.H > 720 {
-			issueClickErr = fmt.Errorf("Close work geometry = rect=%+v ok=%v", r, ok)
+		if r, ok := tr.Find("Close workspace"); !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.X+r.W > 1040 || r.Y < 0 || r.Y+r.H > 720 {
+			issueClickErr = fmt.Errorf("Close workspace geometry = rect=%+v ok=%v", r, ok)
 			return
 		}
 		stop, ok := tr.Find("Stop issue task")

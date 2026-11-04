@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -21,7 +23,7 @@ func TestThreePaneBreakpointsAndToggles(t *testing.T) {
 	a, _ := workspaceTestApp(t)
 	tr := ui.NewTester(a.view, 1040, 720)
 	tr.Frame()
-	if !tr.HasText("No issues in Unfinished.") || !tr.HasText("Conversation work") {
+	if !tr.HasText("No issues in Unfinished.") || !tr.HasText("Chat runs") {
 		t.Fatal("new work panel should show the issue overview and local work entry")
 	}
 	if r, ok := tr.Find("No issues in Unfinished."); !ok || r.X < 620 {
@@ -46,7 +48,7 @@ func TestThreePaneBreakpointsAndToggles(t *testing.T) {
 		t.Fatal("Contacts did not reopen the rail")
 	}
 
-	if err := tr.Click("Close work"); err != nil {
+	if err := tr.Click("Close workspace"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Frame()
@@ -57,14 +59,14 @@ func TestThreePaneBreakpointsAndToggles(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if !tr.HasText("No issues in Unfinished.") || !tr.Focused("Close work") {
-		t.Fatal("opening work should show it and focus Close work")
+	if !tr.HasText("No issues in Unfinished.") || !tr.Focused("Close workspace") {
+		t.Fatal("opening work should show it and focus Close workspace")
 	}
 
 	a.windowWidth = 960
 	tr960 := ui.NewTester(a.view, 960, 640)
 	tr960.Frame()
-	if !a.workOverlay() || !tr960.HasText("Back") {
+	if !a.workOverlay() || !tr960.HasText("Back to chat") {
 		t.Fatal("960 should use the non-modal detail page when the default columns do not fit")
 	}
 	a.windowWidth = 1380
@@ -80,15 +82,56 @@ func TestThreePaneBreakpointsAndToggles(t *testing.T) {
 	a.windowWidth = 900
 	trNarrow := ui.NewTester(a.view, 900, 640)
 	trNarrow.Frame()
-	if !trNarrow.HasText("Back") {
+	if !trNarrow.HasText("Back to chat") {
 		t.Fatal("narrow work detail should be an application page")
 	}
-	if err := trNarrow.Click("Close work"); err != nil {
+	if err := trNarrow.Click("Back to chat"); err != nil {
 		t.Fatal(err)
 	}
 	trNarrow.Frame()
 	if a.workspaceOpen || !trNarrow.Focused("Work") {
 		t.Fatal("narrow detail page did not close to the Work entry")
+	}
+}
+
+func TestIssueOverviewContentHasPanelInset(t *testing.T) {
+	for _, width := range []int{1040, 720} {
+		for _, empty := range []bool{true, false} {
+			name := fmt.Sprintf("%d/empty=%v", width, empty)
+			t.Run(name, func(t *testing.T) {
+				a, ct := workspaceTestApp(t)
+				a.windowWidth = width
+				if !empty {
+					issue := &productIssue{ID: "i-overview-inset", ContactID: ct.ID, Goal: "overview row inset",
+						Status: issueStatusInProgress}
+					ct.Issues = []*productIssue{issue}
+					ct.SelectedIssueID = issue.ID
+				}
+				tr := ui.NewTester(a.view, width, 720)
+				tr.Frame()
+				panelX := float32(width) - a.workWidth() - paneSeparatorWidth
+				if a.detailPageActive() {
+					panelX = 0
+				}
+				check := func(label string) {
+					t.Helper()
+					r, ok := tr.Find(label)
+					if !ok || r.W <= 0 || r.H <= 0 || r.X < panelX+12 || r.X+r.W > float32(width)-12 {
+						t.Errorf("%s rect=%+v ok=%v panelX=%.1f width=%d", label, r, ok, panelX, width)
+					}
+					t.Logf("%s width=%d panelX=%.1f rect=%+v ok=%v", label, width, panelX, r, ok)
+				}
+				check("Issue filter")
+				if empty {
+					check("No issues in Unfinished.")
+				} else {
+					check("overview row inset")
+				}
+			})
+		}
+	}
+	if dir := os.Getenv("SAKI_PREVIEW_DIR"); dir != "" {
+		writeIssueOverviewInsetPreviews(t, dir)
 	}
 }
 
@@ -255,7 +298,7 @@ func TestWorkModalEscapeReturnsFocusToEntry(t *testing.T) {
 	a.windowWidth = 900
 	tr := ui.NewTester(a.view, 900, 640)
 	tr.Frame()
-	if !tr.HasText("Back") {
+	if !tr.HasText("Back to chat") {
 		t.Fatal("narrow work page missing")
 	}
 	tr.Key(0, ui.KeyEscape)
@@ -367,7 +410,7 @@ func TestSettingsPageEscapeDoesNotLeavePageAndBackReturnsToThreePane(t *testing.
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.settingsOpen || !tr.Focused("Settings") || !tr.HasText("Issues") {
+	if a.settingsOpen || !tr.Focused("Settings") || !tr.HasText("Tasks") {
 		t.Fatal("Back did not return to the three-pane work view with entry focus")
 	}
 }
