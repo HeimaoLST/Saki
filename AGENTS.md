@@ -1,6 +1,6 @@
 # AGENTS.md — Saki 多 Agent 协作协议
 
-更新日期：2026-11-01。
+更新日期：2026-11-05。
 
 > 本文件对在本仓库工作的所有 agent（AI 或人类协作者）生效。
 > **本仓库由多条业务线共同维护，采用两层协作。** 独立业务线／独立任务之间通过 GitHub 分派、交接与交付；同一任务内的主 agent／子 agent 通过 tmux 直接协作。
@@ -34,7 +34,7 @@
 
 ### 0.2 当前授权与合并边界
 
-- **PM 指定 Spec 与 owner**：PM 将达到 DoR 的 Spec 以固定评论快照分派，登记唯一业务 owner、可写路径、base、依赖与目标分支。业务主 agent 接受精确 Spec 版本后，按范围提出方案、组织自己的子 agent 实施并提交逐条 AC 证据；不得自行改变验收目标或缩减范围。
+- **PM 指定 Spec 与 owner**：PM 将达到 DoR 的 Spec 以固定评论快照分派，登记唯一业务 owner、可写路径、base、依赖与目标分支。业务主 agent 接受精确 Spec 版本后，按范围提出方案、亲自实施或按明确分工组织子 agent，并提交逐条 AC 证据；不得自行改变验收目标或缩减范围。需要主负责人亲自接管的情形按 §5 执行。
 - **标准实施的默认授权**：已接受 Spec 的业务主 agent 可在指定 worktree 内编辑、小步 commit、push 自己的分支、开/更新 PR，并提交实现与证据；主子 agent 的具体 Git 动作以主 agent 明确分派为准。子 agent 只走 tmux，不另认领、不做 GitHub 通知或跨线派活。
 - **PM 集成处置权（2026-11-01 用户最新授权）**：用户明确要求清除本项目逐 PR 向用户申请 merge 授权的规则，并授权 PM 处置本项目分支、PR、非 breaking 兼容集成和经核验资源收尾。PM 在逐条 Spec/AC 验收、评审、适用实际验收与 required CI 对应 SHA 通过后，可自行合并或明确分派业务主责执行；不再逐 PR 请求用户批准。该授权覆盖通用用户级文件中的逐 PR 限制在 Saki 的适用，仅限本仓库，不改其他项目规则。业务主责／子 agent 不得脱离 PM 集成安排自行合并。`master` 仍须明确发布范围、全套门禁与回归验收；breaking change 仍须人类确认；force-push、tag、GitHub Release、部署不由此扩展。
 - **测试与验收职责**：实现 agent 负责功能与有价值的回归测试；PM/业务主 agent 负责逐条 Spec/AC 验收、代码评审与适用实际运行；QA 负责 CI 工程与自动检查运行可靠性，不承担产品人工验收或独立 `APPROVE` 队列。主 agent 可评审自己或子 agent 的产物，但必须如实记录作者／评审者，不冒充独立评审或人类结论。
@@ -46,7 +46,7 @@
 
 ```text
 你是 agent:<line>#<name>。先完整阅读所在工作区的 AGENTS.md，并核对当前 Spec 固定评论、版本、owner、可写路径、base 与目标分支。
-PM 负责写 Spec、分派、验收、集成顺序与收尾；业务主 agent 接受精确 Spec 后组织实施；
+PM 负责写 Spec、分派、验收、集成顺序与收尾；业务主 agent 接受精确 Spec 后亲自实施或明确分派，按 §5 接管反复失败的问题；
 子 agent 只执行主 agent 的 tmux 分派，不另巡检/认领/通过 GitHub 对话；inspect/ACK 只针对独立主责。
 开始前用 scripts/agent_notify.py inspect 动态确认唯一主 pane；收到通知后以 GitHub 顶层 ACK
 （FROM/KIND: ack/ACK/SPEC/SCOPE/NEXT）作为接收，不以 Enter 或通知运输成功代替。
@@ -296,7 +296,11 @@ Issue 和 PR 承载**当前 Spec、过程与沟通**，`docs/` 是**已采用长
 
 ## 5. 标准工作循环
 
-本节由独立任务的主责／主 agent 执行。主 agent 通过 §2.2 给子 agent 分派具体步骤，子 agent 不另走 GitHub 巡检、认领与汇报循环。
+本节由独立任务的主责／主 agent 执行。主 agent 可以直接编码和实施；需要辅助时按 §2.2 分派具体步骤，子 agent 不另走 GitHub 巡检、认领与汇报循环。不得把所有实现都交给 worker 当作默认要求。
+
+**反复出现或返修未达标的问题由主负责人亲自接管**（2026-11-05 用户明确要求）：同一问题修后复发、反复修改仍不满足验收或用户不满意、worker 无法定位或持续给出无效补丁时，相关主 agent 必须亲自审查已有改动与失败证据、定位原因、完成关键修改并执行实际验证。不得将整项问题原样再次下放，或只转发 worker 的“完成”报告。
+
+worker 可承担目标明确的辅助工作，但不能替代主负责人完成上述核心环节。交付须如实注明实际实现、运行和评审者及主负责人亲自完成的部分；PM 继续负责需求、验收、集成和监督，不因接管新增审批或独立 QA 队列。
 
 **开工先清点遗留**：先核对上轮可处理的遗留——未接收交接（带 `handoff` 待确认）、返修（`REQUEST-CHANGES` 未闭环）、已合并但未 `done`／未关闭的收尾；能处理就处理，不能处理就明确移交或记下一步。已提交待审、正在等外部评审（`needs:review`）、被阻塞、只读研究与未完成任务不算「未收尾」，不阻止开展不冲突的新任务；`needs:review` 也不等于返修。
 
@@ -336,7 +340,7 @@ Issue 和 PR 承载**当前 Spec、过程与沟通**，`docs/` 是**已采用长
    认领后读回状态，确认无其他独立实例占用同一范围。一个 issue 有唯一主责，可分派子 agent 实施；子 agent 在 tmux 确认范围，不重复改标签或发认领评论。文件写入不得重叠，评审与只读核查可并行。
 
 3. **开 worktree 与分支**：`./scripts/agent-worktree.sh add agent/<line>/<issue>-<slug> [base]`（base 默认 `origin/dev`；默认根目录 `$HOME/Workspace/worktrees/Saki`，可用 `SAKI_WORKTREE_ROOT` 覆盖），例如 `agent/tui/142-scroll-fix`；hotfix 用 `origin/master` 作 base，stacked 用直接父分支。**不要在主检出 `git switch`**；主检出固定 `master`。只读任务不需要 worktree。
-4. **实施与监督**：主 agent 在 tmux 给出范围并持续检查子 agent 的进展／结果，子 agent 直接回报；每个可解释的小步骤及时落盘，Git 提交按下一步分工执行。跨线影响、阶段成果或真实阻塞由主 agent 汇总到 issue，内部指导不逐条发评论。
+4. **实施与监督**：主 agent 亲自实施，或对明确分派的辅助任务在 tmux 持续检查进展／结果；发生本节所列接管情形时，核心工作由主 agent 亲自完成。每个可解释的小步骤及时落盘，Git 提交按下一步分工执行。跨线影响、阶段成果或真实阻塞由主 agent 汇总到 issue，内部指导不逐条发评论。
 5. **提交**：主 agent 对 commit／push 闭环负责，可明确分派给子 agent；提交署实际执行身份，记录实现分工与 SHA。交接／阻塞前保存可复核的阶段成果。只读或用户要求不提交时不执行；操作受阻报告并保留现场，不丢弃改动或夹带他人文件。
 6. **交付**：有文件改动时按 `.github/pull_request_template.md` 开 PR，base 与 `Closes`／`Refs` 按 §7 选择；将对应 issue 置 `status:review`、加 `needs:review`，记录评审责任（主 agent 可评审自己或子 agent 产物；需要时再邀请 peer review）。只读任务交付报告。未完成或自身检查失败的改动可开 draft PR，明确剩余工作；merge/auto-merge 按 §0.2 的 PM 集成处置权与步骤 9 门槛执行。
 7. **评审**：主 agent 负责代码评审和适用实际运行／验收，可用 `KIND: review` 记录结论、理由与所审 SHA。主 agent 可评审自己或子 agent 的产物，但必须如实记录作者／评审者，不能冒充独立评审或人类结论。需要额外独立 peer review 时按需发起，不设为每项交付的强制前置。required CI 与仓库门禁单独记录，不能把局部通过写成所有门禁通过；CI 绿不替代主 agent／PM／用户的实际试用判断。评审须注明兼容性判断；PM 集成处置权见 §0.2；breaking change 升级人类。
