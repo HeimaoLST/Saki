@@ -1,6 +1,6 @@
 # Session management
 
-Updated: 2026-11-01. Status: implemented session storage and host behavior. Machine admission, status, cancellation, configuration and caller-input facts below are checked against `dev@d0502695`; see [Runtime API](runtime-api.md) for the wire contract.
+Updated: 2026-11-05 (ID allocation). Status: implemented session storage and host behavior. Machine admission, status, cancellation, configuration and caller-input facts below are checked against `dev@d0502695`; see [Runtime API](runtime-api.md) for the wire contract.
 
 ## Behavior
 
@@ -72,6 +72,8 @@ Frontends exchange `SessionCommand` and `SessionEvent`. Agent events are wrapped
 ```
 
 `metadata.json` contains schema version, stable ID, editable title plus title provenance (`pending`/`auto`/`manual`; missing means legacy/manual), creation time, working directory, model route, API identifier, and compaction settings. Updates use a temporary file and rename. No separate SQLite database or index is maintained.
+
+Implementation fact ([#315](https://github.com/HeimaoLST/Saki/issues/315)): `journal::new_id` keeps the existing decimal-prefix/PID string format. Its process-local allocator serializes allocations and advances the prefix past the previous allocation when the wall clock repeats or moves backwards, so concurrent allocations in that process remain distinct. IDs are opaque identities, not wall-clock timestamps; creation and record times use their existing separate fields. Existing IDs, session directories and journal references are read unchanged, with no migration.
 
 `history.jsonl` is authoritative for conversation and execution history. New records have `schema_version: 1`, a millisecond timestamp, and one of these types:
 

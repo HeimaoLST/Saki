@@ -260,3 +260,34 @@ fn file_errors_keep_path_and_line_diagnostics() {
     assert!(error.contains(":2:"), "{error}");
     assert!(error.contains("unmatched tool result"), "{error}");
 }
+
+#[test]
+fn ids_stay_distinct_when_clock_repeats_or_moves_backwards() {
+    let sequence = std::sync::Mutex::new(0);
+    let ids: std::collections::HashSet<_> = [42, 42, 41, 42]
+        .into_iter()
+        .map(|timestamp| new_id_at(timestamp, &sequence).unwrap())
+        .collect();
+    assert_eq!(ids.len(), 4, "separate identities must not share an ID");
+}
+
+#[test]
+fn concurrent_ids_stay_distinct_at_the_same_clock_value() {
+    let sequence = std::sync::Mutex::new(0);
+    let barrier = std::sync::Barrier::new(4);
+    let ids: std::collections::HashSet<_> = std::thread::scope(|scope| {
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    new_id_at(42, &sequence).unwrap()
+                })
+            })
+            .collect();
+        threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect()
+    });
+    assert_eq!(ids.len(), 4, "concurrent identities must not share an ID");
+}

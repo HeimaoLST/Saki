@@ -128,11 +128,20 @@ pub fn now_ms() -> Result<u64> {
 }
 
 pub fn new_id() -> Result<String> {
-    Ok(format!(
-        "{}-{}",
+    static LAST_TIMESTAMP: std::sync::Mutex<u128> = std::sync::Mutex::new(0);
+    new_id_at(
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
-        std::process::id()
-    ))
+        &LAST_TIMESTAMP,
+    )
+}
+
+fn new_id_at(timestamp_ns: u128, last_timestamp: &std::sync::Mutex<u128>) -> Result<String> {
+    let mut last = last_timestamp
+        .lock()
+        .map_err(|_| anyhow::anyhow!("ID allocation lock poisoned"))?;
+    let timestamp_ns = timestamp_ns.max(last.checked_add(1).context("ID sequence exhausted")?);
+    *last = timestamp_ns;
+    Ok(format!("{timestamp_ns}-{}", std::process::id()))
 }
 
 pub fn write(file: &mut File, record: &JournalRecord) -> Result<()> {
