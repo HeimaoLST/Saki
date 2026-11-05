@@ -1066,5 +1066,9 @@
   "resultFileRowLabel": "读取文件 {index}：{name}",
   "@resultFileRowLabel": {
     "description": "结果中某个已报告文件的辅助名称；序号和文件名是参数。"
-  }
+  },
+  "modelManage": "管理模型",
+  "modelNoConfigured": "此连接未声明模型。",
+  "modelDefaultScope": "默认连接",
+  "modelConversationScope": "当前对话覆盖"
 }

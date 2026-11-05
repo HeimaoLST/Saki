@@ -1516,5 +1516,9 @@
   "resultFileRowLabel": "Read file {index}: {name}",
   "@resultFileRowLabel": {
     "description": "The accessible name of one reported result file; its index and file name are arguments."
-  }
+  },
+  "modelManage": "Manage models",
+  "modelNoConfigured": "No models declared for this connection.",
+  "modelDefaultScope": "Default connection",
+  "modelConversationScope": "Current conversation override"
 }

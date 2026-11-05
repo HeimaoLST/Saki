@@ -380,6 +380,11 @@ func (a *appModel) applyConnectionWorker(gen int, path, sessionDir string, oldRT
 		a.connectionGeneration = gen
 		a.modelRecovery = nil
 		a.modelForm = nil
+		a.conversationModelForms = nil
+		a.modelPanelKind = ""
+		a.modelPanelSessionID = ""
+		a.modelPanelLabel = ""
+		a.settingsReturnModel = nil
 		a.modelOpenToken++
 		a.rt = rt
 		a.connectionLaunch = launch

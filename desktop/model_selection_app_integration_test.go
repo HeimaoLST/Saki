@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -46,6 +47,17 @@ func openModelPanel(t *testing.T, h *guiHarness, entry string) {
 			t.Error("could not read the selected session model: " + h.app.modelForm.Error)
 		}
 	})
+	if entry == "Chat model" {
+		h.pump.do(func() {
+			tr := ui.NewTester(h.app.view, 1040, 720)
+			tr.Frame()
+			clickErr = tr.Click("Manage models")
+		})
+		if clickErr != nil {
+			t.Fatal(clickErr)
+		}
+	}
+
 }
 
 func clickModelAction(t *testing.T, h *guiHarness, action string) {
@@ -57,6 +69,10 @@ func clickModelAction(t *testing.T, h *guiHarness, action string) {
 		if h.app.composerInlineAux() {
 			clickErr = clickInlineModelAction(tr, action, 1040, 720)
 		} else {
+			if h.app.settingsOpen {
+				tr.Scroll(520, 360, 0, -10000)
+				tr.Frame()
+			}
 			clickErr = clickSettingsAction(tr, action)
 		}
 	})
@@ -779,6 +795,176 @@ func TestModelSelectionGUIReleasedIssueStaleCompletionKeepsBookkeepingAndFormSep
 					t.Errorf("original form did not apply success: %q", originalForm.Effective.Config.EffectiveConfig.Model)
 				}
 			})
+		})
+	}
+}
+
+func TestComposerModelPopoverGUISelectsDeclaredModelOnce(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	for _, api := range []string{connectionAPIChatCompletions, connectionAPIResponses} {
+		t.Run(api, func(t *testing.T) {
+			proxy, countPath := modelGUIProxy(t, binary, "pass")
+			t.Setenv("SAKI_MODEL_PROXY_DECLARED", "1")
+			provider := &modelProviderFixture{}
+			h := openModelGUI(t, proxy, api, provider)
+			first := sendConnectionConversation(t, h, "Keep conversation A", "model fixture answer")
+			var firstID string
+			h.pump.do(func() { firstID = h.app.selectedContact().ID; h.app.addDefaultContact() })
+			second := sendConnectionConversation(t, h, "Keep conversation B", "model fixture answer")
+			var rt *runtimeClient
+			var history string
+			h.pump.do(func() {
+				rt = h.app.rt
+				history = filepath.Join(h.app.sessionDir, first, "history.jsonl")
+				for i, ct := range h.app.contacts {
+					if ct.ID == firstID {
+						h.app.selectContact(i)
+						break
+					}
+				}
+				h.app.selectedContact().Draft = "Unsent draft"
+				h.app.openComposerModel()
+			})
+			h.pump.wait(func() bool { return h.app.modelForm != nil && h.app.modelForm.Target.Config.SessionID == first })
+			initial, err := rt.connectionConfig(first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			custom := initial.EffectiveConfig.Compaction
+			maxInput := custom.ContextTokens / 2
+			custom.MaxInputTokens = &maxInput
+			updated, err := rt.updateSessionModel(first, initial.ConfigRevision, runtimeModelPatch{Model: "model-A", Compaction: &custom})
+			if err != nil {
+				t.Fatal(err)
+			}
+			initial = updated.runtimeConnectionConfig
+			h.pump.do(func() { h.app.refreshSessionModel(h.app.modelForm.Target) })
+			h.pump.wait(func() bool { return !h.app.modelForm.Busy })
+			var manual modelSelectionDraft
+			h.pump.do(func() {
+				form := h.app.modelForm
+				if reflect.DeepEqual(form.Catalog.ConfiguredModels[0].Compaction, custom) {
+					t.Error("fixture declaration does not differ from session override")
+				}
+				form.Draft.Model = "unsaved-model-correction"
+				manual = form.Draft
+				tr := ui.NewTester(h.app.view, 960, 640)
+				tr.Frame()
+				// The current ID also appears on the composer. Click its menu row
+				// above the uniquely named next row, using the rendered row bounds.
+				next, ok := tr.Find("model-B")
+				if !ok {
+					t.Error("next model row is missing")
+					return
+				}
+				tr.ClickAt(next.X+next.W/2, next.Y-next.H/2)
+				tr.Frame()
+				if h.app.composerModelOpen || !tr.Focused("Chat model") || h.app.modelForm.Draft != manual {
+					t.Error("current activation did not close/return focus while preserving the unsaved model draft")
+				}
+			})
+			h.pump.wait(func() bool { return !h.app.modelOpActive && !h.app.modelForm.Busy })
+			unchanged, err := rt.connectionConfig(first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(countPath)
+			if err != nil || string(data) != "update\n" {
+				t.Errorf("current item submitted an extra update: %q, %v", data, err)
+			}
+			if unchanged.ConfigRevision != initial.ConfigRevision || !reflect.DeepEqual(unchanged.EffectiveConfig.Compaction, custom) {
+				t.Errorf("current item changed revision/capacity: revision=%d want=%d compaction=%+v want=%+v", unchanged.ConfigRevision, initial.ConfigRevision, unchanged.EffectiveConfig.Compaction, custom)
+			}
+			h.pump.do(func() {
+				if h.app.composerModelOpen || h.app.modelForm.Draft != manual {
+					t.Error("current item did not close/return focus while preserving the unsaved model draft")
+				}
+				h.app.openComposerModel()
+			})
+			h.pump.wait(func() bool { return !h.app.modelForm.Busy })
+			before, err := os.ReadFile(history)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.pump.do(func() {
+				tr := ui.NewTester(h.app.view, 960, 640)
+				tr.Frame()
+				if err := tr.Click("Manage models"); err != nil {
+					t.Error(err)
+					return
+				}
+				tr.Frame()
+				h.app.closeSettings()
+				tr.Frame()
+				h.app.openComposerModel()
+				tr.Frame()
+				if !tr.HasText("model-A") || !tr.HasText("model-B") || len(h.app.modelForm.Catalog.ConfiguredModels) != 2 {
+					t.Error("controlled declarations did not reach popover")
+				}
+			})
+			h.pump.wait(func() bool { return !h.app.modelForm.Busy })
+			if data, err := os.ReadFile(countPath); err != nil || string(data) != "update\n" {
+				t.Fatal("navigation submitted an update")
+			}
+			h.pump.do(func() {
+				tr := ui.NewTester(h.app.view, 960, 640)
+				tr.Frame()
+				if err := tr.Click("model-B"); err != nil {
+					t.Error(err)
+					return
+				}
+			})
+			h.pump.wait(func() bool { return !h.app.modelOpActive && !h.app.modelForm.Busy })
+			h.pump.do(func() {
+				tr := ui.NewTester(h.app.view, 960, 640)
+				tr.Frame()
+				ct := h.app.selectedContact()
+				if h.app.composerModelOpen || ct.SessionModel != "model-B" || ct.Draft != "Unsent draft" || !tr.HasText("model-B") || !tr.Focused("Chat model") {
+					t.Error("successful readback did not close/update/restore the composer")
+				}
+				if h.app.connectionEffective.Model != "model-A" || h.app.connectionForm.Draft.Model != "model-A" {
+					t.Error("conversation choice changed default connection")
+				}
+			})
+			actual, err := rt.connectionConfig(first)
+			if err != nil || actual.EffectiveConfig.Model != "model-B" || actual.ConfigRevision != initial.ConfigRevision+1 || actual.EffectiveConfig.Compaction.MaxInputTokens == nil || *actual.EffectiveConfig.Compaction.MaxInputTokens != actual.EffectiveConfig.Compaction.ContextTokens/2 {
+				t.Fatal("target readback differs from selected model")
+			}
+			other, err := rt.connectionConfig(second)
+			if err != nil || other.EffectiveConfig.Model != "model-A" {
+				t.Fatal("selection changed another session")
+			}
+			data, err = os.ReadFile(countPath)
+			if err != nil || string(data) != "update\nupdate\n" {
+				t.Fatalf("selection update count = %q, %v", data, err)
+			}
+			// Explicit editing in Settings can still change capacity for the same model.
+			h.pump.do(func() { h.app.openComposerModel() })
+			h.pump.wait(func() bool { return !h.app.modelForm.Busy })
+			manualOutput := actual.EffectiveConfig.Compaction.OutputTokens / 2
+			h.pump.do(func() {
+				tr := ui.NewTester(h.app.view, 960, 640)
+				tr.Frame()
+				if err := tr.Click("Manage models"); err != nil {
+					t.Error(err)
+					return
+				}
+				h.app.modelForm.Draft.OutputTokens = strconv.Itoa(manualOutput)
+			})
+			clickModelAction(t, h, "Update model")
+			h.pump.wait(func() bool { return !h.app.modelForm.Busy })
+			edited, err := rt.connectionConfig(first)
+			if err != nil || edited.EffectiveConfig.Model != "model-B" || edited.ConfigRevision != actual.ConfigRevision+1 || edited.EffectiveConfig.Compaction.OutputTokens != manualOutput {
+				t.Fatal("explicit same-model capacity edit was skipped")
+			}
+			data, err = os.ReadFile(countPath)
+			if err != nil || string(data) != "update\nupdate\nupdate\n" {
+				t.Fatalf("explicit capacity edit count = %q, %v", data, err)
+			}
+			after, err := os.ReadFile(history)
+			if err != nil || string(after) != string(before) || len(provider.requestedModels()) != 2 {
+				t.Fatal("model selection changed history or invoked inference")
+			}
 		})
 	}
 }

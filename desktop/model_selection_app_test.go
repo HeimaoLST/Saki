@@ -12,8 +12,8 @@ func TestOpenSessionModelWithoutSessionDoesNotCreate(t *testing.T) {
 		contacts: []*contact{ct}, selected: 0, runtimeStatus: runtimeStateReady,
 		workspaceOpen: true, scrollTo: -1,
 	}
-	a.openSessionModel("", "conversation", ct.Name)
-	if a.aux != "model" || a.modelForm != nil {
+	a.openComposerModel()
+	if !a.composerModelOpen || a.modelForm != nil || a.mainPageActive() {
 		t.Fatal("no-session model entry opened an editable form")
 	}
 	if a.modelPanelMessage != modelPanelMessageNoSession {
@@ -24,7 +24,7 @@ func TestOpenSessionModelWithoutSessionDoesNotCreate(t *testing.T) {
 	}
 	tr := ui.NewTester(a.view, 720, 720)
 	tr.Frame()
-	for _, text := range []string{"Session model", "Connection settings", "Close"} {
+	for _, text := range []string{"Chat model", "Connection settings", "Manage models"} {
 		if !tr.HasText(text) {
 			t.Fatalf("no-session panel missing %q", text)
 		}

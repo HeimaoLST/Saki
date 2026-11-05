@@ -266,7 +266,7 @@ func TestContactScopeSelectAndComposerModelEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.aux != "model" || !tr.HasText("This context has no Runtime session yet") {
+	if !a.composerModelOpen || a.mainPageActive() || !tr.HasText("This context has no Runtime session yet") {
 		t.Fatalf("conversation model entry = aux=%q texts=%q", a.aux, tr.Texts())
 	}
 	if a.selectedContact().Draft != "draft-kept" {

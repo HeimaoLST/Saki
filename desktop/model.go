@@ -171,6 +171,8 @@ type appModel struct {
 	focusComposer        bool
 	composerHandle       ui.Handle
 	composerPanel        string
+	composerModelOpen    bool
+	composerModelFocus   bool
 	composerFocusModel   bool
 	composerFocusContext bool
 
@@ -192,6 +194,9 @@ type appModel struct {
 	issueResultScroll   ui.ScrollState
 	historyScroll       ui.ScrollState
 	historyFullScroll   ui.ScrollState
+
+	settingsReturnModel       *modelSelection
+	settingsReturnModelTarget *modelSelectionTarget
 
 	contactProfile            *contactProfileEditor
 	contactProfileID          string
@@ -314,6 +319,8 @@ type appModel struct {
 
 	modelForm             *modelSelection
 	modelPanelKind        string
+	modelPanelSessionID   string
+	modelPanelLabel       string
 	modelOpenToken        int
 	modelPanelMessage     string
 	modelPanelError       string
@@ -321,6 +328,8 @@ type appModel struct {
 	modelOpActive         bool
 	modelOpSessionID      string
 	modelRecovery         map[string]modelRecoveryState
+
+	conversationModelForms map[string]*modelSelection
 
 	// Layout is a GUI-wide preference, not a contact or runtime fact. Widths
 	// are persisted in the contact store; windowWidth is only the current
@@ -503,6 +512,7 @@ func (a *appModel) selectContact(i int) {
 	a.contactHistoryFull = nil
 	a.aux = ""
 	a.composerPanel = ""
+	a.composerModelOpen = false
 	a.composerFocusModel = false
 	a.composerFocusContext = false
 	a.highlight = ""
@@ -580,6 +590,7 @@ func (a *appModel) addDefaultContact() {
 	a.contactSearch = ""
 	a.aux = ""
 	a.composerPanel = ""
+	a.composerModelOpen = false
 	a.composerFocusModel = false
 	a.composerFocusContext = false
 	a.focusComposer = true
@@ -607,12 +618,11 @@ func (a *appModel) closeAux() {
 	wasModelKind := a.modelPanelKind
 	wasContextIssue := a.taskContextIssueID
 	switch a.composerPanel {
-	case composerPanelModel:
-		a.composerFocusModel = true
 	case composerPanelContext:
 		a.composerFocusContext = true
 	}
 	a.composerPanel = ""
+	a.composerModelOpen = false
 	a.modelPanelKind = ""
 	switch was {
 	case "sources":
@@ -640,6 +650,7 @@ func (a *appModel) closeAux() {
 func (a *appModel) openSources(messageID int) {
 	a.aux = "sources"
 	a.composerPanel = ""
+	a.composerModelOpen = false
 	a.contactHistoryFull = nil
 	a.auxMessage = messageID
 	a.focusSources = false
@@ -648,6 +659,7 @@ func (a *appModel) openSources(messageID int) {
 func (a *appModel) openHistory() {
 	a.aux = ""
 	a.composerPanel = ""
+	a.composerModelOpen = false
 	a.contactHistoryFull = nil
 	a.openDetail(detailHistory)
 }

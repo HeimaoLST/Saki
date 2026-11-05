@@ -9885,3 +9885,43 @@ func ResultFileRowLabel(index string, name string) string {
 func (msgs Messages) ResultFileRowLabel(index string, name string) string {
 	return Catalog.Format(msgs.locale, "resultFileRowLabel", map[string]any{"index": index, "name": name})
 }
+
+// ModelManage says "Manage models"
+// in the language the app shows.
+func ModelManage() string { return In(i18n.Locale()).ModelManage() }
+
+// ModelManage says "Manage models"
+// in the language of msgs.
+func (msgs Messages) ModelManage() string {
+	return Catalog.Format(msgs.locale, "modelManage", nil)
+}
+
+// ModelNoConfigured says "No models declared for this connection."
+// in the language the app shows.
+func ModelNoConfigured() string { return In(i18n.Locale()).ModelNoConfigured() }
+
+// ModelNoConfigured says "No models declared for this connection."
+// in the language of msgs.
+func (msgs Messages) ModelNoConfigured() string {
+	return Catalog.Format(msgs.locale, "modelNoConfigured", nil)
+}
+
+// ModelDefaultScope says "Default connection"
+// in the language the app shows.
+func ModelDefaultScope() string { return In(i18n.Locale()).ModelDefaultScope() }
+
+// ModelDefaultScope says "Default connection"
+// in the language of msgs.
+func (msgs Messages) ModelDefaultScope() string {
+	return Catalog.Format(msgs.locale, "modelDefaultScope", nil)
+}
+
+// ModelConversationScope says "Current conversation override"
+// in the language the app shows.
+func ModelConversationScope() string { return In(i18n.Locale()).ModelConversationScope() }
+
+// ModelConversationScope says "Current conversation override"
+// in the language of msgs.
+func (msgs Messages) ModelConversationScope() string {
+	return Catalog.Format(msgs.locale, "modelConversationScope", nil)
+}
