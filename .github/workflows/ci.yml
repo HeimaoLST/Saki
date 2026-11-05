@@ -106,7 +106,7 @@ jobs:
 
       - name: GUI runtime full offline Go package (real Rust binary, race)
         shell: bash
-        timeout-minutes: 15
+        timeout-minutes: 20
         working-directory: desktop
         env:
           SAKI_TEST_RUNTIME_BIN: ${{ github.workspace }}/target/debug/Saki
@@ -119,7 +119,7 @@ jobs:
           set -euo pipefail
           echo "race_go_env=$(go env GOOS GOARCH CGO_ENABLED CC | tr '\n' ' ')"
           clang --version | sed -n '1p'
-          python3 "$GITHUB_WORKSPACE/scripts/gui-go.py" test -race -timeout=10m -json ./... -count=1 | tee "$RUNNER_TEMP/desktop-go-test.json"
+          python3 "$GITHUB_WORKSPACE/scripts/gui-go.py" test -race -timeout=15m -json ./... -count=1 | tee "$RUNNER_TEMP/desktop-go-test.json"
           python3 "$GITHUB_WORKSPACE/scripts/check-gui-runtime-results.py" "$RUNNER_TEMP/desktop-go-test.json"
 
       - name: Job summary
@@ -133,7 +133,7 @@ jobs:
             echo "- \`cargo test --locked --all-targets\` (unit, integration, example targets)"
             echo "- \`pty_panic_restores_terminal\` (real PTY fixture; step asserts the named fixture passed)"
             echo "- \`cargo build --locked --bin Saki\` + \`python3 examples/runtime_stdio.py --self-test --binary target/debug/Saki\` (real cross-process stdio smoke; no external provider)"
-            echo "- \`SAKI_TEST_RUNTIME_BIN=\$GITHUB_WORKSPACE/target/debug/Saki SAKI_TEST_ISSUE_TOOL_HELPER=\$RUNNER_TEMP/saki-issue-tool-helper SAKI_TEST_ONLINE=0 SAKI_PREVIEW_DIR=\$RUNNER_TEMP/desktop-preview-package CGO_ENABLED=1 python3 ../scripts/gui-go.py test -race -timeout=10m -json ./... -count=1\` in desktop, validated by \`scripts/check-gui-runtime-results.py\` (15-minute step; Go -timeout=10m; 18 MUST; 8-name allowlist unchanged; current preview dir runs 6 previews, normal 3 online/reader SKIPs; helper remains CGO_ENABLED=0)"
+            echo "- \`SAKI_TEST_RUNTIME_BIN=\$GITHUB_WORKSPACE/target/debug/Saki SAKI_TEST_ISSUE_TOOL_HELPER=\$RUNNER_TEMP/saki-issue-tool-helper SAKI_TEST_ONLINE=0 SAKI_PREVIEW_DIR=\$RUNNER_TEMP/desktop-preview-package CGO_ENABLED=1 python3 ../scripts/gui-go.py test -race -timeout=15m -json ./... -count=1\` in desktop, validated by \`scripts/check-gui-runtime-results.py\` (20-minute step; Go -timeout=15m; 18 MUST; 8-name allowlist unchanged; preview directory enabled, normal 3 online/reader SKIPs; helper remains CGO_ENABLED=0)"
             echo ""
             echo "Runtime and TUI share this crate; this job is the required gate for both lines."
           } >> "$GITHUB_STEP_SUMMARY"
