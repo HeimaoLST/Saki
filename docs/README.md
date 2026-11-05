@@ -1,6 +1,6 @@
 # SAKI 文档
 
-更新日期：2026-11-01。
+更新日期：2026-11-05。
 
 Saki 提供可被不同应用复用的 Agent Runtime。Nagi（GUI 暂定名）提供开源的联系人式自主工作台，TUI 侧重用户直接指导执行。三个产品共享运行基础，GUI/TUI 围绕同一工作协作是待实现和验证的产品目标。
 
@@ -13,6 +13,14 @@ Nagi MVP 的基本功能、边界与 MVP-01–MVP-12 验收见 [完整 MVP 交�
 GitHub issue 承载当前 Spec、任务过程与证据；PM 以固定评论快照分发精确版本，`docs/` 只保存已采用的长期需求、设计、接口和实验事实，不重复维护同一任务 delta。Spec 的完整字段、接收 ACK 与 PM 集成处置权见 [AGENTS.md](../AGENTS.md)；本索引不复制流程。
 
 协作入口、角色、Spec/AC、通知 ACK、PM 集成处置权、分支与清理均以 [AGENTS.md](../AGENTS.md) 为唯一规则来源。`docs/` 只记录已采用的长期契约和可复核事实；`scripts/agent_notify.py` 不后台监控、不判断产品 APPROVE，共享 GitHub 账号的 FROM 不是身份认证。
+
+## 项目开发技能
+
+**实现事实（2026-11-05）**：项目的 `.agents/skills/` 安装了 [pstack v0.15.36](https://github.com/cursor/plugins/tree/bb68f2365eceafa0cb2d253112f675acf5f144cc/pstack) 的 58 个主技能。来源、精确 commit、包含与排除范围见 [来源清单](../.agents/pstack-source.json)，[上游指南](../.agents/docs/guide/README.md)及 [MIT 许可证](../.agents/LICENSE)随包保留；上游 `pstack/` 映射到本项目 `.agents/`，技能相对路径不变。
+
+Codex 按[官方项目目录规则](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills)发现技能；下一轮可用，未出现时重启会话。可用 `$poteto-help` 查入口，或 `$how`、`$interrogate`、`$tdd` 等按任务调用。同名个人技能可并存，请按来源路径区分；本包 `unslop` 面向文案，已有个人 UI 技能不被覆盖。其他工具按自身技能加载规则使用，安装文件不表示 Cursor 的模型路由、云 agent、`Task` 等能力已经可用。
+
+技能不替代用户指令与本项目 [AGENTS.md](../AGENTS.md)。安装没有启动工作模式、配置模型或启用 Benny automation，仅保留其被指南引用的说明与静态示例；`setup-pstack` 的上游默认目标是全局 `~/.cursor/rules/pstack-models.mdc`，本次未执行。更新时在独立任务中选定新上游 commit，替换同一范围并核对来源、许可证及相对引用后走 PR，不自动覆盖本地改动。
 
 ## 源码结构
 
