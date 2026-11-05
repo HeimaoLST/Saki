@@ -23,6 +23,7 @@ import (
 const (
 	issueToolSourceID                = "nagi_issue_tools"
 	issueToolScopeContextName        = "nagi.issue_tools.scope"
+	issueToolIssueListContextName    = "nagi.issue_tools.issues"
 	issueToolRoleGuidanceContextName = "nagi.issue_tools.role_guidance"
 	issueToolWaitTimeout             = 25 * time.Second
 	issueToolResultExcerptSize       = 4096
@@ -577,7 +578,7 @@ func (a *appModel) issueToolEnsureConversationSession(rt *runtimeClient, session
 }
 
 // issueToolNewScope issues one app-owned scope before a conversation task is
-// sent. The caller must persist it before the task.send.
+// sent. The caller appends the bounded issue list followed by the opaque scope.
 func (a *appModel) issueToolNewScope(contactID, sessionID, turnID string, roleGuidanceAppended bool) (*IssueToolScope, error) {
 	ct := a.contactByID(contactID)
 	if ct == nil {
@@ -592,7 +593,7 @@ func (a *appModel) issueToolNewScope(contactID, sessionID, turnID string, roleGu
 	scope := IssueToolScope{
 		Ref: newIssueToolScopeRef(), ContactID: contactID, RuntimeSessionID: sessionID,
 		TurnID: turnID, AllowedIssueIDs: ids, AllowCreate: true,
-		RoleGuidanceAppended: roleGuidanceAppended, CreatedAt: nowMillis(),
+		RoleGuidanceAppended: roleGuidanceAppended, IssueListAppended: true, CreatedAt: nowMillis(),
 	}
 	if err := scope.Validate(); err != nil {
 		return nil, err
@@ -624,6 +625,24 @@ func issueToolScopeInput(scope *IssueToolScope) (runtimeContextInput, bool) {
 		return runtimeContextInput{}, false
 	}
 	return runtimeContextInput{Name: issueToolScopeContextName, Text: token}, true
+}
+
+// Called on the UI actor alongside scope issuance, before task.send. This is
+// discovery material, not an implicit target or a second authorization source.
+func (a *appModel) issueToolConversationIssueList(scope *IssueToolScope) (runtimeContextInput, error) {
+	ct := a.contactByID(scope.ContactID)
+	if ct == nil {
+		return runtimeContextInput{}, errors.New("contact not found for issue list context")
+	}
+	list, err := issueToolList(*scope, ct.Issues, false, 50, "")
+	if err != nil {
+		return runtimeContextInput{}, err
+	}
+	data, err := json.Marshal(boundIssueToolList(list))
+	if err != nil {
+		return runtimeContextInput{}, err
+	}
+	return runtimeContextInput{Name: issueToolIssueListContextName, Text: string(data)}, nil
 }
 
 func (a *appModel) issueToolScopeByRef(ref string) (IssueToolScope, error) {
@@ -772,6 +791,7 @@ type issueToolScopeIdentity struct {
 	RuntimeSessionID     string
 	TurnID               string
 	RoleGuidanceAppended bool
+	IssueListAppended    bool
 	CreatedAt            int64
 }
 
@@ -784,7 +804,8 @@ func (a *appModel) issueToolScopeIndexSnapshot() map[string]issueToolScopeIdenti
 			Ref: ref, ContactID: scope.ContactID,
 			RuntimeSessionID: scope.RuntimeSession(),
 			TurnID:           scope.TurnID, RoleGuidanceAppended: scope.RoleGuidanceAppended,
-			CreatedAt: scope.CreatedAt,
+			IssueListAppended: scope.IssueListAppended,
+			CreatedAt:         scope.CreatedAt,
 		}
 	}
 	return index
@@ -818,8 +839,10 @@ func filterIssueToolContextWithIndex(index map[string]issueToolScopeIdentity, se
 		return items
 	}
 	end := len(items) - 1
-	// The persisted provenance is true only when the app appended its guidance
-	// immediately before this scope during task assembly.
+	if identity.IssueListAppended && end > 0 && items[end-1].Name == issueToolIssueListContextName {
+		end--
+	}
+	// The app's optional role precedes its issue list and trailing scope.
 	if identity.RoleGuidanceAppended && end > 0 {
 		end--
 	}

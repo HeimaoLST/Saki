@@ -987,6 +987,85 @@ func TestIssueToolRoleGuidanceFilteredOnlyBesideVerifiedTailScope(t *testing.T) 
 	}
 }
 
+func TestIssueToolConversationIssueListIsBoundedAndScopeOwned(t *testing.T) {
+	a, _ := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	for i := 0; i < 100; i++ {
+		ct.Issues = append(ct.Issues, &productIssue{
+			ID: fmt.Sprintf("issue-%03d", i), ContactID: ct.ID,
+			Goal: strings.Repeat("有界 garden schedule ", 100), Status: issueStatusNotStarted, RequirementsRevision: 1,
+		})
+	}
+	scope, err := a.issueToolNewScope(ct.ID, "catalog-session", "catalog-turn", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct.Issues = append(ct.Issues,
+		&productIssue{ID: "new-after-scope", ContactID: ct.ID, Goal: "Not in this issued scope"},
+		&productIssue{ID: "foreign-issue", ContactID: "another-contact", Goal: "Foreign issue"})
+	other := &contact{ID: "selected-elsewhere", Name: "Elsewhere"}
+	a.contacts = append(a.contacts, other)
+	a.selected = len(a.contacts) - 1
+	before, _ := json.Marshal(ct.Issues)
+	input, err := a.issueToolConversationIssueList(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list IssueToolIssueListResult
+	if err := json.Unmarshal([]byte(input.Text), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(input.Text) > issueToolQueryMaxBytes || !utf8.ValidString(input.Text) ||
+		len(list.Issues) == 0 || !list.HasMore || list.NextCursor == "" {
+		t.Fatalf("bounded discovery page: bytes=%d issues=%d more=%v cursor=%q", len(input.Text), len(list.Issues), list.HasMore, list.NextCursor)
+	}
+	for _, issue := range list.Issues {
+		if !scope.AllowsIssueID(issue.ID) || issue.ID == "foreign-issue" || issue.ID == "new-after-scope" {
+			t.Fatalf("issue outside captured scope: %+v", issue)
+		}
+	}
+	next, err := issueToolList(*scope, ct.Issues, false, 1, list.NextCursor)
+	if err != nil || len(next.Issues) != 1 || next.Issues[0].ID == list.NextCursor {
+		t.Fatalf("discovery cursor cannot continue: %+v err=%v", next, err)
+	}
+	after, _ := json.Marshal(ct.Issues)
+	if string(before) != string(after) || a.selectedContact() != other || len(a.issueToolLedger.Operations) != 0 {
+		t.Fatal("discovery mutated issue facts, selection, or operations")
+	}
+}
+
+func TestIssueToolIssueListHistoryRequiresPersistedProvenance(t *testing.T) {
+	a, store := newIssueToolTestApp(t)
+	ct := a.selectedContact()
+	scope, err := a.issueToolNewScope(ct.ID, "catalog-session", "catalog-turn", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := openContactStore(store.path, a.workDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &appModel{issueToolScopes: reloaded.issueToolScopes}
+	index := b.issueToolScopeIndexSnapshot()
+	user := taskContextItem{Name: issueToolIssueListContextName, Text: "same-named user material"}
+	guidance := taskContextItem{Name: issueToolRoleGuidanceContextName, Text: issueToolConversationGuidance}
+	list := taskContextItem{Name: issueToolIssueListContextName, Text: `{"issues":[],"has_more":false}`}
+	token := taskContextItem{Name: issueToolScopeContextName, Text: scope.Ref}
+	items := []taskContextItem{user, guidance, list, token}
+	if got := filterIssueToolContextWithIndex(index, "catalog-session", items); !reflect.DeepEqual(got, []taskContextItem{user}) {
+		t.Fatalf("current app items were not hidden after reload: %+v", got)
+	}
+	if got := filterIssueToolContextWithIndex(index, "other-session", items); !reflect.DeepEqual(got, items) {
+		t.Fatalf("foreign-session items were hidden: %+v", got)
+	}
+	identity := index[scope.Ref]
+	identity.IssueListAppended, identity.RoleGuidanceAppended = false, false
+	index[scope.Ref] = identity
+	if got := filterIssueToolContextWithIndex(index, "catalog-session", items); !reflect.DeepEqual(got, items[:3]) {
+		t.Fatalf("legacy scope hid same-named user material: %+v", got)
+	}
+}
+
 func TestIssueToolScopeWireIsOpaqueToken(t *testing.T) {
 	a, _ := newIssueToolTestApp(t)
 	ct := a.selectedContact()

@@ -21,6 +21,7 @@ func TestAddWorkflowGuidanceUpgradesReleasedPrefixesWithoutProfileLoss(t *testin
 	}{
 		{"conversation-initial", previousIssueToolConversationGuidance, issueToolConversationGuidance},
 		{"conversation-207", previousIssueToolConversationGuidanceV2, issueToolConversationGuidance},
+		{"conversation-2026-11-03", previousIssueToolConversationGuidanceV3, issueToolConversationGuidance},
 		{"work-released", previousIssueToolWorkGuidance, issueToolWorkGuidance},
 	}
 	for _, tc := range cases {
@@ -707,7 +708,7 @@ func TestIssueToolNativeConversationUsesOneCurrentRoleGuidanceContext(t *testing
 	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
 	provider := &issueToolNativeBodyProvider{}
 	h := startIssueToolTestHarness(t, binary, http.HandlerFunc(provider.handler))
-	oldPrompt := previousIssueToolConversationGuidanceV2 + "\n\nCUSTOM PROFILE: keep these exact bytes"
+	oldPrompt := previousIssueToolConversationGuidanceV3 + "\n\nCUSTOM PROFILE: keep these exact bytes"
 	seedSelection := runtimeToolSelection{
 		Builtin: []string{"read", "bash"},
 		External: []runtimeExternalToolBinding{{

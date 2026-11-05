@@ -88,7 +88,7 @@ func TestIssueToolCreateCarriesConversationSnapshotIntoIssueContext(t *testing.T
 		userMessage.Context[0].Text != material {
 		t.Fatalf("conversation user message did not retain the submitted snapshot: %+v", userMessage)
 	}
-	if !strings.Contains(provider.body(0), issueToolConversationGuidance) {
+	if issueToolNativeRequestSystem(t, provider.body(0)) != issueToolConversationGuidance {
 		t.Fatal("first conversation request did not carry the application workflow guidance")
 	}
 	if len(issue.Context.items) != 0 {
@@ -123,7 +123,7 @@ func TestIssueToolCreateCarriesConversationSnapshotIntoIssueContext(t *testing.T
 	if !found {
 		t.Fatal("issue work request did not carry the captured caller context")
 	}
-	if !strings.Contains(workBody, issueToolWorkGuidance) {
+	if issueToolNativeRequestSystem(t, workBody) != issueToolWorkGuidance {
 		t.Fatal("issue work request did not carry the work workflow guidance")
 	}
 }

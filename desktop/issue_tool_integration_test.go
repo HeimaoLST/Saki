@@ -1559,6 +1559,127 @@ func TestIssueToolReleaseCallbackRunsBeforeQuit(t *testing.T) {
 	}
 }
 
+// This provider only records transport input. It makes no routing decisions.
+func TestIssueToolConversationIssueListReachesRuntimeAndRefreshes(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", ensureIssueToolTestHelper(t))
+	provider := &issueToolNativeBodyProvider{}
+	h := startIssueToolTestHarness(t, binary, http.HandlerFunc(provider.handler))
+	var owner *contact
+	var first, second *productIssue
+	var setupErr error
+	h.pump.do(func() {
+		owner = h.app.selectedContact()
+		first, setupErr = h.app.createIssueFor(owner, "Garden irrigation plan", "Keep the weekly watering schedule")
+		if setupErr != nil {
+			return
+		}
+		second, setupErr = h.app.createIssueFor(owner, "Balcony planting plan", "Keep the seed inventory")
+		if setupErr != nil {
+			return
+		}
+		owner.SelectedIssueID = second.ID
+		other := &contact{ID: "catalog-other-contact", Name: "Other", Workspace: h.root}
+		h.app.contacts = append(h.app.contacts, other)
+		_, setupErr = h.app.createIssueFor(other, "Private travel itinerary", "Other contact material")
+		if setupErr == nil {
+			_, setupErr = owner.Context.AddSnippet("user-note", "Keep this user material")
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	send := func(text string, request int) {
+		t.Helper()
+		var sendErr string
+		h.pump.do(func() {
+			owner.Draft = text
+			if !h.app.sendCurrent() {
+				sendErr = owner.SendError
+			}
+		})
+		if sendErr != "" {
+			t.Fatal(sendErr)
+		}
+		h.pump.wait(func() bool {
+			return provider.count() == request && owner.SendState == sendIdle && owner.ActiveTaskID == ""
+		})
+	}
+	readList := func(request int) IssueToolIssueListResult {
+		t.Helper()
+		var text string
+		for _, input := range issueToolCurrentUserCallerContexts(t, provider.body(request)) {
+			if input.Name == "nagi.issue_tools.issues" {
+				text = input.Text
+			}
+		}
+		var list IssueToolIssueListResult
+		if err := json.Unmarshal([]byte(text), &list); err != nil {
+			t.Fatalf("conversation issue list missing or invalid: %q: %v", text, err)
+		}
+		return list
+	}
+	send("Update my existing garden schedule", 1)
+	list := readList(0)
+	byID := map[string]IssueToolIssueSummary{}
+	for _, issue := range list.Issues {
+		byID[issue.ID] = issue
+	}
+	if len(byID) != 2 || byID[first.ID].Goal != first.Goal || byID[second.ID].Goal != second.Goal ||
+		byID[first.ID].Status != issueStatusNotStarted || byID[first.ID].LastExecutionID != "" {
+		t.Fatalf("unrun issues were not both discoverable: %+v", list)
+	}
+	h.pump.do(func() {
+		if !h.app.editIssueFor(owner, first.ID, "Updated irrigation plan", "Keep the weekly watering schedule") ||
+			!h.app.archiveIssueFor(owner, second.ID) {
+			setupErr = fmt.Errorf("could not change issue facts between turns")
+		}
+	})
+	if setupErr != nil {
+		t.Fatal(setupErr)
+	}
+	send("Thanks, let us discuss the weather", 2)
+	list = readList(1)
+	if len(list.Issues) != 1 || list.Issues[0].ID != first.ID || list.Issues[0].Goal != "Updated irrigation plan" ||
+		list.Issues[0].RequirementsRevision != first.RequirementsRevision {
+		t.Fatalf("next turn did not refresh the contact issue facts: %+v", list)
+	}
+	var sessionID string
+	var index map[string]issueToolScopeIdentity
+	h.pump.do(func() {
+		sessionID, index = owner.SessionID, h.app.issueToolScopeIndexSnapshot()
+		if owner.SelectedIssueID != second.ID || len(owner.Issues) != 2 || len(first.Executions) != 0 || len(second.Executions) != 0 {
+			t.Errorf("discovery changed selection or started work")
+		}
+	})
+	history, err := h.app.rt.historyPage(sessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := parseHistoryWithIssueToolScopeFilter(sessionID, history.Records, nil, index)
+	var firstSeen, secondSeen bool
+	for _, message := range projection.messages {
+		if message.Kind != msgUser {
+			continue
+		}
+		switch message.Text {
+		case "Update my existing garden schedule":
+			firstSeen = true
+			if len(message.Context) != 1 || message.Context[0].Name != "user-note" || message.Context[0].Text != "Keep this user material" {
+				t.Fatalf("first turn user material changed: %+v", message.Context)
+			}
+		case "Thanks, let us discuss the weather":
+			secondSeen = true
+			if len(message.Context) != 0 {
+				t.Fatalf("app discovery leaked into the second turn's empty material: %+v", message.Context)
+			}
+		}
+	}
+	if !firstSeen || !secondSeen {
+		t.Fatal("user history did not retain both turns")
+	}
+}
+
 func TestIssueToolScopeTokenRealChain(t *testing.T) {
 	binary := requireRuntimeBinary(t)
 	helper := ensureIssueToolTestHelper(t)

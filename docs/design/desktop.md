@@ -799,6 +799,15 @@ type resolvedTheme struct {
 
 旧 native、已绑定 schema-2 且目标工具已就绪的会话仅在 Runtime 明确返回 `continuation_not_supported`、其自带配置读回成功且完整 effective config（session/revision/system prompt/tools/aliases/connection 等）与更新前完全一致、且唯一差异是可精确识别的已发布应用 role 时，才走兼容接续：保持原 system/profile/tool selection/session/connection/history 与旧 journal 前缀，不写 config 升级；仅在本次 task.send 的既有 named caller_context 中附加一份当前 role guidance，每 task 至多一份。该低层输入不是 system 配置升级，不承诺与 system 同优先级，不计入用户附件或补充 ledger；历史投影仅在该 verified scope 同 save 记录本轮确实追加应用项的来源事实时，隐藏紧邻的一份应用项；旧/未知来源与用户同名同形材料保留。其它错误、schema refresh、缺工具、读回失败、混合 prompt 或真实工具/别名/连接变化仍按原路径拒绝。新会话和非 native 会话继续使用既有 system guidance 路径；本范围不扩到 schema-1/未绑定 legacy。B-r7 原始失败与真实模型改稿仍未复验，本段不改变该边界，也不表示完整 154 或 MVP 已通过。
 
+### #322 已有事项的逐轮发现上下文（实现事实与待验，2026-11-05）
+
+代码来源：`agent/gui/322-existing-issue-routing`，基于 `758a5dde01fe8bd3302c26376c870d017c5fa0b1`；最终源码、测试与 CI 证据见 [#322](https://github.com/HeimaoLST/Saki/issues/322)。
+
+- **宿主上下文**：managed conversation 每轮发送前，在 UI actor 上按该轮捕获的联系人与新 scope 构造 `nagi.issue_tools.issues`，紧接可选旧 native role、位于 opaque scope token 之前。摘要复用 `issueToolList` 与 `boundIssueToolList`，首选最多 50 个未归档事项，含真实 ID、goal、status、requirements revision、最近执行与待处理摘要；从未运行的事项也在此路径内。沿用文本截断、16 KiB 响应上限和 `has_more/next_cursor`；可用 `issue_list` 继续分页或查看归档事项，用 `issue_get` 读取当前完整详情。每轮重新投影，不注入全部 requirements 或执行历史，不读取 GUI 选中事项，也不改变其选择。
+- **单一事实与资料边界**：摘要只读同一 `productIssue` 与 scope 允许对象，不额外授权或选择执行目标。对话 builtin、query/action、supplement、run 与 work 执行路径保持原入口。store 只新增可选 `issue_list_appended` 来源标志，旧记录缺省为 false，无版本迁移；历史投影核实 session 与尾部 scope 后，才隐藏本轮紧邻的一份应用摘要及可选 role。同名用户资料、旧 scope 与其它 session 的资料保留，摘要不计入用户附件或补充 ledger。
+- **软指导**：引用已有计划或成果时，先发现并用 `issue_get` 核对同一事项，即使它尚未 run；授权执行走该事项 work。普通讨论与无关小动作继续留在 conversation，真实歧义先澄清，小补充仅保存同一事项的准确增量，完整重定义才 update。新委派无匹配事项时才 create/run。已发布旧 role 仍精确替换并保留用户 profile；旧 native 会话沿上节的 task-context 兼容路径补当前 role。本次没有关键词分类器、强制工具路由或第二个 agent loop。
+- **验证边界**：离线回归验证有界分页、scope 隔离与只读投影、逐轮事实刷新、未运行事项可见、历史来源过滤，并通过真实 Rust Runtime 与同 binary MCP helper 检查实际 caller-context。受控 provider 仅记录传输，不证明模型理解或选择正确。原 7b6 Flash 失败仍保留，线上完整 A/B 由 PM 另排新鲜 store/session；本节不宣称自然语言复用、真实改稿或 MVP 已验收通过。
+
 ## #276 工作状态投影与工作入口（实现事实，2026-11-03）
 
 代码来源：本分支 `agent/gui/276-work-status-projection`；N1 固定 `f20e4b6`，N2 以本 PR286 固定候选为准。GUI 只读消费既有 issue Status、execution/AttentionSeenStatus、Work flags 与 presentation state；不在 Runtime/store 写回，不改变连接与联系人会话 Ready 状态。单一投影先保留 Archived/Completed/Canceled 管理终态，再按未终结事项的 Attention（含 118 未看策略与显式 needs_attention）→ Waiting（含无 Run 的既有 waiting 路径）→ 真实 Working/In progress → Not started 排序；旧失败只在真实不同事实时作为 Run 补充，不覆盖主态，未知派发仍走原核查。

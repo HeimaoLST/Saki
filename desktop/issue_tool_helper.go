@@ -105,7 +105,7 @@ func issueToolDefinitions() []issueToolDefinition {
 	}
 	return []issueToolDefinition{
 		{
-			Name: "issue_list", Description: "List issues already authorized in this app-issued conversation scope. Read-only; only call after an explicit user request. Returns a bounded page with has_more/next_cursor.",
+			Name: "issue_list", Description: "Discover existing issues in this app-issued conversation scope, including issues that have never run. Use when the user refers to an existing plan, output, or task; the user need not know its issue ID. Read-only, with bounded pages and has_more/next_cursor.",
 			InputSchema: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{

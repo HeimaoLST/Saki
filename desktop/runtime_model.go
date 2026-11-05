@@ -2728,12 +2728,16 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 	if issueTools {
 		var scope *IssueToolScope
 		var scopeErr error
+		var issueList runtimeContextInput
 		a.runOnUI(func() {
 			if a.shutdownStarted {
 				scopeErr = errors.New("app is shutting down")
 				return
 			}
 			scope, scopeErr = a.issueToolNewScope(contactID, sessionID, turnID, roleGuidanceAppended)
+			if scopeErr == nil {
+				issueList, scopeErr = a.issueToolConversationIssueList(scope)
+			}
 		})
 		if scopeErr != nil {
 			a.failSubmit(contactID, fmt.Errorf("prepare issue tool scope: %w", scopeErr), false)
@@ -2749,7 +2753,7 @@ func (a *appModel) submitTask(rt *runtimeClient, configured bool, contactID, ses
 			return
 		}
 		if input, ok := issueToolScopeInput(scope); ok {
-			wireContext = append(wireContext, input)
+			wireContext = append(wireContext, issueList, input)
 		}
 	}
 	if err := validateRuntimeContextInputs(wireContext); err != nil {
