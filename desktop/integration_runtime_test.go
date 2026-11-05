@@ -645,7 +645,11 @@ func runShutdownObservation(ctx context.Context, name string, args ...string) sh
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Env = append(os.Environ(), "LC_ALL=C", "TZ=UTC")
 		cmd.WaitDelay = 100 * time.Millisecond
-		stdout := &shutdownObservationBuffer{limit: 4096}
+		stdoutLimit := 4096
+		if name == "/usr/bin/sample" {
+			stdoutLimit = 256 * 1024
+		}
+		stdout := &shutdownObservationBuffer{limit: stdoutLimit}
 		stderr := &shutdownObservationBuffer{limit: 1024}
 		cmd.Stdout, cmd.Stderr = stdout, stderr
 		err := cmd.Run()
@@ -705,8 +709,20 @@ func observeShutdownProcess(ctx context.Context, identity shutdownProcessIdentit
 	fmt.Fprintf(&b, "shutdown OS observation: captured_at=%s launch_pid=%d executable=%q first_observed_at=%s start_not_before=%s process_state=%s (identity consistency uses second-resolution start time; not proof against same-second PID reuse)\nps exit=%d err=%v truncated=%v stdout=%q stderr=%q\n",
 		at.Format(time.RFC3339Nano), identity.pid, identity.executable, identity.observedAt.Format(time.RFC3339Nano), identity.notBefore.Format(time.RFC3339Nano), state, ps.exitCode, ps.err, ps.truncated, ps.stdout, ps.stderr)
 	if state == "present_identity_consistent" && ctx.Err() == nil {
+		args := []string{strconv.Itoa(identity.pid), "1", "10", "-mayDie"}
+		started := time.Now().UTC()
+		stack := run(ctx, "/usr/bin/sample", args...)
+		fmt.Fprintf(&b, "sample command=%q args=%q started_at=%s elapsed=%s exit=%d err=%v truncated=%v stdout_limit_bytes=%d\nstdout:\n%s\nstderr:\n%s\n",
+			"/usr/bin/sample", args, started.Format(time.RFC3339Nano), time.Since(started), stack.exitCode, stack.err, stack.truncated, 256*1024, stack.stdout, stack.stderr)
+		b.WriteString("sample contains thread call stacks; individual Tokio async future states remain unknown\n")
+	} else {
+		fmt.Fprintf(&b, "sample not collected: process_state=%s budget_error=%v\n", state, ctx.Err())
+	}
+	if state == "present_identity_consistent" && ctx.Err() == nil {
 		pipes := run(ctx, "/usr/sbin/lsof", "-nP", "-a", "-p", strconv.Itoa(identity.pid), "-d", "1,2", "-Fpcfatn")
 		fmt.Fprintf(&b, "lsof fd1/fd2 exit=%d err=%v truncated=%v stdout=%q stderr=%q\n", pipes.exitCode, pipes.err, pipes.truncated, pipes.stdout, pipes.stderr)
+	} else {
+		fmt.Fprintf(&b, "lsof not collected: process_state=%s budget_error=%v\n", state, ctx.Err())
 	}
 	b.WriteString("stdout/stderr launch pipe identity and live write-end holder PIDs=unknown; lsof is a later target-PID fd snapshot, not a launch mapping or a global holder search")
 	return b.String()
@@ -728,7 +744,8 @@ func (h *guiHarness) logShutdownOS(t *testing.T) {
 			t.Log("shutdown OS observation: unavailable on this platform; process and pipe state unknown")
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		// This budget starts after the original 15-second shutdown wait failed.
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		t.Log(observeShutdownProcess(ctx, *identity, runShutdownObservation))
 	})
@@ -772,7 +789,70 @@ func TestShutdownOSObservationIdentityStates(t *testing.T) {
 			if got := shutdownObservedProcessState(identity, tc.output); got != tc.want {
 				t.Fatalf("process state=%s want=%s", got, tc.want)
 			}
+			sampled := 0
+			observeShutdownProcess(context.Background(), identity, func(_ context.Context, name string, args ...string) shutdownObservationOutput {
+				if name == "/bin/ps" {
+					return tc.output
+				}
+				if name == "/usr/bin/sample" {
+					sampled++
+					if strings.Join(args, " ") != "42 1 10 -mayDie" {
+						t.Fatalf("sample arguments=%q", args)
+					}
+				}
+				return shutdownObservationOutput{}
+			})
+			wantSamples := 0
+			if tc.want == "present_identity_consistent" {
+				wantSamples = 1
+			}
+			if sampled != wantSamples {
+				t.Fatalf("sample called %d times for %s, want %d", sampled, tc.want, wantSamples)
+			}
 		})
+	}
+}
+
+func TestShutdownOSObservationRetainsSampleFailuresAndTruncation(t *testing.T) {
+	at := time.Date(2026, 11, 4, 18, 0, 0, 0, time.UTC)
+	identity := shutdownProcessIdentity{pid: 42, executable: "/tmp/helper", notBefore: at.Add(-time.Second), observedAt: at.Add(time.Second)}
+	for _, result := range []shutdownObservationOutput{
+		{stdout: "Thread main: Runtime::block_on\nThread worker: park"},
+		{stdout: "Thread main: Runtime::block_on", truncated: true},
+		{stdout: "partial thread stack", stderr: "permission denied", exitCode: 7, err: os.ErrPermission},
+	} {
+		ctx, cancel := context.WithCancel(context.Background())
+		var commands []string
+		observation := observeShutdownProcess(ctx, identity, func(received context.Context, name string, _ ...string) shutdownObservationOutput {
+			if received != ctx {
+				t.Fatal("sample replaced the shared absolute budget")
+			}
+			commands = append(commands, name)
+			if name == "/bin/ps" {
+				return shutdownObservationOutput{stdout: "42 1 Wed Nov 4 18:00:00 2026 S /tmp/helper"}
+			}
+			if name != "/usr/bin/sample" {
+				t.Fatalf("command after sample exhausted budget: %s", name)
+			}
+			cancel()
+			return result
+		})
+		cancel()
+		if strings.Join(commands, " ") != "/bin/ps /usr/bin/sample" {
+			t.Fatalf("commands=%q", commands)
+		}
+		for _, want := range []string{
+			result.stdout,
+			result.stderr,
+			fmt.Sprintf("exit=%d err=%v truncated=%v stdout_limit_bytes=262144", result.exitCode, result.err, result.truncated),
+			"individual Tokio async future states remain unknown",
+			"lsof not collected: process_state=present_identity_consistent budget_error=context canceled",
+			"live write-end holder PIDs=unknown",
+		} {
+			if !strings.Contains(observation, want) {
+				t.Fatalf("observation lost %q:\n%s", want, observation)
+			}
+		}
 	}
 }
 
