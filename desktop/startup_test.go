@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +16,38 @@ import (
 
 	"saki/desktop/locales"
 )
+
+func TestInvalidContentSizeStopsBeforeStartup(t *testing.T) {
+	if os.Getenv("GO_WANT_INVALID_CONTENT_SIZE") == "1" {
+		main()
+		t.Fatal("invalid content size did not stop startup")
+	}
+	for _, size := range []string{"960", "960x", "x640", "960x640x1", "0x640", "960x-1", "NaNx640", "960.5x640", "999999999999999999999999x640"} {
+		t.Run(size, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("SAKI_GUI_STORE", filepath.Join(root, "contacts.json"))
+			t.Setenv("SAKI_SESSION_DIR", filepath.Join(root, "sessions"))
+			t.Setenv("SAKI_GUI_WORKDIR", root)
+			t.Setenv("SAKI_GUI_CONTENT_SIZE", size)
+			t.Setenv("GO_WANT_INVALID_CONTENT_SIZE", "1")
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestInvalidContentSizeStopsBeforeStartup$")
+			output, err := cmd.CombinedOutput()
+			var exitErr *exec.ExitError
+			if ctx.Err() != nil || !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+				t.Fatalf("startup error = %v, context = %v, output = %s", err, ctx.Err(), output)
+			}
+			if !strings.Contains(string(output), "SAKI_GUI_CONTENT_SIZE must be positive integer WIDTHxHEIGHT in DIPs") {
+				t.Fatalf("missing startup input diagnostic: %s", output)
+			}
+			files, err := os.ReadDir(root)
+			if err != nil || len(files) != 0 {
+				t.Fatalf("invalid input wrote startup data: files=%v err=%v", files, err)
+			}
+		})
+	}
+}
 
 func runtimeFeedback(a *appModel) (string, string) {
 	msgs := locales.In("en")
