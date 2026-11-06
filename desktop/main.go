@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -30,6 +32,23 @@ func main() {
 		}
 		return
 	}
+	windowOptions := mygo.WindowOptions{
+		Title:     "Nagi",
+		Width:     1040,
+		Height:    720,
+		MinWidth:  720,
+		MinHeight: 640,
+	}
+	if size := os.Getenv("SAKI_GUI_CONTENT_SIZE"); size != "" {
+		widthText, heightText, ok := strings.Cut(size, "x")
+		width, widthErr := strconv.Atoi(widthText)
+		height, heightErr := strconv.Atoi(heightText)
+		if !ok || widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+			log.Fatal("SAKI_GUI_CONTENT_SIZE must be positive integer WIDTHxHEIGHT in DIPs, for example 960x640")
+		}
+		windowOptions.Width, windowOptions.Height = width, height
+		windowOptions.UseContentSize = true
+	}
 	// The visible product name is Nagi; internal identifiers, the Saki.app
 	// artifact and Saki data paths stay as they are. Call before Run so the
 	// default app menu, About, Hide and Quit use Nagi too.
@@ -50,22 +69,22 @@ func main() {
 		a.beginShutdown()
 	})
 	mygo.App.WhenReady(func() {
-		win := mygo.NewWindow(mygo.WindowOptions{
-			Title:     "Nagi",
-			Width:     1040,
-			Height:    720,
-			MinWidth:  720,
-			MinHeight: 640,
-			Content:   ui.View(a.view),
-		})
+		windowOptions.Content = ui.View(a.view)
+		win := mygo.NewWindow(windowOptions)
 		a.win = win
-		if w, _ := win.ContentSize(); w > 0 {
-			a.windowWidth = w
-		}
-		win.OnResize(func() {
-			if w, _ := win.ContentSize(); w > 0 {
+		updateContentSize := func(event string) {
+			w, h := win.ContentSize()
+			if w > 0 {
 				a.windowWidth = w
 			}
+			if windowOptions.UseContentSize {
+				log.Printf("nagi native-content-size event=%s unit=DIP requested_width=%d requested_height=%d actual_width=%d actual_height=%d",
+					event, windowOptions.Width, windowOptions.Height, w, h)
+			}
+		}
+		updateContentSize("created")
+		win.OnResize(func() {
+			updateContentSize("resize")
 		})
 		win.OnClose(func(e *mygo.CloseEvent) {
 			if a.quitReady {
