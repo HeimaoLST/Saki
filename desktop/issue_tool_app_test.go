@@ -30,6 +30,61 @@ func newIssueToolTestApp(t *testing.T) (*appModel, *contactStore) {
 	return a, store
 }
 
+func TestIssueToolAppInitializesWithLongTemporaryDirectory(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "saki-331-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	helper, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	t.Setenv("SAKI_GUI_STORE", filepath.Join(root, "contacts.json"))
+	t.Setenv("SAKI_SESSION_DIR", filepath.Join(root, "sessions"))
+	t.Setenv("SAKI_GUI_WORKDIR", filepath.Join(root, "workspace"))
+	for _, test := range []struct{ name, directory string }{
+		{"short", "short"},
+		{"macos64", strings.Repeat("m", 64-len(root)-1)},
+		{"long", strings.Repeat("long", 32)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tmp := filepath.Join(root, test.directory)
+			if err := os.Mkdir(tmp, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("TMPDIR", tmp)
+			a, err := newRuntimeApp()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = a.closeIssueToolService() })
+			t.Logf("TMPDIR bytes=%d IPC enabled=%v endpoint=%q bytes=%d error=%q", len(tmp), a.issueToolEnabled(), a.issueToolEndpoint, len(a.issueToolEndpoint), a.issueToolErr)
+			if !a.issueToolEnabled() || a.issueToolErr != "" || a.issueToolLaunchSource() == nil {
+				t.Fatalf("application issue collaboration did not initialize: %s", a.issueToolErr)
+			}
+			endpoint, server := a.issueToolEndpoint, a.issueToolServer
+			if err := a.startIssueToolService(); err != nil || a.issueToolServer != server || a.issueToolEndpoint != endpoint {
+				t.Fatalf("initialization did not retain the single service: %v", err)
+			}
+			if a.storePath != filepath.Join(root, "contacts.json") || a.sessionDir != filepath.Join(root, "sessions") || a.workDir != filepath.Join(root, "workspace") || os.TempDir() != tmp {
+				t.Fatal("IPC initialization changed user directories")
+			}
+			info, err := os.Stat(endpoint)
+			if err != nil || info.Mode().Perm() != 0o600 {
+				t.Fatalf("socket permissions: %v / %v", info, err)
+			}
+			if err := a.closeIssueToolService(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(endpoint); !os.IsNotExist(err) {
+				t.Fatalf("application socket remained after close: %v", err)
+			}
+		})
+	}
+}
+
 func activateIssueToolTestScope(t *testing.T, a *appModel, scope *IssueToolScope) {
 	t.Helper()
 	ct := a.contactByID(scope.ContactID)

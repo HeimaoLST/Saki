@@ -1516,5 +1516,7 @@
   "resultFileRowLabel": "Read file {index}: {name}",
   "@resultFileRowLabel": {
     "description": "The accessible name of one reported result file; its index and file name are arguments."
-  }
+  },
+  "issueCollaborationUnavailable": "Issue collaboration unavailable",
+  "issueCollaborationRepairHint": "Fix the diagnostic error, then open Connection & model and apply the saved connection again, or restart the app."
 }

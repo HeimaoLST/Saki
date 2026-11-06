@@ -210,6 +210,80 @@ func ensureIssueToolTestHelper(t *testing.T) string {
 	return helper
 }
 
+func TestIssueToolLongTemporaryDirectoryRealHelper(t *testing.T) {
+	helper := ensureIssueToolTestHelper(t)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	longDir := filepath.Join(t.TempDir(), strings.Repeat("long", 32))
+	if err := os.Mkdir(longDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", longDir)
+	_, store := newIssueToolTestApp(t)
+	t.Setenv("SAKI_GUI_STORE", store.path)
+	t.Setenv("SAKI_GUI_WORKDIR", longDir)
+	t.Setenv("SAKI_SESSION_DIR", filepath.Join(longDir, "sessions"))
+	a, err := newRuntimeApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = a.closeIssueToolService() })
+	if !a.issueToolEnabled() {
+		t.Fatalf("real application initialization: %s", a.issueToolErr)
+	}
+	scope, err := a.issueToolNewScope(a.selectedContact().ID, "read-only-session", "read-only-turn", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": map[string]any{
+		"name": "issue_list", "arguments": map[string]any{"scope": scope.Ref},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, helper, "--issue-tool-helper")
+	cmd.Env = append(os.Environ(), issueToolIPCSocketEnv+"="+a.issueToolEndpoint)
+	cmd.Stdin = strings.NewReader(issueToolInitLine() + `{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n" + `{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n" + string(args) + "\n")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("real helper: %v", err)
+	}
+	responses := decodeIssueToolOutput(t, string(out))
+	if len(responses) != 3 || responses[1].Error != nil || responses[2].Error != nil {
+		t.Fatalf("helper responses: %s", out)
+	}
+	var list struct {
+		Tools []issueToolDefinition `json:"tools"`
+	}
+	if err := json.Unmarshal(responses[1].Result, &list); err != nil {
+		t.Fatal(err)
+	}
+	available := map[string]bool{}
+	for _, tool := range list.Tools {
+		available[tool.Name] = true
+	}
+	for _, definitions := range [][]issueToolDefinition{issueToolConversationDefinitions(), issueToolWorkDefinitions()} {
+		for _, tool := range definitions {
+			if !available[tool.Name] {
+				t.Fatalf("selected tool %q not declared by the real helper: %s", tool.Name, out)
+			}
+		}
+	}
+	var response issueToolForwardResponse
+	if err := json.Unmarshal(responses[2].Result, &response); err != nil || response.IsError {
+		t.Fatalf("read-only request: %+v / %v", response, err)
+	}
+	var page IssueToolIssueListResult
+	if err := json.Unmarshal(issueToolResponseJSON(t, response), &page); err != nil || len(page.Issues) != 0 {
+		t.Fatalf("read-only result: %+v / %v", page, err)
+	}
+	if len(a.selectedContact().Issues) != 0 || len(a.issueToolLedger.Operations) != 0 {
+		t.Fatal("read-only request changed issues or operations")
+	}
+	t.Logf("real helper declared %d tools; conversation=%d work=%d; issue_list returned zero issues without mutations; TMPDIR=%dB socket=%dB", len(list.Tools), len(issueToolConversationDefinitions()), len(issueToolWorkDefinitions()), len(longDir), len(a.issueToolEndpoint))
+}
+
 func issueToolTestIssueID(body string) string {
 	var payload struct {
 		Input []struct {

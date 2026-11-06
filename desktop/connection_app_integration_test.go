@@ -70,6 +70,112 @@ func applyAppConnection(t *testing.T, h *guiHarness) {
 	})
 }
 
+func TestIssueToolStartupFailureVisibleAndApplyRecovery(t *testing.T) {
+	binary := requireRuntimeBinary(t)
+	helper := ensureIssueToolTestHelper(t)
+	root := t.TempDir()
+	isolateConnectionApp(t, root, binary)
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", filepath.Join(root, "missing-helper"))
+	config := testConnectionConfig(t)
+	if err := saveConnectionConfig(connectionConfigPath(guiStorePath()), config); err != nil {
+		t.Fatal(err)
+	}
+	h := openConnectionHarness(t)
+	h.pump.wait(func() bool { return h.app.runtimeStatus == runtimeStateReady && h.app.runtimeCapabilitiesLoaded })
+	var initialRT *runtimeClient
+	var initialError string
+	h.pump.do(func() {
+		a := h.app
+		initialRT, initialError = a.rt, a.issueToolErr
+		if initialError == "" || a.issueToolEnabled() || a.issueToolLaunchSource() != nil {
+			t.Error("missing helper did not disable issue collaboration")
+		}
+		a.selectedContact().Draft = "preserve ordinary chat draft"
+		for _, locale := range []string{"en", "zh-Hans"} {
+			for _, width := range []int{720, 1040} {
+				for _, dark := range []bool{false, true} {
+					a.windowWidth = width
+					tr := ui.NewTester(a.view, width, 640)
+					tr.SetLocale(locale)
+					tr.SetDark(dark)
+					tr.Frame()
+					msgs := locales.In(locale)
+					if !tr.HasText(msgs.IssueCollaborationUnavailable()) {
+						t.Errorf("%s: real initialization failure is not visible", locale)
+					}
+					if r, ok := tr.Find(msgs.ConfigurationDetails()); !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.Y < 0 || r.X+r.W > float32(width) || r.Y+r.H > 640 {
+						t.Errorf("%s width=%d diagnostic action is not visible: %+v", locale, width, r)
+					}
+					if dir := os.Getenv("SAKI_PREVIEW_DIR"); dir != "" {
+						writePreviewPNG(t, filepath.Join(dir, fmt.Sprintf("issue-collaboration-unavailable-%s-%d-dark-%v.png", locale, width, dark)), tr.Image())
+					}
+				}
+			}
+		}
+		a.windowWidth = 1040
+		tr := ui.NewTester(a.view, 1040, 720)
+		tr.Frame()
+		msgs := locales.In("en")
+		if !tr.HasText(msgs.IssueCollaborationUnavailable()) {
+			t.Error("real initialization failure is not visible")
+		}
+		if err := tr.Click(msgs.ConfigurationDetails()); err != nil {
+			t.Error(err)
+		}
+		tr.Frame()
+		if a.settingsTab != settingsTabAdvanced || !tr.HasText(initialError) || !tr.HasText(msgs.RuntimeStatusLine(msgs.RuntimeStatusReady())) {
+			t.Errorf("diagnostics did not distinguish base Ready from issue failure: %v", tr.Texts())
+		}
+		if err := clickSettingsAction(tr, msgs.SettingsOpenConnection()); err != nil {
+			t.Error(err)
+		}
+		tr.Frame()
+		if a.settingsTab != settingsTabConnection || a.rt != initialRT || a.issueToolErr != initialError || a.issueToolServer != nil {
+			t.Error("diagnostic navigation retried initialization or changed Runtime")
+		}
+	})
+	t.Setenv("SAKI_TEST_ISSUE_TOOL_HELPER", helper)
+	t.Setenv("SAKI_RUNTIME_BIN", filepath.Join(root, "missing-runtime"))
+	h.pump.do(func() { h.app.applyConnection() })
+	h.pump.wait(func() bool { return !h.app.connectionApplying })
+	var recoveredSocket string
+	h.pump.do(func() {
+		a := h.app
+		recoveredSocket = a.issueToolEndpoint
+		if a.issueToolServer == nil || recoveredSocket == "" || a.issueToolErr != initialError || a.issueToolEnabled() || a.rt != initialRT || a.runtimeStatus != runtimeStateReady {
+			t.Error("failed Apply falsely recovered collaboration or replaced the working Runtime")
+		}
+	})
+	t.Setenv("SAKI_RUNTIME_BIN", binary)
+	applyAppConnection(t, h)
+	h.pump.do(func() {
+		a := h.app
+		if !a.issueToolEnabled() || a.issueToolErr != "" || a.issueToolEndpoint != recoveredSocket || a.rt == initialRT {
+			t.Error("successful Apply did not install the existing issue service")
+		}
+		a.closeSettings()
+		tr := ui.NewTester(a.view, 1040, 720)
+		tr.Frame()
+		if tr.HasText(locales.In("en").IssueCollaborationUnavailable()) || a.selectedContact().Draft != "preserve ordinary chat draft" {
+			t.Error("successful Apply left a stale warning or changed the draft")
+		}
+	})
+	data, err := os.ReadFile(h.app.connectionLaunch.HostConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var host struct {
+		ToolSources []runtimeToolSource `json:"tool_sources"`
+	}
+	if err := json.Unmarshal(data, &host); err != nil || len(host.ToolSources) != 1 || host.ToolSources[0].ID != issueToolSourceID {
+		t.Fatalf("recovered host source: %+v / %v", host, err)
+	}
+	h.shutdown(t)
+	if _, err := os.Lstat(recoveredSocket); !os.IsNotExist(err) {
+		t.Fatalf("recovered app socket remained after shutdown: %v", err)
+	}
+}
+
 func sendConnectionConversation(t *testing.T, h *guiHarness, text, result string) string {
 	t.Helper()
 	accepted := false

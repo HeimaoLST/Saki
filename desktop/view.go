@@ -610,6 +610,12 @@ func (a *appModel) main(c *ui.Context, t *ui.Theme) {
 			case a.runtimeStatus == runtimeStateStarting:
 				ui.Text(c, msgs.RuntimeConnecting()).FontSize(14).Padding(8, 16).TextColor(t.TextMuted)
 			}
+			if a.issueToolErr != "" {
+				ui.Row(c).Padding(8, 16).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, msgs.IssueCollaborationUnavailable()).FontSize(14).TextColor(t.Warning)
+					secondaryButton(c, msgs.ConfigurationDetails()).OnClick(func() { a.openAdvancedSettings() })
+				})
+			}
 		}
 		a.connectionErrorBanner(c, t, ct)
 		if ct.LoadErr != "" {
@@ -1434,6 +1440,11 @@ func (a *appModel) runtimePanel(c *ui.Context, t *ui.Theme, ct *contact) {
 	}
 	if a.runtimeHintDisplay(msgs) != "" {
 		ui.Text(c, a.runtimeHintDisplay(msgs)).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
+	}
+	if a.issueToolErr != "" {
+		ui.Text(c, msgs.IssueCollaborationUnavailable()).FontSize(14).TextColor(t.Warning)
+		ui.Text(c, a.redactConnectionText(a.issueToolErr)).FontSize(14).LineHeight(1.5).TextColor(t.Text)
+		ui.Text(c, msgs.IssueCollaborationRepairHint()).FontSize(14).LineHeight(1.5).TextColor(t.TextMuted)
 	}
 	helper := a.runtimeBinary
 	if helper == "" {

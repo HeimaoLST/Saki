@@ -1066,5 +1066,7 @@
   "resultFileRowLabel": "读取文件 {index}：{name}",
   "@resultFileRowLabel": {
     "description": "结果中某个已报告文件的辅助名称；序号和文件名是参数。"
-  }
+  },
+  "issueCollaborationUnavailable": "事项协作不可用",
+  "issueCollaborationRepairHint": "修复诊断错误后，打开“连接与模型”并重新应用已保存的连接，或重启应用。"
 }

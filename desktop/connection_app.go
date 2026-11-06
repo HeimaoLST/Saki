@@ -289,6 +289,11 @@ func (a *appModel) applyConnection() {
 	form.ReloadBlocked = ""
 	form.Error = ""
 	form.ErrorDetail = ""
+	if a.issueToolErr != "" {
+		if err := a.startIssueToolService(); err != nil {
+			a.issueToolErr = err.Error()
+		}
+	}
 	form.Busy = true
 	form.Status = connStatusChecking
 	a.connectionApplying = true
@@ -386,6 +391,9 @@ func (a *appModel) applyConnectionWorker(gen int, path, sessionDir string, oldRT
 		a.connectionEffective = &config
 		a.connectionManaged = true
 		a.connectionLegacy = false
+		if toolSource != nil {
+			a.issueToolErr = ""
+		}
 		a.workDir = config.WorkingDirectory
 		a.runtimeBinary = binary
 		a.runtimeStatus = runtimeStateReady

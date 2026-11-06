@@ -49,11 +49,11 @@ func newIssueToolScopeRef() string {
 }
 
 func (a *appModel) issueToolEnabled() bool {
-	return a != nil && a.issueToolServer != nil && a.issueToolEndpoint != "" && a.issueToolHelper != ""
+	return a.issueToolLaunchSource() != nil && a.issueToolErr == ""
 }
 
 func (a *appModel) startIssueToolService() error {
-	if a.issueToolEnabled() {
+	if a.issueToolServer != nil {
 		return nil
 	}
 	helper := strings.TrimSpace(os.Getenv("SAKI_TEST_ISSUE_TOOL_HELPER"))
@@ -76,7 +76,9 @@ func (a *appModel) startIssueToolService() error {
 	if info, err := os.Stat(helper); err != nil || info.IsDir() {
 		return fmt.Errorf("issue tool helper is not executable at %s", helper)
 	}
-	endpoint := filepath.Join(os.TempDir(), fmt.Sprintf("nagi-issue-%d-%s.sock", os.Getpid(), newIssueToolScopeRef()))
+	// macOS TMPDIR can exceed sun_path once the socket name is appended.
+	// Only the IPC address uses /tmp; user data and workspaces stay unchanged.
+	endpoint := filepath.Join("/tmp", fmt.Sprintf("nagi-issue-%d-%s.sock", os.Getpid(), newIssueToolScopeRef()))
 	server, err := startIssueToolIPCServer(endpoint, a.handleIssueToolForward)
 	if err != nil {
 		return err
@@ -103,11 +105,10 @@ func (a *appModel) closeIssueToolService() error {
 	return a.issueToolServer.Close()
 }
 
-// issueToolLaunchSource is the single Runtime host-config source for this app's
-// helper. It is passed only to the conversation Runtime; issue work sessions do
-// not select external tools.
+// A recovered socket can be prepared for Apply while the current Runtime still
+// lacks its source. issueToolEnabled stays false until that Apply succeeds.
 func (a *appModel) issueToolLaunchSource() *runtimeToolSource {
-	if !a.issueToolEnabled() {
+	if a == nil || a.issueToolServer == nil || a.issueToolEndpoint == "" || a.issueToolHelper == "" {
 		return nil
 	}
 	return &runtimeToolSource{
