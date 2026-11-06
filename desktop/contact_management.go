@@ -54,13 +54,14 @@ func contactHistoryNoticeText(msgs locales.Messages, notice, detail string) stri
 }
 
 type contactHistoryFull struct {
-	Origin    string
-	SessionID string
-	EntryID   string
-	Date      string
-	From      string
-	Text      string
-	Context   []taskContextItem
+	WorkingDirectory string
+	Origin           string
+	SessionID        string
+	EntryID          string
+	Date             string
+	From             string
+	Text             string
+	Context          []taskContextItem
 }
 
 const (
@@ -543,6 +544,11 @@ func (a *appModel) openContactHistoryMatch(match contactHistoryMatch) bool {
 				errorText = historyNoticeMoved
 			}
 		}
+		if full != nil {
+			if config, configErr := rt.connectionConfig(match.SessionID); configErr == nil {
+				full.WorkingDirectory = config.EffectiveConfig.WorkingDirectory
+			}
+		}
 		a.updateUI(func() {
 			defer a.historyAsyncFinished()
 			a.applyContactHistoryFull(rt, runtimeGeneration, contactID, searchGen, detailGen, full, errorText, err)
@@ -589,7 +595,7 @@ func (a *appModel) openHistoryEntryFull(e historyEntry) {
 		return
 	}
 	a.contactHistoryFull = &contactHistoryFull{
-		Origin: historyOriginLoaded, SessionID: ct.SessionID, EntryID: e.ID, Date: e.Date, From: e.From,
+		WorkingDirectory: ct.SessionWorkingDir, Origin: historyOriginLoaded, SessionID: ct.SessionID, EntryID: e.ID, Date: e.Date, From: e.From,
 		Text: e.Text, Context: cloneTaskContextItems(e.Context),
 	}
 	a.historyFullScroll = ui.ScrollState{}

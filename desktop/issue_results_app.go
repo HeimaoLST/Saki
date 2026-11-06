@@ -242,6 +242,7 @@ func (a *appModel) applyIssueResultLoaded(rt *runtimeClient, runtimeGeneration, 
 	}
 	page.Loading = false
 	page.Notice = notice
+	page.Panel.WorkingDirectory = derived.WorkingDirectory
 	page.Panel.Response = response
 	page.Panel.Files = derived.Files
 	if derived.UnavailableKind != "" {
@@ -357,13 +358,14 @@ func (a *appModel) issueResultPanelView(c *ui.Context, t *ui.Theme) {
 
 func (a *appModel) issueResultPanelActions(generation int) issueResultPanelActions {
 	return issueResultPanelActions{
-		OpenSettings: func(c *ui.Context) { a.openSettingsFromContext(c, settingsTabAppearance, settingsSourceAux) },
-		Close:        func() { a.closeIssueResult() },
-		Reload:       func() { a.reloadIssueResult(generation) },
-		SelectFile:   func(key string) { a.checkIssueResultFileByKey(generation, key) },
-		CheckFile:    func(file issueResultFile) { a.checkIssueResultFile(generation, file) },
-		OpenFile:     func(file issueResultFile) { a.requestIssueResultFileAction(generation, file, true) },
-		RevealFile:   func(file issueResultFile) { a.requestIssueResultFileAction(generation, file, false) },
+		OpenLocalFile: a.openMarkdownFile,
+		OpenSettings:  func(c *ui.Context) { a.openSettingsFromContext(c, settingsTabAppearance, settingsSourceAux) },
+		Close:         func() { a.closeIssueResult() },
+		Reload:        func() { a.reloadIssueResult(generation) },
+		SelectFile:    func(key string) { a.checkIssueResultFileByKey(generation, key) },
+		CheckFile:     func(file issueResultFile) { a.checkIssueResultFile(generation, file) },
+		OpenFile:      func(file issueResultFile) { a.requestIssueResultFileAction(generation, file, true) },
+		RevealFile:    func(file issueResultFile) { a.requestIssueResultFileAction(generation, file, false) },
 		ToggleSource: func(key string) {
 			page := &a.issueResult
 			if page.Generation != generation {
@@ -437,9 +439,9 @@ func (a *appModel) requestIssueResultFileAction(generation int, file issueResult
 		page.Panel.ActionFor = ""
 		page.Panel.Action = issueResultFileAction{}
 	}
-	openWith, revealWith := a.issueResultOpen, a.issueResultReveal
+	openWith, revealWith := a.openPath, a.issueResultReveal
 	if openWith == nil {
-		openWith = requestOpenIssueResultWithSystem
+		openWith = openFileWithSystem
 	}
 	if revealWith == nil {
 		revealWith = requestRevealIssueResultWithSystem

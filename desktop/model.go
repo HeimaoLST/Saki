@@ -300,7 +300,7 @@ type appModel struct {
 
 	issueResult        issueResultPage
 	issueResultInspect func(issueResultFile) issueResultFileInspection
-	issueResultOpen    func(string) error
+	openPath           func(string) error
 	issueResultReveal  func(string) error
 
 	// #154 conversation issue tools. The scope/operation records live in the
