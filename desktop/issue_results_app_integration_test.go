@@ -391,7 +391,7 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 	var openCalls, revealCalls atomic.Int32
 	var openPath, revealPath string
 	h.pump.do(func() {
-		h.app.issueResultOpen = func(path string) error {
+		h.app.openPath = func(path string) error {
 			openCalls.Add(1)
 			openPath = path
 			return fmt.Errorf("injected open failure")
@@ -425,7 +425,7 @@ func TestIssueResultPageRuntimeIntegration(t *testing.T) {
 		t.Fatalf("successful check kept stale open error: %v", stem)
 	}
 	h.pump.do(func() {
-		h.app.issueResultOpen = func(path string) error {
+		h.app.openPath = func(path string) error {
 			openCalls.Add(1)
 			openPath = path
 			return nil

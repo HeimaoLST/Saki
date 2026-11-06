@@ -1070,5 +1070,6 @@
   "modelManage": "管理模型",
   "modelNoConfigured": "此连接未声明模型。",
   "modelDefaultScope": "默认连接",
-  "modelConversationScope": "当前对话覆盖"
+  "modelConversationScope": "当前对话覆盖",
+  "markdownFileSourceUnknown": "来源会话的工作目录未知，无法解析这个相对文件链接。"
 }

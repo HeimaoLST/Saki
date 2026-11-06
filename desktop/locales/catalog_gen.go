@@ -9925,3 +9925,13 @@ func ModelConversationScope() string { return In(i18n.Locale()).ModelConversatio
 func (msgs Messages) ModelConversationScope() string {
 	return Catalog.Format(msgs.locale, "modelConversationScope", nil)
 }
+
+// MarkdownFileSourceUnknown says "The source session working directory is unknown; this relative file link cannot be resolved."
+// in the language the app shows.
+func MarkdownFileSourceUnknown() string { return In(i18n.Locale()).MarkdownFileSourceUnknown() }
+
+// MarkdownFileSourceUnknown says "The source session working directory is unknown; this relative file link cannot be resolved."
+// in the language of msgs.
+func (msgs Messages) MarkdownFileSourceUnknown() string {
+	return Catalog.Format(msgs.locale, "markdownFileSourceUnknown", nil)
+}

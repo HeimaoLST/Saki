@@ -597,6 +597,14 @@ type resolvedTheme struct {
 - `view.go` 保留 Back to latest/FollowEnd 行为；键盘焦点、消息选择和复制反馈沿用 reader 的实现。`workspace_test.go` 新增 received-output copy 回归；本次 #118 UI 改动没有修改 parser，也没有把 reader 测试改写成 #118 路由测试。
 - 证据边界：reader 的 headless 测试与 #118 的 app/real-runtime 测试分开记录；原生窗口/输入法仍未由 #118 执行，不能把 headless 通过写成 native PASS。
 
+### 对话及阅读中的本地文件链接（#327，实现事实，2026-11-06）
+
+助手消息中的相对文件链接由应用传入的来源目录解析，再复用现有文件检查与 `Shell.OpenPath` 请求。当前对话、已加载历史和来源使用该 Runtime 会话的 `SessionWorkingDir`，不使用进程 cwd 或后来编辑的联系人工作区。跨会话保存消息单独读取该来源会话的有效目录；目录不可得时显示不可解析说明，不借当前联系人目录。事项结果使用原执行目录，Markdown 文件内的相对链接使用该文件所在目录。
+
+reader 只接收可选的 `OpenLocalFile` 回调，不读取联系人、配置或文件。点击和聚焦后的 Enter 走同一回调；仅显式激活才请求打开。中文和空格路径按 Markdown URL 解码。文件不存在、不是普通文件或 opener 返回错误时，消息旁显示现有文件动作错误；成功只表示请求未报错，没有“外部文档已打开”的成功提示。用户原文、草稿、资料和复制内容不变。
+
+HTTPS、mailto、文内锚点、未完成链接与不支持的 scheme 保持原行为。应用回调复用 `ui.SafeToOpen`，不放宽 MyGo 默认链接规则，也不引入 Router。指针/键盘、不同 cwd/两个会话同名文件、来源未知和打开错误由 headless 应用回归覆盖；外部编辑器的真实文档/标签打开仍须用含修复的同源包原生观察，不能由回调返回 nil 或运行应用清单推断。
+
 ### #217 消息复制降权（阶段实现事实，2026-10-30）
 
 本切片基于冻结 `4546a1a9d2cfaf28771748f42b600c0abccaba07`，由 reader/Iris 实现，reader 主责评审；它是可组合的阅读组件阶段输入，不代表 #98 升级、#218 组合或新原生验收完成。

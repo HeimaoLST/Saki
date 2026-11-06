@@ -1520,5 +1520,6 @@
   "modelManage": "Manage models",
   "modelNoConfigured": "No models declared for this connection.",
   "modelDefaultScope": "Default connection",
-  "modelConversationScope": "Current conversation override"
+  "modelConversationScope": "Current conversation override",
+  "markdownFileSourceUnknown": "The source session working directory is unknown; this relative file link cannot be resolved."
 }

@@ -1034,3 +1034,38 @@ func TestMessageReaderUserContextMenuUsesFreshControlledTime(t *testing.T) {
 		t.Fatalf("success feedback shifted content: text %+v -> %+v button %+v -> %+v", textBefore, text, buttonBefore, button)
 	}
 }
+
+func TestMarkdownLocalFileCallbackPreservesOtherLinks(t *testing.T) {
+	source := "[定位](#target) [网页](https://example.com/docs) [邮件](mailto:hello@example.com) [危险](javascript:alert(1))\n\n" + strings.Repeat("A paragraph before the heading.\n\n", 30) + "# Target\n\nEnd."
+	var scroll ui.ScrollState
+	calls := 0
+	options := markdownReaderOptions{OpenLocalFile: func(string) error { calls++; return nil }}
+	tr := ui.NewTester(func(c *ui.Context) {
+		ui.Scroll(c).Fill().TrackScroll(&scroll).Children(func() { markdownReader(c, source, options) })
+	}, 600, 300)
+	for _, label := range []string{"网页", "邮件", "危险"} {
+		if err := tr.Click(label); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := tr.OpenedURLs(); len(got) != 2 || got[0] != "https://example.com/docs" || got[1] != "mailto:hello@example.com" {
+		t.Fatalf("external links=%q", got)
+	}
+	if err := tr.Click("定位"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	if scroll.Y <= 0 || calls != 0 {
+		t.Fatalf("anchor scroll=%v file calls=%d", scroll.Y, calls)
+	}
+
+	source = "请阅读[待定](native-output.md"
+	options.Streaming = true
+	pending := ui.NewTester(func(c *ui.Context) { markdownReader(c, source, options) }, 600, 300)
+	if err := pending.Click("待定"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 || len(pending.OpenedURLs()) != 0 {
+		t.Fatal("pending link was activated")
+	}
+}

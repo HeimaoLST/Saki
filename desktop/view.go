@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -158,7 +161,8 @@ func (a *appModel) armActiveSurfaceFallback() {
 	}
 }
 
-func (a *appModel) readerOptions(options markdownReaderOptions, scope string) markdownReaderOptions {
+func (a *appModel) readerOptions(options markdownReaderOptions, scope, base string) markdownReaderOptions {
+	options.OpenLocalFile = func(dest string) error { return a.openMarkdownFile(base, dest) }
 	if !options.PlainText && scope != "" {
 		options.LinkScope = scope
 		options.LinkFocus = &a.markdownLinkFocus
@@ -767,7 +771,7 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Start).Children(func() {
 		a.avatarTile(c, t, 28)
 		ui.Column(c).MaxWidth(680).MinWidth(0).Shrink(1).Children(func() {
-			opts := a.readerOptions(messageReaderOptions(c, false), historyLinkScope(a.selectedContact().ID, "conversation", e.ID))
+			opts := a.readerOptions(messageReaderOptions(c, false), historyLinkScope(a.selectedContact().ID, "conversation", e.ID), a.selectedContact().SessionWorkingDir)
 			opts.MessageBubble = &markdownMessageBubble{
 				Background: bg, PaddingX: 14, PaddingY: 10, Radius: 14,
 				Header: func(hc *ui.Context) {
@@ -855,7 +859,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Start).Children(func() {
 			a.avatarTile(c, t, 28)
 			ui.Column(c).MaxWidthPercent(80).MinWidth(0).Shrink(1).Children(func() {
-				opts := a.readerOptions(markdownReaderOptions{Streaming: m.Streaming, CopyLabel: locales.In(c.Locale()).CopyMessageLabel(), Theme: messageMarkdownTheme}, messageLinkScope(ct.ID, m))
+				opts := a.readerOptions(markdownReaderOptions{Streaming: m.Streaming, CopyLabel: locales.In(c.Locale()).CopyMessageLabel(), Theme: messageMarkdownTheme}, messageLinkScope(ct.ID, m), ct.SessionWorkingDir)
 				opts.MessageBubble = &markdownMessageBubble{
 					Background: a.workTheme.BubbleContact, PaddingX: 12, PaddingY: 8, Radius: 12,
 					Header: func(hc *ui.Context) {
@@ -1464,7 +1468,7 @@ func (a *appModel) historyDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 							if e.From == "me" {
 								markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: msgs.CopyHistoryMessageLabel(), Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.5).TextColor(t.Text)
 							} else {
-								markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: msgs.CopyHistoryMessageLabel(), Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "history", e.ID))).FontSize(typeBody).LineHeight(1.5)
+								markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: msgs.CopyHistoryMessageLabel(), Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "history", e.ID), ct.SessionWorkingDir)).FontSize(typeBody).LineHeight(1.5)
 							}
 						} else {
 							ui.Text(c, truncate(e.Text, 150)).FontSize(14).LineHeight(1.5).MaxLines(3).TextColor(t.Text)
@@ -1515,7 +1519,7 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 			if e.From == "me" {
 				markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: msgs.CopySourceMessageLabel(), Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.5).TextColor(t.Text)
 			} else {
-				markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: msgs.CopySourceMessageLabel(), Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "sources", e.ID))).FontSize(typeBody).LineHeight(1.5)
+				markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: msgs.CopySourceMessageLabel(), Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "sources", e.ID), ct.SessionWorkingDir)).FontSize(typeBody).LineHeight(1.5)
 			}
 			ui.Row(c).Children(func() {
 				secondaryButton(c, msgs.ViewInConversation()).OnClick(func() { a.viewInConversation(e.ID) })
@@ -1654,4 +1658,31 @@ func truncate(text string, max int) string {
 		return text
 	}
 	return string(runes[:max]) + "…"
+}
+
+func (a *appModel) openMarkdownFile(base, destination string) error {
+	msgs := locales.In(a.uiLocale)
+	target, err := url.Parse(destination)
+	if err != nil {
+		return errors.New(msgs.ResultOpenFailed(err.Error()))
+	}
+	path := target.Path
+	if !filepath.IsAbs(path) {
+		if !filepath.IsAbs(base) {
+			return errors.New(msgs.ResultOpenFailed(msgs.MarkdownFileSourceUnknown()))
+		}
+		path = filepath.Join(base, path)
+	}
+	open := a.openPath
+	if open == nil {
+		open = openFileWithSystem
+	}
+	action := requestOpenIssueResultFile(issueResultFile{Path: filepath.Clean(path)}, open)
+	if action.NoticeKind != "" {
+		return errors.New(issueResultNoticeText(msgs, action.NoticeKind, action.NoticeDetail))
+	}
+	if action.ErrKind != "" {
+		return errors.New(issueResultNoticeText(msgs, action.ErrKind, action.ErrDetail))
+	}
+	return nil
 }

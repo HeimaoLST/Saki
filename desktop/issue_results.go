@@ -55,8 +55,9 @@ type issueResultFile struct {
 }
 
 type issueResultDerivation struct {
-	Files           []issueResultFile
-	UnavailableKind string
+	WorkingDirectory string
+	Files            []issueResultFile
+	UnavailableKind  string
 }
 
 // deriveIssueResultFiles reads only the supplied Runtime history response. The
@@ -113,7 +114,7 @@ func deriveIssueResultFiles(source issueResultSource, history runtimeHistory) is
 	if messageMismatch {
 		return issueResultDerivation{UnavailableKind: "message-missing"}
 	}
-	return issueResultDerivation{Files: files}
+	return issueResultDerivation{Files: files, WorkingDirectory: source.WorkingDirectory}
 }
 
 func successfulWriteEditPath(toolName, output string) (string, bool) {
@@ -358,7 +359,7 @@ func requestRevealIssueResultFile(file issueResultFile, reveal func(string) erro
 
 // OpenPath reports whether the request failed, not whether an application
 // actually displayed the file; callers must not claim the OS opened it.
-func requestOpenIssueResultWithSystem(path string) error {
+func openFileWithSystem(path string) error {
 	return mygo.Shell.OpenPath(path)
 }
 
@@ -375,6 +376,7 @@ func requestRevealIssueResultWithSystem(path string) error {
 // local reading mode (ReaderKey) and renders matching results on the next
 // frame. It contains no file I/O, task dispatch or persistence.
 type issueResultPanelState struct {
+	WorkingDirectory   string
 	RunNumber          int
 	RunGoal            string
 	RunStatus          string
@@ -417,15 +419,16 @@ type issueResultPanelState struct {
 // issueResultPanelActions are explicit user requests. The component never
 // inspects, opens, reveals or starts a task by itself.
 type issueResultPanelActions struct {
-	OpenSettings func(c *ui.Context)
-	Close        func()
-	Reload       func()
-	SelectFile   func(key string)
-	CheckFile    func(file issueResultFile)
-	OpenFile     func(file issueResultFile)
-	RevealFile   func(file issueResultFile)
-	ToggleSource func(key string)
-	CopyText     func(text string) error
+	OpenLocalFile func(base, destination string) error
+	OpenSettings  func(c *ui.Context)
+	Close         func()
+	Reload        func()
+	SelectFile    func(key string)
+	CheckFile     func(file issueResultFile)
+	OpenFile      func(file issueResultFile)
+	RevealFile    func(file issueResultFile)
+	ToggleSource  func(key string)
+	CopyText      func(text string) error
 }
 
 // issueResultMarkdownFile is the explicit Markdown rendering allowlist. Other
@@ -477,7 +480,12 @@ func issueResultPanel(c *ui.Context, state *issueResultPanelState, actions issue
 				ui.Text(c, locales.In(c.Locale()).ResultNoAssistant()).FontSize(14).LineHeight(1.5).TextColor(th.TextMuted)
 				return
 			}
+			var openLocalFile func(string) error
+			if actions.OpenLocalFile != nil {
+				openLocalFile = func(dest string) error { return actions.OpenLocalFile(state.WorkingDirectory, dest) }
+			}
 			markdownReader(c, state.Response, markdownReaderOptions{
+				OpenLocalFile:   openLocalFile,
 				CopyLabel:       locales.In(c.Locale()).CopyResultLabel(),
 				CopyText:        actions.CopyText,
 				CopyHandle:      &state.CopyResultHandle,
@@ -716,7 +724,12 @@ func issueResultReaderPreview(c *ui.Context, th *ui.Theme, state *issueResultPan
 	if inspection.Preview == "" {
 		ui.Text(c, locales.In(c.Locale()).ResultEmptyFile()).FontSize(14).LineHeight(1.5).TextColor(th.TextMuted)
 	}
+	var openLocalFile func(string) error
+	if actions.OpenLocalFile != nil {
+		openLocalFile = func(dest string) error { return actions.OpenLocalFile(filepath.Dir(file.Path), dest) }
+	}
 	markdownReader(c, inspection.Preview, markdownReaderOptions{
+		OpenLocalFile:   openLocalFile,
 		PlainText:       !issueResultMarkdownFile(file.Path),
 		CopyLabel:       locales.In(c.Locale()).CopyCurrentFileLabel(),
 		CopyText:        actions.CopyText,
