@@ -116,6 +116,20 @@ SAKI_GUI_WORKDIR=/abs/working-directory \
 ```
 Finder 启动不继承 shell 环境。空配置时通过 Connection settings 保存并 Apply；已有 GUI 配置从持久文件恢复。上述命令保留为开发者外部环境模式入口。不要把 key 放进 Info.plist、候选包或仓库。
 
+### 原生内容尺寸诊断（#328，实现事实，2026-11-06）
+
+实现源 `14f2275bfa74717f167d1c45344f25fecea78931` 在正常 GUI 启动时支持一个显式环境变量。测试启动者可以向同源包的可执行文件传入内容区逻辑尺寸，单位为 DIP：
+
+```sh
+SAKI_GUI_CONTENT_SIZE=960x640 "/path/to/Saki.app/Contents/MacOS/Saki"
+```
+
+非空值采用小写 `x` 分隔的两个正整数。非法值在应用、Runtime 和用户数据初始化前以 exit 1 和参数错误停止。缺省或空值保留原外框 `1040×720`、最小尺寸及正常启动路径，不输出本项诊断。现有 `--issue-tool-helper` 分支优先，不消费这个 GUI 选项。
+
+启用后，窗口使用 MyGo v0.7.4 的公开 `WindowOptions.UseContentSize`。创建和 resize 回调直接读取该窗口的 `ContentSize()`，同时更新既有响应式宽度。stderr 记录前缀为 `nagi native-content-size`，字段包括 `event=created|resize`、`unit=DIP`、启动请求 `requested_width/height` 和 getter 读回的 `actual_width/height`。请求值保持为启动参数，用户后续调整窗口不会被自动恢复到请求尺寸。该入口不写配置或会话，也不增加控制服务或窗口状态副本。
+
+尺寸验收须比较实际 getter 与请求值，并保留同源包的原生图和交互记录。OS 或窗口约束导致实际值不同时，如实记录差异；截图像素、CG 外框、应用宽度缓存和参数回显都不能替代内容区读回。接口实现及离线检查不等于原生 `960×640` 或视觉验收通过，实际验收由 #156 记录。
+
 ## 原生工作台（#130，历史实现事实；固定布局比例已由 #184 替代）
 
 更新于 2026-10-23。当前实现/测试 HEAD `c1b804e`（栈上合并 112 `31d3cff`；产品 formatter merge `4ec3ad5`）；本条只保留当轮 GUI 实现事实。当前布局规范和宽度偏好以顶部 [GUI 设计约束（当前规范）](#gui-design-constraints) 为准；当轮的固定 1120/960 列宽已由 [#184 可调三栏具体值](#adjustable-layout-values) 替代。后续宽窄返回的有限原生补验见 [1eb 固定包记录](#native-1eb-acceptance-r3)，不回填为旧 v3 包的通过结果。
@@ -597,6 +611,14 @@ type resolvedTheme struct {
 - `view.go` 保留 Back to latest/FollowEnd 行为；键盘焦点、消息选择和复制反馈沿用 reader 的实现。`workspace_test.go` 新增 received-output copy 回归；本次 #118 UI 改动没有修改 parser，也没有把 reader 测试改写成 #118 路由测试。
 - 证据边界：reader 的 headless 测试与 #118 的 app/real-runtime 测试分开记录；原生窗口/输入法仍未由 #118 执行，不能把 headless 通过写成 native PASS。
 
+### 对话及阅读中的本地文件链接（#327，实现事实，2026-11-06）
+
+助手消息中的相对文件链接由应用传入的来源目录解析，再复用现有文件检查与 `Shell.OpenPath` 请求。当前对话、已加载历史和来源使用该 Runtime 会话的 `SessionWorkingDir`，不使用进程 cwd 或后来编辑的联系人工作区。跨会话保存消息单独读取该来源会话的有效目录；目录不可得时显示不可解析说明，不借当前联系人目录。事项结果使用原执行目录，Markdown 文件内的相对链接使用该文件所在目录。
+
+reader 只接收可选的 `OpenLocalFile` 回调，不读取联系人、配置或文件。点击和聚焦后的 Enter 走同一回调；仅显式激活才请求打开。中文和空格路径按 Markdown URL 解码。文件不存在、不是普通文件或 opener 返回错误时，消息旁显示现有文件动作错误；成功只表示请求未报错，没有“外部文档已打开”的成功提示。用户原文、草稿、资料和复制内容不变。
+
+HTTPS、mailto、文内锚点、未完成链接与不支持的 scheme 保持原行为。应用回调复用 `ui.SafeToOpen`，不放宽 MyGo 默认链接规则，也不引入 Router。指针/键盘、不同 cwd/两个会话同名文件、来源未知和打开错误由 headless 应用回归覆盖；外部编辑器的真实文档/标签打开仍须用含修复的同源包原生观察，不能由回调返回 nil 或运行应用清单推断。
+
 ### #217 消息复制降权（阶段实现事实，2026-10-30）
 
 本切片基于冻结 `4546a1a9d2cfaf28771748f42b600c0abccaba07`，由 reader/Iris 实现，reader 主责评审；它是可组合的阅读组件阶段输入，不代表 #98 升级、#218 组合或新原生验收完成。
@@ -696,6 +718,22 @@ type resolvedTheme struct {
 - **验证边界**：`model_selection_integration_test.go`验证真实双协议模型请求、目录容量与provider ID分离、失败保持、丢回复和显式Release/Load；`model_selection_app_integration_test.go`从实际app视图/动作验证对话与事项隔离、重启、拒绝/冲突/取消、未知恢复、退出互锁及逆序读取。故障代理在真实Rust提交后丢弃或替换指定回复；`commit_unknown`代理只验证GUI消费语义，Runtime磁盘故障由其既有测试覆盖。使用固定#160 binary与本地受控HTTP provider，不声称任意外部模型或真实付费模型已验证。
 - **本机组合结果**：以#160 binary（SHA256 `c738c63374c0222b8e4397a15e1fb4109c8ff6bf34b89b8219cdecd7e0fa5516`）执行全部Go race并开启预览，240 PASS / 0 FAIL / 3 opt-in SKIP，136.672s；`go vet`、GUI build、diff检查通过。实际app明暗960/1280预览24张，选择器560/320预览8张；这些是受控数据下的headless页面。此前一次Chat子用例等待/quit超时未稳定复现，原日志保留，不能将本次通过写成已修复所有退出问题。
 - **原生限制**：2026-10-26再次读取CUA状态仍返回`Sky Computer Use native pipe startup failed`，未取得本候选原生点击/键盘/输入法证据。headless布局与真实进程消费者验收独立记录，不替代#114原生验收。最终验证SHA、门禁和日志随PR165/issue #115更新；尚未集成dev不标done。
+
+### #324 composer 模型浮层与统一设置（实现事实，2026-11-06）
+
+本实现基于 `758a5dde01fe8bd3302c26376c870d017c5fa0b1`，对应 `composer-model-popover-r1`。本节替代 #218 中当前对话模型在输入框下方内联展开的行为。资料上下文仍在原位置内联展开，事项执行模型保持原入口。
+
+`composerModelButton` 锚定 MyGo v0.7.4 的公开 `PopoverBase`，空间不足时向上展开。浮层覆盖内容，不改变聊天和 composer 布局，也不打开右侧工作区。候选只来自当前连接 `model.list` 的 `ConfiguredModels`。容量目录 `Models` 不作为模型声明。当前实际模型不在候选中时显示实际值，空列表与目录读取失败分别显示，不选择第一项补位。
+
+模型行保留完整可访问名称、tooltip、32px 命中区和当前项勾选。普通行透明，选中、hover 和键盘 focus 使用现有轻量底面。Up/Down 通过官方 `FocusGroup` 移动焦点，Enter 只激活菜单项，Escape 返回模型入口。Tab 关闭浮层并继续框架的焦点遍历，外部点击同时到达实际点击目标。关闭浮层不取消在途配置操作，也不解除未知结果保护。
+
+实际配置已确认时，再次激活当前项只关闭浮层并返回入口焦点，不写配置、不改变 revision、容量或手工草稿。未知或待恢复状态不按已确认处理，Settings 中显式修改同模型容量仍走原更新。选择其他项提交完整声明的模型和 compaction 参数，复用 `updateSessionModel` 的 revision、单次写入和实际回读。成功读回后更新 composer 并关闭浮层。失败保留实际模型和可见错误，未知结果继续使用 #115 的刷新或显式 Reload 契约。默认连接、其他会话、旧任务和历史不因此改变。
+
+底部唯一的 Manage models / 管理模型进入现有 Settings 的 Connection & models / 连接与模型分类。默认连接表单与当前对话覆盖分别标明作用域，仍使用原 `connectionForm` 和 `modelSelection`。手动模型 ID、容量、Refresh、Update model 和 Reload session 保持可达。全局 Settings 与浮层入口使用同一页面和同一表单。每次打开模型入口沿既有 Refresh 路径读取实际配置，保留可修正草稿。会话表单按 session 保留内存草稿，切换联系人或进入事项模型后再返回，不覆盖另一份未保存草稿。从事项模型进入设置后返回时，恢复原事项表单和未保存草稿，配置操作在途时保留原有关闭保护。Apply 安装新 Runtime 时清空旧连接的会话表单，沿原路径重新读取。
+
+纯导航不创建 session、不写配置、不发模型请求，保留联系人、聊天草稿、资料和阅读位置。当前对话尚未建立时显示未创建状态，不把默认模型作为已有会话的实际配置。
+
+行为覆盖位于 `composer_model_test.go` 与既有 `model_selection_app_integration_test.go`。受控故障代理只为声明模型用例扩充 `model.list`，实际更新、配置回读、历史与另一会话仍由同源 Rust 进程提供。截图和 `ui.Tester.Compose` 是 headless 证据，不证明系统 IME 或真实窗口已验收。准确验证 SHA、命令和原生限制记录在 #324 交付，最终集成由 PM 核对。
 
 ### #206 已释放事项的模型更新（实现事实与待验，2026-10-30）
 
@@ -805,6 +843,15 @@ type resolvedTheme struct {
 实现源：`aa044b643897844512ed36e11c01a5d0f3c580b5`。2026-11-03 的 guidance 校准把既有工作流规则写清为软提示：先核对目标 issue 的真实 goal、requirements 与已捕获材料；小修正、澄清或有限变更只沿同一 issue 的 supplement/answer 路径提交用户原文的准确增量，保留既有 requirements、identity 与 history，不把澄清当作完整重定义授权；真正的完整重定义仍可使用既有 update，不自动新建 issue。work guidance 要求修改已有文件前先读当前内容，优先最小 edit，只有新文件或确需整体替换才 write。已知应用旧 role 只做精确前缀替换，保留其后用户 profile/custom prompt 的原始字节，不再以“包含当前规则”判定升级完成。以上是模型提示，不是硬分类器或语义保证。
 
 旧 native、已绑定 schema-2 且目标工具已就绪的会话仅在 Runtime 明确返回 `continuation_not_supported`、其自带配置读回成功且完整 effective config（session/revision/system prompt/tools/aliases/connection 等）与更新前完全一致、且唯一差异是可精确识别的已发布应用 role 时，才走兼容接续：保持原 system/profile/tool selection/session/connection/history 与旧 journal 前缀，不写 config 升级；仅在本次 task.send 的既有 named caller_context 中附加一份当前 role guidance，每 task 至多一份。该低层输入不是 system 配置升级，不承诺与 system 同优先级，不计入用户附件或补充 ledger；历史投影仅在该 verified scope 同 save 记录本轮确实追加应用项的来源事实时，隐藏紧邻的一份应用项；旧/未知来源与用户同名同形材料保留。其它错误、schema refresh、缺工具、读回失败、混合 prompt 或真实工具/别名/连接变化仍按原路径拒绝。新会话和非 native 会话继续使用既有 system guidance 路径；本范围不扩到 schema-1/未绑定 legacy。B-r7 原始失败与真实模型改稿仍未复验，本段不改变该边界，也不表示完整 154 或 MVP 已通过。
+
+### #322 已有事项的逐轮发现上下文（实现事实与待验，2026-11-05）
+
+代码来源：`agent/gui/322-existing-issue-routing`，基于 `758a5dde01fe8bd3302c26376c870d017c5fa0b1`；最终源码、测试与 CI 证据见 [#322](https://github.com/HeimaoLST/Saki/issues/322)。
+
+- **宿主上下文**：managed conversation 每轮发送前，在 UI actor 上按该轮捕获的联系人与新 scope 构造 `nagi.issue_tools.issues`，紧接可选旧 native role、位于 opaque scope token 之前。摘要复用 `issueToolList` 与 `boundIssueToolList`，首选最多 50 个未归档事项，含真实 ID、goal、status、requirements revision、最近执行与待处理摘要；从未运行的事项也在此路径内。沿用文本截断、16 KiB 响应上限和 `has_more/next_cursor`；可用 `issue_list` 继续分页或查看归档事项，用 `issue_get` 读取当前完整详情。每轮重新投影，不注入全部 requirements 或执行历史，不读取 GUI 选中事项，也不改变其选择。
+- **单一事实与资料边界**：摘要只读同一 `productIssue` 与 scope 允许对象，不额外授权或选择执行目标。对话 builtin、query/action、supplement、run 与 work 执行路径保持原入口。store 只新增可选 `issue_list_appended` 来源标志，旧记录缺省为 false，无版本迁移；历史投影核实 session 与尾部 scope 后，才隐藏本轮紧邻的一份应用摘要及可选 role。同名用户资料、旧 scope 与其它 session 的资料保留，摘要不计入用户附件或补充 ledger。
+- **软指导**：引用已有计划或成果时，先发现并用 `issue_get` 核对同一事项，即使它尚未 run；授权执行走该事项 work。普通讨论与无关小动作继续留在 conversation，真实歧义先澄清，小补充仅保存同一事项的准确增量，完整重定义才 update。新委派无匹配事项时才 create/run。已发布旧 role 仍精确替换并保留用户 profile；旧 native 会话沿上节的 task-context 兼容路径补当前 role。本次没有关键词分类器、强制工具路由或第二个 agent loop。
+- **验证边界**：离线回归验证有界分页、scope 隔离与只读投影、逐轮事实刷新、未运行事项可见、历史来源过滤，并通过真实 Rust Runtime 与同 binary MCP helper 检查实际 caller-context。受控 provider 仅记录传输，不证明模型理解或选择正确。原 7b6 Flash 失败仍保留，线上完整 A/B 由 PM 另排新鲜 store/session；本节不宣称自然语言复用、真实改稿或 MVP 已验收通过。
 
 ## #276 工作状态投影与工作入口（实现事实，2026-11-03）
 
@@ -972,7 +1019,9 @@ type resolvedTheme struct {
 - **接口/状态修正**：v0.7.3 对同一 `ui.Handle` 在一次 build 中绑定两个控件更严格。`view` 在 build 前捕获 workspace overlay 决策，避免分隔条 OnChange 导致同一 frame 同时挂载三栏工作区和覆盖工作区、重复绑定 `OverviewScroll`。
 - **验证边界**：初段已通过一次 `gui-go.py test -run '^$'` 编译、Split/Editor patch 回归、Markdown 链接/复制/设置返回、composer IME/草稿/焦点、layout 分隔条/覆盖抽屉及 issue/settings 定向测试。随后固定 `62d142c` 用同一标准入口构建一次同源包：exit 0、66.467s，5 项 checksum、arm64、strict/deep 签名和 stdio smoke 通过。完整同包 Go race 实际完成：exit **1**、262.013s，**624 PASS / 8 FAIL / 3 既有 opt-in Skip**，checker exit 1，但 **18/18 MUST 均 PASS**；8 个 FAIL 均为 ModelSelectionGUI 使用旧固定 `Scroll(520,360)` 找不到 inline `Update model`，属于旧坐标 helper，不是 MUST 失败。该 FAIL 原样保留，不能在 62d 上写成 full 绿；#218 后来只在 218 树把该 helper 改为从实际 `Model details` viewport 滚动，并以 1040×720 完整模型组定向 PASS，原更新/拒绝/unknown/重启退出断言保留。218 新候选整体尚未重跑 full/package；native、IME 和线上模型仍未验证。旧 4546 包/窗口保持冻结，未用于本单。
 
-## #218 composer 固定主操作与内嵌模型编辑收尾（实现事实与待验，2026-10-30）
+## #218 composer 固定主操作与内嵌模型编辑收尾（历史实现，2026-10-30）
+
+当前对话模型的内联展示已由上文 #324 的锚定浮层和统一设置替代。以下证据只适用于当时提交。
 
 代码来源：`agent/gui/218-composer-final`，基于 #98 迁移提交 `62d142c460c01b23a49ebc087724acd6212f0f4d`。conversation composer 的 `Send`/`Stop conversation` 已移出 `ui.Toolbar`，固定为工具栏右侧的 `PrimaryButton`/`Button`，长模型名和 1040 最小正文 480px 时不会进入 Toolbar overflow；资料按钮仍在官方 Toolbar 内，使用标准按钮的 hover/pressed/焦点。模型入口固定显示 `Conversation` 作用域和截断短名，完整有效模型仍由原 model panel 显示；`Open model/context` 在内嵌 `Model details`/`Task context details` 视口滚动，既有 controller、会话 owner、async generation/openToken 守卫保留。被 `modelOpActive` 或 `connectionApplying` 拒绝的打开请求不会先改变 `composerPanel`，context owner 和 legacy dialog 状态保持一致。空草稿不新增禁用错误文案；有草稿时 `canSend` 的模型 recovery/容量/错误原因在 composer 内可见，原 Reload/Retry/更新路径仍可达。
 
@@ -1018,10 +1067,10 @@ type resolvedTheme struct {
 - **Profile**：右侧摘要读取当前 contact 已生效的 Name / Purpose / Instructions / Workspace / session / activity，不读取或展示另一份未保存 Settings draft。`Edit full profile` 进入既有唯一 Settings 的 Contact profile 分类和同一 `settingsProfiles` 草稿；Back 精确回到当前资料摘要的 Edit 入口。
 - **Work / issue model / task context**：Work 仍复用 `issueViewState` 的 filter/detail/scroll；显式执行入口调用 `setWorkspaceOpen(true)` 时保证切到 Work 载体，不依赖调用时原先打开的是 History 还是 Profile；运行事件不因完成/开始自动展开详情。窄页概览仍在同一 header 保留右上的 `New issue`，Back 在左、标题居中收缩，点击继续复用既有 issue form/controller。非 composer 的 Issue model / Task context 改为无遮罩主页面，顶部可见 Back，关闭后回到原 Issue 按钮；composer 内嵌 model/context 的既有 controller、owner、generation 和 Scroll 不变。
 - **成果、文件与 Sources**：结果页和文件阅读都占主内容，不塞右栏或第二层浮层；结果页固定 Back，文件页 `Back to results`，逐层为 file → result → work/issue 入口，保留 owner/issue/execution/session/task、raw/source/error、Copy/Open/Reveal/Reload 及精确焦点 handle。Settings 从当前可见面确定返回 scope（Work / History / Profile / Aux/result/reader/sources/model/context / Link）；reader 页由当前实际页面消费同一 `FocusReturn`，不回隐藏父页的 Close。Sources、非 composer model/context 同样使用主区页面和明确返回入口。
-- **Composer 主操作**：Send / Stop 继续固定在 Toolbar 外；Stop 恢复可见的 “Stop conversation” 文字（图标仍保留），模型短名旁持续显示 Conversation 作用域，完整模型值仍在原面板。主导航与主动作不进入 Toolbar overflow；正常态不增加重复说明，error/unknown/capacity/disabled 原因仍持续可读。
+- **Composer 主操作**：Send / Stop 继续固定在 Toolbar 外；Stop 恢复可见的 “Stop conversation” 文字（图标仍保留），模型短名旁持续显示 Conversation 作用域，完整模型值可在模型浮层及统一设置中查看，见 #324。主导航与主动作不进入 Toolbar overflow；正常态不增加重复说明，error/unknown/capacity/disabled 原因仍持续可读。
 - **2026-10-31 集成收尾事实**：
   - 详情浏览的持久化只跟随 `workspaceOpen` 的真实开合：已打开时切换 detail/focus 只变更瞬态状态，不再无条件重写 whole store；原字节一致回归通过。
-  - History 已允许请求开始前存在的 inline model/task-context carrier 打开保存全文；accepted `openSessionModel`（guard 之后）、`openConversationTaskContext` 和合法 owner 检查后的 `openIssueTaskContext` 统一调用既有 `cancelHistoryFullDisplay`，使后续旧请求失效；refused open 不取消。消息被拒打开后不会越过原 owner；loaded/saved 入口、Back、查询、滚动和焦点保持。既有真实 Rust 用例 `TestContactManagementGUIProfileNewConversationHistoryAndRestart` 在点击 `View full message` 前打开 inline task context，读取后仍保留原 Context、会话、请求次数和 inline owner，`0.920s` PASS。
+  - History 允许资料上下文已展开时打开保存全文。#324 的当前对话模型浮层和统一设置不取消 History 阅读；事项模型打开、`openConversationTaskContext` 和合法 owner 检查后的 `openIssueTaskContext` 继续调用 `cancelHistoryFullDisplay`，使后续旧请求失效；refused open 不取消。消息被拒打开后不会越过原 owner；loaded/saved 入口、Back、查询、滚动和焦点保持。既有真实 Rust 用例 `TestContactManagementGUIProfileNewConversationHistoryAndRestart` 在点击 `View full message` 前打开 inline task context，读取后仍保留原 Context、会话、请求次数和 inline owner，`0.920s` PASS。
   - composer 的 `Composer tools` Toolbar 设 `Shrink(0)`，保留资料按钮的实际 intrinsic 宽度；model 恢复 `MaxWidth(230)` 并由既有 `Shrink(1)` 自适应，Send/Stop 仍固定在 Toolbar 外。720 stop 实测 context 37.57px、model 224.52px、stop 150.26px，三者不重叠且 Stop 可见文字完整；详见 `/private/tmp/saki-gui-219-integration-fixes/key/composer-stop-720-{light,dark}.png`。
   - chat list 增加 `Conversation messages` 可访问名称，滚动测试在真实消息 viewport 内执行，不再依赖 Contact profile +20 的猜测坐标；旧 fixture 的 issue result 通过真实 `Close results` 导航回 Issue，编辑历史 720 使用整页 viewport；History 摘要通过真实 `Read full message` 阅读页验证，rail 测试在 detail 真正关闭后检查原边界。关键图在 `/private/tmp/saki-gui-219-integration-fixes/key/`（history/navigation 1040、720 明暗及 composer stop 720 明暗）。
   - `0ba50437d1ba73525aabe28127a5d79ade565b35` 同源验证完成：标准 build **53.865s** exit 0，包 `/private/tmp/saki-gui-219-final/0ba5043/package/Saki.app`（GUI `9d06e14386d194ae6aa0af435597b8324b6dff94b2696f2871edb7c72a5d8078`，Runtime `d7a8755c3b7b245bf8b5228ed4c4e5995bb9102523cf22c1201c58c120a23ef5`）；同包完整 race **273.191s** exit 0，**670 events = 667 PASS / 0 FAIL / 3 existing SKIP**（587 roots + 83 subtests），18/18 MUST 真 PASS，checker exit 0。适用 vet exit 0；Split/Editor patch dependency regression 2 root + 22 subtests PASS（0.511s）。同 SHA headless 预览 472 PNG 在 `/private/tmp/saki-gui-219-final/0ba5043/previews/`；这些全部是 `ui.Tester` 证据，包括文件名带 `native-` 前缀的图片也不是原生证据。native、IME、online 仍待验；用户 4546 窗口未触碰；无 dev 集成。

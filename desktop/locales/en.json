@@ -1517,6 +1517,11 @@
   "@resultFileRowLabel": {
     "description": "The accessible name of one reported result file; its index and file name are arguments."
   },
+  "modelManage": "Manage models",
+  "modelNoConfigured": "No models declared for this connection.",
+  "modelDefaultScope": "Default connection",
+  "modelConversationScope": "Current conversation override",
+  "markdownFileSourceUnknown": "The source session working directory is unknown; this relative file link cannot be resolved.",
   "issueCollaborationUnavailable": "Issue collaboration unavailable",
   "issueCollaborationRepairHint": "Fix the diagnostic error, then open Connection & model and apply the saved connection again, or restart the app."
 }

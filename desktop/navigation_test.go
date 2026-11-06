@@ -301,19 +301,17 @@ func TestHistoryFullActiveRequestPreservesInlineCarrier(t *testing.T) {
 	}
 }
 
-func TestHistoryFullLateResultCannotHijackReopenedInlineKind(t *testing.T) {
+func TestHistoryFullCanCompleteWhileModelPopoverIsOpen(t *testing.T) {
 	a, ct := workspaceTestApp(t)
 	a.windowWidth = 1040
 	a.openDetail(detailHistory)
-	a.aux = "model"
-	a.composerPanel = composerPanelModel
 	searchGen := a.contactHistoryGen
 	detailGen := a.contactHistoryDetailGen
 	a.contactHistoryDetailBusy = true
 	a.openComposerModel()
 	a.applyContactHistoryFull(nil, a.connectionGeneration, ct.ID, searchGen, detailGen,
 		&contactHistoryFull{SessionID: "s1", EntryID: "h1", Text: "late same kind"}, "", nil)
-	if a.contactHistoryFull != nil || !a.composerInlineAux() || a.contactHistoryDetailBusy {
+	if a.contactHistoryFull == nil || a.contactHistoryFull.Text != "late same kind" || !a.composerModelOpen || a.contactHistoryDetailBusy {
 		t.Fatalf("late result stole reopened inline kind: full=%+v aux=%q panel=%q busy=%v",
 			a.contactHistoryFull, a.aux, a.composerPanel, a.contactHistoryDetailBusy)
 	}
@@ -323,8 +321,6 @@ func TestHistoryFullRefusedInlineOpenDoesNotInvalidatePendingRead(t *testing.T) 
 	a, ct := workspaceTestApp(t)
 	a.windowWidth = 1040
 	a.openDetail(detailHistory)
-	a.aux = "model"
-	a.composerPanel = composerPanelModel
 	searchGen := a.contactHistoryGen
 	detailGen := a.contactHistoryDetailGen
 	a.contactHistoryDetailBusy = true
@@ -332,7 +328,7 @@ func TestHistoryFullRefusedInlineOpenDoesNotInvalidatePendingRead(t *testing.T) 
 	a.openComposerModel()
 	a.applyContactHistoryFull(nil, a.connectionGeneration, ct.ID, searchGen, detailGen,
 		&contactHistoryFull{SessionID: "s1", EntryID: "h1", Text: "accepted after refusal"}, "", nil)
-	if a.contactHistoryFull == nil || a.contactHistoryFull.Text != "accepted after refusal" || !a.composerInlineAux() {
+	if a.contactHistoryFull == nil || a.contactHistoryFull.Text != "accepted after refusal" || a.composerModelOpen {
 		t.Fatalf("refused inline open invalidated pending read: full=%+v aux=%q panel=%q",
 			a.contactHistoryFull, a.aux, a.composerPanel)
 	}
@@ -844,13 +840,13 @@ func TestExplicitDetailOpenKeepsTheSamePageOpen(t *testing.T) {
 func TestAcceptedIssueModelTargetLeavesConversationCarrier(t *testing.T) {
 	a, _ := workspaceTestApp(t)
 	a.openComposerModel()
-	if !a.composerInlineAux() || a.composerPanel != composerPanelModel {
+	if !a.composerModelOpen || a.mainPageActive() {
 		t.Fatalf("conversation model marker = aux=%q panel=%q", a.aux, a.composerPanel)
 	}
 	if !a.openSessionModel("issue-session", "work", "Issue") {
 		t.Fatal("issue model rejected without an active operation")
 	}
-	if a.aux != "model" || a.composerPanel != "" || a.composerInlineAux() || !a.mainPageActive() || a.modelPanelKind != "work" {
+	if a.composerModelOpen || a.aux != "model" || a.composerPanel != "" || a.composerInlineAux() || !a.mainPageActive() || a.modelPanelKind != "work" {
 		t.Fatalf("issue model kept conversation carrier: aux=%q panel=%q inline=%v main=%v kind=%q",
 			a.aux, a.composerPanel, a.composerInlineAux(), a.mainPageActive(), a.modelPanelKind)
 	}
@@ -861,7 +857,7 @@ func TestAcceptedIssueModelTargetLeavesConversationCarrier(t *testing.T) {
 	if rejected.openSessionModel("issue-session", "work", "Issue") {
 		t.Fatal("guarded issue model open was accepted")
 	}
-	if rejected.aux != "model" || rejected.composerPanel != composerPanelModel || !rejected.composerInlineAux() || rejected.modelPanelKind != "conversation" {
+	if !rejected.composerModelOpen || rejected.aux != "" || rejected.mainPageActive() || rejected.modelPanelKind != "conversation" {
 		t.Fatalf("rejected open changed the conversation carrier: aux=%q panel=%q inline=%v kind=%q",
 			rejected.aux, rejected.composerPanel, rejected.composerInlineAux(), rejected.modelPanelKind)
 	}

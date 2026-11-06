@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -640,5 +642,164 @@ func TestAppFullSavedMessageUsesReaderAndPreservesDraft(t *testing.T) {
 	tr.Frame()
 	if a.contactHistoryFull != nil || !a.detailIs(detailHistory) || ct.Draft != "draft survives full history" {
 		t.Fatalf("back from full history = full:%+v detail:%q draft:%q", a.contactHistoryFull, a.activeDetail(), ct.Draft)
+	}
+}
+
+func TestConversationLocalFileLinkUsesSessionDirectory(t *testing.T) {
+	a, ct := appReadingTestApp(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "native-output.md"), []byte("output"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ct.SessionWorkingDir = root
+	ct.Workspace = t.TempDir()
+	ct.Messages = []*message{{ID: 1, Kind: msgContact, Text: "已写入 [native-output.md](native-output.md)。 [网页](https://example.com/docs)"}}
+	ct.Draft = "keep this draft"
+	var opened []string
+	a.openPath = func(path string) error { opened = append(opened, path); return nil }
+	tr := ui.NewTester(a.view, 1040, 720)
+	tr.SetFocused(true)
+	tr.Frame()
+	if err := tr.Click("网页"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.OpenedURLs(); len(got) != 1 || got[0] != "https://example.com/docs" {
+		t.Fatalf("https positive control = %q", got)
+	}
+	if err := tr.Click("native-output.md"); err != nil {
+		t.Fatal(err)
+	}
+	if len(opened) != 1 || opened[0] != filepath.Join(root, "native-output.md") {
+		t.Fatalf("file opener = %q, want one request for session directory %q", opened, root)
+	}
+	tabToFocused(t, tr, "native-output.md")
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if len(opened) != 2 || opened[1] != filepath.Join(root, "native-output.md") {
+		t.Fatalf("Enter file opener = %q", opened)
+	}
+	if ct.Draft != "keep this draft" {
+		t.Fatalf("link changed draft: %q", ct.Draft)
+	}
+}
+
+func TestConversationFileLinkOwnersAndErrors(t *testing.T) {
+	t.Chdir(t.TempDir())
+	a, first := appReadingTestApp(t)
+	roots := []string{t.TempDir(), t.TempDir()}
+	const name = "中文 计划.md"
+	for _, root := range roots {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(root), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first.SessionWorkingDir, first.Draft = roots[0], "draft A"
+	first.Context.items = []taskContextItem{{ID: "material", Name: "notes", Text: "preserve attachment"}}
+	second := &contact{ID: "second", Name: "Other", SessionID: "s2", Loaded: true, SessionWorkingDir: roots[1], Draft: "draft B"}
+	text := "查看[本地](" + url.PathEscape(name) + ")。"
+	first.Messages = []*message{{ID: 1, Kind: msgContact, Text: text}}
+	second.Messages = []*message{{ID: 2, Kind: msgContact, Text: text}}
+	a.contacts = append(a.contacts, second)
+	var opened []string
+	a.openPath = func(path string) error { opened = append(opened, path); return nil }
+	tr := ui.NewTester(a.view, 1040, 720)
+	if err := tr.Click("本地"); err != nil {
+		t.Fatal(err)
+	}
+	a.selectContact(1)
+	tr.Frame()
+	if err := tr.Click("本地"); err != nil {
+		t.Fatal(err)
+	}
+	if len(opened) != 2 || opened[0] != filepath.Join(roots[0], name) || opened[1] != filepath.Join(roots[1], name) {
+		t.Fatalf("cross-contact paths = %q", opened)
+	}
+	if first.Draft != "draft A" || second.Draft != "draft B" || len(first.Context.items) != 1 || first.Context.items[0].Text != "preserve attachment" {
+		t.Fatal("link changed drafts or attached material")
+	}
+	tr.Frame()
+	if len(opened) != 2 {
+		t.Fatalf("frame retried file open: %q", opened)
+	}
+
+	for _, tc := range []struct {
+		name, base, target, want string
+		openerErr                error
+		calls                    int
+	}{
+		{name: "unknown source", target: url.PathEscape(name), want: "source session working directory is unknown"},
+		{name: "missing", base: roots[0], target: "missing.md", want: "No file exists at the reported path"},
+		{name: "opener failure", base: roots[0], target: url.PathEscape(name), want: "fixture opener failed", openerErr: errors.New("fixture opener failed"), calls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, ct := appReadingTestApp(t)
+			ct.SessionWorkingDir, ct.Workspace = tc.base, roots[1]
+			ct.Messages = []*message{{ID: 1, Kind: msgContact, Text: "查看[文件](" + tc.target + ")。"}}
+			count := 0
+			app.openPath = func(string) error { count++; return tc.openerErr }
+			tester := ui.NewTester(app.view, 1040, 720)
+			if err := tester.Click("文件"); err != nil {
+				t.Fatal(err)
+			}
+			tester.Frame()
+			if count != tc.calls || !tester.HasText(tc.want) {
+				t.Fatalf("calls=%d texts=%q", count, tester.Texts())
+			}
+			tester.Frame()
+			if count != tc.calls {
+				t.Fatal("error caused an automatic retry")
+			}
+		})
+	}
+}
+
+func TestSavedMessageFileLinkKeepsOriginalDirectory(t *testing.T) {
+	a, ct := appReadingTestApp(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "saved.md"), []byte("saved"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ct.SessionWorkingDir = t.TempDir()
+	a.contactHistoryFull = &contactHistoryFull{Origin: historyOriginSaved, SessionID: "old-session", EntryID: "old-entry", From: "contact", Text: "旧消息[文件](saved.md)。", WorkingDirectory: root}
+	var paths []string
+	a.openPath = func(path string) error { paths = append(paths, path); return nil }
+	tr := ui.NewTester(a.view, 1040, 720)
+	if err := tr.Click("文件"); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 1 || paths[0] != filepath.Join(root, "saved.md") {
+		t.Fatalf("historical paths=%q", paths)
+	}
+}
+
+func TestIssueResultMarkdownLinksUseRunAndFileOrigins(t *testing.T) {
+	a, ct := appReadingTestApp(t)
+	runRoot, documentRoot := t.TempDir(), t.TempDir()
+	for _, root := range []string{runRoot, documentRoot} {
+		if err := os.WriteFile(filepath.Join(root, "target.md"), []byte(root), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ct.SessionWorkingDir = t.TempDir()
+	a.aux = "issue-result"
+	a.issueResult = issueResultPage{Open: true, OwnerContactID: ct.ID, Generation: 1,
+		Panel: issueResultPanelState{WorkingDirectory: runRoot, Response: "结果[目标](target.md)。"}}
+	var paths []string
+	a.openPath = func(path string) error { paths = append(paths, path); return nil }
+	tr := ui.NewTester(a.view, 1040, 720)
+	if err := tr.Click("目标"); err != nil {
+		t.Fatal(err)
+	}
+	file := issueResultFile{SessionID: "work-session", TaskID: "task", CallID: "write", Path: filepath.Join(documentRoot, "report.md"), WorkingDirectory: runRoot}
+	key := issueResultFileKey(file)
+	a.issueResult.Panel.Files = []issueResultFile{file}
+	a.issueResult.Panel.ReaderKey, a.issueResult.Panel.InspectFor = key, key
+	a.issueResult.Panel.Inspection = &issueResultFileInspection{Exists: true, Regular: true, Preview: "文件内[目标](target.md)。"}
+	tr.Frame()
+	if err := tr.Click("目标"); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || paths[0] != filepath.Join(runRoot, "target.md") || paths[1] != filepath.Join(documentRoot, "target.md") {
+		t.Fatalf("run/file reader paths=%q", paths)
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -15,6 +16,8 @@ import (
 // markdownReaderOptions configures markdownReader. The source is the only
 // content it reads: no app, contact or runtime state is involved.
 type markdownReaderOptions struct {
+	// OpenLocalFile receives only explicit path-link activations; the caller owns the source directory and errors.
+	OpenLocalFile func(destination string) error
 	// PlainText shows source literally and never parses it as Markdown.
 	PlainText bool
 	// Streaming shows source as a reply still being written.
@@ -84,7 +87,10 @@ type markdownReaderState struct {
 	sourceFeedback readerCopyFeedback
 	codeFeedback   map[int]*readerCopyFeedback
 
-	ready bool
+	linkError  error
+	linkSource string
+	linkScope  string
+	ready      bool
 }
 
 type readerCopyFeedback struct {
@@ -144,6 +150,28 @@ func markdownReader(c *ui.Context, source string, options markdownReaderOptions)
 			return true
 		}
 	}
+	if st.linkSource != source || st.linkScope != options.LinkScope {
+		st.linkError = nil
+		st.opts.Anchor = ""
+		st.linkSource, st.linkScope = source, options.LinkScope
+	}
+	st.opts.OnLink = nil
+	if options.OpenLocalFile != nil {
+		st.opts.OnLink = func(dest string) {
+			st.linkError = nil
+			switch {
+			case strings.HasPrefix(dest, "#"):
+				st.opts.Anchor = strings.TrimPrefix(dest, "#")
+				st.opts.AnchorVersion++
+			case ui.SafeToOpen(dest):
+				c.OpenURL(dest)
+			case !strings.ContainsAny(dest, "\\\x00") && !strings.HasPrefix(dest, "//"):
+				if i := strings.IndexAny(dest, ":/?#"); i < 0 || dest[i] != ':' {
+					st.linkError = options.OpenLocalFile(dest)
+				}
+			}
+		}
+	}
 	st.opts.Theme = normalizedMarkdownTheme(options.Theme)
 	st.opts.LinkElement = nil
 	if !options.PlainText && options.LinkScope != "" && options.LinkFocus != nil {
@@ -182,6 +210,9 @@ func markdownReader(c *ui.Context, source string, options markdownReaderOptions)
 			markdown.Stream(c, source, &st.opts)
 		default:
 			markdown.View(c, source, &st.opts)
+		}
+		if st.linkError != nil {
+			ui.Text(c, st.linkError.Error()).FontSize(typeAction).LineHeight(1.4).TextColor(c.Theme().Danger)
 		}
 	}
 	if options.MessageBubble == nil {

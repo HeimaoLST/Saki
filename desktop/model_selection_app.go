@@ -105,12 +105,64 @@ func (a *appModel) updateModelContactDisplay(sessionID, model string) {
 }
 
 func (a *appModel) openComposerModel() {
+	if a.composerModelOpen {
+		a.closeComposerModel()
+		return
+	}
 	ct := a.selectedContact()
 	if ct == nil {
 		return
 	}
-	if a.openSessionModel(ct.SessionID, "conversation", ct.Name) {
-		a.composerPanel = composerPanelModel
+	if a.prepareConversationModel() {
+		a.composerModelOpen = true
+		a.composerModelFocus = true
+	}
+}
+
+func (a *appModel) prepareConversationModel() bool {
+	ct := a.selectedContact()
+	if ct == nil || a.shutdownStarted || a.connectionApplying || a.modelOpActive {
+		return false
+	}
+	if a.modelForm != nil && a.modelPanelKind == "conversation" {
+		if a.conversationModelForms == nil {
+			a.conversationModelForms = map[string]*modelSelection{}
+		}
+		a.conversationModelForms[a.modelForm.Target.Config.SessionID] = a.modelForm
+	}
+	if form := a.conversationModelForms[ct.SessionID]; form != nil && a.modelRecoveryFor(ct.SessionID) != modelRecoveryNeedsRefresh {
+		a.modelForm = form
+		a.modelPanelKind = "conversation"
+		a.modelPanelSessionID = ct.SessionID
+		form.Target.Label = ct.Name
+		if a.rt != nil && a.runtimeStatus == runtimeStateReady {
+			a.refreshSessionModel(form.Target)
+		}
+		return true
+	}
+	return a.openSessionModel(ct.SessionID, "conversation", ct.Name)
+}
+
+func (a *appModel) closeComposerModel() {
+	a.composerModelOpen = false
+}
+
+func (a *appModel) chooseComposerModel(index int) {
+	form := a.modelForm
+	if form == nil || form.Busy || a.modelOpActive || index < 0 || index >= len(form.Catalog.ConfiguredModels) {
+		return
+	}
+	if !form.Unconfirmed && a.modelRecoveryFor(form.Target.Config.SessionID) == 0 &&
+		form.Catalog.ConfiguredModels[index].Model == form.Effective.Config.EffectiveConfig.Model {
+		a.closeComposerModel()
+		a.composerFocusModel = true
+		return
+	}
+	form.SelectConfigured(index)
+	if request, ok := form.Request(); ok {
+		compaction := form.Catalog.ConfiguredModels[index].Compaction
+		request.Patch.Compaction = &compaction
+		a.updateSessionModel(request)
 	}
 }
 
@@ -118,14 +170,17 @@ func (a *appModel) openSessionModel(sessionID, kind, label string) bool {
 	if a.shutdownStarted || a.connectionApplying || a.modelOpActive {
 		return false
 	}
-	// The accepted target owns the panel from here. A saved-message request
-	// that started before it must not revive after this surface closes.
-	a.cancelHistoryFullDisplay()
-	a.composerPanel = ""
-	a.composerFocusModel = false
-	a.composerFocusContext = false
-	a.aux = "model"
+	a.composerModelOpen = false
+	if kind == "work" {
+		a.cancelHistoryFullDisplay()
+		a.composerPanel = ""
+		a.composerFocusModel = false
+		a.composerFocusContext = false
+		a.aux = "model"
+	}
 	a.modelPanelKind = kind
+	a.modelPanelSessionID = sessionID
+	a.modelPanelLabel = label
 	if kind == "work" {
 		a.focusAuxBack = true
 	}
@@ -149,7 +204,7 @@ func (a *appModel) openSessionModel(sessionID, kind, label string) bool {
 		config, err := rt.connectionConfig(sessionID)
 		if err != nil {
 			a.updateUI(func() {
-				if a.rt != rt || a.connectionGeneration != generation || a.aux != "model" || a.modelOpenToken != openToken || a.shutdownStarted {
+				if a.rt != rt || a.connectionGeneration != generation || a.modelPanelKind != kind || a.modelOpenToken != openToken || a.shutdownStarted {
 					return
 				}
 				a.modelPanelMessage = ""
@@ -160,11 +215,22 @@ func (a *appModel) openSessionModel(sessionID, kind, label string) bool {
 		}
 		catalog, catalogErr := a.loadModelCatalog(rt, config)
 		a.updateUI(func() {
-			if a.rt != rt || a.connectionGeneration != generation || a.aux != "model" || a.modelOpActive || a.modelOpenToken != openToken || a.shutdownStarted {
+			if a.rt != rt || a.connectionGeneration != generation || a.modelPanelKind != kind || a.modelOpActive || a.modelOpenToken != openToken || a.shutdownStarted {
 				return
 			}
 			target := modelSelectionTarget{Kind: kind, Label: label, Config: config}
 			form := newModelSelection(target, catalog)
+			if kind == "conversation" {
+				if a.conversationModelForms == nil {
+					a.conversationModelForms = map[string]*modelSelection{}
+				}
+				if saved := a.conversationModelForms[sessionID]; saved != nil {
+					form = saved
+					form.SetEffective(config)
+					form.SetCatalog(catalog)
+				}
+				a.conversationModelForms[sessionID] = form
+			}
 			if catalogErr != nil {
 				form.SetStatus(modelStatusCatalogUnavailable)
 			}
@@ -313,6 +379,10 @@ func (a *appModel) updateSessionModel(request modelSelectionRequest) {
 				form.SetResult(updated.runtimeConnectionConfig)
 				form.SetStatus(modelStatusUpdated)
 				a.updateModelContactDisplay(sessionID, updated.EffectiveConfig.Model)
+				if a.modelForm == form && a.composerModelOpen {
+					a.closeComposerModel()
+					a.composerFocusModel = true
+				}
 			} else {
 				a.applyModelUpdateFailure(form, sessionID, updated, err)
 			}

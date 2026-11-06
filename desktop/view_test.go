@@ -735,7 +735,7 @@ func TestContactRailControlsStayVisibleAtNarrowWidths(t *testing.T) {
 	}
 }
 
-func TestComposerModelAndTaskContextStayInlineAndReturnFocus(t *testing.T) {
+func TestComposerModelPopoverAndInlineContextReturnFocus(t *testing.T) {
 	a := testApp(t)
 	ct := a.selectedContact()
 	ct.Context.items = []taskContextItem{
@@ -748,17 +748,15 @@ func TestComposerModelAndTaskContextStayInlineAndReturnFocus(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr.Frame()
-	if a.aux != "model" || !a.composerInlineAux() || a.mainPageActive() {
+	if !a.composerModelOpen || a.mainPageActive() {
 		t.Fatalf("conversation model aux=%q panel=%q inline=%v", a.aux, a.composerPanel, a.composerInlineAux())
 	}
 	if !tr.HasText("This context has no Runtime session yet") {
 		t.Fatalf("inline model panel missing actual target state: %v", tr.Texts())
 	}
-	if err := tr.Click("Close"); err != nil {
-		t.Fatal(err)
-	}
+	tr.Key(0, ui.KeyEscape)
 	tr.Frame()
-	if a.aux != "" || a.composerPanel != "" || !tr.Focused("Chat model") {
+	if a.composerModelOpen || !tr.Focused("Chat model") {
 		t.Fatalf("model close = aux=%q panel=%q focused=%v", a.aux, a.composerPanel, tr.Focused("Chat model"))
 	}
 
@@ -810,9 +808,15 @@ func TestComposerModelAndTaskContextStayInlineAndReturnFocus(t *testing.T) {
 				t.Fatal(err)
 			}
 			tr.Frame()
-			if a.aux != "model" || a.composerPanel != composerPanelModel || !a.composerInlineAux() {
+			if !a.composerModelOpen || a.aux != "task-context" || a.composerPanel != composerPanelContext {
 				t.Fatalf("model could not open after rejection cleared: aux=%q panel=%q inline=%v", a.aux, a.composerPanel, a.composerInlineAux())
 			}
+			tr.Key(0, ui.KeyEscape)
+			tr.Frame()
+			if a.composerModelOpen || a.aux != "task-context" || !a.composerInlineAux() {
+				t.Fatal("model Escape also closed the separate task context")
+			}
+
 		})
 	}
 
@@ -824,7 +828,7 @@ func TestComposerModelAndTaskContextStayInlineAndReturnFocus(t *testing.T) {
 	tr.Frame()
 	a.selectContact(1)
 	tr.Frame()
-	if a.aux != "" || a.composerPanel != "" || a.composerInlineAux() || tr.HasText("Session model") {
+	if a.composerModelOpen || a.aux != "" || a.composerPanel != "" || a.composerInlineAux() {
 		t.Fatalf("contact switch kept stale inline model panel: aux=%q panel=%q texts=%v", a.aux, a.composerPanel, tr.Texts())
 	}
 	a.selectContact(0)

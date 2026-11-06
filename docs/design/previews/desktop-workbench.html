@@ -1680,6 +1680,23 @@
         align-items: center;
         gap: 3px;
       }
+      .composer .model-control { border: 0; background: transparent; padding: 0 8px; min-height: 32px; }
+      .model-select { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .composer-model-menu {
+        position: fixed; inset: auto; margin: 0; width: min(320px, calc(100vw - 32px));
+        padding: 6px; color: var(--ink); background: var(--surface);
+        border: 1px solid var(--control-border); border-radius: 10px;
+        box-shadow: 0 6px 20px #0002;
+      }
+      .composer-model-menu button {
+        display: flex; align-items: center; gap: 6px; width: 100%; min-height: 32px;
+        padding: 6px 8px; border: 0; border-radius: 4px; background: transparent;
+        color: var(--ink); font-size: 13px; text-align: left;
+      }
+      .composer-model-menu button:is(:hover, :focus-visible, [aria-checked="true"]) { background: var(--selected); }
+      .composer-model-menu svg { width: 16px; height: 16px; flex-shrink: 0; }
+      #model-choice span { flex: 1; }
+      .composer-model-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
       .model-scope {
         color: var(--muted);
         font-size: 12px;
@@ -2201,17 +2218,21 @@
                 </button>
               </div>
               <div class="composer-right">
-                <label class="model-control" title="当前对话，deepseek-v4.1-flash">
+                <button class="model-control" id="model" type="button"
+                  title="当前对话，deepseek-v4.1-flash" aria-label="当前对话模型：deepseek-v4.1-flash"
+                  aria-haspopup="menu" aria-expanded="false" popovertarget="composer-model-menu">
                   <span class="model-scope">对话</span>
-                  <span class="sr">当前对话模型</span>
-                  <select
-                    class="model-select"
-                    id="model"
-                    aria-label="当前对话模型：deepseek-v4.1-flash"
-                  >
-                    <option>DeepSeek Flash，deepseek-v4.1-flash</option>
-                  </select>
-                </label>
+                  <span class="model-select">deepseek-v4.1-flash</span>
+                </button>
+                <div id="composer-model-menu" class="composer-model-menu" popover role="menu" aria-label="当前对话模型">
+                  <button type="button" role="menuitemradio" aria-checked="true" id="model-choice">
+                    <span>deepseek-v4.1-flash</span><svg aria-hidden="true"><use href="#i-check" /></svg>
+                  </button>
+                  <hr />
+                  <button type="button" role="menuitem" id="manage-models">
+                    <svg aria-hidden="true"><use href="#i-settings" /></svg><span>管理模型</span>
+                  </button>
+                </div>
                 <button
                   class="icon primary send-icon"
                   id="send"
@@ -3736,6 +3757,37 @@
           return;
         }
         openSettings("appearance", { origin: $("settings-entry") });
+      });
+      const modelMenu = $("composer-model-menu");
+      function positionModelMenu() {
+        if (!modelMenu.matches(":popover-open")) return;
+        const anchor = $("model").getBoundingClientRect();
+        const box = modelMenu.getBoundingClientRect();
+        modelMenu.style.left = `${Math.max(16, Math.min(anchor.left, innerWidth - box.width - 16))}px`;
+        const below = anchor.bottom + 4;
+        modelMenu.style.top = `${Math.max(16, Math.min(innerHeight - box.height - 16, below + box.height <= innerHeight - 16 ? below : anchor.top - box.height - 4))}px`;
+      }
+      modelMenu.addEventListener("toggle", (event) => {
+        const open = event.newState === "open";
+        $("model").setAttribute("aria-expanded", String(open));
+        if (open) { positionModelMenu(); $("model-choice").focus(); }
+      });
+      addEventListener("resize", positionModelMenu);
+      $("model").addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowDown") return;
+        event.preventDefault(); modelMenu.showPopover(); $("model-choice").focus();
+      });
+      modelMenu.addEventListener("keydown", (event) => {
+        if (event.key === "Tab") { queueMicrotask(() => modelMenu.hidePopover()); return; }
+        if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+        event.preventDefault();
+        const items = Array.from(modelMenu.querySelectorAll("button"));
+        const next = items.indexOf(document.activeElement) + (event.key === "ArrowDown" ? 1 : -1);
+        items[(next + items.length) % items.length].focus();
+      });
+      $("model-choice").addEventListener("click", () => modelMenu.hidePopover());
+      $("manage-models").addEventListener("click", () => {
+        modelMenu.hidePopover(); openSettings("connection", { origin: $("model") });
       });
       $("diagnostics").addEventListener("click", () =>
         openSettings("connection", {

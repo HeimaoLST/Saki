@@ -23,6 +23,7 @@ const (
 	settingsSourceConfiguration = "configuration"
 	settingsSourceCommand       = "command"
 	settingsSourceComposer      = "composer"
+	settingsSourceModel         = "composer-model"
 	settingsSourceHistory       = "history"
 	settingsSourceAux           = "aux"
 	settingsSourceLink          = "link"
@@ -131,8 +132,20 @@ func (a *appModel) openSettingsTab(tab, source string) {
 	}
 	wasOpen := a.settingsOpen
 	if !wasOpen {
+		if a.aux == "model" && a.modelPanelKind == "work" {
+			target := modelSelectionTarget{Kind: "work", Label: a.modelPanelLabel, Config: runtimeConnectionConfig{SessionID: a.modelPanelSessionID}}
+			if a.modelForm != nil {
+				target = a.modelForm.Target
+			}
+			a.settingsReturnModelTarget = &target
+			a.settingsReturnModel = a.modelForm
+		}
 		a.settingsReturnFocus = source
 		a.settingsFocusBack = true
+	}
+	a.closeComposerModel()
+	if a.modelForm != nil {
+		a.modelForm.focusField = ""
 	}
 	a.settingsOpen = true
 	a.settingsTab = tab
@@ -172,10 +185,23 @@ func (a *appModel) selectSettingsTab(tab string) {
 }
 
 func (a *appModel) closeSettings() {
-	if !a.settingsOpen {
+	if !a.settingsOpen || (a.modelOpActive && a.settingsReturnModelTarget != nil && a.settingsReturnModel == nil) {
 		return
 	}
 	a.settingsOpen = false
+	if target := a.settingsReturnModelTarget; target != nil && a.aux == "model" {
+		if a.settingsReturnModel != nil {
+			a.modelOpenToken++
+			a.modelForm = a.settingsReturnModel
+			a.modelPanelKind = target.Kind
+			a.modelPanelSessionID = target.Config.SessionID
+			a.modelPanelLabel = target.Label
+		} else {
+			a.openSessionModel(target.Config.SessionID, target.Kind, target.Label)
+		}
+	}
+	a.settingsReturnModel = nil
+	a.settingsReturnModelTarget = nil
 	a.settingsFocusBack = false
 	a.settingsFocusTab = ""
 	switch a.settingsReturnFocus {
@@ -195,6 +221,8 @@ func (a *appModel) closeSettings() {
 		a.focusConnectionEntry = true
 	case settingsSourceConfiguration:
 		a.focusConfiguration = true
+	case settingsSourceModel:
+		a.composerFocusModel = true
 	case settingsSourceComposer:
 		a.focusComposer = true
 	case settingsSourceHistory:
@@ -303,12 +331,15 @@ func (a *appModel) settingsSidebar(c *ui.Context, t *ui.Theme, narrow bool) {
 				ui.Icon(c, navBackIcon).Width(16).Height(16).TextColor(t.TextMuted)
 				ui.Text(c, msgs.SettingsBack()).FontSize(typeAction).TextColor(t.Text)
 			})
-			back.OnClick(func() { a.closeSettings() })
+			back.Disabled(a.modelOpActive && a.settingsReturnModelTarget != nil && a.settingsReturnModel == nil).OnClick(func() { a.closeSettings() })
 			if a.settingsFocusBack {
 				back.Focus()
 				a.settingsFocusBack = false
 			}
 		}).Label(msgs.SettingsNavigationLabel()).AlignSelf(ui.Start).Padding(0)
+		if a.modelOpActive && a.settingsReturnModelTarget != nil && a.settingsReturnModel == nil {
+			ui.Text(c, msgs.ModelWaiting()).FontSize(typeAction).LineHeight(1.5).TextColor(t.TextMuted)
+		}
 		ui.Text(c, msgs.SettingsTitle()).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
 		nav := func(label, tab string) {
 			selected := a.settingsTab == tab
@@ -413,6 +444,7 @@ func (a *appModel) settingsConnectionContent(c *ui.Context, t *ui.Theme) {
 	form := a.connectionForm
 	ui.Column(c).FillWidth().MaxWidth(600).AlignItems(ui.Start).Gap(12).Children(func() {
 		ui.Text(c, msgs.SettingsConnection()).FontSize(typePageTitle).FontWeight(500).TextColor(t.Text)
+		ui.Text(c, msgs.ModelDefaultScope()).FontSize(typeGroupTitle).FontWeight(500).TextColor(t.Text)
 		if a.connectionApplied() && a.connectionEffective != nil {
 			ui.Column(c).FillWidth().Gap(4).Children(func() {
 				ui.Text(c, msgs.ConnectionCurrent(connectionCurrentSummary(a.connectionEffective))).FontSize(typeBody).LineHeight(1.5).TextColor(t.Text)
@@ -434,6 +466,16 @@ func (a *appModel) settingsConnectionContent(c *ui.Context, t *ui.Theme) {
 		actions := a.connectionActions()
 		actions.Discard = func() { form.ResetDraft() }
 		form.view(c, t, actions)
+		ui.Divider(c)
+		ui.Text(c, msgs.ModelConversationScope()).FontSize(typeGroupTitle).FontWeight(500).TextColor(t.Text)
+		if a.modelPanelKind == "conversation" && a.modelPanelSessionID == a.selectedContact().SessionID {
+			a.modelPanel(c, t)
+		} else {
+			secondaryButton(c, msgs.ModelSessionTitle()).Disabled(a.modelOpActive).
+				OnClick(func() {
+					a.prepareConversationModel()
+				})
+		}
 	})
 }
 

@@ -128,6 +128,7 @@ func TestModelSelectionProxyHelper(t *testing.T) {
 	}
 	var updates sync.Map
 	var reads sync.Map
+	var catalogs sync.Map
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
 		scanner.Buffer(make([]byte, 65536), runtimeMaxLine)
@@ -145,6 +146,9 @@ func TestModelSelectionProxyHelper(t *testing.T) {
 				}
 				_, _ = file.WriteString("update\n")
 				_ = file.Close()
+			}
+			if request.Method == "model.list" {
+				catalogs.Store(request.ID, true)
 			}
 			if request.Method == "session.config.get" {
 				reads.Store(request.ID, true)
@@ -196,6 +200,28 @@ func TestModelSelectionProxyHelper(t *testing.T) {
 		if _, ok := reads.Load(response.ID); ok && dropped && !failedRead && mode == "fail_readback" {
 			failedRead = true
 			writeError(response.ID, "io_error")
+			continue
+		}
+		if _, ok := catalogs.Load(response.ID); ok && os.Getenv("SAKI_MODEL_PROXY_DECLARED") == "1" {
+			var reply runtimeResponse
+			if err := json.Unmarshal(scanner.Bytes(), &reply); err != nil {
+				t.Fatal(err)
+			}
+			var catalog runtimeModelCatalog
+			if err := json.Unmarshal(reply.Result, &catalog); err != nil {
+				t.Fatal(err)
+			}
+			if len(catalog.ConfiguredModels) != 1 {
+				t.Fatal("expected one real model declaration")
+			}
+			second := catalog.ConfiguredModels[0]
+			second.Model = "model-B"
+			maxInput := second.Compaction.ContextTokens / 2
+			second.Compaction.MaxInputTokens = &maxInput
+			catalog.ConfiguredModels = append(catalog.ConfiguredModels, second)
+			reply.Result, _ = json.Marshal(catalog)
+			data, _ := json.Marshal(reply)
+			writeLine(data)
 			continue
 		}
 		writeLine(scanner.Bytes())

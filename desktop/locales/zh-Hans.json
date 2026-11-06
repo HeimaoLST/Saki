@@ -1067,6 +1067,11 @@
   "@resultFileRowLabel": {
     "description": "结果中某个已报告文件的辅助名称；序号和文件名是参数。"
   },
+  "modelManage": "管理模型",
+  "modelNoConfigured": "此连接未声明模型。",
+  "modelDefaultScope": "默认连接",
+  "modelConversationScope": "当前对话覆盖",
+  "markdownFileSourceUnknown": "来源会话的工作目录未知，无法解析这个相对文件链接。",
   "issueCollaborationUnavailable": "事项协作不可用",
   "issueCollaborationRepairHint": "修复诊断错误后，打开“连接与模型”并重新应用已保存的连接，或重启应用。"
 }

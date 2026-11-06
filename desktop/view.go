@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -16,7 +19,6 @@ import (
 var messageMarkdownTheme = &markdown.Theme{FontSize: typeBody, LineHeight: 1.5}
 
 const (
-	composerPanelModel   = "model"
 	composerPanelContext = "task-context"
 )
 
@@ -38,6 +40,9 @@ func messageReaderOptions(c *ui.Context, plain bool) markdownReaderOptions {
 func (a *appModel) view(c *ui.Context) {
 	a.uiLocale = c.Locale()
 	a.syncDetailPageMode()
+	if a.settingsOpen || a.mainPageActive() || a.detailPageActive() {
+		a.closeComposerModel()
+	}
 	if !a.settingsOpen {
 		a.linkReturnSeen = false
 	}
@@ -156,7 +161,8 @@ func (a *appModel) armActiveSurfaceFallback() {
 	}
 }
 
-func (a *appModel) readerOptions(options markdownReaderOptions, scope string) markdownReaderOptions {
+func (a *appModel) readerOptions(options markdownReaderOptions, scope, base string) markdownReaderOptions {
+	options.OpenLocalFile = func(dest string) error { return a.openMarkdownFile(base, dest) }
 	if !options.PlainText && scope != "" {
 		options.LinkScope = scope
 		options.LinkFocus = &a.markdownLinkFocus
@@ -771,7 +777,7 @@ func (a *appModel) historyMessage(c *ui.Context, t *ui.Theme, e historyEntry, hi
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Start).Children(func() {
 		a.avatarTile(c, t, 28)
 		ui.Column(c).MaxWidth(680).MinWidth(0).Shrink(1).Children(func() {
-			opts := a.readerOptions(messageReaderOptions(c, false), historyLinkScope(a.selectedContact().ID, "conversation", e.ID))
+			opts := a.readerOptions(messageReaderOptions(c, false), historyLinkScope(a.selectedContact().ID, "conversation", e.ID), a.selectedContact().SessionWorkingDir)
 			opts.MessageBubble = &markdownMessageBubble{
 				Background: bg, PaddingX: 14, PaddingY: 10, Radius: 14,
 				Header: func(hc *ui.Context) {
@@ -859,7 +865,7 @@ func (a *appModel) message(c *ui.Context, t *ui.Theme, ct *contact, m *message) 
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Start).Children(func() {
 			a.avatarTile(c, t, 28)
 			ui.Column(c).MaxWidthPercent(80).MinWidth(0).Shrink(1).Children(func() {
-				opts := a.readerOptions(markdownReaderOptions{Streaming: m.Streaming, CopyLabel: locales.In(c.Locale()).CopyMessageLabel(), Theme: messageMarkdownTheme}, messageLinkScope(ct.ID, m))
+				opts := a.readerOptions(markdownReaderOptions{Streaming: m.Streaming, CopyLabel: locales.In(c.Locale()).CopyMessageLabel(), Theme: messageMarkdownTheme}, messageLinkScope(ct.ID, m), ct.SessionWorkingDir)
 				opts.MessageBubble = &markdownMessageBubble{
 					Background: a.workTheme.BubbleContact, PaddingX: 12, PaddingY: 8, Radius: 12,
 					Header: func(hc *ui.Context) {
@@ -1003,8 +1009,7 @@ func (a *appModel) connectionErrorBanner(c *ui.Context, t *ui.Theme, ct *contact
 // ---------- composer ----------
 
 func (a *appModel) composerInlineAux() bool {
-	return a.aux != "" && a.composerPanel == a.aux &&
-		(a.aux == composerPanelModel || a.aux == composerPanelContext)
+	return a.aux == composerPanelContext && a.composerPanel == composerPanelContext
 }
 
 func (a *appModel) composerModelButton(c *ui.Context, t *ui.Theme, ct *contact) ui.Element {
@@ -1033,25 +1038,130 @@ func (a *appModel) composerModelButton(c *ui.Context, t *ui.Theme, ct *contact) 
 	return button
 }
 
+var modelSelectedIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>`))
+
+func (a *appModel) composerModelPopover(c *ui.Context, t *ui.Theme, anchor ui.Element) {
+	msgs := locales.In(c.Locale())
+	panel := ui.PopoverBase(c, anchor, &a.composerModelOpen, func(panel ui.Element) {
+		panel.Label(msgs.ConversationModelLabel()).Role(ui.RoleMenu).FocusGroup(ui.Vertical).
+			Width(320).MaxHeight(360).Padding(6).Gap(4).Margin(4, 0, 0, 0).
+			Radius(t.Radius+2).Background(t.Background).Border(1, t.Border).
+			Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.18))
+		if panel.OverlayShortcut(0, ui.KeyEscape) {
+			a.closeComposerModel()
+			a.composerFocusModel = true
+		}
+		leaveOnTab := func(ev ui.InputEvent) bool {
+			if ev.Kind == ui.InputKeyDown && ev.Key == ui.KeyTab {
+				a.closeComposerModel()
+			}
+			return false
+		}
+		ui.Scroll(c).FillWidth().MaxHeight(280).Children(func() {
+			ui.Column(c).FillWidth().Gap(4).Children(func() {
+				form := a.modelForm
+				if form == nil {
+					text := modelPanelMessageText(msgs, a.modelPanelMessage)
+					color := t.TextMuted
+					if a.modelPanelError != "" {
+						text = modelPanelErrorText(msgs, a.modelPanelError, a.modelPanelErrorDetail)
+						color = t.Danger
+					}
+					ui.Text(c, text).FontSize(typeAction).LineHeight(1.5).TextColor(color)
+				} else {
+					current := form.Effective.Config.EffectiveConfig.Model
+					declared := false
+					for _, entry := range form.Catalog.ConfiguredModels {
+						declared = declared || entry.Model == current
+					}
+					if !declared || form.Unconfirmed {
+						label := msgs.ModelEffectiveModel(current)
+						if form.Unconfirmed {
+							label = msgs.ModelLastReadModel(current)
+						}
+						ui.Text(c, label).FontSize(typeAction).LineHeight(1.5).TextColor(t.TextMuted)
+					}
+					if form.Status == modelStatusCatalogUnavailable || form.Status == modelStatusRefreshedNoCatalog {
+						ui.Text(c, msgs.ModelCatalogNotLoaded()).FontSize(typeAction).LineHeight(1.5).TextColor(t.Warning)
+					} else if len(form.Catalog.ConfiguredModels) == 0 {
+						ui.Text(c, msgs.ModelNoConfigured()).FontSize(typeAction).LineHeight(1.5).TextColor(t.TextMuted)
+					}
+					ui.Column(c).FillWidth().Children(func() {
+						ui.Column(c).FillWidth().Gap(2).Children(func() {
+							for index, entry := range form.Catalog.ConfiguredModels {
+								selected := !form.Unconfirmed && entry.Model == current
+								row := appTooltip(c, ui.ButtonBase(c).Radius(4).TextColor(t.Text).Label(entry.Model).Role(ui.RoleMenuItemRadio).Checked(selected).
+									FillWidth().MinHeight(32).Padding(6, 8).HandleInput(leaveOnTab), entry.Model)
+								if selected || row.Hovered() || row.FocusVisible() {
+									row.Background(t.SurfaceHover)
+								}
+								if row.Pressed() {
+									row.Background(t.SurfacePressed)
+								}
+								row.Children(func() {
+									ui.Row(c).FillWidth().MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
+										ui.Text(c, entry.Model).FontSize(typeAction).Grow(1).MinWidth(0).MaxLines(1).Ellipsis("…")
+										if selected {
+											ui.Icon(c, modelSelectedIcon).Size(16, 16).Shrink(0)
+										}
+									})
+								})
+								row.Disabled(form.Busy || form.Unconfirmed || a.modelOpActive).
+									OnClick(func() { a.chooseComposerModel(index) })
+								if a.composerModelFocus && !form.Busy && !form.Unconfirmed {
+									row.Focus()
+									a.composerModelFocus = false
+								}
+							}
+						})
+					})
+					if form.Error != "" {
+						ui.Text(c, modelErrorText(msgs, form.Error, form.ErrorDetail)).FontSize(typeAction).LineHeight(1.5).TextColor(t.Danger)
+					}
+					if form.UnconfirmedKind != "" {
+						ui.Text(c, modelUnconfirmedText(msgs, form.UnconfirmedKind, form.UnconfirmedDetail)).FontSize(typeAction).LineHeight(1.5).TextColor(t.Warning)
+					}
+					if form.Busy {
+						ui.Text(c, modelStatusText(msgs, form.Status)).FontSize(typeMeta).TextColor(t.TextMuted)
+					}
+				}
+			})
+		})
+		ui.Divider(c)
+		manage := ui.ButtonBase(c).MinHeight(32).Padding(6, 8).Radius(4).TextColor(t.Text).Label(msgs.ModelManage()).FillWidth().Justify(ui.Start).HandleInput(leaveOnTab).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+				ui.Icon(c, railSettingsIcon).Size(16, 16)
+				ui.Text(c, msgs.ModelManage()).FontSize(typeAction)
+			})
+		}).OnClick(func() {
+			a.openSettingsTab(settingsTabConnection, settingsSourceModel)
+		})
+		if manage.Hovered() || manage.FocusVisible() {
+			manage.Background(t.SurfaceHover)
+		}
+		if manage.Pressed() {
+			manage.Background(t.SurfacePressed)
+		}
+		if a.composerModelFocus {
+			manage.Focus()
+			a.composerModelFocus = false
+		}
+	})
+	if panel.Dismissed() {
+		a.closeComposerModel()
+	}
+}
+
 func (a *appModel) composerInlinePanel(c *ui.Context, t *ui.Theme) {
 	if !a.composerInlineAux() {
 		return
 	}
 	msgs := locales.In(c.Locale())
 	c.OnShortcut(0, ui.KeyEscape, func() { a.closeAux() })
-	scrollLabel := msgs.ModelDetailsScroll()
-	if a.aux == composerPanelContext {
-		scrollLabel = msgs.TaskContextDetailsScroll()
-	}
 	ui.Column(c).FillWidth().Children(func() {
-		ui.Scroll(c).Label(scrollLabel).MaxHeight(300).TrackScroll(a.auxScrollFor(a.aux)).Children(func() {
+		ui.Scroll(c).Label(msgs.TaskContextDetailsScroll()).MaxHeight(300).TrackScroll(a.auxScrollFor(a.aux)).Children(func() {
 			ui.Column(c).Padding(8, 10).Radius(10).Background(t.Surface).Gap(8).Children(func() {
-				switch a.aux {
-				case composerPanelModel:
-					a.modelPanel(c, t)
-				case composerPanelContext:
-					a.taskContextPanel(c, t)
-				}
+				a.taskContextPanel(c, t)
 			})
 		})
 	})
@@ -1175,6 +1285,10 @@ func (a *appModel) composer(c *ui.Context, t *ui.Theme) {
 				ui.Spacer(c)
 				modelButton := a.composerModelButton(c, t, ct)
 				modelButton.OnClick(func() { a.openComposerModel() })
+				if modelButton.Shortcut(0, ui.KeyDown) {
+					a.openComposerModel()
+				}
+				a.composerModelPopover(c, t, modelButton)
 				if a.composerFocusModel {
 					modelButton.Focus()
 					a.composerFocusModel = false
@@ -1360,7 +1474,7 @@ func (a *appModel) historyDetail(c *ui.Context, t *ui.Theme, narrow bool) {
 							if e.From == "me" {
 								markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: msgs.CopyHistoryMessageLabel(), Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.5).TextColor(t.Text)
 							} else {
-								markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: msgs.CopyHistoryMessageLabel(), Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "history", e.ID))).FontSize(typeBody).LineHeight(1.5)
+								markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: msgs.CopyHistoryMessageLabel(), Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "history", e.ID), ct.SessionWorkingDir)).FontSize(typeBody).LineHeight(1.5)
 							}
 						} else {
 							ui.Text(c, truncate(e.Text, 150)).FontSize(14).LineHeight(1.5).MaxLines(3).TextColor(t.Text)
@@ -1411,7 +1525,7 @@ func (a *appModel) sourcesPanel(c *ui.Context, t *ui.Theme) {
 			if e.From == "me" {
 				markdownReader(c, e.Text, markdownReaderOptions{PlainText: true, CopyLabel: msgs.CopySourceMessageLabel(), Theme: messageMarkdownTheme}).FontSize(typeBody).LineHeight(1.5).TextColor(t.Text)
 			} else {
-				markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: msgs.CopySourceMessageLabel(), Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "sources", e.ID))).FontSize(typeBody).LineHeight(1.5)
+				markdownReader(c, e.Text, a.readerOptions(markdownReaderOptions{CopyLabel: msgs.CopySourceMessageLabel(), Theme: messageMarkdownTheme}, historyLinkScope(ct.ID, "sources", e.ID), ct.SessionWorkingDir)).FontSize(typeBody).LineHeight(1.5)
 			}
 			ui.Row(c).Children(func() {
 				secondaryButton(c, msgs.ViewInConversation()).OnClick(func() { a.viewInConversation(e.ID) })
@@ -1555,4 +1669,31 @@ func truncate(text string, max int) string {
 		return text
 	}
 	return string(runes[:max]) + "…"
+}
+
+func (a *appModel) openMarkdownFile(base, destination string) error {
+	msgs := locales.In(a.uiLocale)
+	target, err := url.Parse(destination)
+	if err != nil {
+		return errors.New(msgs.ResultOpenFailed(err.Error()))
+	}
+	path := target.Path
+	if !filepath.IsAbs(path) {
+		if !filepath.IsAbs(base) {
+			return errors.New(msgs.ResultOpenFailed(msgs.MarkdownFileSourceUnknown()))
+		}
+		path = filepath.Join(base, path)
+	}
+	open := a.openPath
+	if open == nil {
+		open = openFileWithSystem
+	}
+	action := requestOpenIssueResultFile(issueResultFile{Path: filepath.Clean(path)}, open)
+	if action.NoticeKind != "" {
+		return errors.New(issueResultNoticeText(msgs, action.NoticeKind, action.NoticeDetail))
+	}
+	if action.ErrKind != "" {
+		return errors.New(issueResultNoticeText(msgs, action.ErrKind, action.ErrDetail))
+	}
+	return nil
 }

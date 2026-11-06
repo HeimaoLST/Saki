@@ -67,6 +67,7 @@ type IssueToolScope struct {
 	WorkIssueID           string   `json:"work_issue_id,omitempty"`
 	WorkExecutionID       string   `json:"work_execution_id,omitempty"`
 	RoleGuidanceAppended  bool     `json:"role_guidance_appended,omitempty"`
+	IssueListAppended     bool     `json:"issue_list_appended,omitempty"`
 	CreatedAt             int64    `json:"created_at"`
 }
 
