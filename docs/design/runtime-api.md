@@ -1,6 +1,6 @@
 # Runtime 调用契约与实施规划
 
-更新日期：2026-11-01（#31 有限 MVP 输入事实与 Python stdio 示例清理边界）。状态：**调用契约及服务化工作包已有实现；当前联合验收来源与范围见文末，集成状态以 #103、#31 和对应 PR 为准**。
+更新日期：2026-11-09（#333 独立 Runtime 入口、只读快照与可选 metadata 订阅）。状态：**当前 #333 独立 Runtime 工作树的调用契约与实现事实；提交、集成及外部消费者验收以 #333 和对应 PR 为准。后文服务化工作包及 #103/#31 记录保留原阶段与原证据，不能代替本轮验收**。
 
 需求依据：[Agent runtime 需求](../requirements/agent-runtime.md)、[#43](https://github.com/HeimaoLST/Saki/issues/43) 及 [GUI 首轮交接](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6235030388)。本文定义跨宿主调用契约与验收边界；实时优先级、任务状态和负责人以 GitHub 为准。
 
@@ -8,19 +8,34 @@
 
 本契约已取得实际消费意见与独立提案评审：[GUI ACK](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6258133217)、[PM 范围 ACK](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6258394345)、[TUI 兼容 ACK](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6262714452)、[最终提案独立评审汇总](https://github.com/HeimaoLST/Saki/pull/59#issuecomment-6244513599)。[PM 实施交接](https://github.com/HeimaoLST/Saki/issues/60#issuecomment-6284753791)已确认 #60 的 DoR，首轮按 #60 → #63 推进；[QA 边界调整](https://github.com/HeimaoLST/Saki/issues/60#issuecomment-6284890371)将 #64 限定为 CI 工程，不作为逐 PR 人工产品验收前置。
 
-以上确认针对调用契约与范围；现行实现状态以此时 `dev@d0502695` 的源码、测试和下文实现事实为准。具体 v1 DTO 位于 `src/session/stdio.rs`，可执行驱动位于 `examples/runtime_stdio.py`。多 session 并发、调用方输入资料和配置更新已经存在；#31 的有限 MVP 由 PM 接受，FIFO/steering 仍未实现；压缩后原文检索（#62）和权威已应用编辑结果（#33）仍是独立后续事项。
+以上确认针对原服务化调用契约与范围，基线为 `dev@d0502695`；#333 增量基于 `dev@ddf1dfbf`，当前入口与新增契约以下一节及 #333 实现事实为准。具体 v1 DTO 位于 `src/session/stdio.rs`，可执行驱动位于 `examples/runtime_stdio.py`。多 session 并发、调用方输入资料和配置更新已经存在；#31 的有限 MVP 由 PM 接受，FIFO/steering 仍未实现；压缩后原文检索（#62）和权威已应用编辑结果（#33）仍是独立后续事项。
 
 ## 现状与目标
 
-实现事实（`dev@d0502695`）：`src/session/runtime.rs` 提供 typed 服务核心，`src/session/stdio.rs` 提供 stdio v1 调用边界，按 ID 保留 loaded sessions；Runtime capacity 默认 1、可配置更高，同一 session 最多一个 accepted/running task，不同 session 可在容量内重叠。`Agent` 继续承担唯一模型／工具循环，`SessionStore` 和 journal reader 继续承担持久化／恢复，旧 TUI／console 入口保持。跨 session 并发已实现；压缩后原文检索（#62）和权威已应用编辑结果（#33）仍独立。
+当前 #333 工作树实现事实（基于 `dev@ddf1dfbf`）：`src/session/runtime.rs` 提供 typed 服务核心，`src/session/stdio.rs` 提供 stdio v1 调用边界，按 ID 保留 loaded sessions；Runtime capacity 默认 1、可配置更高，同一 session 最多一个 accepted/running task，不同 session 可在容量内重叠。`Agent` 继续承担唯一模型／工具循环，`SessionStore` 和 journal reader 继续承担持久化／恢复，TUI/console 由独立 Rous 消费服务，Saki 不再编译终端适配器。跨 session 并发已实现；压缩后原文检索（#62）和权威已应用编辑结果（#33）仍独立。
 
 ## 推荐方案与取舍
 
-推荐新增 `Saki --stdio`：一个子进程、一条输入 JSONL 和一条输出 JSONL。Go 通过 `os/exec` 的 pipe 调用，stdout 专用于机器响应／事件，stderr 用于诊断。无需新增依赖、监听端口、daemon、Rust library 打包或 Go FFI。
+当前 `Saki`（也接受 `Saki --stdio`）：一个子进程、一条输入 JSONL 和一条输出 JSONL。Go 通过 `os/exec` 的 pipe 调用，stdout 专用于机器响应／事件，stderr 用于诊断。无需新增依赖、监听端口、daemon、Rust library 打包或 Go FFI。
 
-HTTP 适合后续多连接／远程宿主，但当前需要额外服务生命周期；FFI 需要 ABI 与跨语言构建约束。两者不是首轮前提。默认启动及现有 `SAKI_UI=console|tui` 保持原行为，`--stdio` 是独立入口而非新 console 输出格式。
+HTTP 适合后续多连接／远程宿主，但当前需要额外服务生命周期；FFI 需要 ABI 与跨语言构建约束。两者不是首轮前提。默认启动就是 stdio 服务；`--stdio` 保持兼容。Saki 不再读取 `SAKI_UI` 或用终端状态选择前端。`--help`/`--version` 无需凭据、不初始化模型或会话。
 
 核心不依赖传输或前端。机器适配层负责解析、版本和关联；执行仍进入同一个 Agent、工具 registry、store、journal 和 compact。先复用／提取现有 session 执行与取消职责，不把第二份 model/tool loop 放进适配层，也不为了未来宿主预建插件框架。
+
+## #333 独立服务与消费者查询（实现事实）
+
+实现事实（#333，`product-repository-split-r1`）：Saki 只拥有 Runtime、服务宿主与公共协议，Nagi 和 Rous 各有独立仓库。stdio 调用 Runtime；Runtime 不再转调 stdio。现有 v1、存储 schema、接纳/取消/背压/终态/EOF/shutdown drain 语义保持。
+
+| 新增方法 | 参数、返回与错误 |
+| --- | --- |
+| `session.snapshot` | `{session_id,before_task_id?:string}`；仅限本进程已 loaded 的会话。返回 `{session_id,metadata,session,records,context}`；metadata 为现有 SessionMetadata，session 为现有 SessionState，records 为现有 `{offset,timestamp_ms,record}` 数组，context 为 `{model,context_tokens?,context_window?,input_limit?}`，不可用数值省略。 |
+| `runtime.metadata.subscribe` | `{}` → `{subscribed:true}`；重复调用不建立重复订阅。接纳订阅响应先于该订阅新事件；仅 opt-in 的连接收到 `{version:1,type:"event",session_id,event:{type:"session_metadata_updated"}}`。不携带 task_id/message_id，调用方重读 snapshot；通知不是 metadata 内容。 |
+
+snapshot 只读 journal，复用唯一 replay/context 估算，不调用模型、工具或工具发现，也不加载/接管未 loaded 会话的写锁。`before_task_id` 从记录中对应 TaskStarted 之前截断，供已显示该任务 live stream 的消费者使用；它不改变返回的当前 session 状态。找不到真实边界（包括 accepted 尚未 started）或会话未 loaded 返回 `not_found`，调用方不得假造历史。配置在读期间发生变化返回 `config_conflict`，需重读。输出投影与 frame 均受 8 MiB 限制，过大返回 `snapshot_too_large`，改用分页 `session.history`；连接保持可用。
+
+订阅复用有界 metadata broadcast 和既有有界输出；自动标题、手工 rename 和配置应用后可失效通知。broadcast lag 时对全部 loaded 会话重新发失效通知；不增加持久事件游标或断线重播。未 opt-in 的既有 Nagi 不接收新 unsolicited event。订阅不会阻止 EOF/shutdown 收尾。
+
+`SAKI_AUTOMATIC_TITLES` 只接受 `true`/`false`，默认 `false`；Rous 对其独占 Runtime 子进程设 `true`，复用已有附属标题作业，不在客户端新增模型循环。普通机器/Nagi 默认不变。所有会话 ID、数据目录与 schema 保持；不自动迁移/重放，不增加 daemon、远端文件或多客户端附着能力。
 
 ## 启动与配置
 
@@ -987,9 +1002,9 @@ load 可恢复有效 Conversation 但工具不可用时，返回明确错误并�
 
 验收补充日期：2026-10-23，分类仍为候选实现的确定性证据。已选工具的 description、有效 inputSchema、有效 outputSchema 分别变化时，下一 send 在模型请求前拒绝且 metadata/history 字节不变；显式确认后 revision 与持久化/生效 schema 同步，确认本身不启动业务调用。另以真实 SourceProcess 的现代 listen/ACK 和存活 PID 证明订阅尚未结束，再分别执行 Runtime release/shutdown，观察原进程回收、写锁可重新取得及同一来源配额重新可用；不是用直接 SourceProcess.close 代替 Runtime 收尾。modern/legacy/auto 三种策略另验证不支持的协议版本在工具发现前明确失败，进程及配额回收，不落入工具业务结果。cargo tree --locked -i rmcp -e features 核对实际依赖图仍为 rmcp 3.6.0，仅 client 与 transport-async-rw；未更改生产实现、SDK 版本或协议。以上不代表新的真实模型/GUI/TUI 组合已验收。
 
-## #109 终端服务委托与自动标题（实施中）
+## #109 终端服务委托与自动标题（历史实施阶段）
 
-更新日期：2026-10-23。分类：**候选实现事实，尚未集成到 dev**。app 只组装一份 Runtime，stdio 与终端选择各自适配器；SessionManager 已成为 RuntimeHandle 委托，不再持有 Agent、store 写入者或独立执行循环。终端展示通道和投影已接入候选，跨端真实运行及最终评审仍按 #103 核对，尚不能宣布 U02–U05 全部通过。
+更新日期：2026-10-23。分类：**历史候选实现事实，当时尚未集成到 dev；#333 已将终端适配迁至独立 Rous，以下文件/类型描述保留该阶段语义**。app 只组装一份 Runtime，stdio 与终端选择各自适配器；SessionManager 已成为 RuntimeHandle 委托，不再持有 Agent、store 写入者或独立执行循环。终端展示通道和投影已接入候选，跨端真实运行及最终评审仍按 #103 核对，尚不能宣布 U02–U05 全部通过。
 
 标题生成统一在 `src/session/title.rs`，沿用原 2000 字符双侧输入、60 字符标题、独立 1024 输出预算、30 秒期限和失败不改标题的规则。SessionManager 启用服务的附属标题作业并订阅 metadata 失效通知，原有独立标题 claim/apply/运行流程已移除。
 
@@ -1028,7 +1043,7 @@ history_required 时，桥在 Finished 前读取服务完整历史并发送同�
 
 | 验收范围 | 可复查来源 | 结论边界 |
 | --- | --- | --- |
-| U01–U05，两端及任务投影 | [服务](../../tests/session/service.rs)、[终端桥](../../tests/session/terminal_delivery.rs)、[TUI 投影](../../tests/tui/sessions.rs) | 实际接纳关联、历史与 live 边界、取消及唯一终态；不是另建执行循环 |
+| U01–U05，两端及任务投影 | [服务](../../tests/session/service.rs)、[终端桥](../../tests/session/terminal_delivery.rs)、[TUI 投影](https://github.com/HeimaoLST/Rous/blob/dev/tests/tui/sessions.rs) | 实际接纳关联、历史与 live 边界、取消及唯一终态；不是另建执行循环 |
 | C01–C10、C08a–e，配置及身份 | [配置](../../tests/session/config.rs)、[连接](../../tests/session/connections.rs)、[存储提交](../../tests/session/store_config.rs) | CAS、接纳快照、失败保持、未知旧身份、显式迁移及安全回退；不推测旧 endpoint |
 | N01–N08、N07a–d，并发及整链背压 | [并发](../../tests/session/concurrent.rs)、[stdio](../../tests/session/stdio.rs)、[通道](../../tests/session/channel.rs)、[真实宿主进程](../../tests/session/process.rs) | 受控到达／容量屏障与虚拟期限；输出失效后仍持久化、清理并释放锁 |
 | E01–E08、E06a–f，工具及输入资料 | [MCP 服务](../../tests/session/mcp.rs)、[MCP SDK](../../tests/tools/mcp_sdk.rs)、[来源](../../tests/tools/mcp_client.rs)、[资料](../../tests/session/context.rs) | SDK forced-lag、来源结束／重建、服务准入为分层证据，不宣称单一子进程 forced-lag 全链测试 |

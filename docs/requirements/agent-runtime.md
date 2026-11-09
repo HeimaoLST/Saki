@@ -1,16 +1,16 @@
 # Agent runtime 需求交接：多 session 重叠执行与可观察事实
 
-更新日期：2026-10-24。
+更新日期：2026-11-09（#333 独立产品边界）。
 状态：**通用 Runtime 需求与应用边界**。多会话容量与服务接口已演进，当前实现和验收来源见 [Runtime API](../design/runtime-api.md)，不再用“本文件尚未实施”概括全部能力。
-范围：本文描述通用调用方需要的能力，不定义 GUI 的联系人体验。Nagi 的产品模型与行为要求统一见 [GUI 产品定义](desktop.md)。本次更新不修改公共协议或实施方案。
+范围：本文描述通用调用方需要的能力，不定义 GUI 的联系人体验。Nagi 的产品模型与行为要求统一见 [GUI 产品定义](https://github.com/HeimaoLST/Nagi/blob/dev/docs/requirements/desktop.md)。三个产品采用独立仓库，边界见[产品仓库划分](../design/product-repositories.md)。
 
-> 原文 2026-10-15 的单执行槽观察已被新的服务实现取代，旧代码位置从现行要求中移除，可从 Git 历史追溯。当前核对基线为 `dev@fd58ec2`；GUI 多事项与跨客户端接续不能由 Runtime 基础能力直接推导为已完成。
+> 原文 2026-10-15 的单执行槽观察已被新的服务实现取代，旧代码位置从现行要求中移除，可从 Git 历史追溯。迁移前的运行能力核对基线为 `dev@ddf1dfbf`，本轮增量与验收见 #333；GUI 多事项与跨客户端接续不能由 Runtime 基础能力直接推导为已完成。
 
 ## 背景与范围
 
 - Saki 是可供 TUI／GUI／Web／Bot／API／脚本复用的通用 Agent Runtime。Nagi 是基于它构建的联系人式桌面产品，GUI 当前已有真实 Runtime 接入；它有自身的产品语义和交互目标。
 - 多个独立 session 的重叠执行是 runtime 能力，不能只靠 GUI 多窗口或在应用层复制 agent loop。不得把并发整体归到应用层。
-- 本文重点是 Runtime 与应用的职责边界；桌面产品需求见 [Nagi](desktop.md)，实际 GUI 接线见 [Desktop](../design/desktop.md)，会话与压缩契约见 [Session management](../design/session-management.md) 和 [Conversation compaction](../design/conversation-compaction.md)。长期身份研究不作为使用 Runtime 的前置。
+- 本文重点是 Runtime 与应用的职责边界；桌面产品需求见 [Nagi](https://github.com/HeimaoLST/Nagi/blob/dev/docs/requirements/desktop.md)，实际 GUI 接线见 [Desktop](https://github.com/HeimaoLST/Nagi/blob/dev/docs/design/desktop.md)，会话与压缩契约见 [Session management](../design/session-management.md) 和 [Conversation compaction](../design/conversation-compaction.md)。长期身份研究不作为使用 Runtime 的前置。
 
 ## 术语与边界
 
@@ -45,9 +45,9 @@
 | 范围 | 可核验依据与边界 |
 | --- | --- |
 | 服务与容量 | [runtime.rs](../../src/session/runtime.rs) 的 `RuntimeHandle`、`Runtime::with_max_active_tasks` 和 `Runtime::start`；默认容量 1，同一 session 的活动执行与全局容量分别检查 |
-| 终端与机器调用 | [terminal.rs](../../src/session/terminal.rs) 经 `RuntimeHandle` 调用；[stdio.rs](../../src/session/stdio.rs) 消费同一服务；[app.rs](../../src/app.rs) 负责组装 |
+| 机器调用与消费者 | [stdio.rs](../../src/session/stdio.rs) 消费唯一 Runtime；[app.rs](../../src/app.rs) 组装纯服务宿主；[Rous](https://github.com/HeimaoLST/Rous) 和 Nagi 通过公开协议调用，不依赖内部终端适配 |
 | 会话与上下文 | [Session management](../design/session-management.md) 和 [Conversation compaction](../design/conversation-compaction.md) 维护实际存储、恢复和压缩契约 |
-| GUI 产品能力 | 当前联系人绑定、历史和阶段限制见 [Desktop](../design/desktop.md)；工作分身、事项和 GUI/TUI 接续按 [Nagi 需求](desktop.md) 独立验收 |
+| GUI 产品能力 | 当前联系人绑定、历史和阶段限制见 [Desktop](https://github.com/HeimaoLST/Nagi/blob/dev/docs/design/desktop.md)；工作分身、事项和 GUI/TUI 接续按 [Nagi 需求](https://github.com/HeimaoLST/Nagi/blob/dev/docs/requirements/desktop.md) 独立验收 |
 
 ## 建议验收场景（用受控 mock／确定性协调，不用 sleep 碰运气）
 

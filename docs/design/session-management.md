@@ -1,64 +1,50 @@
 # Session management
 
-Updated: 2026-11-05 (ID allocation). Status: implemented session storage and host behavior. Machine admission, status, cancellation, configuration and caller-input facts below are checked against `dev@d0502695`; see [Runtime API](runtime-api.md) for the wire contract.
+Updated: 2026-11-09 (#333 independent service and read-only snapshots). Status: implemented session storage and host behavior. Machine admission, status, cancellation, configuration and caller-input facts below are checked against `dev@d0502695`; see [Runtime API](runtime-api.md) for the wire contract.
 
 ## Behavior
 
 SAKI supports multiple persistent conversations. At `dev@d0502695`, the machine Runtime defaults to `max_active_tasks=1` and supports a configured higher capacity across different sessions; each individual session still accepts at most one accepted/running task. A second send to an occupied session is rejected as `busy/session_busy`; an exhausted global capacity is `busy/capacity_exceeded`; neither rejection is queued. The terminal frontend's selected session, draft and Busy presentation are terminal-host policy, not a service-wide single-task limit. A host can reuse a session or create separate sessions, using the same Agent loop; neither choice defines the final Nagi contact model.
 
-Plain startup always creates a fresh session; it never restores stored history implicitly. Existing history is restored only through an explicit `SAKI_SESSION=<id>`, `/resume <id>`, or the session picker. `SAKI_SESSION=new` explicitly requests the same fresh-session behavior as plain startup. Opening a session reads history; it does not call the model, resume an unfinished job, or execute tools. Opening also takes an exclusive journal lock; because `fork(2)` copies the descriptor table, a child that has not `exec`'d yet can briefly keep a released lock alive, so lock acquisition retries for a bounded window before reporting the session as locked.
+Saki starts as a stdio service without selecting or creating a session. Creation and loading require explicit `session.create` / `session.load`. Rous owns fresh startup, `SAKI_SESSION`, local commands and the session picker in its independent repository; Nagi owns its own contact/session selection. Loading reads history without calling a model, resuming a job or executing tools. It takes an exclusive journal lock; a child between fork and exec can briefly retain an inherited descriptor, so lock acquisition retries for a bounded window before reporting locked.
 
 Both metadata schemas retain the session's model, API/protocol, working directory and compaction configuration; configuration revision and capacity source have legacy defaults. Only explicit schema 2 stores the enhanced connection identity/binding, system prompt and tool selection/schemas ([creation](https://github.com/HeimaoLST/Saki/blob/d0502695446e4826c34c1d9d8e841d0e10cdcd09/src/session/store.rs#L200-L221)). Schema 1 requires these enhanced fields to be absent (tool schemas empty); its initial system message remains in the journal, so old metadata is not evidence of a verified endpoint or enhanced configuration ([validation](https://github.com/HeimaoLST/Saki/blob/d0502695446e4826c34c1d9d8e841d0e10cdcd09/src/session/store.rs#L657-L666)). Current environment defaults apply to new sessions. `session.config.update` validates idle changes and applies them to the next task without rewriting history. Credentials and live clients remain host-owned; schema 2's saved [ConnectionIdentity](https://github.com/HeimaoLST/Saki/blob/d0502695446e4826c34c1d9d8e841d0e10cdcd09/src/client/connections.rs#L16-L21) includes connection_id, API and normalized endpoint as historical routing identity. Contact/profile data stays host/GUI-owned; Runtime has no profile record. A saved custom model route must still be supported by its resolved endpoint.
 
-A session records its wire protocol (`api`: `openai-responses` or `openai-chat-completions`). Legacy single-client startup and `/resume` use `SessionStore::open_for_api` to reject a protocol mismatch without a model request or history rewrite. A configured multi-connection service instead resolves the session's saved connection identity; it does not require every session to use the host's default client. Unknown legacy origin is not a verified binding, and explicit binding/upgrade follows the [connection contract](runtime-api.md#106-连接增强配置与显式升级候选实现事实). There is no silent protocol migration or fallback to another endpoint.
+A session records its wire protocol (`api`: `openai-responses` or `openai-chat-completions`). Legacy single-connection loads use `SessionStore::open_for_api` to reject a protocol mismatch without a model request or history rewrite. A configured multi-connection service instead resolves the session's saved connection identity; it does not require every session to use the host's default client. Unknown legacy origin is not a verified binding, and explicit binding/upgrade follows the [connection contract](runtime-api.md#106-连接增强配置与显式升级候选实现事实). There is no silent protocol migration or fallback to another endpoint.
 
 Session isolation covers conversation state and output directories. Two sessions using the same working directory still modify the same files. Switching sessions does not roll back the filesystem, create a worktree, or provide a sandbox.
 
-A session is a context and history boundary, not an application-level contact or work item. Nagi's target model associates a continuing conversation and separate work sessions with the same contact; see [Nagi product requirements](../requirements/desktop.md). Shared beliefs, experiences, and relationship history remain outside this session implementation; session contents are not automatically mixed into one another's prompts.
+A session is a context and history boundary, not an application-level contact or work item. Nagi's target model associates a continuing conversation and separate work sessions with the same contact; see [Nagi product requirements](https://github.com/HeimaoLST/Nagi/blob/dev/docs/requirements/desktop.md). Shared beliefs, experiences, and relationship history remain outside this session implementation; session contents are not automatically mixed into one another's prompts.
 
-## Use
+## Use and read queries
 
 | Entry | Behavior |
 | --- | --- |
-| `cargo run` | Create and start a new session; stored history is not restored implicitly |
-| `SAKI_SESSION=new cargo run` | Start a new session explicitly (same as plain startup) |
-| `SAKI_SESSION=<id> cargo run` | Open a specific session; fail explicitly if unavailable or locked |
-| Console: `/resume <id>` | Open an existing session by exact ID (explicit restore) |
-| `SAKI_SESSION_DIR=/path/to/sessions cargo run` | Use a different storage root |
-| TUI: Ctrl+S or click the session title | Open the session picker |
-| Picker: Up/Down, Enter | Select and open a session |
-| Picker: / then type | Filter the listed sessions locally; terms are case-insensitive and all must match title, ID, working directory or model |
-| Picker: Up/Down while searching | Move through the matching results only |
-| Picker: n | Create and open a new session (outside search) |
-| Picker: r | Rename the selected session; Enter saves, Esc cancels (outside search) |
-| Picker: Esc in search | Clear the search field and keep the picker open |
-| Picker: Esc or Ctrl+S | Close the picker (Esc closes after search is cleared) |
+| `cargo run` or `Saki --stdio` | Start v1 JSONL service; no implicit session |
+| `SAKI_SESSION_DIR=/path/to/sessions Saki` | Use the explicit storage root without moving old data |
+| `session.create` / `session.load` | Create or load an addressed session; failures never choose another session |
+| `session.history` | Read bounded pages of semantic journal records |
+| `session.snapshot` | Read a loaded session's metadata, current state, records and context estimate without execution |
+| `runtime.metadata.subscribe` | Opt in to metadata invalidations and refresh snapshot after notices |
 
-The picker shows titles, model routes, working directories, recent activity, and unavailable/in-use/interrupted states. It is displayed on demand; there is no permanent sidebar or shortcut list. A local `/` search filters the already-listed summaries: terms are case-insensitive, whitespace-separated and must all match the title, ID, working directory or model. An empty query shows all sessions in the existing recent-activity order; no matches show an explicit empty state, and Enter or `r` do nothing. Backspace is grapheme-safe, and while the field is active `n` and `r` are query text, not create/rename shortcuts. Search is frontend-only and never reaches core. New sessions start with the default title `New session` and a persisted `pending` provenance. After the first successful turn, one bounded background job asks the active model (tools disabled, small text-only excerpt, 30 s timeout) for a one-line title. Dispatch persists `auto` provenance first, so a failed, empty, timed-out, or restarted attempt is never retried; a manual rename records `manual` and always wins. Generated titles are English by design; only new sessions are eligible, and legacy metadata is never auto-titled. Metadata written before this feature has no provenance and keeps its explicit title.
+The [Runtime API](runtime-api.md#333-独立服务与消费者查询实现事实) defines exact snapshot and notification fields. A snapshot can exclude an identified active task's history prefix boundary when a consumer already displays its live stream; missing boundaries return `not_found`, never fabricated history. Oversized snapshots return `snapshot_too_large`; paginated history remains available. Snapshot reads do not take another process's session lock or change journal bytes.
 
-The TUI keeps each session's unsent draft, image attachments, reading position, selected record, and reasoning/tool expansion state during in-process switching. Reopening reads disk history again, so a cached view cannot hide newly saved messages. Cross-restart restoration of unsent drafts is not implemented. Restored reasoning is collapsed by default.
+Automatic titles are a generic optional service job. `SAKI_AUTOMATIC_TITLES=true` enables one bounded job after a new session's first successful turn; the default is false. A manual rename wins over late generated titles. Rous enables this for its exclusively owned Runtime process; UI drafts, navigation, attachment handling and rendering belong to that client. Nagi owns contact/issue associations. Neither client copies model/tool/compact execution.
 
-The [terminal adapter](https://github.com/HeimaoLST/Saki/blob/d0502695446e4826c34c1d9d8e841d0e10cdcd09/src/session/terminal.rs#L333-L391) permits listing, renaming, creating and opening another session while a task runs; opening another session does not cancel the old task. Sending remains subject to the same per-session/capacity admission rules, and the TUI preserves a rejected draft. While a job runs, Esc in the TUI (or `SessionCommand::Cancel { session_id, task_id }`) requests cancellation for the active session. Cancellation is cooperative: the Agent stops at await boundaries, persists already-streamed assistant partials in order, closes pending tool pairs as interrupted without replaying them, writes `TaskFinished { Interrupted }`, and emits exactly one terminal `TurnInterrupted`. Stale or mismatched session/task pairs do not cancel another task; a repeated matching cancel does not create a second terminal. Bash cancellation kills the whole process group, including descendants. Cancellation is not transactional: a partially started filesystem write from an in-flight tool may have finished or may remain half-written; inspect state before retrying. For an interrupted or unfinished turn, streamed public reasoning remains UI-only and is never persisted as a provider payload; normal completed turns keep their existing reasoning persistence. Only assistant text is made durable on cancellation (final messages always, plus the ordered streamed assistant partials). Closing the input connection drains accepted tasks before the worker exits; background title jobs are aborted when the manager stops.
-
-The console restores historical messages, reasoning, tool markers, compact records, and failure notices. Piped input is sent one message at a time and EOF does not discard an in-flight reply. Console callers can also use `/new`, `/sessions`, `/resume <id>`, and `/rename <title>`; startup configuration remains supported.
+`task.cancel {session_id,task_id}` is cooperative and directed; acknowledgment is not a terminal and cannot undo tool side effects. Bash cleanup completes before the task terminal. EOF and explicit shutdown stop admission and drain accepted work; subscription presence does not prolong the service. Clients must keep observing output and keep their application tool handlers alive until drain/child exit, then release local IPC/configuration.
 
 ## Modules and dependencies
 
 | Component | Responsibility |
 | --- | --- |
-| [SessionStore](../../src/session/store.rs) | Session directories, metadata, create/list/open/rename |
-| [SessionManager](../../src/session/mod.rs) | Active Agent lifecycle and typed request/event routing |
-| [Conversation](../../src/agent/conversation.rs) | Active model context, usage baseline, compact, and task persistence boundaries |
-| [Journal](../../src/agent/journal.rs) | One JSONL format, append writer, validation and replay |
-| [Agent](../../src/agent/mod.rs) | Existing model/tool loop; saves each tool result before proceeding |
-| [TUI sessions](../../src/frontend/tui/sessions.rs) | Picker interaction and per-session presentation cache |
-| [app](../../src/app.rs) | Configuration, startup selection, channels and frontend assembly |
+| `session::runtime::Runtime` / `RuntimeHandle` | Unique session/task ownership, admission, cancellation, status, configuration, snapshot queries |
+| `session::stdio` | v1 JSONL conversion, optional metadata notification delivery and process transport drain |
+| `SessionStore` | Session directories, metadata, create/list/open/rename |
+| `Conversation` / journal | One context/compact implementation, append writer, validation and replay |
+| `Agent` / tool registry / ModelClient | Unique model and tool execution loop |
+| `app` | Explicit host configuration and stdio assembly; no UI selection |
 
-The journal lives under `agent/` so Conversation and the standalone experiment can use persistence without depending on SessionManager, a frontend, or application assembly. SessionStore reuses that same journal reader. There is no second parser for UI history.
-
-Frontends exchange `SessionCommand` and `SessionEvent`. Agent events are wrapped as `SessionEvent::Agent { session_id, event }`; the AgentEvent variants remain unchanged. An `Opened` event supplies session metadata, a history/context snapshot, and current context information before subsequent job events. Frontends ignore events for other session IDs.
-
-`SessionCommand` is a typed core request, not a slash-command parser. Available requests are Send, List, Create, Open, Rename, and Cancel; Cancel carries both `session_id` and `task_id` ([definition](https://github.com/HeimaoLST/Saki/blob/d0502695446e4826c34c1d9d8e841d0e10cdcd09/src/session/terminal.rs#L30-L48)). `SessionStore::create` returns an ID without selecting it; the manager's Create request combines creation and opening for the current application. Agent can still be called directly without session management or a TUI.
+Saki has no terminal module exports or frontend includes. Snapshot context estimation is inside Runtime and reuses the same replay and tool definitions; consumers receive semantic records, never serialized Replay/Conversation/ToolRegistry. The protocol's association identifies session/task/message/item/call; the UI's selected object never supplies missing ownership.
 
 ## Storage
 
@@ -117,14 +103,14 @@ If a target session fails to load, the existing active Agent and its frontend dr
 
 ## Validation and limits
 
-Behavior tests are grouped in [session tests](../../tests/session/mod.rs), [conversation tests](../../tests/conversation/mod.rs), and [TUI session tests](../../tests/tui/sessions.rs). They cover A/B/A context and model separation, session working directories, save/reopen, Busy handling, failed-open preservation, file locking, invalid versions, torn-tail recovery, interrupted tools, draft/attachment/view preservation, session ID filtering, and picker search (metadata matching, empty state, key precedence, grapheme-safe editing, and selection stability across rename/title updates). Existing tests now exercise production restore after repeated compact checkpoints and compare native requests containing images and reasoning before/after restore. M1 adds the API mismatch cases (2026-10-16): `a_session_created_on_another_api_is_not_opened_or_changed` (the refused open leaves the active session and files untouched) and `cross_api_open_with_torn_tail_fails_before_repairing_the_history` (fails before restore, history bytes unchanged, while the matching API still repairs the tail).
+Behavior tests are grouped in [session tests](../../tests/session/mod.rs), [conversation tests](../../tests/conversation/mod.rs), and the independent Rous consumer tests. They cover A/B/A context and model separation, session working directories, save/reopen, Busy handling, failed-open preservation, file locking, invalid versions, torn-tail recovery, interrupted tools, draft/attachment/view preservation, session ID filtering, and picker search (metadata matching, empty state, key precedence, grapheme-safe editing, and selection stability across rename/title updates). Existing tests now exercise production restore after repeated compact checkpoints and compare native requests containing images and reasoning before/after restore. M1 adds the API mismatch cases (2026-10-16): `a_session_created_on_another_api_is_not_opened_or_changed` (the refused open leaves the active session and files untouched) and `cross_api_open_with_torn_tail_fails_before_repairing_the_history` (fails before restore, history bytes unchanged, while the matching API still repairs the tail).
 
 - Historical all-target regression (2026-10-13): **197 main tests + 40 experiment tests passed**. Formatting, build and whitespace checks also passed.
 - Current acceptance for automatic titles and cancellation (2026-10-15, frozen binary SHA `63b74e217c5d239e…`): combined serial suite passed **282 main + 40 experiment tests** with `cargo fmt --all -- --check` clean; the independent 5-scenario PTY harness passed 5/5; a real Magpie gateway live smoke (`opencode-go/deepseek-v4.1-flash`) completed with no tool calls and generated the title `Simple Greeting Request and Response` (report: `/tmp/saki-title-cancel-qa/live_report.json`).
 
 Additional acceptance used the actual binary with an isolated mock Responses server and temporary session roots:
 
-- Fresh-startup default (current): two plain console startups created two distinct sessions with no restored transcript and no model connection; explicit `SAKI_SESSION=<id>` restored the seeded transcript; a missing or locked explicit ID failed without creating or falling back. Test: [startup regression](../../tests/console/startup.rs). Independent compiled-binary acceptance also confirmed two plain launches created distinct IDs and explicit reopen created no additional session. Combined serial verification on 2026-10-15 passed 251 main tests and 40 experiment tests, with 6 manual fixtures ignored; log: `/tmp/saki-color-session-supervisor-tests.log`.
+- Fresh-startup default (current): two plain console startups created two distinct sessions with no restored transcript and no model connection; explicit `SAKI_SESSION=<id>` restored the seeded transcript; a missing or locked explicit ID failed without creating or falling back. Test: [startup regression](https://github.com/HeimaoLST/Rous/blob/dev/tests/console/startup.rs). Independent compiled-binary acceptance also confirmed two plain launches created distinct IDs and explicit reopen created no additional session. Combined serial verification on 2026-10-15 passed 251 main tests and 40 experiment tests, with 6 manual fixtures ignored; log: `/tmp/saki-color-session-supervisor-tests.log`.
 - Historical (implicit resume existed then): two process lifetimes: automatic resume, restored visible history, saved context sent on the next request, cross-process lock rejection, and zero model calls during open. Evidence: `/var/folders/_x/4s504vvn6zv5vz36ktpbwl480000gn/T/saki-session-process-omyhw7sa/report.json`.
 - Hard-kill after a completed write tool: the saved result survived, the lock was released, reopening reported Interrupted, continuing recorded the interruption, and the write was not replayed. Evidence: `/var/folders/_x/4s504vvn6zv5vz36ktpbwl480000gn/T/saki-session-crash-e60gvqja/report.json`.
 - Real PTY with terminal-screen decoding: create/open/rename through the picker, A/B draft restoration, and clean exit. Evidence: `/var/folders/_x/4s504vvn6zv5vz36ktpbwl480000gn/T/saki-session-tui-qx05xgyc/report.json`.
@@ -133,13 +119,9 @@ These session checks used local mock model responses; no new real-provider reque
 
 Remaining scope: durable queued follow-up/steering, session deletion/export/fork, old-directory migration, full-text history search (the picker only filters list metadata), cross-restart drafts, library packaging, and shared long-term identity. Cross-session execution already exists; it is not a same-session queue.
 
-## Local command system
+## Consumer navigation
 
-The command layer should parse local user intent and dispatch existing typed operations. It should not introduce a second session implementation or send local commands as ordinary model messages.
-
-The implemented vocabulary is `/new`, `/sessions`, `/resume <id>`, `/rename <title>`, and `/help`. TUI picker buttons/keys and slash commands call the same session handlers. The command implementation documents completion, argument errors, literal-slash escaping, draft preservation, and Busy feedback. TUI Esc cancellation and `SessionCommand::Cancel { session_id, task_id }` are implemented and accepted (see Behavior). Future commands such as manual compact should be added only alongside their own supported core operations; model/compaction changes already have the idle `session.config.update` path.
-
-Implemented local input routing: [Local command system](command-system.md).
+Rous owns local command parsing, selected session, drafts and terminal cleanup. Its operations use the service contract above. Saki owns execution and history, with no second session implementation or local slash-command parser. Product navigation does not cancel a running task or release a live session unless explicitly requested.
 
 ## Machine host
 

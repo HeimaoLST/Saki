@@ -10,7 +10,6 @@ use std::{
 use futures_util::FutureExt;
 use serde::Serialize;
 use tokio::{
-    io::{AsyncBufRead, AsyncWrite},
     sync::{broadcast, mpsc, oneshot, watch},
     task::{JoinHandle, JoinSet},
 };
@@ -159,6 +158,26 @@ pub struct HistoryPage {
     pub status: String,
     pub state: &'static str,
     pub active_task_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SnapshotContext {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionSnapshot {
+    pub session_id: String,
+    pub metadata: SessionMetadata,
+    pub session: SessionState,
+    pub records: Vec<HistoryRecord>,
+    pub context: SnapshotContext,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -327,6 +346,10 @@ pub enum RuntimeCommand {
         session_id: String,
         title: String,
     },
+    Snapshot {
+        session_id: String,
+        before_task_id: Option<String>,
+    },
     History {
         session_id: String,
         offset: usize,
@@ -375,6 +398,7 @@ pub enum RuntimeReply {
         session_id: String,
         metadata: SessionMetadata,
     },
+    Snapshot(Box<SessionSnapshot>),
     History(HistoryPage),
     Released {
         session_id: String,
@@ -538,10 +562,6 @@ impl Runtime {
         self
     }
 
-    pub(super) fn output_state(&self) -> OutputState {
-        self.output.clone()
-    }
-
     #[cfg(test)]
     pub(crate) fn with_panicking_session(mut self, session_id: String) -> Self {
         self.panicking_sessions.insert(session_id);
@@ -585,14 +605,6 @@ impl Runtime {
     pub fn with_event_limits(mut self, limits: EventLimits) -> Self {
         self.limits = limits;
         self
-    }
-
-    pub async fn run<R, W>(self, input: R, writer: W) -> anyhow::Result<()>
-    where
-        R: AsyncBufRead + Unpin,
-        W: AsyncWrite + Unpin + Send + 'static,
-    {
-        super::stdio::run(self, input, writer).await
     }
 
     pub fn start(self) -> (RuntimeHandle, JoinHandle<anyhow::Result<()>>) {
@@ -705,6 +717,12 @@ enum Prepared {
         tool_error: Option<RuntimeError>,
     },
     Listed(Vec<SessionSummary>),
+    Snapshot {
+        session_id: String,
+        revision: u64,
+        records: Vec<HistoryRecord>,
+        context: SnapshotContext,
+    },
     History {
         session_id: String,
         replay: Replay,
@@ -1241,6 +1259,8 @@ impl RuntimeActor {
                         "session.list",
                         "session.rename",
                         "session.history",
+                        "session.snapshot",
+                        "runtime.metadata.subscribe",
                         "session.status",
                         "session.release",
                         "task.send",
@@ -1473,6 +1493,27 @@ impl RuntimeActor {
                         session_id: id,
                         metadata,
                     })
+                });
+            }
+            RuntimeCommand::Snapshot {
+                session_id,
+                before_task_id,
+            } => {
+                let Some(session) = self.sessions.get(&session_id) else {
+                    let _ =
+                        reply.send(Err(RuntimeError::new("not_found", "session is not loaded")
+                            .session(&session_id)));
+                    return;
+                };
+                let metadata = session.metadata.clone();
+                let prompt = session.system_prompt.clone();
+                if !self.admit() {
+                    self.reject_busy(reply);
+                    return;
+                }
+                let store = self.store.clone();
+                self.spawn_op(reply, None, move || {
+                    prepare_snapshot(&store, &metadata, prompt, before_task_id)
                 });
             }
             RuntimeCommand::History {
@@ -2469,6 +2510,9 @@ impl RuntimeActor {
                     session.tool_error = None;
                 }
 
+                let _ = self
+                    .metadata_updates
+                    .send(SessionMetadataUpdate { session_id });
                 let view = self.decorate_config(ConfigView::from_metadata(&metadata, prompt));
                 Ok(RuntimeReply::ConfigUpdated {
                     config: view,
@@ -2518,6 +2562,39 @@ impl RuntimeActor {
                     .map(|summary| self.summary_view(summary))
                     .collect(),
             }),
+            Prepared::Snapshot {
+                session_id,
+                revision,
+                records,
+                context,
+            } => {
+                let entry = self.sessions.get(&session_id).ok_or_else(|| {
+                    RuntimeError::new("not_found", "session is not loaded").session(&session_id)
+                })?;
+                if entry.metadata.config_revision != revision {
+                    return Err(
+                        RuntimeError::conflict(entry.metadata.config_revision).session(&session_id)
+                    );
+                }
+                let metadata = entry.metadata.clone();
+                let snapshot = SessionSnapshot {
+                    session: self.session_state(&session_id, Some(metadata.clone()), None),
+                    session_id: session_id.clone(),
+                    metadata,
+                    records,
+                    context,
+                };
+                serde_json::to_writer(&mut ByteCounter::new(8 * 1024 * 1024), &snapshot).map_err(
+                    |_| {
+                        RuntimeError::new(
+                            "snapshot_too_large",
+                            "snapshot exceeds its 8 MiB projection limit; use session.history",
+                        )
+                        .session(&session_id)
+                    },
+                )?;
+                Ok(RuntimeReply::Snapshot(Box::new(snapshot)))
+            }
             Prepared::History {
                 session_id,
                 replay,
@@ -2539,6 +2616,9 @@ impl RuntimeActor {
                 if let Some(session) = self.sessions.get_mut(&session_id) {
                     session.metadata = metadata.clone();
                 }
+                let _ = self.metadata_updates.send(SessionMetadataUpdate {
+                    session_id: session_id.clone(),
+                });
                 Ok(RuntimeReply::Renamed {
                     session_id,
                     metadata,
@@ -2700,6 +2780,86 @@ impl RuntimeActor {
             active_task_id: active.map(|active| active.association.task_id.clone()),
         }
     }
+}
+
+fn prepare_snapshot(
+    store: &SessionStore,
+    metadata: &SessionMetadata,
+    prompt: String,
+    before_task_id: Option<String>,
+) -> std::result::Result<Prepared, RuntimeError> {
+    let mut replay = replay_for(store, &metadata.id)?;
+    if let Some(task_id) = before_task_id {
+        let boundary = replay
+            .history
+            .iter()
+            .position(|record| {
+                matches!(record,
+                    JournalRecord::TaskStarted { task_id: id, .. } if *id == task_id
+                )
+            })
+            .ok_or_else(|| {
+                RuntimeError::new("not_found", "snapshot task boundary not found")
+                    .session(&metadata.id)
+            })?;
+        replay = journal::replay_records(
+            replay
+                .history
+                .into_iter()
+                .zip(replay.history_timestamps)
+                .take(boundary)
+                .map(|(record, timestamp)| (timestamp, record)),
+        )
+        .map_err(io_error)?;
+    }
+    let mut size = ByteCounter::new(8 * 1024 * 1024);
+    serde_json::to_writer(&mut size, &replay.history).map_err(|_| {
+        RuntimeError::new(
+            "snapshot_too_large",
+            "snapshot exceeds its 8 MiB projection limit; use session.history",
+        )
+        .session(&metadata.id)
+    })?;
+    let conversation = crate::agent::conversation::Conversation::from_replay(&replay)
+        .with_compaction_config(metadata.compaction)
+        .map_err(io_error)?;
+    let mut conversation = conversation;
+    conversation.set_system_prompt(prompt);
+    let registry = build_tool_registry(store, metadata).map_err(io_error)?;
+    let mut tools = registry.list_definition();
+    tools.extend(metadata.tool_schemas.iter().map(|(name, schema)| {
+        crate::protocol::ToolDefinition {
+            name: name.clone(),
+            tool_type: crate::protocol::ToolType::Function,
+            description: schema.description.clone(),
+            parameters: schema.input_schema.clone(),
+        }
+    }));
+    let context = SnapshotContext {
+        model: metadata.model.clone(),
+        context_tokens: conversation
+            .estimated_context_tokens(&metadata.model, &tools)
+            .ok(),
+        context_window: conversation.context_window(),
+        input_limit: conversation.input_limit(),
+    };
+    let records = replay
+        .history
+        .into_iter()
+        .zip(replay.history_timestamps)
+        .enumerate()
+        .map(|(offset, (record, timestamp_ms))| HistoryRecord {
+            offset,
+            timestamp_ms,
+            record,
+        })
+        .collect();
+    Ok(Prepared::Snapshot {
+        session_id: metadata.id.clone(),
+        revision: metadata.config_revision,
+        records,
+        context,
+    })
 }
 
 fn replayed_task_state(session_id: String, task_id: String, replay: Replay) -> TaskState {

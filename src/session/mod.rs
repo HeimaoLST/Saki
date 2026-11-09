@@ -1,17 +1,12 @@
-pub mod channel;
 pub mod config;
 pub mod host;
 pub mod runtime;
 pub mod stdio;
 pub mod store;
-mod terminal;
 mod title;
 
-pub use channel::{SessionEventPacket, SessionEventReceiver, SessionEventSender};
-pub use terminal::{SessionCommand, SessionEvent, SessionManager, SessionRequest};
-
 #[cfg(test)]
-use crate::agent::{AgentEvent, conversation::CompactionConfig};
+use crate::agent::conversation::CompactionConfig;
 use crate::{
     agent::Agent,
     client::ModelClient,

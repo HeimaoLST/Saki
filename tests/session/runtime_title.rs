@@ -159,6 +159,7 @@ async fn manual_rename_wins_while_title_job_runs_and_shutdown_waits_for_cleanup(
     let metadata = workspace.store().metadata(&id).unwrap();
     assert_eq!(metadata.title, "My manual title");
     assert_eq!(metadata.title_source.as_deref(), Some("manual"));
+    assert_eq!(updates.try_recv().unwrap().session_id, id);
     assert!(matches!(
         updates.try_recv(),
         Err(broadcast::error::TryRecvError::Empty)

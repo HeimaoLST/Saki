@@ -45,7 +45,11 @@ impl Driver {
     async fn from_runtime(runtime: Runtime) -> Self {
         let (input, runtime_input) = tokio::io::duplex(65536);
         let (runtime_output, output) = tokio::io::duplex(65536);
-        let worker = tokio::spawn(runtime.run(BufReader::new(runtime_input), runtime_output));
+        let worker = tokio::spawn(crate::session::stdio::run(
+            runtime,
+            BufReader::new(runtime_input),
+            runtime_output,
+        ));
         let mut driver = Self {
             input,
             output: BufReader::new(output).lines(),
@@ -852,4 +856,337 @@ async fn stdio_connection_binding_creation_and_rollback_use_the_same_service_con
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
     );
+}
+
+#[tokio::test]
+async fn snapshot_is_loaded_only_read_only_and_never_takes_another_owners_lock() {
+    let directory = Directory::new();
+    let (client, server) = scripted_http(vec![]).await;
+    let mut driver = Driver::new(&directory, client.clone()).await;
+    let id = driver.create().await;
+    let store = SessionStore::new(directory.0.join("sessions")).unwrap();
+    let history_path = store.directory(&id).unwrap().join("history.jsonl");
+    let metadata_path = store.directory(&id).unwrap().join("metadata.json");
+    let original_history = std::fs::read(&history_path).unwrap();
+    let original_metadata = std::fs::read(&metadata_path).unwrap();
+    let snapshot = driver
+        .call("session.snapshot", json!({"session_id":id}))
+        .await;
+    let value = &snapshot["result"];
+    assert_eq!(value["session"]["loaded"], true);
+    assert_eq!(value["metadata"]["id"], id);
+    assert_eq!(value["context"]["model"], "test");
+    assert!(value["context"]["context_tokens"].as_u64().unwrap() > 0);
+    assert_eq!(value["records"][0]["offset"], 0);
+    assert_eq!(value["records"][0]["record"]["type"], "messages");
+    let mut other = Driver::new(&directory, client).await;
+    assert_eq!(
+        other
+            .call("session.snapshot", json!({"session_id":id}))
+            .await["error"]["code"],
+        "not_found"
+    );
+    other.shutdown().await;
+    assert!(
+        store
+            .open_for_api(&id, crate::client::config::RESPONSES_API)
+            .is_err()
+    );
+    driver
+        .call("session.release", json!({"session_id":id}))
+        .await;
+    assert_eq!(
+        driver
+            .call("session.snapshot", json!({"session_id":id}))
+            .await["error"]["code"],
+        "not_found"
+    );
+    driver.call("session.load", json!({"session_id":id})).await;
+    let again = driver
+        .call("session.snapshot", json!({"session_id":id}))
+        .await;
+    assert_eq!(again["result"]["records"], value["records"]);
+    assert_eq!(std::fs::read(history_path).unwrap(), original_history);
+    assert_eq!(std::fs::read(metadata_path).unwrap(), original_metadata);
+    driver.shutdown().await;
+    assert!(requests(server).await.is_empty());
+}
+
+#[tokio::test]
+async fn snapshot_live_prefix_requires_a_real_start_boundary_and_keeps_full_input_separate() {
+    use tokio::{net::TcpListener, sync::oneshot};
+    let directory = Directory::new();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = ModelClient::for_test(format!("http://{}/v1", listener.local_addr().unwrap()));
+    let (arrived_tx, arrived) = oneshot::channel();
+    let (release, released) = oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let body = read_request(&mut socket).await;
+        arrived_tx.send(()).unwrap();
+        released.await.unwrap();
+        let answer = serde_json::to_vec(&completed("result")).unwrap();
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", answer.len()).as_bytes()).await.unwrap();
+        socket.write_all(&answer).await.unwrap();
+        vec![body]
+    });
+    let (start, started) = oneshot::channel();
+    let runtime = Runtime::new(
+        SessionStore::new(directory.0.join("sessions")).unwrap(),
+        client,
+        directory.0.clone(),
+        "test".into(),
+        CompactionConfig::new(65536),
+    )
+    .with_task_start_gate(started);
+    let mut driver = Driver::from_runtime(runtime).await;
+    let id = driver.create().await;
+    let accepted = driver
+        .call(
+            "task.send",
+            json!({"session_id":id,"message":{"text":"live-input-marker"}}),
+        )
+        .await;
+    let task = &accepted["result"];
+    let args = json!({"session_id":id,"before_task_id":task["task_id"]});
+    assert_eq!(
+        driver.call("session.snapshot", args.clone()).await["error"]["code"],
+        "not_found"
+    );
+    start.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), arrived)
+        .await
+        .unwrap()
+        .unwrap();
+    let full = driver
+        .call("session.snapshot", json!({"session_id":id}))
+        .await;
+    let prefix = driver.call("session.snapshot", args).await;
+    assert_eq!(prefix["result"]["session"]["state"], "running");
+    assert_eq!(
+        prefix["result"]["session"]["active_task"]["task_id"],
+        task["task_id"]
+    );
+    assert!(
+        full["result"]["records"]
+            .to_string()
+            .contains("live-input-marker")
+    );
+    assert!(
+        !prefix["result"]["records"]
+            .to_string()
+            .contains("live-input-marker")
+    );
+    assert!(
+        prefix["result"]["records"].as_array().unwrap().len()
+            < full["result"]["records"].as_array().unwrap().len()
+    );
+    assert_eq!(
+        driver
+            .call(
+                "session.snapshot",
+                json!({"session_id":id,"before_task_id":"wrong-task"})
+            )
+            .await["error"]["code"],
+        "not_found"
+    );
+    release.send(()).unwrap();
+    assert_eq!(driver.finish(task).await["event"]["status"], "completed");
+    driver.shutdown().await;
+    assert_eq!(requests(server).await.len(), 1);
+}
+
+#[tokio::test]
+async fn oversized_snapshot_is_rejected_without_losing_history_or_the_connection() {
+    let directory = Directory::new();
+    let store = SessionStore::new(directory.0.join("sessions")).unwrap();
+    let id = store
+        .create(
+            &directory.0,
+            "test",
+            SYSTEM_PROMPT,
+            CompactionConfig::new(65536),
+        )
+        .unwrap();
+    let mut loaded = store
+        .open_for_api(&id, crate::client::config::RESPONSES_API)
+        .unwrap();
+    loaded.conversation.begin_task().unwrap();
+    let task_id = loaded.conversation.active_task_id().unwrap().to_owned();
+    loaded
+        .conversation
+        .add_user_message("x".repeat(8 * 1024 * 1024));
+    loaded.conversation.finish_task(None).unwrap();
+    drop(loaded);
+    let path = store.directory(&id).unwrap().join("history.jsonl");
+    let original = std::fs::read(&path).unwrap();
+    let (client, server) = scripted_http(vec![]).await;
+    let mut driver = Driver::new(&directory, client).await;
+    driver.call("session.load", json!({"session_id":id})).await;
+    assert_eq!(
+        driver
+            .call("session.snapshot", json!({"session_id":id}))
+            .await["error"]["code"],
+        "snapshot_too_large"
+    );
+    assert!(
+        driver
+            .call("session.status", json!({"session_id":id}))
+            .await
+            .get("result")
+            .is_some()
+    );
+    assert!(
+        driver
+            .call(
+                "session.snapshot",
+                json!({"session_id":id,"before_task_id":task_id})
+            )
+            .await
+            .get("result")
+            .is_some()
+    );
+    assert_eq!(
+        driver
+            .call("session.history", json!({"session_id":id,"limit":1}))
+            .await["result"]["next_offset"],
+        1
+    );
+    driver.shutdown().await;
+    assert_eq!(std::fs::read(path).unwrap(), original);
+    assert!(requests(server).await.is_empty());
+}
+
+#[tokio::test]
+async fn metadata_subscription_is_opt_in_idempotent_and_eof_does_not_keep_the_service_alive() {
+    let directory = Directory::new();
+    let (client, server) = scripted_http(vec![]).await;
+    let mut driver = Driver::new(&directory, client).await;
+    let id = driver.create().await;
+    driver
+        .call(
+            "session.rename",
+            json!({"session_id":id,"title":"Before subscription"}),
+        )
+        .await;
+    driver
+        .call("session.status", json!({"session_id":id}))
+        .await;
+    assert!(
+        driver
+            .seen
+            .iter()
+            .all(|row| row["event"]["type"] != "session_metadata_updated")
+    );
+    assert_eq!(
+        driver.call("runtime.metadata.subscribe", json!({})).await["result"]["subscribed"],
+        true
+    );
+    assert_eq!(
+        driver.call("runtime.metadata.subscribe", json!({})).await["result"]["subscribed"],
+        true
+    );
+    driver
+        .call(
+            "session.rename",
+            json!({"session_id":id,"title":"New title"}),
+        )
+        .await;
+    while driver
+        .seen
+        .iter()
+        .all(|row| row["event"]["type"] != "session_metadata_updated")
+    {
+        driver.next().await;
+    }
+    driver
+        .call("session.status", json!({"session_id":id}))
+        .await;
+    let notices: Vec<_> = driver
+        .seen
+        .iter()
+        .filter(|row| row["event"]["type"] == "session_metadata_updated")
+        .collect();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0]["session_id"], id);
+    assert!(notices[0].get("task_id").is_none());
+    assert!(notices[0].get("message_id").is_none());
+    assert_eq!(
+        driver
+            .call("session.snapshot", json!({"session_id":id}))
+            .await["result"]["metadata"]["title"],
+        "New title"
+    );
+    let Driver {
+        input,
+        mut output,
+        worker,
+        ..
+    } = driver;
+    drop(input);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while output.next_line().await.unwrap().is_some() {}
+        worker.await.unwrap().unwrap();
+    })
+    .await
+    .unwrap();
+    assert!(requests(server).await.is_empty());
+}
+
+#[tokio::test]
+async fn subscribed_auto_title_is_observed_through_snapshot_without_entering_task_history() {
+    let directory = Directory::new();
+    let (client, server) = scripted_http(vec![
+        (200, completed("visible answer")),
+        (200, completed("Generated title")),
+    ])
+    .await;
+    let runtime = Runtime::new(
+        SessionStore::new(directory.0.join("sessions")).unwrap(),
+        client,
+        directory.0.clone(),
+        "test".into(),
+        CompactionConfig::new(65536),
+    )
+    .with_automatic_titles(true);
+    let mut driver = Driver::from_runtime(runtime).await;
+    driver.call("runtime.metadata.subscribe", json!({})).await;
+    let id = driver.create().await;
+    let accepted = driver
+        .call(
+            "task.send",
+            json!({"session_id":id,"message":{"text":"first turn"}}),
+        )
+        .await;
+    assert_eq!(
+        driver.finish(&accepted["result"]).await["event"]["status"],
+        "completed"
+    );
+    while driver
+        .seen
+        .iter()
+        .all(|row| row["event"]["type"] != "session_metadata_updated")
+    {
+        driver.next().await;
+    }
+    let snapshot = driver
+        .call("session.snapshot", json!({"session_id":id}))
+        .await;
+    assert_eq!(snapshot["result"]["metadata"]["title"], "Generated title");
+    assert!(
+        !snapshot["result"]["records"]
+            .to_string()
+            .contains("Generated title")
+    );
+    assert_eq!(
+        snapshot["result"]["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["record"]["type"] == "task_started")
+            .count(),
+        1
+    );
+    driver.shutdown().await;
+    assert_eq!(requests(server).await.len(), 2);
 }
