@@ -85,11 +85,11 @@ fetcher 拒绝过期产物、失败或未完成的 run、身份不符、错误 h
 
 没有已核实的产物时，pin 使用 `status=pending`，fetcher 在网络取件前失败，兼容 job 和聚合检查随之失败。工程初版按此方式拒绝未提供的身份；首个真实产物验证后，消费者固定其 run/attempt/源码/双 hash。实际选择以各仓库的 pin 为准，不选择旧 GUI 组合包、虚构身份或“最新”回退。
 
-现行消费者 workflow 读取 `SAKI_ARTIFACT_READ_TOKEN`，未提供时尝试 `github.token`。这段回退不证明跨公共仓下载可用。[GITHUB_TOKEN 官方约束](https://docs.github.com/en/actions/concepts/security/github_token) 将权限限定到 workflow 所在仓库；artifact REST 的公开资源免鉴权例外只列在元数据查询，下载接口仍要求源仓库 Actions read。公开仓库不等于匿名可下载 Actions artifact，消费者的 `actions: read` 也不自动扩大到 Saki。
+现行消费者 workflow 使用 `SAKI_ARTIFACT_READ_TOKEN`，未提供时使用 `github.token`。公开仓库组合已有真实默认令牌证据：[Nagi CI42615178823/attempt2](https://github.com/HeimaoLST/Nagi/actions/runs/42615178823/attempts/2) 在源码 `255ea29b9ed97de1444ff7024bcc0aea4e4ae9b3` 下完成 Fetch exact pinned Saki runtime artifact 与 Runtime identity 两步。该时点两个消费者的 Actions secret 列表均为空，因此使用的是默认 `GITHUB_TOKEN`。取件不仅查询元数据，也实际下载并校验了固定源 run、ZIP、manifest 和 binary hash。
 
-当前 fetcher 对 run、artifact 元数据和下载都执行 `gh api`，尚无独立的跨仓凭据获取流程。跨仓下载是否被授权必须由消费者自身 job 实证；本机授权 gh 的下载成功不能代替该证据。权限不足会使兼容 job 与聚合检查失败，没有改为跳过检查、使用相邻源码或忽略 hash。
+这证明本轮公共 Saki → 公共 Nagi 的实际调用组合可用，不证明任意私有仓权限或匿名取件。不能仅依据 [GITHUB_TOKEN 的仓库权限说明](https://docs.github.com/en/actions/concepts/security/github_token) 推断本轮公开下载必然失败；也不能把本机授权 gh 的成功代替消费者自己的运行证据。Rous 及后续组合仍按自身 job 记录。
 
-GitHub 原生下载路径需要实际具有 Saki Actions read 的 App 安装令牌或 fine-grained PAT。令牌必须由真实授权产生并提供给 workflow，secret 名本身不是凭据。[App 安装令牌](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app) 可以限定 repository 与 permissions。脚本不创建 App、PAT 或 secret；所需凭据由维护者按仓库权限配置。当前决定不新建或转存凭据，不引入 Release、部署或其他取件绕路。严格门禁保持，真实源产物出现后再验证消费者取件并记录结果。
+fetcher 对 run、artifact 元数据和下载都执行 `gh api`，没有匿名或相邻源码回退。真实权限错误照常使兼容 job 与聚合检查失败。若使用私有来源或实际权限不足，可由维护者配置具有源仓库 Actions read 的 App 安装令牌或 fine-grained PAT；本轮公开组合没有新增凭据要求。脚本不创建 App、PAT 或 secret。另行选择公开发行 ZIP 时，发布渠道与授权仍须另定，当前 fetch 协议不会自动切换。
 
 ## 各产品的兼容检查
 
