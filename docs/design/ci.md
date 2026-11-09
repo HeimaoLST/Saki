@@ -1,6 +1,6 @@
 # Saki CI 与 Runtime 产物
 
-更新日期：2026-11-09。状态：配置与脚本实现事实，基于 #333 产品仓库拆分工作区。新配置的 hosted CI、真实产物上传与消费者取件尚待固定提交和实际 run，不以本地检查或旧候选运行代替。
+更新日期：2026-11-09。状态：配置与脚本实现事实，基于 #333 产品仓库拆分。独立 Runtime 首次真实产物来自 [CI42613582733/attempt1](https://github.com/HeimaoLST/Saki/actions/runs/42613582733)，源码 `a00c587e5407cd5b06b81470aad0fb8394710003`；三个 Saki job 全部成功。后续提交与消费者的实际验证以 #333 和各自 PR/run 为准，不以旧组合候选或本地检查代替。
 
 配置权威为 [ci.yml](../../.github/workflows/ci.yml)。Saki 只交付 Runtime、服务入口与契约。Nagi 和 Rous 在各自仓库构建并消费显式固定的 Saki 产物，不编译相邻 Saki 源码。Nagi 的 GUI 打包、原生体验与 Rous 的终端交互由各产品负责。
 
@@ -56,7 +56,7 @@ artifact 可在 `runtime` job 完成后出现，但消费者还要求整个固�
 
 本次沿用 base `ddf1dfbfce134dcc084188126737d2b91956091b` 的 `actions/upload-artifact@v7` 引用。原 [workflow 第 199、333 行](https://github.com/HeimaoLST/Saki/blob/ddf1dfbfce134dcc084188126737d2b91956091b/.github/workflows/ci.yml#L199) 已使用它，拆仓没有升级这个 action 的主版本。
 
-2026-11-09 只读查询官方 tag 得到 `v7 → cf430e030ddbb5b0abf93d22962f4752f3646cd9`，该提交的 [package.json](https://github.com/actions/upload-artifact/blob/cf430e030ddbb5b0abf93d22962f4752f3646cd9/package.json) 版本为 `7.0.2`。[action.yml](https://github.com/actions/upload-artifact/blob/cf430e030ddbb5b0abf93d22962f4752f3646cd9/action.yml) 使用 Node 24，定义 `artifact-id` 与 `artifact-digest`，`archive` 默认值为 `true`。Saki 显式设置相同值，以固定下载 ZIP 的约定。tag 存在与版本定义匹配已核实，新 workflow 实际上传仍待真实 run。
+2026-11-09 只读查询官方 tag 得到 `v7 → cf430e030ddbb5b0abf93d22962f4752f3646cd9`，该提交的 [package.json](https://github.com/actions/upload-artifact/blob/cf430e030ddbb5b0abf93d22962f4752f3646cd9/package.json) 版本为 `7.0.2`。[action.yml](https://github.com/actions/upload-artifact/blob/cf430e030ddbb5b0abf93d22962f4752f3646cd9/action.yml) 使用 Node 24，定义 `artifact-id` 与 `artifact-digest`，`archive` 默认值为 `true`。Saki 显式设置相同值，以固定下载 ZIP 的约定。tag 存在与版本定义匹配已核实；首次真实 run 的上传、外层 ZIP digest 和二进制 hash 已下载核对，证据见 #333。
 
 归档与二进制校验分别对应不同内容：
 
@@ -83,13 +83,13 @@ Nagi 与 Rous 各自的 `.github/saki-runtime.json` 固定以下身份，由各�
 
 fetcher 拒绝过期产物、失败或未完成的 run、身份不符、错误 hash、缺失或额外归档成员，以及校验文件不符。只有验证通过后才写出可执行文件，并向 job 导出 `SAKI_TEST_RUNTIME_BIN`、`SAKI_RUNTIME_BIN`、`SAKI_RUNTIME_SOURCE_SHA` 和 `SAKI_RUNTIME_VERSION`。
 
-当前两个 pin 的 `status` 都为 `pending`。这表示真实新 Saki CI 产物尚未固定，fetcher 会在网络取件前失败，兼容 job 和聚合检查随之失败。没有把旧 GUI 组合包或虚构 run/hash 记作新 Runtime 产物。
+没有已核实的产物时，pin 使用 `status=pending`，fetcher 在网络取件前失败，兼容 job 和聚合检查随之失败。工程初版按此方式拒绝未提供的身份；首个真实产物验证后，消费者固定其 run/attempt/源码/双 hash。实际选择以各仓库的 pin 为准，不选择旧 GUI 组合包、虚构身份或“最新”回退。
 
 现行消费者 workflow 读取 `SAKI_ARTIFACT_READ_TOKEN`，未提供时尝试 `github.token`。这段回退不证明跨公共仓下载可用。[GITHUB_TOKEN 官方约束](https://docs.github.com/en/actions/concepts/security/github_token) 将权限限定到 workflow 所在仓库；artifact REST 的公开资源免鉴权例外只列在元数据查询，下载接口仍要求源仓库 Actions read。公开仓库不等于匿名可下载 Actions artifact，消费者的 `actions: read` 也不自动扩大到 Saki。
 
-当前 fetcher 对 run、artifact 元数据和下载都执行 `gh api`，尚无独立的跨仓凭据获取流程。真实消费者 token 的源 artifact 下载未实测，不能写成已支持。权限不足会使兼容 job 与聚合检查失败，没有改为跳过检查、使用相邻源码或忽略 hash。
+当前 fetcher 对 run、artifact 元数据和下载都执行 `gh api`，尚无独立的跨仓凭据获取流程。跨仓下载是否被授权必须由消费者自身 job 实证；本机授权 gh 的下载成功不能代替该证据。权限不足会使兼容 job 与聚合检查失败，没有改为跳过检查、使用相邻源码或忽略 hash。
 
-GitHub 原生下载路径需要实际具有 Saki Actions read 的 App 安装令牌或 fine-grained PAT。令牌必须由真实授权产生并提供给 workflow，secret 名本身不是凭据。[App 安装令牌](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app) 可以限定 repository 与 permissions。本轮没有创建 App、PAT、secret 或改设置。当前决定不新建或转存凭据，不引入 Release、部署或其他取件绕路。严格门禁保持，真实源产物出现后再验证消费者取件并记录结果。
+GitHub 原生下载路径需要实际具有 Saki Actions read 的 App 安装令牌或 fine-grained PAT。令牌必须由真实授权产生并提供给 workflow，secret 名本身不是凭据。[App 安装令牌](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app) 可以限定 repository 与 permissions。脚本不创建 App、PAT 或 secret；所需凭据由维护者按仓库权限配置。当前决定不新建或转存凭据，不引入 Release、部署或其他取件绕路。严格门禁保持，真实源产物出现后再验证消费者取件并记录结果。
 
 ## 各产品的兼容检查
 
@@ -103,7 +103,7 @@ GitHub 原生下载路径需要实际具有 Saki Actions read 的 App 安装令�
 
 ## 证据与责任
 
-本轮删除旧产品脚本后的 Saki Python 3.12 discovery 已通过，无已删除模块的导入错误。工作流 actionlint、Python AST、workflow shell 语法、受控产物格式回环与检查器负向场景已有本地证据。hosted CI、真实 pin 下载和新的各产品完整兼容执行仍分别按实际提交/run记录，不能从上述工具测试推导为通过。
+本轮删除旧产品脚本后的 Saki Python 3.12 discovery 已通过，无已删除模块的导入错误。工作流 actionlint、Python AST、workflow shell 语法、受控产物格式回环与检查器负向场景已有本地证据。首次 Saki hosted CI 与实际产物核验已有记录；消费者自身取件和产品完整兼容分别按实际源码/run记录，不能从上述工具测试推导为通过。
 
 实现 owner 维护功能与有价值的行为回归。QA 维护 workflow、取件校验、结果检查和自动检查可靠性，不改产线源码、不承担产品人工验收或额外独立 `APPROVE` 队列。PM 统筹评阅、集成和适用验收，真人体验由 PM/用户判断。CI 通过不扩大 commit、push、merge、Release 或部署授权。
 
