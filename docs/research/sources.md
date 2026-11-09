@@ -129,7 +129,7 @@ Pi 原仓库 `badlogic/pi-mono` 已重定向至 `earendil-works/pi`。OpenCode �
 
 ## Terminal UI
 
-2026-10-13 追加显示层研究，分析见 [Terminal presentation](systems/terminal-presentation.md)，设计推论见 [TUI style](../design/tui-style.md)。对应本机安装版本：Codex `0.162.1` 固定到 [`092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d)，Pi `1.0.2` 固定到 [`cd32f7725fdbddbaecdff5b1e68491563394e0ca`](https://github.com/earendil-works/pi/tree/cd32f7725fdbddbaecdff5b1e68491563394e0ca)。检查消息／推理、工具预览、Markdown、主题和 footer 的发布源码；未做两者的完整可用性对照实验。以下早期研究版本继续保留。
+2026-10-13 追加显示层研究，分析见 [Terminal presentation](systems/terminal-presentation.md)，设计推论见 [TUI style](https://github.com/HeimaoLST/Rous/blob/dev/docs/design/tui-style.md)。对应本机安装版本：Codex `0.162.1` 固定到 [`092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d)，Pi `1.0.2` 固定到 [`cd32f7725fdbddbaecdff5b1e68491563394e0ca`](https://github.com/earendil-works/pi/tree/cd32f7725fdbddbaecdff5b1e68491563394e0ca)。检查消息／推理、工具预览、Markdown、主题和 footer 的发布源码；未做两者的完整可用性对照实验。以下早期研究版本继续保留。
 
 2026-10-15 四系统能力矩阵补充：为 [Issue #19](https://github.com/HeimaoLST/Saki/issues/19) 固定最新稳定 release 的 peeled commit，只读核对输入／历史／文件引用／外部编辑器、取消／排队／引导、transcript 搜索／跳转、工具 diff／高亮、会话检索、命令／模型／主题／无障碍、流式与长历史性能。本机 Pi 已升级到 `1.2.0`、Codex 仍为 `0.162.1`。矩阵与逐项链接见 [Terminal presentation](systems/terminal-presentation.md) 第 8 节；未运行第三方 harness。
 
@@ -137,7 +137,7 @@ Pi 原仓库 `badlogic/pi-mono` 已重定向至 `earendil-works/pi`。OpenCode �
 - Pi `v1.2.0` peeled commit [`06a466935536f8c9bcacb2d5efc0fc021be1bdff`](https://github.com/earendil-works/pi/tree/06a466935536f8c9bcacb2d5efc0fc021be1bdff)。
 - OpenCode `v1.19.0` peeled commit [`733b2c627e5aec39cb33cc22373bdce33053ef2c`](https://github.com/anomalyco/opencode/tree/733b2c627e5aec39cb33cc22373bdce33053ef2c)。
 
-核对日期：2026-10-06。以下是 TUI 布局研究使用的新快照，不替换此前 builtin tools 或 compact 的核对版本。分析见 [Terminal UI](systems/terminal-ui.md)，候选与对比页面见 [TUI 设计](../design/tui.md)。
+核对日期：2026-10-06。以下是 TUI 布局研究使用的新快照，不替换此前 builtin tools 或 compact 的核对版本。分析见 [Terminal UI](systems/terminal-ui.md)，候选与对比页面见 [TUI 设计](https://github.com/HeimaoLST/Rous/blob/dev/docs/design/tui.md)。
 
 - Pi：固定到 [28dcce2ba45ce4a9efeb0f5b686f0be830fd89b9](https://github.com/earendil-works/pi/tree/28dcce2ba45ce4a9efeb0f5b686f0be830fd89b9)；检查 packages/coding-agent/docs/usage.md、themes.md 及官方 interactive-mode 图。当前仓库为 earendil-works/pi，所检查版本明确支持 fullscreen／regular 两种模式。
 - Codex：固定到 [822e58cc3d666166c7446c5b1ea2e52f5d09594c](https://github.com/openai/codex/tree/822e58cc3d666166c7446c5b1ea2e52f5d09594c)；检查 codex-rs/tui/src/lib.rs 与 transcript_mode.rs 的屏幕策略和 transcript ownership。
@@ -159,7 +159,7 @@ Pi 原仓库 `badlogic/pi-mono` 已重定向至 `earendil-works/pi`。OpenCode �
 - 阅读的行为测试：transcript_view/layout_tests.rs、app/owned_transcript_follow_tests.rs；未执行这些测试，未编译或运行 Codex。
 
 
-2026-10-08 输入框交互追加研究：本机 Codex 0.161.0，对应官方 tag `rust-v0.161.0` 的 commit `979011409de0a60b52f179721948e65531d26144`。读取 keymap.rs、bottom_pane/textarea.rs、chat_composer.rs、chat_composer_history.rs、mod.rs、chat_composer/history_search.rs、paste_input.rs 与 chatwidget/interaction.rs；核对官方 developer-commands 和 CLI customization 文档。结论与逐项来源见 [Terminal UI 第 7 节](systems/terminal-ui.md#7-codex-输入框的编辑手感)。Codex 部分是源码阅读，未运行其交互测试；随后经用户授权实现 SAKI 的三组输入改造，SAKI 的实际验收见 [TUI 设计](../design/tui.md#输入框优化验收)。
+2026-10-08 输入框交互追加研究：本机 Codex 0.161.0，对应官方 tag `rust-v0.161.0` 的 commit `979011409de0a60b52f179721948e65531d26144`。读取 keymap.rs、bottom_pane/textarea.rs、chat_composer.rs、chat_composer_history.rs、mod.rs、chat_composer/history_search.rs、paste_input.rs 与 chatwidget/interaction.rs；核对官方 developer-commands 和 CLI customization 文档。结论与逐项来源见 [Terminal UI 第 7 节](systems/terminal-ui.md#7-codex-输入框的编辑手感)。Codex 部分是源码阅读，未运行其交互测试；随后经用户授权实现 SAKI 的三组输入改造，SAKI 的实际验收见 [TUI 设计](https://github.com/HeimaoLST/Rous/blob/dev/docs/design/tui.md#输入框优化验收)。
 
 ### Rust TUI 组件
 

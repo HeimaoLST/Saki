@@ -1,6 +1,6 @@
 # Persistent identity：长期身份与成长研究
 
-更新日期：2026-10-24。状态：**长期研究方向与批判分析，非当前产品定义或实现前置**。本文保留此前关于长期状态的探索；Saki、Nagi 与 TUI 的当前关系及 GUI 需求见 [Nagi 产品定义与需求](../requirements/desktop.md)。
+更新日期：2026-10-24。状态：**长期研究方向与批判分析，非当前产品定义或实现前置**。本文保留此前关于长期状态的探索；Saki、Nagi 与 TUI 的当前关系及 GUI 需求见 [Nagi 产品定义与需求](https://github.com/HeimaoLST/Nagi/blob/dev/docs/requirements/desktop.md)。
 
 ## 研究方向
 
@@ -34,7 +34,7 @@ Saki 是可供不同应用复用的通用 Runtime，不将某个持续个体的�
 
 当前 Agent、Conversation 与前端已经按消息／事件分离，但现有 `Agent` 对象持有一个 Conversation，不能直接等同于完整的持久身份。已实现会话跨重启恢复，尚未实现独立 library 或共享长期身份；会话恢复也不代表长期身份机制已经存在。同一身份被多个进程同时使用时的状态协调，需在支持该场景前单独设计。
 
-联系人和执行会话分离的产品方向已明确；具体映射、存储与迁移按 [GUI 需求](../requirements/desktop.md) 推进。会话与执行契约见 [Runtime API](runtime-api.md) 和 [Session management](session-management.md)，不能从本研究文档推导新的实施前置或第二套运行内核。
+联系人和执行会话分离的产品方向已明确；具体映射、存储与迁移按 [GUI 需求](https://github.com/HeimaoLST/Nagi/blob/dev/docs/requirements/desktop.md) 推进。会话与执行契约见 [Runtime API](runtime-api.md) 和 [Session management](session-management.md)，不能从本研究文档推导新的实施前置或第二套运行内核。
 
 ## 成长研究应验证的使用收益
 

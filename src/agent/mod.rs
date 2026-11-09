@@ -104,12 +104,15 @@ pub enum AgentEvent {
     },
     /// Terminal event: the turn finished and the agent accepts the next message.
     /// Emitted once by the worker, not by the process loop.
+    #[cfg(test)]
     TurnCompleted,
     /// Terminal event: the turn was interrupted by an explicit cancellation.
     /// Emitted once by the worker at the `handle_user_message` return boundary.
+    #[cfg(test)]
     TurnInterrupted,
     /// Terminal event: the turn failed. Emitted once by the worker at the
     /// `handle_user_message` return boundary.
+    #[cfg(test)]
     TurnFailed {
         message: String,
     },
@@ -665,8 +668,7 @@ impl Agent {
 /// message at that return boundary, so a turn never has both a success and a
 /// failure event. Closing the input channel ends the worker.
 ///
-/// The binary drives the same loop through `SessionManager::run`, so this helper
-/// is compiled only for tests.
+/// Production Runtime owns task terminals; this helper is compiled only for tests.
 #[cfg(test)]
 pub async fn run_agent(mut agent: Agent, mut input: UnboundedReceiver<UserMessage>) {
     agent.emit_context().await;

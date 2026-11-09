@@ -1,27 +1,23 @@
 use crate::session::host::HostConfig;
-use std::io::IsTerminal;
-
-use tokio::sync::mpsc;
-
 use crate::{
     agent::conversation::CompactionConfig,
     client::{
         ClientConfig,
         connections::{Connection, ConnectionRegistry},
     },
-    frontend::{console, tui},
     model::catalog,
-    session::{SYSTEM_PROMPT, SessionManager, store::SessionStore},
+    session::{SYSTEM_PROMPT, store::SessionStore},
 };
 
-/// Application assembly: existing model, tools, conversation and session setup,
-/// then the agent worker connected to the current terminal front end.
-///
-/// This module wires channels and lifecycle only; it contains no model/tool loop
-/// and no terminal drawing.
+/// Assemble the independently owned stdio service from host configuration.
 pub async fn run() -> anyhow::Result<()> {
     // Assembly boundary: the protocol, key and base URL are read once here and
     // injected explicitly; nothing below reads them again.
+    let automatic_titles = match std::env::var("SAKI_AUTOMATIC_TITLES") {
+        Ok(value) => value.parse::<bool>()?,
+        Err(std::env::VarError::NotPresent) => false,
+        Err(error) => return Err(error.into()),
+    };
     let cwd = std::env::current_dir()?.canonicalize()?;
     let (connections, capacity, tools) = if let Some(path) = std::env::var_os("SAKI_RUNTIME_CONFIG")
     {
@@ -98,76 +94,14 @@ pub async fn run() -> anyhow::Result<()> {
         .with_tool_sources(tools)
         .with_max_active_tasks(capacity)?
         .with_catalog(loaded_catalog);
-    if std::env::args().skip(1).any(|arg| arg == "--stdio") {
-        #[cfg(unix)]
-        let output = crate::session::stdio::NativeStdout::new()?;
-        #[cfg(not(unix))]
-        let output = tokio::io::stdout();
-        return runtime
-            .run(tokio::io::BufReader::new(tokio::io::stdin()), output)
-            .await;
-    }
-    let initial_session = std::env::var("SAKI_SESSION").ok().filter(|id| id != "new");
-    let manager = SessionManager::from_runtime(runtime, initial_session);
-
-    let (events_tx, events_rx) = manager.event_channel();
-    let (input_tx, input_rx) = mpsc::channel(32);
-    let worker = tokio::spawn(manager.run(input_rx, events_tx));
-
-    // One choice point for the terminal front end. Both front ends connect to
-    // the worker through the same channels. The front end result is kept so the
-    // worker is always awaited before returning.
-    let frontend = match select_frontend() {
-        Ok(frontend) => frontend,
-        Err(error) => {
-            drop(input_tx);
-            drop(events_rx);
-            let _ = worker.await;
-            return Err(error);
-        }
-    };
-    let frontend_result = match frontend {
-        Frontend::Console => console::run(input_tx, events_rx).await,
-        Frontend::Tui => tui::run(input_tx, events_rx).await,
-    };
-    let worker_result = worker.await;
-    worker_result??;
-    frontend_result?;
-    Ok(())
-}
-
-/// Terminal front ends. This is the only startup selection; never branch on the
-/// UI anywhere else.
-enum Frontend {
-    Console,
-    Tui,
-}
-
-fn select_frontend() -> anyhow::Result<Frontend> {
-    let stdin_tty = std::io::stdin().is_terminal();
-    let stdout_tty = std::io::stdout().is_terminal();
-    match std::env::var("SAKI_UI").as_deref() {
-        Ok("console") => Ok(Frontend::Console),
-        Ok("tui") => {
-            if stdin_tty && stdout_tty {
-                Ok(Frontend::Tui)
-            } else {
-                // Never take over a pipe or redirected output.
-                anyhow::bail!("SAKI_UI=tui requires both stdin and stdout to be terminals")
-            }
-        }
-        Ok(other) => {
-            eprintln!("unknown SAKI_UI={other:?}; using console");
-            Ok(Frontend::Console)
-        }
-        // Interactive terminals default to the TUI; pipes and scripts stay on
-        // the line-based console adapter.
-        Err(_) => {
-            if stdin_tty && stdout_tty {
-                Ok(Frontend::Tui)
-            } else {
-                Ok(Frontend::Console)
-            }
-        }
-    }
+    #[cfg(unix)]
+    let output = crate::session::stdio::NativeStdout::new()?;
+    #[cfg(not(unix))]
+    let output = tokio::io::stdout();
+    crate::session::stdio::run(
+        runtime.with_automatic_titles(automatic_titles),
+        tokio::io::BufReader::new(tokio::io::stdin()),
+        output,
+    )
+    .await
 }

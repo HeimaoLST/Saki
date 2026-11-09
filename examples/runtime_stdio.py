@@ -282,9 +282,22 @@ def self_test(binary):
             Path(root, "probe.txt").write_text(marker)
             env = dict(os.environ, API_KEY="offline-fixture", SAKI_API="openai-responses",
                        SAKI_BASE_URL=f"http://127.0.0.1:{server.server_port}/v1",
-                       SAKI_MODEL="fixture", SAKI_CONTEXT_TOKENS="65536",
+                       SAKI_MODEL="fixture", SAKI_CONTEXT_TOKENS="65536", SAKI_AUTOMATIC_TITLES="false",
                        SAKI_SESSION_DIR=str(Path(root, "sessions")), SAKI_SESSION="missing")
-            for broken in (dict(env, SAKI_CONTEXT_TOKENS="1"),
+            env.pop("SAKI_RUNTIME_CONFIG", None)
+            for flag in ("--help", "--version"):
+                info = subprocess.run([str(binary), flag], cwd=root, env={"PATH": os.defpath},
+                                      capture_output=True, text=True, timeout=10)
+                assert info.returncode == 0 and "Saki" in info.stdout, info.stderr
+            default = subprocess.run([str(binary)], cwd=root, env=env,
+                                     input=json.dumps({"version": 1, "id": "stop", "method": "runtime.shutdown", "params": {}}) + "\n",
+                                     capture_output=True, text=True, timeout=30)
+            assert default.returncode == 0, default.stderr
+            frames = [json.loads(line) for line in default.stdout.splitlines()]
+            assert frames[0]["type"] == "ready" and frames[-1]["result"]["state"] == "draining"
+            assert not list(Path(root, "sessions").iterdir())
+            for broken in (dict(env, SAKI_AUTOMATIC_TITLES="TRUE"),
+                           dict(env, SAKI_CONTEXT_TOKENS="1"),
                            {key: value for key, value in env.items() if key != "API_KEY"}):
                 rejected = subprocess.run([str(binary), "--stdio"], cwd=root, env=broken,
                                           input="", capture_output=True, text=True, timeout=30)
@@ -305,6 +318,11 @@ def self_test(binary):
                 loaded = runtime.call("session.load", {"session_id": session})
                 assert loaded["loaded"] and loaded["status"] == "completed"
                 history = runtime.call("session.history", {"session_id": session})
+                snapshot = runtime.call("session.snapshot", {"session_id": session})
+                assert snapshot["records"] == history["records"]
+                assert snapshot["session"]["status"] == "completed"
+                assert snapshot["context"]["model"] == "fixture"
+                assert runtime.call("runtime.metadata.subscribe", {}) == {"subscribed": True}
                 assert marker in json.dumps(history)
                 assert len(requests) == 2
                 started = next(r["record"] for r in history["records"] if r["record"]["type"] == "task_started")

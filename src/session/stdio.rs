@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt},
-    sync::{Semaphore, mpsc, watch},
+    sync::{Semaphore, broadcast, mpsc, oneshot, watch},
     task::JoinSet,
 };
 
@@ -100,6 +100,18 @@ struct History {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Snapshot {
+    session_id: String,
+    before_task_id: Option<String>,
+}
+
+enum Command {
+    Runtime(Box<RuntimeCommand>),
+    SubscribeMetadata,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SendTask {
     session_id: String,
     message: Message,
@@ -164,7 +176,7 @@ fn params<T: DeserializeOwned>(value: serde_json::Value) -> Result<T, RuntimeErr
     serde_json::from_value(value).map_err(|e| RuntimeError::new("invalid_request", e.to_string()))
 }
 
-fn decode(bytes: &[u8]) -> (Option<String>, Result<RuntimeCommand, RuntimeError>) {
+fn decode(bytes: &[u8]) -> (Option<String>, Result<Command, RuntimeError>) {
     let value = match serde_json::from_slice::<serde_json::Value>(bytes) {
         Ok(value) => value,
         Err(error) => {
@@ -184,7 +196,11 @@ fn decode(bytes: &[u8]) -> (Option<String>, Result<RuntimeCommand, RuntimeError>
             ));
         }
         let value = request.params;
-        Ok(match request.method.as_str() {
+        if request.method == "runtime.metadata.subscribe" {
+            let _: Empty = params(value)?;
+            return Ok(Command::SubscribeMetadata);
+        }
+        Ok(Command::Runtime(Box::new(match request.method.as_str() {
             "runtime.capabilities" => {
                 let _: Empty = params(value)?;
                 RuntimeCommand::Capabilities
@@ -258,6 +274,13 @@ fn decode(bytes: &[u8]) -> (Option<String>, Result<RuntimeCommand, RuntimeError>
                     title: p.title,
                 }
             }
+            "session.snapshot" => {
+                let p: Snapshot = params(value)?;
+                RuntimeCommand::Snapshot {
+                    session_id: p.session_id,
+                    before_task_id: p.before_task_id,
+                }
+            }
             "session.history" => {
                 let p: History = params(value)?;
                 RuntimeCommand::History {
@@ -312,7 +335,7 @@ fn decode(bytes: &[u8]) -> (Option<String>, Result<RuntimeCommand, RuntimeError>
                     format!("unknown method: {}", request.method),
                 ));
             }
-        })
+        })))
     })();
     (id, result)
 }
@@ -532,6 +555,34 @@ async fn deliver(
             )
             .await;
         }
+        RuntimeReply::Snapshot(value) => {
+            let response = Response {
+                version: 1,
+                kind: "response",
+                id: &id,
+                result: Some(&value),
+                error: None,
+            };
+            if serde_json::to_writer(
+                &mut ByteCounter::new(output.limit.saturating_sub(1)),
+                &response,
+            )
+            .is_err()
+            {
+                reject(
+                    &output,
+                    &id,
+                    RuntimeError::new(
+                        "snapshot_too_large",
+                        "snapshot response exceeds its frame limit; use session.history",
+                    )
+                    .session(&value.session_id),
+                )
+                .await;
+            } else {
+                reply(&output, &id, value).await;
+            }
+        }
         RuntimeReply::History(value) => {
             reply(&output, &id, value).await;
         }
@@ -585,6 +636,7 @@ async fn deliver(
                 let sent = match event {
                     TaskEvent::Event(packet) => {
                         // Keep the upstream byte permit until this frame is written.
+                        #[cfg(test)]
                         if matches!(
                             packet.event,
                             AgentEvent::TurnCompleted
@@ -723,6 +775,44 @@ async fn drain_output(
     state.close();
 }
 
+async fn forward_metadata(
+    handle: super::runtime::RuntimeHandle,
+    mut updates: broadcast::Receiver<super::runtime::SessionMetadataUpdate>,
+    output: Output,
+    ready: oneshot::Receiver<bool>,
+) {
+    if ready.await != Ok(true) {
+        return;
+    }
+    loop {
+        let update = tokio::select! {
+            biased;
+            _ = output.state.closed() => return,
+            update = updates.recv() => update,
+        };
+        let ids = match update {
+            Ok(update) => vec![update.session_id],
+            Err(broadcast::error::RecvError::Lagged(_)) => {
+                match handle.call(RuntimeCommand::List).await {
+                    Ok(RuntimeReply::List { sessions }) => sessions
+                        .into_iter()
+                        .filter(|session| session.loaded)
+                        .map(|session| session.metadata.id)
+                        .collect(),
+                    _ => {
+                        output.state.close();
+                        return;
+                    }
+                }
+            }
+            Err(broadcast::error::RecvError::Closed) => return,
+        };
+        for session_id in ids {
+            if !output.send(&json!({"version":1,"type":"event","session_id":session_id,"event":{"type":"session_metadata_updated"}}), None).await { return; }
+        }
+    }
+}
+
 pub async fn run<R, W>(runtime: Runtime, input: R, writer: W) -> anyhow::Result<()>
 where
     R: AsyncBufRead + Unpin,
@@ -791,6 +881,7 @@ where
     control
         .send(&json!({"version":1,"type":"ready","api":api}), None)
         .await;
+    let mut metadata_job = None;
     let mut jobs = JoinSet::new();
     let mut input_error = None;
     let mut service_result = None;
@@ -812,15 +903,44 @@ where
         }
         let (id, command) = decode(&bytes);
         if jobs.len() >= max_requests {
-            if let Ok(command @ (RuntimeCommand::Cancel { .. } | RuntimeCommand::Shutdown)) =
-                command
+            if let Ok(Command::Runtime(command)) = command
+                && matches!(
+                    *command,
+                    RuntimeCommand::Cancel { .. } | RuntimeCommand::Shutdown
+                )
             {
-                let _ = handle.submit(command);
+                let _ = handle.submit(*command);
             }
             state.close();
             break;
         }
-        let response = command.and_then(|command| handle.submit(command));
+        let response = match command {
+            Ok(Command::SubscribeMetadata) => {
+                let gate = if metadata_job.is_none() {
+                    let updates = handle.subscribe_metadata();
+                    let (ready, gate) = oneshot::channel();
+                    metadata_job = Some(tokio::spawn(forward_metadata(
+                        handle.clone(),
+                        updates,
+                        events.clone(),
+                        gate,
+                    )));
+                    Some(ready)
+                } else {
+                    None
+                };
+                let output = control.clone();
+                jobs.spawn(async move {
+                    let sent = reply(&output, &id, json!({"subscribed": true})).await;
+                    if let Some(gate) = gate {
+                        let _ = gate.send(sent);
+                    }
+                });
+                continue;
+            }
+            Ok(Command::Runtime(command)) => handle.submit(*command),
+            Err(error) => Err(error),
+        };
         let output = control.clone();
         let task_events = events.clone();
         #[cfg(test)]
@@ -859,6 +979,10 @@ where
     };
     if service_result.is_err() {
         state.close();
+    }
+    if let Some(job) = metadata_job {
+        job.abort();
+        let _ = job.await;
     }
     drop(control);
     drop(events);

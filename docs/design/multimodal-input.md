@@ -25,7 +25,7 @@
 | 模块 | 职责 |
 | --- | --- |
 | [agent/message.rs](../../src/agent/message.rs) | `UserMessage`、图片内容快照及图片路径识别 |
-| [frontend/tui/](../../src/frontend/tui/) | 剪贴板／文件适配、附件草稿与历史、展示和删除 |
+| [frontend/tui/](https://github.com/HeimaoLST/Rous/blob/dev/src/frontend/tui) | 剪贴板／文件适配、附件草稿与历史、展示和删除 |
 | [agent/mod.rs](../../src/agent/mod.rs) | 接收文字或图文消息，执行同一个模型／工具循环 |
 | [agent/conversation.rs](../../src/agent/conversation.rs) | 保存图文消息、usage 校准、自动压缩及原始输入日志 |
 | [protocol/](../../src/protocol/mod.rs) | 公共 `InputMessageContent::Parts`、文字和图片内容 |

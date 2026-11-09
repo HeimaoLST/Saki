@@ -397,7 +397,11 @@ impl StdioDriver {
             "test".to_owned(),
             CompactionConfig::new(262_144),
         );
-        let worker = tokio::spawn(runtime.run(BufReader::new(runtime_input), runtime_output));
+        let worker = tokio::spawn(crate::session::stdio::run(
+            runtime,
+            BufReader::new(runtime_input),
+            runtime_output,
+        ));
         let mut driver = Self {
             input,
             output: BufReader::new(output).lines(),

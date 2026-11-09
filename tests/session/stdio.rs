@@ -1049,3 +1049,56 @@ async fn shutdown_waits_for_terminal_ack_after_reply_and_stdin_eof() {
         "terminal ack released: actor/delivery jobs/writer returned; one completed task restored"
     );
 }
+
+#[tokio::test]
+async fn lagged_metadata_subscription_invalidates_every_loaded_session() {
+    let workspace = Workspace::new();
+    let (client, server) = scripted_http(vec![]).await;
+    let (handle, actor) = workspace.runtime(client).start();
+    let id = match handle
+        .call(RuntimeCommand::Create {
+            working_directory: None,
+            system_prompt: None,
+        })
+        .await
+        .unwrap()
+    {
+        RuntimeReply::Session(state) => state.session_id,
+        _ => panic!("expected created session"),
+    };
+    let (updates, receiver) = broadcast::channel(1);
+    updates
+        .send(super::super::runtime::SessionMetadataUpdate {
+            session_id: "lost".into(),
+        })
+        .unwrap();
+    updates
+        .send(super::super::runtime::SessionMetadataUpdate {
+            session_id: "latest".into(),
+        })
+        .unwrap();
+    let (frames, mut incoming) = mpsc::channel(4);
+    let output = Output {
+        sender: frames,
+        budget: Arc::new(Semaphore::new(4096)),
+        state: handle.output_state(),
+        limit: 4096,
+        metrics: BufferMetrics::default(),
+    };
+    let (ready, gate) = oneshot::channel();
+    let job = tokio::spawn(forward_metadata(handle.clone(), receiver, output, gate));
+    ready.send(true).unwrap();
+    let frame = tokio::time::timeout(Duration::from_secs(5), incoming.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let value: Value = serde_json::from_slice(&frame.bytes).unwrap();
+    assert_eq!(value["session_id"], id);
+    assert_eq!(value["event"]["type"], "session_metadata_updated");
+    drop(frame);
+    job.abort();
+    let _ = job.await;
+    handle.call(RuntimeCommand::Shutdown).await.unwrap();
+    actor.await.unwrap().unwrap();
+    assert!(server.await.unwrap().is_empty());
+}
