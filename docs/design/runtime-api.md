@@ -1,6 +1,6 @@
 # Runtime 调用契约与实施规划
 
-更新日期：2026-11-09（#333 独立 Runtime 入口、只读快照与可选 metadata 订阅）。状态：**当前 #333 独立 Runtime 工作树的调用契约与实现事实；提交、集成及外部消费者验收以 #333 和对应 PR 为准。后文服务化工作包及 #103/#31 记录保留原阶段与原证据，不能代替本轮验收**。
+更新日期：2026-11-10（#336 首次启动容量发现与入口覆盖；#333 独立 Runtime 入口、只读快照与可选 metadata 订阅）。状态：**当前独立 Runtime 的调用契约与实现事实；提交、集成及验收以对应 issue/PR 的固定源码与运行证据为准。后文服务化工作包及 #103/#31 记录保留原阶段与原证据，不能代替本轮验收**。
 
 需求依据：[Agent runtime 需求](../requirements/agent-runtime.md)、[#43](https://github.com/HeimaoLST/Saki/issues/43) 及 [GUI 首轮交接](https://github.com/HeimaoLST/Saki/issues/43#issuecomment-6235030388)。本文定义跨宿主调用契约与验收边界；实时优先级、任务状态和负责人以 GitHub 为准。
 
@@ -46,6 +46,10 @@ SAKI_MODEL=model-id SAKI_SESSION_DIR=/path/to/sessions target/debug/Saki --stdio
 ```
 
 示例假设宿主已经通过进程环境或既有 `.env` 提供 `API_KEY`；示例不表示无需凭据。实际 provider 与模型的兼容性以对应 smoke 运行证据为准。
+
+首次启动容量（实现事实，2026-11-10，#336）：提供匹配 provider 的凭据、协议、endpoint 和 model 后，不要求用户手设 context/output/compact 容量。没有显式 `SAKI_CONTEXT_TOKENS` 时，Runtime 在发布 ready 前读取子进程 cwd 下的 `.saki/cache/models.json`。可解析、非空且小于24小时的 fresh 快照不触发刷新；模型唯一匹配时采用其 limits。无缓存、坏缓存或 stale 快照会先尝试公共 catalog 刷新；刷新失败时保留可用旧快照，没有可用快照或模型无唯一匹配时打印诊断并使用默认262144 context。默认容量不等于对任意模型容量的保证。显式合法容量仍跳过目录发现，并继续校验 compact 配置关系。
+
+可选 catalog 的等待发生在 ready 之前；HTTP 请求配置20秒 timeout，不是整个启动到 ready 的墙钟承诺，文件操作、其余装配及输出写出另计。ready 仅证明宿主初始化成功并公布协议/API，不证明 provider 凭据、模型或工具已实际调用成功。必需配置、路径、容量关系或输出初始化错误仍以 stderr 和非零退出报告，不发 ready；catalog 的默认降级不把这些配置错误变成成功。
 
 当前连接目录、客户端和凭据由宿主在启动时组装；凭据不写入 stdio 请求／事件、session metadata 或 journal。持久身份与当前客户端配置分开：两种 metadata schema 都记录 API，显式 schema 2 还保存 ConnectionIdentity 的 connection_id、API 和规范化 endpoint，供恢复时核对历史路由（[身份定义](https://github.com/HeimaoLST/Saki/blob/d0502695446e4826c34c1d9d8e841d0e10cdcd09/src/client/connections.rs#L16-L21)）；这不包含凭据，也不证明 schema 1 的原 endpoint。模型、工作目录、system prompt、compact 配置按 session 生效，省略新建覆盖值时使用宿主默认。默认内置工具为 read/bash/edit/write；外部工具沿既有 MCP 配置接入，不由 JSON 上传可执行实现。
 
@@ -149,6 +153,8 @@ python3 examples/runtime_stdio.py --session SAVED_ID --prompt 'Continue our prev
 ```
 
 示例记录并展示所有任务事件；正式 GUI 持续路由所有 response/event，并独立处理 stderr 和子进程退出。`--self-test` 使用受控本地模型服务和真实 read 工具，在独立 Rust 进程间验证恢复／历史零模型调用、新任务继续前文，以及 stdout 失效后保持 stdin 打开的排空／退出，共四次本地模型请求；它不替代真实 provider smoke。
+
+入口覆盖（#336）：同一 `--self-test` 先运行两个无手设容量、无 HostConfig 的隔离启动场景。冷启动必须实际命中只接收、不转发的本地 `models.dev:443` CONNECT 故障端点；释放本地错误后验证完整 ready、schema1/create 默认262144及 shutdown/EOF正常。fresh 匹配快照场景验证容量131072、无 catalog 请求且缓存不变；两例均无 task/provider 请求。未命中代理或新场景失败会令整个 self-test 失败，不跳过。协调等待的绝对期限只防测试挂住；本地 CONNECT 错误不测量真实20秒 timeout，也不证明任何旧启动事故根因。坏配置的既有失败断言保持。
 
 实现事实（[#239 r2](https://github.com/HeimaoLST/Saki/issues/239#issuecomment-6557135111)，以同 PR 的代码与证据为准）：Python `Runtime` 正常关闭仍须收到对应 shutdown response、排空后续事件至 EOF、结束 reader 并确认 child exit 0。示例通过 `with Runtime(...)` 管理每个实例；构造器在 spawn 后失败、上下文内调用体失败或关闭失败时，统一有界回收自有子进程和 reader，保留首次异常；失败后的强制终止不算正常关闭成功。失败诊断只记录阶段、请求 ID／方法、帧／事件计数、PID／poll、stdin 与 reader 状态及清理结果，不输出 payload、环境或凭据。30 秒协议等待及 CI 的 5 分钟自测上限不变。受控脚本 child 的正常、保持输出和初始化失败回归由 `python3 -m unittest discover -s scripts -p 'test_*.py' -v` 发现；真实 Rust 进程仍由上述 `--self-test` 独立验证。
 
