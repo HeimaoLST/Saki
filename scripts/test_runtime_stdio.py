@@ -81,7 +81,12 @@ class RuntimeLifecycleTests(unittest.TestCase):
                 send({"version": 1, "type": "not-ready"})
                 signal.pause()
 
-            send({"version": 1, "type": "ready", "api": "openai-responses"})
+            ready = {"version": 1, "type": "ready", "api": "openai-responses"}
+            if mode == "unterminated-ready":
+                sys.stdout.write(json.dumps(ready))
+                sys.stdout.flush()
+                sys.exit(0)
+            send(ready)
             shutdown_seen = False
             for line in sys.stdin:
                 request = json.loads(line)
@@ -150,9 +155,9 @@ class RuntimeLifecycleTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def runtime(self, mode: str):
+    def runtime(self, mode: str, **kwargs):
         env = dict(os.environ, RUNTIME_STDIO_TEST_MODE=mode)
-        return self.module.Runtime(self.child, cwd=self.root, env=env)
+        return self.module.Runtime(self.child, cwd=self.root, env=env, **kwargs)
 
     def cleanup_runtime(self, runtime):
         """Test-owned last-resort cleanup; never required for a passing close."""
@@ -318,6 +323,43 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertEqual(returncode, 1)
         self.assertIn(b"init_failure type=AssertionError", stderr)
         self.assertNotIn(b"not-ready", stderr)
+
+    def test_ready_without_jsonl_newline_fails_and_reclaims_owned_resources(self):
+        started = []
+
+        def remember(runtime):
+            started.append(runtime)
+            self.addCleanup(self.cleanup_runtime, runtime)
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(RuntimeError):
+                self.runtime("unterminated-ready", before_ready=remember)
+
+        runtime, = started
+        self.assertIsNotNone(runtime.process.poll())
+        self.assertFalse(runtime.reader.is_alive())
+        self.assertTrue(runtime.process.stdin.closed)
+        self.assertTrue(runtime.process.stdout.closed)
+
+    def test_before_ready_failure_preserves_exception_and_reclaims_owned_resources(self):
+        started = []
+        original = LookupError("startup coordination failed")
+
+        def fail_before_ready(runtime):
+            started.append(runtime)
+            self.addCleanup(self.cleanup_runtime, runtime)
+            raise original
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(LookupError) as failure:
+                self.runtime("held", before_ready=fail_before_ready)
+
+        self.assertIs(failure.exception, original)
+        runtime, = started
+        self.assertIsNotNone(runtime.process.poll())
+        self.assertFalse(runtime.reader.is_alive())
+        self.assertTrue(runtime.process.stdin.closed)
+        self.assertTrue(runtime.process.stdout.closed)
 
     def test_close_failure_releases_inherited_stderr_without_manual_release(self):
         returncode, _stdout, stderr = self.run_wrapper("close", "held")
