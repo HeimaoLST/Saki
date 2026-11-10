@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 class Runtime:
-    def __init__(self, binary, *, cwd=None, env=None):
+    def __init__(self, binary, *, cwd=None, env=None, before_ready=None):
         self.process = subprocess.Popen(
             [str(binary), "--stdio"], cwd=cwd, env=env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
@@ -35,6 +35,8 @@ class Runtime:
         self.reader = threading.Thread(target=self._read, daemon=True)
         try:
             self.reader.start()
+            if before_ready is not None:
+                before_ready(self)
             ready = self.next()
             if ready.get("version") != 1 or ready.get("type") != "ready":
                 raise AssertionError("runtime ready frame is invalid")
@@ -48,6 +50,8 @@ class Runtime:
     def _read(self):
         try:
             for line in self.process.stdout:
+                if not line.endswith("\n"):
+                    raise RuntimeError("runtime frame is missing a JSONL newline")
                 self.messages.put(json.loads(line))
         except Exception as error:
             self.messages.put(error)
@@ -244,7 +248,89 @@ def completed(text):
     }]}
 
 
+def catalog_startup_self_test(binary):
+    for fresh in (False, True):
+        catalog_requests = []
+        provider_requests = []
+        gate_errors = []
+        arrived = threading.Event()
+        release = threading.Event()
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def do_CONNECT(self):
+                catalog_requests.append((self.path, self.headers.get("Authorization")))
+                arrived.set()
+                if not release.wait(timeout=10):
+                    gate_errors.append("catalog release timed out")
+                self.send_error(502, "Catalog fixture unavailable")
+
+            def do_POST(self):
+                provider_requests.append(self.path)
+                self.send_error(500, "Unexpected provider request")
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="saki-catalog-startup-") as root:
+                Path(root, ".env").write_text("")
+                cache = Path(root, ".saki/cache/models.json")
+                if fresh:
+                    cache.parent.mkdir(parents=True)
+                    cached = json.dumps({"providers": {"provider": {"models": {"model": {
+                        "limit": {"context": 131072, "input": 126976, "output": 8192},
+                    }}}}}).encode()
+                    cache.write_bytes(cached)
+                    assert max(0, time.time() - cache.stat().st_mtime) < 86400
+                    release.set()
+                # Own the complete child environment: no inherited capacity,
+                # host config, proxy bypass or parent dotenv may select this path.
+                env = dict(PATH=os.defpath, API_KEY="offline-fixture",
+                           SAKI_API="openai-responses", SAKI_MODEL="provider/model",
+                           SAKI_BASE_URL=f"http://127.0.0.1:{server.server_port}/provider",
+                           SAKI_SESSION_DIR=str(Path(root, "sessions")),
+                           HTTPS_PROXY=f"http://127.0.0.1:{server.server_port}", NO_PROXY="")
+
+                def release_catalog(runtime):
+                    try:
+                        assert arrived.wait(timeout=10), "catalog proxy control not established"
+                        assert catalog_requests == [("models.dev:443", None)], catalog_requests
+                        assert runtime.messages.empty(), "ready arrived before catalog release"
+                    finally:
+                        release.set()
+
+                with Runtime(binary, cwd=root, env=env,
+                             before_ready=None if fresh else release_catalog) as runtime:
+                    assert runtime.received[0]["api"] == "openai-responses"
+                    session = runtime.call("session.create", {})
+                    assert session["metadata"]["schema_version"] == 1, session
+                    compaction = session["metadata"]["compaction"]
+                    assert compaction["context_budget_tokens"] == (131072 if fresh else 262144), session
+                    assert compaction["max_input_tokens"] == (126976 if fresh else None), session
+                assert runtime._frame_counts(runtime.received) == (1, 2, 0, 0), runtime.received
+                assert catalog_requests == ([] if fresh else [("models.dev:443", None)]), catalog_requests
+                assert not provider_requests, provider_requests
+                assert not gate_errors, gate_errors
+                if fresh:
+                    assert cache.read_bytes() == cached
+                else:
+                    assert not cache.exists()
+                print(f"PASS: first-start {'fresh cache' if fresh else 'local CONNECT failure fallback'}; "
+                      f"context={compaction['context_budget_tokens']}, "
+                      f"catalog_requests={len(catalog_requests)}, task/provider requests=0")
+        finally:
+            release.set()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+            assert not thread.is_alive(), "catalog fixture server did not stop"
+
+
 def self_test(binary):
+    catalog_startup_self_test(binary)
     requests = []
     marker = "saki-stdio-cross-process-60"
     disconnect_arrived = threading.Event()
